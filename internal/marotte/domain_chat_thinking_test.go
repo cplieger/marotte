@@ -108,3 +108,36 @@ func TestModelChoiceMetaSessionModel_CapsAsKASDoesForThinkingOff(t *testing.T) {
 		})
 	}
 }
+
+func TestChatNextModelAndEffort_AreWhatTheNextTurnRunsOn(t *testing.T) {
+	tests := []struct {
+		name                  string
+		chat                  Chat
+		wantModel, wantEffort string
+	}{
+		{name: "nothing parked", chat: Chat{Model: "a", Effort: "low"}, wantModel: "a", wantEffort: "low"},
+		{name: "thinking chosen off", chat: Chat{Model: "a", Effort: "low", Thinking: ThinkingOff}, wantModel: "a", wantEffort: string(SwitchEffortOff)},
+		{name: "thinking chosen on", chat: Chat{Model: "a", Effort: "low", Thinking: ThinkingOn}, wantModel: "a", wantEffort: "low"},
+		{
+			name:      "a pick parked with its tier",
+			chat:      Chat{Model: "a", Effort: "low", Thinking: ThinkingOff, PendingModel: "b", PendingEffort: "high"},
+			wantModel: "b", wantEffort: "high",
+		},
+		{name: "a pick parked with no tier", chat: Chat{Model: "a", Effort: "low", PendingModel: "b"}, wantModel: "b", wantEffort: "low"},
+		{
+			name:      "a pick parked with no tier while thinking is off",
+			chat:      Chat{Model: "a", Effort: "low", Thinking: ThinkingOff, PendingModel: "b"},
+			wantModel: "b", wantEffort: string(SwitchEffortOff),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.chat.NextModel(); got != tc.wantModel {
+				t.Errorf("NextModel() = %q, want %q", got, tc.wantModel)
+			}
+			if got := tc.chat.NextEffort(); got != tc.wantEffort {
+				t.Errorf("NextEffort() = %q, want %q", got, tc.wantEffort)
+			}
+		})
+	}
+}

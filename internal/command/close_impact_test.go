@@ -274,7 +274,7 @@ func workIDs(n int, prefix string) []string {
 // invalidImpacts are the impacts the confirmation's validation refuses, shared by close_tab and delete_chat.
 func invalidImpacts() map[string]*marotte.CloseImpact {
 	tooManyChats := &marotte.CloseImpact{}
-	for i := range tabs.MaxOpenTabs + 1 {
+	for i := range tabs.MaxTabs + 1 {
 		tooManyChats.Chats = append(tooManyChats.Chats, marotte.ChatWork{Ref: "c-" + strconv.Itoa(i)})
 	}
 	one := func(w marotte.ChatWork) *marotte.CloseImpact {
@@ -315,6 +315,18 @@ func TestCmdCloseTab_RefusesAnInvalidImpact(t *testing.T) {
 				t.Error("an invalid impact closed the tab")
 			}
 		})
+	}
+}
+
+// TestValidCloseImpact_AcceptsAPageOverTheProductLimit pins the bound at the decode limit: the boot heal can leave more
+// than 48 tabs open, and a close over them must still validate.
+func TestValidCloseImpact_AcceptsAPageOverTheProductLimit(t *testing.T) {
+	healed := &marotte.CloseImpact{}
+	for i := range tabs.MaxOpenTabs + 1 {
+		healed.Chats = append(healed.Chats, marotte.ChatWork{Ref: "c-" + strconv.Itoa(i)})
+	}
+	if !validCloseImpact(healed) {
+		t.Errorf("validCloseImpact(%d chats) = false, want true", len(healed.Chats))
 	}
 }
 

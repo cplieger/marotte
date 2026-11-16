@@ -22,7 +22,7 @@ interface ControlHeight {
     readonly members: readonly Row[];
   }[];
   readonly undersize: readonly (Row & { readonly kind: string; readonly count: number })[];
-  readonly viewportHidden: readonly (Row & { readonly count: number })[];
+  readonly unrendered: readonly { readonly el: string; readonly count: number }[];
   readonly expanded: readonly (Row & { readonly kind: string; readonly count: number })[];
   readonly inlineExempt: readonly { readonly el: string; readonly count: number }[];
   readonly unmeasurable: readonly {
@@ -98,6 +98,25 @@ interface Contrast {
 interface Reveal {
   readonly revealed: number;
   readonly passes: number;
+}
+interface FocusStop {
+  readonly sig: string;
+  readonly body: boolean;
+  readonly painted: boolean;
+  readonly focusVisible: boolean;
+  readonly backwards: boolean;
+  readonly repeat: boolean;
+}
+interface Sweep {
+  readonly floor: number | null;
+  readonly selectors: readonly {
+    readonly selector: string;
+    readonly matches: number;
+    readonly hidden: number;
+    readonly heights: readonly { readonly h: number; readonly count: number }[];
+    readonly mismatch: boolean;
+    readonly short: boolean;
+  }[];
 }
 
 /** Call a walker the way a test does: directly, with its real options. */
@@ -223,17 +242,12 @@ describe("control-height", () => {
   });
 
   it("refuses to measure a small control something else answers for at its centre", () => {
-    // Inside a closed `<details>` Chromium keeps the control in layout (`content-visibility` on
-    // `::details-content`) while the hit test answers the `<summary>` painted over it.
     mount(
-      `<details class="fx-closed"><summary style="height:24px">s</summary>
+      `<div style="position:relative">
          <button class="fx-buriedbtn" style="height:12px;width:12px"></button>
-       </details>`,
+         <div style="position:absolute;inset:0;background:#fff"></div>
+       </div>`,
     );
-    const buried = host.querySelector(".fx-buriedbtn");
-    // The premise: it really does report a box, or this case proves nothing.
-    expect(buried?.getClientRects().length).toBeGreaterThan(0);
-
     const r = run<ControlHeight>("control-height", { tol: 1.5 });
     expect(undersizeFor(r, "fx-buriedbtn")).toHaveLength(0);
     expect(r.unmeasurable.find((u) => hasClass(u.el, "fx-buriedbtn"))?.why).toContain(
@@ -330,10 +344,10 @@ describe("control-height", () => {
     expect(mismatchesFor(r, "fx-decor")).toHaveLength(1);
   });
 
-  it("reports a stylesheet-hidden control as viewport-hidden rather than measuring it", () => {
+  it("reports a stylesheet-hidden control as unrendered rather than measuring it", () => {
     mount(`<button class="fx-gone" style="display:none">x</button>`);
     const r = run<ControlHeight>("control-height", { tol: 1.5 });
-    expect(r.viewportHidden.some((v) => hasClass(v.el, "fx-gone"))).toBe(true);
+    expect(r.unrendered.some((v) => hasClass(v.el, "fx-gone"))).toBe(true);
     expect(undersizeFor(r, "fx-gone")).toHaveLength(0);
   });
 
@@ -403,7 +417,7 @@ describe("control-height", () => {
     const r = run<ControlHeight>("control-height", { tol: 1.5 });
     for (const cls of ["fx-inline", "fx-chipinprose"]) {
       expect(undersizeFor(r, cls)).toHaveLength(0);
-      expect(r.viewportHidden.some((v) => hasClass(v.el, cls))).toBe(false);
+      expect(r.unrendered.some((v) => hasClass(v.el, cls))).toBe(false);
       expect(r.inlineExempt.some((e) => hasClass(e.el, cls))).toBe(true);
     }
   });
@@ -1009,6 +1023,216 @@ describe("contrast", () => {
   });
 });
 
+// What a reader cannot see, per axe-core 4.13's `isVisibleOnScreen` (lib/commons/dom/
+// is-visible-on-screen.js), which its color-contrast check gates on: every walker counts it out.
+const HIDERS: readonly { name: string; wrap: (slot: string) => string; settle?: () => void }[] = [
+  {
+    name: "beyond the summary of a closed <details>",
+    wrap: (s) => `<details class="fx-r-wrap"><summary>s</summary>${s}</details>`,
+  },
+  {
+    name: "deep inside a closed <details>",
+    wrap: (s) =>
+      `<details class="fx-r-wrap"><summary>s</summary><div><div>${s}</div></div></details>`,
+  },
+  { name: "under the hidden attribute", wrap: (s) => `<div class="fx-r-wrap" hidden>${s}</div>` },
+  {
+    name: "under display:none",
+    wrap: (s) => `<div class="fx-r-wrap" style="display:none">${s}</div>`,
+  },
+  {
+    // Laid out first, then hidden: the subtree keeps its boxes while nothing in it is painted.
+    name: "under a content-visibility:hidden ancestor",
+    wrap: (s) => `<div class="fx-r-wrap">${s}</div>`,
+    settle: () => {
+      document
+        .querySelector<HTMLElement>(".fx-r-wrap")
+        ?.style.setProperty("content-visibility", "hidden");
+    },
+  },
+  {
+    name: "under visibility:hidden",
+    wrap: (s) => `<div class="fx-r-wrap" style="visibility:hidden">${s}</div>`,
+  },
+  {
+    name: "under opacity 0",
+    wrap: (s) => `<div class="fx-r-wrap" style="opacity:0">${s}</div>`,
+  },
+  {
+    name: "in a zero-height overflow:hidden box",
+    wrap: (s) => `<div class="fx-r-wrap" style="height:0;overflow:hidden">${s}</div>`,
+  },
+  {
+    name: "under a zero-area clip",
+    wrap: (s) => `<div class="fx-r-wrap" style="position:absolute;clip:rect(0 0 0 0)">${s}</div>`,
+  },
+  {
+    name: "under clip-path: inset(50%)",
+    wrap: (s) => `<div class="fx-r-wrap" style="clip-path:inset(50%)">${s}</div>`,
+  },
+  {
+    name: "positioned before the page's start, where no scroll reaches",
+    wrap: (s) => `<div class="fx-r-wrap" style="position:absolute;left:-9999px">${s}</div>`,
+  },
+];
+
+const FAINT = `<span class="fx-r-ink" style="color:#eee;font-size:14px">faint</span>`;
+const SMALL_BTN = `<button class="fx-r-btn" style="height:12px;width:12px"></button>`;
+// 12px parent radius, 1px border, 4px inset: the 11px child is too round by the concentric rule.
+const ROUND_NEST = `<div style="border:1px solid #000;border-radius:12px;padding:4px;width:80px">
+    <div class="fx-r-round" style="border-radius:11px;background:#eee;height:40px"></div>
+  </div>`;
+const HEADER = (h: number): string => `<div class="fx-r-head" style="height:${h}px">h</div>`;
+
+describe.each(HIDERS)("what is not rendered: $name", ({ wrap, settle }) => {
+  const place = (slot: string, beside = ""): void => {
+    mount(`<div style="background:#fff">${wrap(slot)}${beside}</div>`);
+    settle?.();
+  };
+
+  it("files no contrast verdict on its text", () => {
+    place(FAINT);
+    const r = run<Contrast>("contrast", {});
+    expect(findingFor(r, "fx-r-ink")).toBeUndefined();
+    expect(r.passes.some((p) => hasClass(p.sel, "fx-r-ink"))).toBe(false);
+    expect(r.dimmed.some((d) => hasClass(d.sel, "fx-r-ink"))).toBe(false);
+  });
+
+  it("counts its control out of control-height as unrendered", () => {
+    place(SMALL_BTN);
+    const r = run<ControlHeight>("control-height", { tol: 1.5 });
+    expect(r.unrendered.some((u) => hasClass(u.el, "fx-r-btn"))).toBe(true);
+    expect(undersizeFor(r, "fx-r-btn")).toHaveLength(0);
+    expect(r.unmeasurable.some((u) => hasClass(u.el, "fx-r-btn"))).toBe(false);
+    expect(r.mismatches.some((m) => m.members.some((x) => hasClass(x.el, "fx-r-btn")))).toBe(false);
+  });
+
+  it("judges none of its corners", () => {
+    place(ROUND_NEST);
+    const r = run<RadiusResult>("radius", { tol: 0.75 });
+    expect(findingsFor(r, "fx-r-round")).toHaveLength(0);
+  });
+
+  it("does not list its control as focusable but never reached", () => {
+    place(SMALL_BTN);
+    run("focus-setup", {});
+    const unreached = run<string[]>("focus-unreached", {});
+    expect(unreached.some((u) => hasClass(u, "fx-r-btn"))).toBe(false);
+  });
+
+  it("leaves its header out of the height sweep", () => {
+    place(HEADER(20), HEADER(30));
+    const r = run<Sweep>("height-sweep", { selectors: [".fx-r-head"] });
+    expect(r.selectors[0]?.heights.map(({ h, count }) => ({ h, count }))).toEqual([
+      { h: 30, count: 1 },
+    ]);
+    expect(r.selectors[0]?.hidden).toBe(1);
+  });
+});
+
+it("files no contrast verdict on a closed <details>'s own text beyond its summary", () => {
+  mount(
+    `<div style="background:#fff"><details class="fx-r-bare" style="color:#eee;font-size:14px"><summary style="color:#000">s</summary>bare text</details></div>`,
+  );
+  const r = run<Contrast>("contrast", {});
+  expect(findingFor(r, "fx-r-bare")).toBeUndefined();
+});
+
+describe("what is rendered", () => {
+  it("judges faint text inside an OPEN <details>", () => {
+    mount(
+      `<div style="background:#fff"><details open><summary>s</summary>${FAINT}</details></div>`,
+    );
+    expect(findingFor(run<Contrast>("contrast", {}), "fx-r-ink")).toBeDefined();
+  });
+
+  it("judges the summary of a closed <details>, which stays painted", () => {
+    mount(
+      `<div style="background:#fff"><details><summary class="fx-r-sum" style="color:#eee;font-size:14px">s</summary>x</details></div>`,
+    );
+    expect(findingFor(run<Contrast>("contrast", {}), "fx-r-sum")).toBeDefined();
+  });
+
+  it("judges an absolutely positioned child a static zero-height clip does not contain", () => {
+    mount(
+      `<div style="background:#fff"><div style="height:0;overflow:hidden"><span class="fx-r-ink" style="position:absolute;color:#eee;font-size:14px">faint</span></div></div>`,
+    );
+    expect(findingFor(run<Contrast>("contrast", {}), "fx-r-ink")).toBeDefined();
+  });
+
+  it("still lists a rendered control the walk never reached", () => {
+    mount(SMALL_BTN);
+    run("focus-setup", {});
+    const unreached = run<string[]>("focus-unreached", {});
+    expect(unreached.some((u) => hasClass(u, "fx-r-btn"))).toBe(true);
+  });
+});
+
+describe("focus order", () => {
+  it("reports the focused element's signature, with its accessible name", () => {
+    mount(`<button class="fx-f-one" aria-label="First">1</button>`);
+    run("focus-setup", {});
+    host.querySelector<HTMLElement>(".fx-f-one")?.focus();
+    const s = run<FocusStop>("focus-stop", {});
+    expect(s.sig).toBe('button.fx-f-one "First"');
+    expect(s.painted).toBe(true);
+    expect(s.body).toBe(false);
+  });
+
+  it("flags a stop that comes before the previous one in DOM order, and a repeat", () => {
+    mount(`<button class="fx-f-a">a</button><button class="fx-f-b">b</button>`);
+    run("focus-setup", {});
+    host.querySelector<HTMLElement>(".fx-f-b")?.focus();
+    expect(run<FocusStop>("focus-stop", {}).backwards).toBe(false);
+    host.querySelector<HTMLElement>(".fx-f-a")?.focus();
+    expect(run<FocusStop>("focus-stop", {}).backwards).toBe(true);
+    host.querySelector<HTMLElement>(".fx-f-b")?.focus();
+    expect(run<FocusStop>("focus-stop", {}).repeat).toBe(true);
+  });
+
+  it("calls a focused element under opacity 0 unpainted", () => {
+    mount(`<div style="opacity:0"><button class="fx-f-ghost">g</button></div>`);
+    run("focus-setup", {});
+    host.querySelector<HTMLElement>(".fx-f-ghost")?.focus();
+    expect(run<FocusStop>("focus-stop", {}).painted).toBe(false);
+  });
+
+  it("focuses the --start element during setup", () => {
+    mount(`<button class="fx-f-start">s</button>`);
+    run("focus-setup", { start: ".fx-f-start" });
+    expect(document.activeElement?.classList.contains("fx-f-start")).toBe(true);
+  });
+
+  it("leaves a disabled, negative-tabindex or inert control out of the unreached list", () => {
+    mount(
+      `<button class="fx-f-off" disabled>x</button><button class="fx-f-neg" tabindex="-1">y</button><div inert><button class="fx-f-inert">z</button></div>`,
+    );
+    run("focus-setup", {});
+    const unreached = run<string[]>("focus-unreached", {});
+    for (const cls of ["fx-f-off", "fx-f-neg", "fx-f-inert"]) {
+      expect(unreached.some((u) => hasClass(u, cls))).toBe(false);
+    }
+  });
+});
+
+describe("height sweep", () => {
+  it("calls two distinct heights a mismatch and one under the floor short", () => {
+    document.documentElement.style.setProperty("--hit-floor", "24px");
+    mount(`${HEADER(20)}${HEADER(30)}`);
+    const s = run<Sweep>("height-sweep", { selectors: [".fx-r-head"] }).selectors[0];
+    expect(s?.mismatch).toBe(true);
+    expect(s?.short).toBe(true);
+    expect(s?.matches).toBe(2);
+  });
+
+  it("reports no floor when the page declares none", () => {
+    mount(HEADER(30));
+    const r = run<Sweep>("height-sweep", { selectors: [".fx-r-head"] });
+    expect(r.floor).toBeNull();
+    expect(r.selectors[0]?.short).toBe(false);
+  });
+});
+
 describe("the injection contract", () => {
   it("answers identically through `pageSource` and through a direct call", () => {
     mount(
@@ -1022,9 +1246,14 @@ describe("the injection contract", () => {
       ["control-height", { tol: 1.5 }],
       ["radius", { tol: 0.75 }],
       ["contrast", {}],
+      ["height-sweep", { selectors: ["button"] }],
     ] as const) {
       expect(runViaSource(name, opts)).toEqual(run(name, opts));
     }
+    run("focus-setup", {});
+    const direct = run("focus-unreached", {});
+    runViaSource("focus-setup", {});
+    expect(runViaSource("focus-unreached", {})).toEqual(direct);
   });
 
   it("carries its options by value, so a runner's `--tol` reaches the walker", () => {
@@ -1044,6 +1273,11 @@ describe("the injection contract", () => {
     // The prelude binds helpers by STRING: a rename missed at a call site throws only here and in the page.
     expect(() => runViaSource("radius", { tol: 0.75 })).not.toThrow();
     expect(() => runViaSource("control-height", { tol: 1.5 })).not.toThrow();
+    expect(() => runViaSource("contrast", {})).not.toThrow();
+    expect(() => runViaSource("height-sweep", { selectors: ["button"] })).not.toThrow();
+    runViaSource("focus-setup", {});
+    expect(() => runViaSource("focus-stop", {})).not.toThrow();
+    expect(() => runViaSource("focus-unreached", {})).not.toThrow();
   });
 
   it("refuses a walker it does not have, naming the ones it does", () => {
@@ -1051,7 +1285,16 @@ describe("the injection contract", () => {
     expect(() => pageSource("no-such-walker")).toThrow(/control-height/u);
   });
 
-  it("exposes exactly the four walkers the runners ask for", () => {
-    expect(Object.keys(WALKERS).sort()).toEqual(["contrast", "control-height", "radius", "reveal"]);
+  it("exposes exactly the walkers the runners ask for", () => {
+    expect(Object.keys(WALKERS).sort()).toEqual([
+      "contrast",
+      "control-height",
+      "focus-setup",
+      "focus-stop",
+      "focus-unreached",
+      "height-sweep",
+      "radius",
+      "reveal",
+    ]);
   });
 });

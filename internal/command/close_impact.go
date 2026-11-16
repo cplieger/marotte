@@ -64,7 +64,8 @@ func validCloseImpact(impact *marotte.CloseImpact) bool {
 	if impact == nil {
 		return true
 	}
-	if len(impact.Chats) > tabs.MaxOpenTabs {
+	// MaxTabs, not MaxOpenTabs: the boot heal opens Bot tabs past the product limit (OpenTab.OverCap).
+	if len(impact.Chats) > tabs.MaxTabs {
 		return false
 	}
 	refs := make(map[string]bool, len(impact.Chats))

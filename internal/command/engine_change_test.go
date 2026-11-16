@@ -54,7 +54,7 @@ func TestDispatcherRun_AChangeRunsInline(t *testing.T) {
 	cancel()
 	refused := StatusError(http.StatusBadGateway, context.DeadlineExceeded)
 	var ranOn error
-	d.RegisterChange(marotte.CmdSetEffort, func(ctx context.Context, _ *marotte.ClientCommand) (any, error) {
+	d.registerChange(marotte.CmdSetEffort, func(ctx context.Context, _ *marotte.ClientCommand) (any, error) {
 		ranOn = ctx.Err()
 		return nil, refused
 	})

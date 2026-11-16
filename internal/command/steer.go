@@ -125,6 +125,9 @@ func cmdSteer(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComman
 	if err != nil {
 		return nil, err
 	}
+	if err := refuseBotDraft(ctx, roles.chats, cmd.ChatID); err != nil {
+		return nil, err
+	}
 	s := Submission{
 		Row:    marotte.QueuedPrompt{ID: p.MessageID, Text: text, Caller: cmd.From},
 		Origin: marotte.RunFromPrompt, Kind: marotte.SendPlain, SteerOnly: true, Wait: true,

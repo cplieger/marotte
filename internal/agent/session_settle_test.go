@@ -341,6 +341,13 @@ func (s *unreadableOnce) Get(ctx context.Context, id marotte.ChatID) (*marotte.C
 	return s.testChatStore.Get(ctx, id)
 }
 
+func (s *unreadableOnce) Lookup(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool, error) {
+	if id == s.chatID && s.failing.Load() {
+		return nil, false, errors.New("chat header unreadable")
+	}
+	return s.testChatStore.Lookup(ctx, id)
+}
+
 // A record the session open could not read is not the chat's absence: the answer is retryable, and the
 // next load opens the chat.
 func TestLoadSession_AnUnreadableRecordIsRetryable(t *testing.T) {

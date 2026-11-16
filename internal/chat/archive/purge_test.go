@@ -192,6 +192,7 @@ func TestPurge_OnePassLineCarriesOnlyTheReasonsThatKeptAChat(t *testing.T) {
 		store.set(t, "a", fakeChat{lastUse: old, keptBy: KeptByRun})
 		store.set(t, "b", fakeChat{lastUse: old, keptBy: KeptByWords})
 		store.set(t, "c", fakeChat{lastUse: time.Now(), keptBy: KeptByTab})
+		store.set(t, "d", fakeChat{lastUse: old, keptBy: KeptByBot})
 		buf := capturePurgeLogs(t)
 
 		svc.Purge(t.Context(), 24*time.Hour)
@@ -200,7 +201,7 @@ func TestPurge_OnePassLineCarriesOnlyTheReasonsThatKeptAChat(t *testing.T) {
 		if len(lines) != 1 {
 			t.Fatalf("pass lines = %q, want exactly one", lines)
 		}
-		for _, want := range []string{" kept_by.run=1", " kept_by.words=1"} {
+		for _, want := range []string{" kept_by.run=1", " kept_by.words=1", " kept_by.bot=1"} {
 			if !strings.Contains(lines[0], want) {
 				t.Errorf("pass line lacks %q: %q", want, lines[0])
 			}

@@ -527,24 +527,34 @@ func (s *Store) setComposer(ctx context.Context, chatID marotte.ChatID, what str
 // fault, a decode failure, a cancelled ctx) removes nothing and answers that error: the chain
 // it holds is the caller's teardown input.
 func (s *Store) Delete(ctx context.Context, chatID marotte.ChatID) (sessionChain []string, err error) {
+	sessionChain, _, err = s.DeleteIf(ctx, chatID, nil)
+	return sessionChain, err
+}
+
+// DeleteIf is Delete when doomed, run on the record under the chat's lock, answers true; a nil doomed always does.
+// A record doomed spares is kept untouched, answering deleted false and a nil error; a missing one is Delete's no-op.
+func (s *Store) DeleteIf(ctx context.Context, chatID marotte.ChatID, doomed func(*marotte.Chat) bool) (sessionChain []string, deleted bool, err error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	m := s.lock(chatID)
 	m.Lock()
 	c, loadErr := s.load(ctx, chatID)
 	switch {
+	case loadErr == nil && doomed != nil && !doomed(c):
+		m.Unlock()
+		return nil, false, nil
 	case loadErr == nil:
 		sessionChain = c.SessionChain()
 	case !errors.Is(loadErr, os.ErrNotExist):
 		m.Unlock()
-		return nil, loadErr
+		return nil, false, loadErr
 	}
 	chatsVersion, rmErr := s.remove(chatID)
 	missing := errors.Is(rmErr, os.ErrNotExist)
 	m.Unlock()
 	if rmErr != nil && !missing {
-		return nil, rmErr
+		return nil, false, rmErr
 	}
 	s.broadcastDeleted(ctx, chatID, chatsVersion)
 	if missing {
@@ -556,7 +566,7 @@ func (s *Store) Delete(ctx context.Context, chatID marotte.ChatID) (sessionChain
 		s.tombMu.Unlock()
 		slog.Debug("chat delete", "chat_id", chatID, "tombstones", tombCount)
 	}
-	return sessionChain, nil
+	return sessionChain, true, nil
 }
 
 // broadcastDeleted announces a removal stamped with the `chats` version remove minted. It reads the broadcaster at

@@ -228,11 +228,13 @@ func (o SessionOwners) add(sessionID string, chatID marotte.ChatID) {
 
 // OwnerScan is one fresh scan's SessionOwners with what it read. Read holds every chat id whose header was read, empty
 // chains included; Skipped every id that exists and was not read; Listed is false only when the chats directory could
-// not be listed, the one case where Skipped cannot name what exists. Complete is Listed with nothing skipped.
+// not be listed, the one case where Skipped cannot name what exists. Complete is Listed with nothing skipped. Bots
+// holds every read id whose header has a bot block, sorted.
 type OwnerScan struct {
 	Owners   SessionOwners
 	Read     map[marotte.ChatID]struct{}
 	Skipped  []marotte.ChatID
+	Bots     []marotte.ChatID
 	Listed   bool
 	Complete bool
 }
@@ -251,9 +253,13 @@ func (s *Store) SessionOwners(ctx context.Context) OwnerScan {
 	for i := range scan.rows {
 		id := scan.rows[i].id
 		out.Read[id] = struct{}{}
+		if scan.rows[i].header.Bot != nil {
+			out.Bots = append(out.Bots, id)
+		}
 		for _, sess := range scan.rows[i].header.SessionChain() {
 			out.Owners.add(sess, id)
 		}
 	}
+	slices.Sort(out.Bots)
 	return out
 }

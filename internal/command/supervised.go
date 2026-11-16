@@ -29,32 +29,42 @@ func cmdSetSupervisedMode(
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	unlock, lockErr := lockSessionChange(ctx, supervisedLocks, cmd.ChatID)
+	if err := applySupervised(ctx, bridges, chats, supervisedLocks, cmd.ChatID, p.Enabled); err != nil {
+		return nil, err
+	}
+	slog.Info("supervised mode set", "chat", cmd.ChatID, "enabled", p.Enabled)
+	return responseWith(map[string]any{"enabled": p.Enabled}), nil
+}
+
+// applySupervised applies enabled to chatID's running session under supervisedLocks, then records it.
+func applySupervised(
+	ctx context.Context, bridges bridgeAccess, chats chatStore, supervisedLocks *keylock.Set[marotte.ChatID],
+	chatID marotte.ChatID, enabled bool,
+) error {
+	unlock, lockErr := lockSessionChange(ctx, supervisedLocks, chatID)
 	if lockErr != nil {
-		return nil, lockErr
+		return lockErr
 	}
 	defer unlock()
 
 	// Assert first, persist only on success (applySessionConfig's rule): a refused toggle persisted
 	// would show supervised over a session in autopilot. A bridge still opening its session grades as nil, so
 	// the choice still persists for the session door.
-	if err := applySessionConfig(ctx, bridges, cmd.ChatID, "set_supervised_mode",
-		marotte.MethodSetConfigOption, configOptionParams(marotte.ConfigOptionAutopilot, autopilotValue(p.Enabled))); err != nil {
-		return nil, err
+	if err := applySessionConfig(ctx, bridges, chatID, "set_supervised_mode",
+		marotte.MethodSetConfigOption, configOptionParams(marotte.ConfigOptionAutopilot, autopilotValue(enabled))); err != nil {
+		return err
 	}
 
-	if _, err := chats.Mutate(ctx, cmd.ChatID, func(c *marotte.Chat, exists bool) bool {
-		if !exists || c.SupervisedMode == p.Enabled {
+	if _, err := chats.Mutate(ctx, chatID, marotte.BotWriter(func(c *marotte.Chat, exists bool) bool {
+		if !exists || c.SupervisedMode == enabled {
 			return false
 		}
-		c.SupervisedMode = p.Enabled
+		c.SupervisedMode = enabled
 		return true
-	}); err != nil {
-		return nil, StatusError(http.StatusInternalServerError, err)
+	})); err != nil {
+		return StatusError(http.StatusInternalServerError, err)
 	}
-
-	slog.Info("supervised mode set", "chat", cmd.ChatID, "enabled", p.Enabled)
-	return responseWith(map[string]any{"enabled": p.Enabled}), nil
+	return nil
 }
 
 // autopilotValue maps supervised mode onto KAS's `autopilot` option: supervised ON is autopilot

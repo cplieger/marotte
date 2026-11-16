@@ -61,6 +61,10 @@ const (
 	// CmdMergeTangent summarizes a tangent (chat_id) and hands the summary to the chat it was
 	// forked from. Payload: MergeTangentCommand.
 	CmdMergeTangent CommandType = "merge_tangent"
+	// The Bot commands, each refused 409 bot_not_found on a chat with no bot block.
+	CmdBotSave        CommandType = "bot_save"
+	CmdBotSetPaused   CommandType = "bot_set_paused"
+	CmdBotClearMemory CommandType = "bot_clear_memory"
 )
 
 // ClientCommand is the envelope for every command the browser posts. Type
@@ -122,6 +126,8 @@ type CreateChatCommand struct {
 	// to the chat the first attempt made. Optional; unlike Idempotency-Key it
 	// covers the fall-through past that cache's TTL (command/create_ledger.go).
 	OpID string `json:"op_id,omitempty"`
+	// Bot creates a Bot draft: the record carries a bot block from creation, on the Bot role, named "New Bot".
+	Bot bool `json:"bot,omitempty"`
 }
 
 // MergeTangentCommand is the payload for type="merge_tangent". OpID is required (an identifier,
@@ -289,6 +295,31 @@ type SetThinkingCommand struct {
 // the chat, at most MaxUserChatNameUnits UTF-16 code units after sanitizing.
 type RenameChatCommand struct {
 	Name string `json:"name"`
+}
+
+// BotSaveCommand is the payload for type="bot_save": the Bot's whole setup, written in one record write.
+// Field order is fieldalignment's.
+type BotSaveCommand struct {
+	// Supervised is written through the supervised switch's path; nil leaves it as it is.
+	Supervised *bool  `json:"supervised,omitempty"`
+	Name       string `json:"name"`
+	Goal       string `json:"goal"`
+	Steering   string `json:"steering,omitempty"`
+	// Model and Effort go through the model pill's switch when they differ from BotSetup's; empty keeps it.
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
+	// BaseVersion is the Bot.SpecVersion the page loaded; another answers 409 bot_changed and saves nothing.
+	// bot_supervised, whatever its status, leaves the base stale, and so does a refused model pick whose stop already
+	// landed; the page reloads the setup after any refused save that is not 400 or 409 bot_changed.
+	BaseVersion int  `json:"base_version"`
+	Memory      bool `json:"memory"`
+	// Start on a draft stamps started_at and sends the kickoff prompt; on a started Bot it is ignored.
+	Start bool `json:"start,omitempty"`
+}
+
+// BotSetPausedCommand is the payload for type="bot_set_paused". bot_clear_memory has no payload.
+type BotSetPausedCommand struct {
+	Paused bool `json:"paused"`
 }
 
 // MaxUserChatNameUnits caps a user rename in UTF-16 code units, the unit an HTML

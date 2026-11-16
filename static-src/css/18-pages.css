@@ -998,6 +998,13 @@ label.toggle-inline:has(> .toggle) {
   gap: var(--sp-4);
 }
 
+/* A read failure stated above rows the list still holds: a plain line outside the list's frame. */
+.history-status {
+  margin: 0;
+  color: var(--c-text-secondary);
+  font-size: var(--fs-sm);
+}
+
 /* --- The run and subagent tabs' layout ------------------------------------ */
 
 /* A COLUMN, so the page-content grows and the bottom bar stays pinned. The
