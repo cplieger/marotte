@@ -214,14 +214,14 @@
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 178
+          "seconds": 179
         },
         {
           "scenario": "chat-stream",
           "scale": "x10",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 175
+          "seconds": 174
         },
         {
           "scenario": "tabs",
@@ -322,7 +322,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 32
+          "seconds": 36
         },
         {
           "scenario": "chat-stream",
@@ -332,7 +332,7 @@
           "windows": [
             "cold"
           ],
-          "seconds": 32
+          "seconds": 33
         },
         {
           "scenario": "tabs",
