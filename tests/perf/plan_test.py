@@ -1,12 +1,13 @@
 """The performance harness's own contract: the plan cplieger/ci's perf-ci.yaml
 reads, the instance's refusal of the live port, a seeded fixture, the git shim
-that counts fetches, the fake engine's steer answer, the window failures that
-fail a rep, and the line that ends a shell drive.
+that counts fetches, the fake engine's steer answer, the window failures that fail a rep, the
+line that ends a shell drive, and the stream frames a window counts.
 
 run.sh runs this before it measures anything, so a broken plan fails the shard.
 """
 
 import hashlib
+import http.server
 import json
 import os
 import pathlib
@@ -14,6 +15,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -539,6 +542,128 @@ class ShellEnd(unittest.TestCase):
     def test_the_typed_commands_echo_names_no_pid(self):
         self.assertEqual(self.pids(scroll_frame(['$ sleep 3 && ./emit.py 50000'])), [])
         self.assertEqual(self.pids('sleep 3 && ./emit.py 50000'), [])
+
+
+def hello(keepalive_event: str) -> str:
+    """go/sse/v2's handshake frame (Hello, verdict.go) naming the hub's keepalive event."""
+    data = {'epoch': 'e1', 'verdict': 'fresh', 'keepalive_event': keepalive_event, 'wire': 1}
+    return f'event: sse:hello\ndata: {json.dumps(data)}\n\n'
+
+
+class SseCapture(unittest.TestCase):
+    """tests/perf/measure/sse-capture.py: the records it writes for a chunked event stream."""
+
+    def capture(self, chunks: list[str], records: int, close: bool = False) -> list[dict]:
+        held = threading.Event()
+
+        class Stream(http.server.BaseHTTPRequestHandler):
+            # HTTP/1.1 chunked, as net/http serves a stream with no Content-Length.
+            protocol_version = 'HTTP/1.1'
+
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/event-stream')
+                self.send_header('Transfer-Encoding', 'chunked')
+                if close:
+                    self.send_header('Connection', 'close')
+                self.end_headers()
+                for c in chunks:
+                    data = c.encode()
+                    self.wfile.write(b'%x\r\n%s\r\n' % (len(data), data))
+                    self.wfile.flush()
+                held.wait(30)
+
+            def log_message(self, *args):
+                pass
+
+        srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Stream)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                out, stop, scope = (pathlib.Path(tmp, n) for n in ('sse.jsonl', 'stop', 'scope'))
+                scope.write_text('null')
+                proc = subprocess.Popen(
+                    [
+                        sys.executable,
+                        str(PERF / 'measure' / 'sse-capture.py'),
+                        *('--port', str(srv.server_address[1]), '--out', str(out)),
+                        *('--scope-file', str(scope), '--stop-file', str(stop)),
+                    ]
+                )
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline and proc.poll() is None:
+                    if out.exists() and out.read_text().count('\n') >= records:
+                        break
+                    time.sleep(0.05)
+                stop.touch()
+                try:
+                    rc = proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                    self.fail('the stop file did not end the capture')
+                self.assertEqual(rc, 0)
+                return [json.loads(line) for line in out.read_text().splitlines()]
+        finally:
+            held.set()
+            srv.shutdown()
+            srv.server_close()
+
+    def marks(self, chunks: list[str], records: int) -> list[tuple[str, bool]]:
+        return [(r['event'], r.get('keepalive', False)) for r in self.capture(chunks, records)]
+
+    def test_marks_the_keepalive_the_hello_names_and_no_other_frame(self):
+        chunks = [
+            hello('beat'),
+            'event: beat\ndata: {}\n\n',
+            'event: heartbeat\ndata: {}\n\n',
+            'data: {"type":"chat"}\n\n',
+        ]
+        self.assertEqual(
+            self.marks(chunks, 4),
+            [('sse:hello', False), ('beat', True), ('heartbeat', False), ('message', False)],
+        )
+
+    def test_a_hello_naming_the_comment_form_marks_no_frame(self):
+        chunks = [hello(''), ': keepalive\n\n', 'data: {"type":"chat"}\n\n']
+        self.assertEqual(self.marks(chunks, 2), [('sse:hello', False), ('message', False)])
+
+    def test_a_frame_split_across_chunks_is_one_record(self):
+        chunks = [hello('heartbeat'), 'event: chat\n', 'data: {"type":"turn","chat_id":"c1"}\n\n']
+        got = self.capture(chunks, 2)
+        self.assertEqual(len(got), 2, got)
+        self.assertEqual(
+            (got[1]['event'], got[1].get('type'), got[1].get('chat_id')), ('chat', 'turn', 'c1')
+        )
+
+    def test_the_stop_file_ends_a_stream_that_closes_its_connection(self):
+        # http.client hands such a connection to the response and clears conn.sock.
+        got = self.capture([hello('heartbeat'), 'data: {}\n\n'], 2, close=True)
+        self.assertEqual([r['event'] for r in got], ['sse:hello', 'message'])
+
+
+class StreamFrames(unittest.TestCase):
+    """static-src/perf/stream-frames.mjs: the sse_frames count of one window."""
+
+    def count(self, records: list[dict]) -> int:
+        module = ROOT / 'static-src' / 'perf' / 'stream-frames.mjs'
+        script = (
+            f'import {{ streamFrames }} from {json.dumps(module.as_uri())};'
+            f'console.log(JSON.stringify(streamFrames({json.dumps(records)})));'
+        )
+        return json.loads(node(script))
+
+    def test_counts_no_keepalive_and_no_handshake(self):
+        records = [
+            {'event': 'sse:hello'},
+            {'event': 'heartbeat', 'keepalive': True},
+            {'event': 'message', 'type': 'chat'},
+            {'event': 'sse:keepalive', 'keepalive': True},
+        ]
+        self.assertEqual(self.count(records), 1)
+
+    def test_counts_an_event_the_hello_did_not_name_as_its_keepalive(self):
+        self.assertEqual(self.count([{'event': 'heartbeat'}]), 1)
 
 
 if __name__ == '__main__':

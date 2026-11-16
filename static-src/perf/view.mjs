@@ -15,6 +15,7 @@ import playwright from "playwright";
 import { decodeShares } from "./attrprobe.mjs";
 import { windowFailures } from "./failures.mjs";
 import { donePids } from "./shell-end.mjs";
+import { streamFrames } from "./stream-frames.mjs";
 import { DRIVERS, VIEWS, instanceFacts } from "./views.mjs";
 
 const LIVE_PORT = "9847";
@@ -715,9 +716,7 @@ async function browserCell() {
       (e) => "argv" in e,
     ).length;
     w.gitFetch = linesIn(path.join(logDir, "git.jsonl"), start, end).length;
-    w.sseFrames = cdp
-      ? linesIn(scope.sseFile, start, end, 1).filter((f) => !f.event.startsWith("sse:")).length
-      : null;
+    w.sseFrames = cdp ? streamFrames(linesIn(scope.sseFile, start, end, 1)) : null;
     doc.failures.push(...windowFailures(name, w));
     if (windows.has(name)) {
       doc.windows[name] = w;
