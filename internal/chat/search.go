@@ -145,9 +145,10 @@ type searchCall struct {
 	titled bool
 }
 
-// title is the title the card draws, marotte.ToolCardTitle of the settled call; "" with no call.
+// title is the title the card draws, marotte.ToolCardTitle of the settled call, the result's alone when no call
+// decoded.
 func (c *searchCall) title() string {
-	if !c.titled && c.call != nil {
+	if !c.titled {
 		tc := marotte.SettledToolCall(c.call, c.result)
 		c.drawn, c.titled = marotte.ToolCardTitle(&tc), true
 	}
@@ -234,7 +235,8 @@ func (t *searchTurn) observe(e *marotte.Entry) {
 	case marotte.EntryKindToolResult:
 		var res marotte.EntryToolResult
 		if json.Unmarshal(e.Payload, &res) == nil {
-			t.callFor(marotte.ToolCallIDOfResult(e.ID)).result = &res
+			c := t.callFor(marotte.ToolCallIDOfResult(e.ID))
+			c.result, c.titled = &res, false
 		}
 	}
 }

@@ -17,7 +17,7 @@ import (
 // and a rewind, rewrite, run_named, header write or remove drops it.
 
 const (
-	// filterBytes is one chat's bits, and with its open turns' tails (a few bytes per lane) the index's cost per chat.
+	// filterBytes is one chat's bits, and with its open turns' tails and tool calls the index's cost per chat.
 	filterBytes = 64 << 10
 	filterWords = filterBytes / 8
 	filterBits  = filterBytes * 8
@@ -33,6 +33,9 @@ type chatFilter struct {
 	// tails is each open (turn, lane)'s last message text runes a trigram across the next text entry takes
 	// (indexEntry). Written only under the chat's lock, never read by a query.
 	tails map[toolRunKey]string
+	// turns is each open turn's decoded calls, so an appended result's title reads its call; the turn's close drops
+	// them. Same lock as tails.
+	turns map[string]*searchTurn
 	// words is its own allocation: beside the map it would round the filter up to the next 8 KiB page.
 	words *[filterWords]uint64
 }
@@ -50,14 +53,31 @@ func buildChatFilter(name string, entries []marotte.Entry) *chatFilter {
 	names := wakeFactsOf(entries).names
 	for i := range entries {
 		f.indexEntry(&entries[i], turns[entries[i].Turn], names)
+		if entries[i].Kind == marotte.EntryKindTurnClose {
+			delete(turns, entries[i].Turn)
+		}
+	}
+	// Copied into a fresh map: the emptied one, and maps.Clone of it, keep a whole chat's buckets.
+	for id, t := range turns {
+		if f.turns == nil {
+			f.turns = make(map[string]*searchTurn, len(turns))
+		}
+		f.turns[id] = t
 	}
 	return f
 }
 
-// addEntry records one appended entry, read as its own turn, so a tool_call's input is indexed whole before any diff
-// drops a leaf at query time. A filter may hold more than the scan reads, never less.
+// addEntry records one appended entry into its open turn, so a tool_call's input is indexed whole before its
+// result's diff drops a leaf at query time. A filter may hold more than the scan reads, never less.
 func (f *chatFilter) addEntry(e *marotte.Entry) {
-	t := newSearchTurn(false)
+	if f.turns == nil {
+		f.turns = make(map[string]*searchTurn)
+	}
+	t := f.turns[e.Turn]
+	if t == nil {
+		t = newSearchTurn(false)
+		f.turns[e.Turn] = t
+	}
 	t.observe(e)
 	f.indexEntry(e, t, nil)
 }
@@ -71,9 +91,16 @@ func (f *chatFilter) indexEntry(e *marotte.Entry, t *searchTurn, names map[strin
 		for _, seg := range segs {
 			f.addText(seg.text)
 		}
-		if e.Kind == marotte.EntryKindTurnClose {
-			// No text follows its turn's close (only lane-less between-turns kinds do), so its tails are dead.
+		switch e.Kind {
+		case marotte.EntryKindToolResult:
+			// The settled title the scan files under the call, which was indexed before this result arrived.
+			if c := t.calls[marotte.ToolCallIDOfResult(e.ID)]; c != nil {
+				f.addText(c.title())
+			}
+		case marotte.EntryKindTurnClose:
+			// No text or result follows its turn's close (only lane-less between-turns kinds do), so its state is dead.
 			maps.DeleteFunc(f.tails, func(k toolRunKey, _ string) bool { return k.turn == e.Turn })
+			delete(f.turns, e.Turn)
 		}
 		return
 	}
