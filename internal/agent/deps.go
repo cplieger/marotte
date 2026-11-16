@@ -31,6 +31,8 @@ type RouteRegistrar interface {
 // Delete is absent: only cmdDeleteChat may remove a chat.
 type bridgeChatRecords interface {
 	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
+	// Lookup is Get keeping a missing record apart from an unreadable one.
+	Lookup(ctx context.Context, id marotte.ChatID) (c *marotte.Chat, found bool, err error)
 	// Presence is the chat-gone read (the digest's, and a failed generation's), under no per-chat
 	// mutex: Mutate holds it across an fsync.
 	Presence(id marotte.ChatID) chat.Presence
@@ -77,8 +79,9 @@ type chatRecords interface {
 	SetAttachments(ctx context.Context, id marotte.ChatID, paths []string) (*marotte.ComposerState, error)
 	// Delete removes the chat directory; only cmdDeleteChat calls it.
 	Delete(ctx context.Context, id marotte.ChatID) (sessionChain []string, err error)
-	// Lookup, Revert and the other log reads are command.chatStore's and translate.chatRecords'.
-	Lookup(ctx context.Context, id marotte.ChatID) (c *marotte.Chat, found bool, err error)
+	// DeleteIf is the membership coordinator's conditional delete of a closed draft.
+	DeleteIf(ctx context.Context, id marotte.ChatID, doomed func(*marotte.Chat) bool) (sessionChain []string, deleted bool, err error)
+	// Revert and the other log reads are command.chatStore's and translate.chatRecords'.
 	Revert(ctx context.Context, chatID marotte.ChatID, turn, kasMessageID string) (record *marotte.Entry, minted []*marotte.Entry, err error)
 	PromptTarget(ctx context.Context, chatID marotte.ChatID, promptID string) (marotte.PromptTarget, bool, error)
 	PromptReceipt(ctx context.Context, chatID marotte.ChatID, promptID string) (marotte.PromptReceipt, error)

@@ -25,7 +25,7 @@ type reopenCall struct {
 
 // reopenRecorder records each reopen and passes it to inner when set.
 type reopenRecorder struct {
-	inner chatReopener
+	inner messageDoor
 	opens *openRecorder
 	queue *launchingRun
 	calls []reopenCall
@@ -40,6 +40,19 @@ func (r *reopenRecorder) ReopenForMessage(ctx context.Context, chatID marotte.Ch
 	if r.inner != nil {
 		r.inner.ReopenForMessage(ctx, chatID)
 	}
+}
+
+func (r *reopenRecorder) BeginMessage(ctx context.Context, chatID marotte.ChatID, reopen bool, stamp func() uint64) (uint64, error) {
+	if !reopen {
+		return stamp(), nil
+	}
+	r.mu.Lock()
+	r.calls = append(r.calls, reopenCall{chat: chatID, promptsOpened: len(r.opens.prompts()), rowsQueued: len(r.queue.queued())})
+	r.mu.Unlock()
+	if r.inner != nil {
+		return r.inner.BeginMessage(ctx, chatID, reopen, stamp)
+	}
+	return stamp(), nil
 }
 
 func (r *reopenRecorder) recorded() []reopenCall {

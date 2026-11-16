@@ -22,6 +22,12 @@ const botRoleMessage = "This Bot's role did not load. Its next message retries."
 // so the role's paths sit under it.
 func botRuntime(t *testing.T, bridges ...*fakeBridge) (*Runtime, *testChatStore) {
 	t.Helper()
+	return botRuntimeWith(t, nil, bridges...)
+}
+
+// botRuntimeWith is botRuntime built with opts.
+func botRuntimeWith(t *testing.T, opts []Option, bridges ...*fakeBridge) (*Runtime, *testChatStore) {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	// KIRO_HOME exists as kiro-cli and marotte's boot steering leave it; a Bot's memory file is made below it.
@@ -41,7 +47,7 @@ func botRuntime(t *testing.T, bridges ...*fakeBridge) (*Runtime, *testChatStore)
 		return b
 	}
 	cs := newTestChatStore()
-	h := newRuntimeOn(context.Background(), "/tmp/work", fakeEngineOf(factory, nil), cs)
+	h := newRuntimeOn(context.Background(), "/tmp/work", fakeEngineOf(factory, nil), cs, opts...)
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	settleBoot(t, h)
@@ -286,14 +292,14 @@ func TestBotDoor_AReassertKASAnswersWithNotFoundFailsTheGeneration(t *testing.T)
 }
 
 // TestBotDoor_OnlyAStartedBotsRecordOpensTheRoleDoor pins that the door reads Bot-ness off the record: a record naming
-// the role with no bot block, or a draft, opens as a regular chat, with no set_mode, no context file and no error.
+// the role with no bot block opens as a regular chat, with no set_mode, no context file and no error. A draft opens no
+// session at all (TestBotDoor_ADraftOpensNoSession).
 func TestBotDoor_OnlyAStartedBotsRecordOpensTheRoleDoor(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		bot  *marotte.Bot
 	}{
 		{"a record with no bot block", nil},
-		{"a draft", &marotte.Bot{Goal: "Not started yet.", Memory: true}},
 	} {
 		for _, door := range doors {
 			t.Run(tc.name+" on "+door.name, func(t *testing.T) {
@@ -441,27 +447,6 @@ func TestBotTurn_AFailedReassertReloadsTheSessionAtTheNextMessage(t *testing.T) 
 	})
 }
 
-// TestBotTurn_OnlyAStartedBotsSwitchIsReasserted pins that the role keeper holds only a started Bot's session: a
-// draft's session never registered the role, so its agent's switch is its own.
-func TestBotTurn_OnlyAStartedBotsSwitchIsReasserted(t *testing.T) {
-	br := reporting(marotte.DefaultModeID, marotte.DefaultModeID, "kiro_spec")
-	modeUpdateOnPrompt(br, "kiro_spec")
-	h, cs := botRuntime(t, br)
-	seedModeChat(t, cs, "c1", false, false)
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Bot = &marotte.Bot{Goal: "Not started yet."}
-		return true
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	runPrompt(t, h, cs, "c1", "m1")
-
-	if got := setModeParams(br); len(got) != 0 {
-		t.Errorf("session/set_mode modeIds after a draft's switch = %v, want none", got)
-	}
-}
-
 // waitNoHold waits until no hold on chatID's life refuses a close: runPrompt returns before the turn's close tail
 // ends, and a door opened directly under that tail keeps the session.
 func waitNoHold(t *testing.T, h *Runtime, chatID marotte.ChatID) {
@@ -475,30 +460,6 @@ func waitNoHold(t *testing.T, h *Runtime, chatID marotte.ChatID) {
 		defer lc.mu.Unlock()
 		return lc.blockerLocked(0) == holdKinds
 	})
-}
-
-// TestPersistNewSessionMetadata_ADraftIsToldItsModeDidNotApply pins that only a started Bot's door reports its own
-// mode (holdBotRole): a draft's new session reporting another mode than the one asked gets the regular toast.
-func TestPersistNewSessionMetadata_ADraftIsToldItsModeDidNotApply(t *testing.T) {
-	br := reporting("kiro_spec", marotte.DefaultModeID, "kiro_spec")
-	h, cs := botRuntime(t, br)
-	seedModeChat(t, cs, "c1", false, false)
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.CurrentModeID = marotte.BotRoleID
-		c.Bot = &marotte.Bot{Goal: "Not started yet."}
-		return true
-	}); err != nil {
-		t.Fatal(err)
-	}
-	since := h.bus.fanout.Position().Head
-
-	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
-		t.Fatalf("open: %v", err)
-	}
-
-	if got := modeErrorsSince(t, h, since); len(got) != 1 || got[0] == botRoleMessage {
-		t.Errorf("mode_not_applied messages = %q, want the regular chat's one", got)
-	}
 }
 
 // lastCall is the position of b's last call to method among all its calls, -1 for none.

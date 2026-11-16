@@ -278,6 +278,54 @@ export interface Attachment {
   name: string;
 }
 
+/**
+ * Bot is the block that makes a chat a Bot: a chat whose record carries it is one, for good, and every setting
+ * marotte keeps about the Bot lives here, in the chat's own chat.json. Field order is fieldalignment's.
+ */
+export interface Bot {
+  /** Goal is what the Bot keeps working toward. */
+  goal: string;
+  /** Steering is the user's custom steering for the Bot, markdown. */
+  steering?: string;
+  /** StartedAt is the unix ms of the first start; 0 is a draft. */
+  started_at?: number;
+  /** ClosedAt is the unix ms the Bot's tab was closed; 0 while it is open. */
+  closed_at?: number;
+  /**
+   * SpecVersion is moved only by BotWriter, once per user command write that changes the Bot's view, so no user
+   * write reuses a version an earlier one published; a save sends it back as its base_version.
+   */
+  spec_version: number;
+  memory: boolean;
+  paused?: boolean;
+}
+
+/** BotMemoryStat is the memory file's size and last write, both 0 before the file exists. */
+export interface BotMemoryStat {
+  bytes: number;
+  /** UpdatedAt is the file's modification time in unix ms. */
+  updated_at: number;
+}
+
+/** BotMemoryText is GET /api/bots/{id}/memory: the Bot's notes, empty before the file exists. */
+export interface BotMemoryText {
+  text: string;
+  bytes: number;
+  updated_at: number;
+}
+
+/** BotSetup is GET /api/bots/{id}: what the Bot's setup shows, read from its record. Field order is fieldalignment's. */
+export interface BotSetup {
+  bot?: Bot;
+  /** Memory describes the memory file; nil while memory is off. */
+  memory?: BotMemoryStat;
+  name: string;
+  /** Model and Effort are Chat.NextModel and Chat.NextEffort, the pick a bot_save sending them back leaves as it is. */
+  model: string;
+  effort: string;
+  supervised: boolean;
+}
+
 /** BotSummary is the Bot's part of ChatHeader: its facts a reader needs without loading the record. */
 export interface BotSummary {
   state: BotState;
@@ -2939,6 +2987,8 @@ export interface RecentClose {
   closed_at: number;
   /** Pinned is the closed tab's flag; a top-level reopen restores it. */
   pinned?: boolean;
+  /** Bot is the closed chat's record fact, so the row draws a Bot without its header. */
+  bot?: boolean;
 }
 
 /**

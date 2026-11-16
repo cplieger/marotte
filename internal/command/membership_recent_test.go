@@ -66,17 +66,28 @@ func frameRecentRefs(p *marotte.TabsChangedPayload) ([]string, bool) {
 	return refsOf(p.Recent.Items), true
 }
 
-// unreadableNames answers Get as unreadable for the listed chats; Lookup, which the tab holds use, still reads them.
+// unreadableNames answers Get as unreadable for the chats in unread; Lookup, which the tab holds use, still reads
+// them.
 type unreadableNames struct {
 	*testsupport.InMemoryChatStore
 	unread map[marotte.ChatID]bool
+	mu     sync.Mutex
 }
 
 func (u *unreadableNames) Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool) {
-	if u.unread[id] {
+	u.mu.Lock()
+	unread := u.unread[id]
+	u.mu.Unlock()
+	if unread {
 		return nil, false
 	}
 	return u.InMemoryChatStore.Get(ctx, id)
+}
+
+func (u *unreadableNames) stopReading(id marotte.ChatID) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.unread[id] = true
 }
 
 // failingExpiry is the real tab store with its first fails ExpireRecent writes refused.
@@ -141,14 +152,15 @@ func TestCloseTab_TheFrameCarriesTheListWithEachClosedChatsName(t *testing.T) {
 }
 
 func TestCloseTab_AChatWhoseRecordCannotBeReadIsListedWithNoName(t *testing.T) {
-	store := &unreadableNames{
-		InMemoryChatStore: testsupport.NewInMemoryChatStore(),
-		unread:            map[marotte.ChatID]bool{"c-lost": true},
-	}
+	store := &unreadableNames{InMemoryChatStore: testsupport.NewInMemoryChatStore(), unread: map[marotte.ChatID]bool{}}
 	mem, st, _ := newTabbedMembership(t, store)
 	seedNamed(t, store.InMemoryChatStore, "c-lost", "Will not be read")
+	tab := openChatTab(t, mem, "c-lost", "")
+	store.stopReading("c-lost")
 
-	closeListed(t, mem, "c-lost")
+	if _, _, err := mem.closeTab(t.Context(), tab.ID, "op-close-lost", true, nil); err != nil {
+		t.Fatalf("close c-lost: %v", err)
+	}
 
 	recent := st.Recent()
 	if len(recent) != 1 || recent[0].Ref != "c-lost" || recent[0].Name != "" {
