@@ -8,7 +8,7 @@ import { CHROME_ATTR } from "../chrome-attr.js";
 import { attachClamp } from "../clamp-text.js";
 import { selectableButton } from "../disclosure-row.js";
 import { iconEl } from "../icon-el.js";
-import { ICON_SEND, ICON_TAB_CHAT, ICON_TAB_RUN, workflowIcon } from "../icons.js";
+import { ICON_STEER, ICON_TAB_CHAT, ICON_TAB_RUN, workflowIcon } from "../icons.js";
 import { absoluteTime } from "../relative-time.js";
 import { sentBy } from "../sent-by.js";
 import type { Caller, SteerOrigin, SteerReason } from "../types.js";
@@ -99,12 +99,9 @@ const REASONS: Record<SteerReason, string> = {
   boundary: "the turn ended first",
 };
 
-/** The second channel, never a hue (WCAG 1.4.1 would forbid one as the only
- *  channel anyway): the composer's send arrow for the reader's own message, the
- *  workflow tree for a run's result, and the tree's message badge for a workflow
- *  message in either direction, whose label says which way it went. */
+/** The second channel, never a hue (WCAG 1.4.1). A workflow message draws one badge in both directions; its label says which way it went. */
 const GLYPHS: Record<SteerOrigin, string> = {
-  user: ICON_SEND,
+  user: ICON_STEER,
   agent: ICON_TAB_RUN,
   parent: workflowIcon("message"),
   step: workflowIcon("message"),

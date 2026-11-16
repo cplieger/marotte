@@ -7,7 +7,7 @@ import { buildSteerNote, setSteerNoteRunLabel, type SteerNoteData } from "./stee
 import type { SteerReason } from "../types.js";
 import { mountAppCSS } from "../__test-helpers__/css-rules.js";
 import { glyphMarkup, registryMarkup } from "../__test-helpers__/glyph.js";
-import { ICON_TAB_CHAT, ICON_TAB_RUN, workflowIcon } from "../icons.js";
+import { ICON_STEER, ICON_TAB_CHAT, ICON_TAB_RUN, workflowIcon } from "../icons.js";
 import { appendQuote, quoteSelection } from "../message-quote.js";
 import { buildTurnHeader } from "./turn-header.js";
 
@@ -196,7 +196,7 @@ describe("whose words the note holds", () => {
     expect(parent).not.toBe(glyph(note({ origin: "agent" })));
   });
 
-  it("draws the tree with the message badge for a workflow message, and the bare tree for a run's result", () => {
+  it("draws the tree with the message badge for a workflow message, the bare tree for a run's result, and the steer wheel for the reader's own message", () => {
     const drawn = (n: HTMLElement): string | null => {
       const icon = n.querySelector(".tool-icon");
       expect(icon?.getAttribute("aria-hidden")).toBe("true");
@@ -206,6 +206,7 @@ describe("whose words the note holds", () => {
     expect(drawn(note({ origin: "parent" }))).toBe(registryMarkup(workflowIcon("message")));
     expect(drawn(note({ origin: "step" }))).toBe(registryMarkup(workflowIcon("message")));
     expect(drawn(note({ origin: "agent" }))).toBe(registryMarkup(ICON_TAB_RUN));
+    expect(drawn(note())).toBe(registryMarkup(ICON_STEER));
   });
 });
 
