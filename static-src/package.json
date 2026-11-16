@@ -50,7 +50,7 @@
     "@cplieger/keyenc": "1.3.0",
     "@cplieger/reactive": "2.4.0",
     "@cplieger/sse": "2.2.0",
-    "@cplieger/ui": "1.3.0-dev.34",
+    "@cplieger/ui": "1.3.0-dev.36",
     "@cplieger/web-terminal-engine": "6.6.0-dev.1",
     "@cplieger/web-terminal-ui": "9.1.0-dev.2",
     "pele": "1.13.0"
