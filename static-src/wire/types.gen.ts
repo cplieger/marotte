@@ -3607,8 +3607,8 @@ export interface RunStepStart {
    */
   open?: OpenEntry;
   /**
-   * Calls is set on an attempt in flight: the card titles of its open turn's own-lane tool_calls a result has not
-   * settled, by call id, so a dock line seeded mid-call moves when the result settles another title.
+   * Calls is set on an attempt in flight: the card titles of its open turn's own-lane tool_calls no result but an
+   * abort has settled, by call id, so a dock line seeded mid-call moves when the result settles another title.
    */
   calls?: { [key: string]: string };
   /** StartedAt is RFC 3339. */

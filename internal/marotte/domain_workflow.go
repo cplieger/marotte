@@ -311,8 +311,8 @@ type RunStepStart struct {
 	// read was written: the id and delta count its next entry_delta follows, and the end of its text from the newest
 	// finished line that prints, all the dock line reads of it.
 	Open *OpenEntry `json:"open,omitempty"`
-	// Calls is set on an attempt in flight: the card titles of its open turn's own-lane tool_calls a result has not
-	// settled, by call id, so a dock line seeded mid-call moves when the result settles another title.
+	// Calls is set on an attempt in flight: the card titles of its open turn's own-lane tool_calls no result but an
+	// abort has settled, by call id, so a dock line seeded mid-call moves when the result settles another title.
 	Calls map[string]string `json:"calls,omitempty"`
 	// StartedAt is RFC 3339.
 	StartedAt string `json:"started_at"`

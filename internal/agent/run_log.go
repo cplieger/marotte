@@ -115,7 +115,7 @@ func (s runSink) Append(ctx context.Context, e *marotte.Entry) error {
 	return nil
 }
 
-// openCalls is the turn's unsettled own-lane calls' card titles, nil when none.
+// openCalls is the card titles of the turn's own-lane calls stepCalls holds, nil when none.
 func (t *runTurn) openCalls() map[string]string {
 	if p := t.callTitles.Load(); p != nil {
 		return *p

@@ -124,6 +124,11 @@
       "status": "completed"
     },
     {
+      "site": "internal/agent/run_step_tail.go:91",
+      "form": "compare",
+      "status": "aborted"
+    },
+    {
       "site": "internal/chat/entrylog.go:1135",
       "form": "status_field",
       "status": "aborted"

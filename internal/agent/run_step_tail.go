@@ -56,8 +56,7 @@ func printedLine(e *marotte.Entry, calls stepCalls) string {
 	}
 }
 
-// stepCalls is a step's root-lane tool_calls awaiting their results, or a late one after an abort, by turn and call
-// id.
+// stepCalls is a step's root-lane tool_calls no result but an abort has settled, by turn and call id.
 type stepCalls map[stepCallKey]*marotte.EntryToolCall
 
 type stepCallKey struct{ turn, id string }
