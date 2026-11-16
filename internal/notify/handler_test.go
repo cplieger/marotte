@@ -11,9 +11,12 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/cplieger/go/slogx/capture"
 )
 
-// fakeDeliverer is the delivery port, answering each call from answer.
+// fakeDeliverer is the delivery port, answering each call from answer, and accepting under the id m-1 when answer is
+// nil.
 type fakeDeliverer struct {
 	answer func(session string) error
 	calls  []delivery
@@ -22,14 +25,16 @@ type fakeDeliverer struct {
 
 type delivery struct{ session, text, source string }
 
-func (f *fakeDeliverer) Deliver(_ context.Context, session, text, source string) error {
+func (f *fakeDeliverer) Deliver(_ context.Context, session, text, source string) (string, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, delivery{session: session, text: text, source: source})
 	f.mu.Unlock()
-	if f.answer == nil {
-		return nil
+	if f.answer != nil {
+		if err := f.answer(session); err != nil {
+			return "", err
+		}
 	}
-	return f.answer(session)
+	return "m-1", nil
 }
 
 type handlerRig struct {
@@ -84,6 +89,7 @@ func decodeAnswer(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 }
 
 func TestHandler_DeliversThroughThePort(t *testing.T) {
+	logs := capture.Default(t)
 	rig := newHandlerRig(t)
 	w := rig.post(t, notifyBody(t, "1 new message from RubyRobin", "grelot", "m-1"))
 	if w.Code != http.StatusOK {
@@ -95,6 +101,12 @@ func TestHandler_DeliversThroughThePort(t *testing.T) {
 	want := delivery{session: "sess-1", text: "1 new message from RubyRobin", source: "grelot"}
 	if len(rig.deliv.calls) != 1 || rig.deliv.calls[0] != want {
 		t.Errorf("deliveries = %+v, want [%+v]", rig.deliv.calls, want)
+	}
+	if id, _ := logs.AttrValueExact("notify accepted", "message_id"); id != "m-1" {
+		t.Errorf("accept line message_id = %q, want the deliverer's m-1, the key its delivery is logged under", id)
+	}
+	if strings.Contains(w.Body.String(), "m-1") {
+		t.Errorf("answer %s names the message id, want it in the log only", w.Body.String())
 	}
 }
 

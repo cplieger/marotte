@@ -542,22 +542,22 @@ func (lc *chatLifecycle) doorSubmitLocked(stamp uint64, s *command.Submission, m
 		e.want = marotte.RunWantPrompt
 	}
 	f := lc.orderFactsLocked()
-	a, place := lc.run.doorSend(e, &f, stamp)
+	a, place, holder := lc.run.doorSend(e, &f, stamp)
 	switch {
 	case place == doorTooBig:
 		return command.SubmitAnswer{}, nil, command.ErrSubmitTooBig
-	case place == doorWithKAS, a.steering:
-		return command.SubmitAnswer{As: command.SubmitSteered}, nil, nil
+	case place == doorWithKAS:
+		return command.SubmitAnswer{As: command.SubmitSteered, MessageID: holder}, nil, nil
 	case place == doorReplaced:
-		return command.SubmitAnswer{As: command.SubmitQueued}, nil, nil
+		return command.SubmitAnswer{As: command.SubmitQueued, MessageID: holder}, nil, nil
 	case a.refused == takeClosed:
 		return command.SubmitAnswer{}, nil, marotte.ErrChatClosedDuringCall
 	case a.refused == takeGone:
 		return command.SubmitAnswer{}, nil, command.ErrChatNotFound
 	case a.taken:
-		return command.SubmitAnswer{As: command.SubmitStarted}, nil, nil
+		return command.SubmitAnswer{As: command.SubmitStarted, MessageID: holder}, nil, nil
 	}
-	return command.SubmitAnswer{As: command.SubmitQueued}, nil, nil
+	return command.SubmitAnswer{As: command.SubmitQueued, MessageID: holder}, nil, nil
 }
 
 // submitVerb is where s goes on a list holding entries (VerbFor, with steering ruled out by NoSteer), or why it is

@@ -19,35 +19,37 @@ const notifyAdmitWait = 50 * time.Millisecond
 var errNotifyMention = errors.New(`a "#[[kind:query]]" context-mention token is not accepted from an outside caller`)
 
 // Notify places text from an outside caller on chatID's run order as the notify door's entry (RunFromNotify) and
-// returns once it is placed; the run order delivers it after, as a steer, a turn of its own or in turn. A caller's
-// earlier entry still waiting takes the text instead, and one kiro-cli holds unread covers it. from must be non-nil:
-// a caller's message neither ends the chat's waiting_on_user claim nor touches its composer. A refusal is a 400
-// StatusError for text that reads as a system notice or holds a context-mention token, else Submit's refusal as HTTP.
-func (d *Dispatcher) Notify(ctx context.Context, chatID marotte.ChatID, text string, from *marotte.Caller) error {
+// returns once it is placed, with the id of the run entry holding the text; the run order delivers it after, as a
+// steer, a turn of its own or in turn. A caller's earlier entry still waiting takes the text instead, and one kiro-cli
+// holds unread covers it. from must be non-nil: a caller's message neither ends the chat's waiting_on_user claim nor
+// touches its composer. A refusal is a 400 StatusError for text that reads as a system notice or holds a
+// context-mention token, else Submit's refusal as HTTP.
+func (d *Dispatcher) Notify(ctx context.Context, chatID marotte.ChatID, text string, from *marotte.Caller) (string, error) {
 	switch {
 	case notificationPrefix.MatchString(text):
-		return StatusError(http.StatusBadRequest, errSteerLooksLikeNotification)
+		return "", StatusError(http.StatusBadRequest, errSteerLooksLikeNotification)
 	case mentionRe.MatchString(text):
-		return StatusError(http.StatusBadRequest, errNotifyMention)
+		return "", StatusError(http.StatusBadRequest, errNotifyMention)
 	}
 	roles := d.prompts
 	if err := refuseBotDraft(ctx, roles.chats, chatID); err != nil {
-		return err
+		return "", err
 	}
 	// Before the submit, as a prompt's: a message into an idle chat starts a turn, whose tab must exist first.
 	stamp, err := roles.door.BeginMessage(ctx, chatID, true, roles.admission.LifeStamp)
 	if err != nil {
-		return err
+		return "", err
 	}
 	s := Submission{
 		Row:    marotte.QueuedPrompt{ID: ids.NewMessageID(), Text: text, Caller: from},
 		Origin: marotte.RunFromNotify, Kind: marotte.SendPlain,
 		AdmitWait: notifyAdmitWait, Retry: !kasClaimsPromptText(text),
 	}
-	if _, err := roles.runq.Submit(ctx, chatID, stamp, &s); err != nil {
-		return submitRefusal(err)
+	a, err := roles.runq.Submit(ctx, chatID, stamp, &s)
+	if err != nil {
+		return "", submitRefusal(err)
 	}
-	return nil
+	return a.MessageID, nil
 }
 
 // NotifyRefusal is what a Notify error means to its outside caller.

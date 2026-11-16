@@ -14,7 +14,7 @@ type notifyDoor struct {
 	enter       func() (release func(), ok bool)
 	engineReady func() bool
 	chats       func(ctx context.Context) []marotte.ChatHeader
-	deliver     func(ctx context.Context, chatID marotte.ChatID, text string, from *marotte.Caller) error
+	deliver     func(ctx context.Context, chatID marotte.ChatID, text string, from *marotte.Caller) (string, error)
 }
 
 var _ notify.Deliverer = notifyDoor{}
@@ -31,23 +31,24 @@ func (rt *Runtime) Notifier() notify.Deliverer {
 
 // Deliver holds the drain gate until the message is placed, so a shutdown waits for the placement rather than cutting
 // it.
-func (d notifyDoor) Deliver(ctx context.Context, session, text, source string) error {
+func (d notifyDoor) Deliver(ctx context.Context, session, text, source string) (string, error) {
 	release, ok := d.enter()
 	if !ok {
-		return notify.ErrUnavailable
+		return "", notify.ErrUnavailable
 	}
 	defer release()
 	if !d.engineReady() {
-		return notify.ErrUnavailable
+		return "", notify.ErrUnavailable
 	}
 	chatID, ok := chatForSession(d.chats(ctx), session)
 	if !ok {
-		return notify.ErrUnknownSession
+		return "", notify.ErrUnknownSession
 	}
-	if err := d.deliver(ctx, chatID, text, &marotte.Caller{Label: source}); err != nil {
-		return notifyError(err)
+	id, err := d.deliver(ctx, chatID, text, &marotte.Caller{Label: source})
+	if err != nil {
+		return "", notifyError(err)
 	}
-	return nil
+	return id, nil
 }
 
 // chatForSession answers the chat whose current session is session, else the one chat whose earlier sessions hold

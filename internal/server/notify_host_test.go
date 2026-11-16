@@ -15,8 +15,11 @@ import (
 // scriptedDeliverer answers each session with its scripted error, else accepts.
 type scriptedDeliverer map[string]error
 
-func (d scriptedDeliverer) Deliver(_ context.Context, session, _, _ string) error {
-	return d[session]
+func (d scriptedDeliverer) Deliver(_ context.Context, session, _, _ string) (string, error) {
+	if err := d[session]; err != nil {
+		return "", err
+	}
+	return "m-1", nil
 }
 
 // hostGatedNotifyStack is the server's own routes and middleware behind an ALLOWED_HOSTS list

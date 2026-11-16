@@ -13,9 +13,9 @@ import (
 
 type acceptingDeliverer struct{ sessions []string }
 
-func (d *acceptingDeliverer) Deliver(_ context.Context, session, _, _ string) error {
+func (d *acceptingDeliverer) Deliver(_ context.Context, session, _, _ string) (string, error) {
 	d.sessions = append(d.sessions, session)
-	return nil
+	return "m-1", nil
 }
 
 // servedNotify posts a notification through the server's own route table and middleware.

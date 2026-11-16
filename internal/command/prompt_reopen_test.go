@@ -158,7 +158,7 @@ func TestNotify_RefusedTextReopensNothing(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newCallerFixture(t)
-			err := f.d.Notify(t.Context(), "c1", text, grelotCaller)
+			_, err := f.d.Notify(t.Context(), "c1", text, grelotCaller)
 			if got := ClassifyNotifyError(err); got != NotifyBadText {
 				t.Errorf("class = %v, want NotifyBadText", got)
 			}
@@ -303,7 +303,7 @@ func TestNotify_IntoAGoneChatIsUnknownAndOpensNothing(t *testing.T) {
 	m.opens.admitFirst = AdmissionChatGone
 	mark := len(m.bus.frames(t))
 
-	err := m.d.Notify(t.Context(), "c-gone", notifyText, grelotCaller)
+	_, err := m.d.Notify(t.Context(), "c-gone", notifyText, grelotCaller)
 
 	if got := ClassifyNotifyError(err); got != NotifyUnknownChat {
 		t.Errorf("class = %v (%v), want NotifyUnknownChat", got, err)

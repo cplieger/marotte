@@ -185,15 +185,29 @@ func issueSteers(ctx context.Context, t SteerTarget, sends []SteerSend, key stri
 		done(s, reply.Queued, err)
 		switch {
 		case err != nil:
-			slog.Warn("steer: bridge call failed", "chat", t.Key, "steer_id", s.ID, keyError, err)
+			slog.Warn("steer: bridge call failed", "chat", t.Key, "steer_id", s.ID, "message_ids", steerMessageIDs(s), keyError, err)
 			if s.ID == key || slices.Contains(s.Keys, key) {
 				keyErr = err
 			}
 		case !reply.Queued:
-			slog.Info("steer dropped", "chat", t.Key, "steer_id", s.ID, "reason", reply.Dropped)
+			slog.Info("steer dropped", "chat", t.Key, "steer_id", s.ID, "message_ids", steerMessageIDs(s), "reason", reply.Dropped)
 		}
 	}
 	return keyErr
+}
+
+// steerMessageIDs is the message ids of the rows s carries (marotte.SteerIDFor's input), the key a run entry's other
+// log lines and the notify route's accept line name it by; a fresh or combined send's own id is none of them.
+func steerMessageIDs(s SteerSend) []string {
+	keys := s.Keys
+	if len(keys) == 0 {
+		keys = []string{s.ID}
+	}
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, strings.TrimPrefix(k, marotte.SteerIDPrefix))
+	}
+	return out
 }
 
 // ValidSteerText answers a steer's trimmed text and the id KAS will stamp on it (marotte.SteerIDFor),

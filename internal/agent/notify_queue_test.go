@@ -23,7 +23,8 @@ func notifyWake(t *testing.T, h *Runtime, chatID marotte.ChatID) <-chan error {
 	t.Helper()
 	got := make(chan error, 1)
 	go func() {
-		got <- h.dispatcher.Notify(t.Context(), chatID, grelotWake, &marotte.Caller{Label: "grelot"})
+		_, err := h.dispatcher.Notify(t.Context(), chatID, grelotWake, &marotte.Caller{Label: "grelot"})
+		got <- err
 	}()
 	return got
 }
@@ -222,7 +223,7 @@ func placeWakeFrom(t *testing.T, h *Runtime, chatID marotte.ChatID, id, label st
 		row: &marotte.QueuedPrompt{ID: id, Text: grelotWake, Caller: &marotte.Caller{Label: label}},
 	}
 	f := lc.orderFactsLocked()
-	if a, _ := lc.run.doorSend(e, &f, lc.stamp); a.refused != takeGranted {
+	if a, _, _ := lc.run.doorSend(e, &f, lc.stamp); a.refused != takeGranted {
 		t.Fatalf("Setup: the wake was refused (%d)", a.refused)
 	}
 	lc.wakeLocked()
@@ -568,7 +569,8 @@ func TestNotify_ASteerCommandWithNothingRunningPlacesNothing(t *testing.T) {
 // wakeWith delivers text from grelot through the door's own deliver and answers its refusal, nil once accepted.
 func wakeWith(t *testing.T, h *Runtime, chatID marotte.ChatID, text string) error {
 	t.Helper()
-	return h.dispatcher.Notify(t.Context(), chatID, text, &marotte.Caller{Label: "grelot"})
+	_, err := h.dispatcher.Notify(t.Context(), chatID, text, &marotte.Caller{Label: "grelot"})
+	return err
 }
 
 // grelotRows are the ids and texts of the rows waiting on chatID's list under grelot's name.

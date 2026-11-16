@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/notify"
@@ -256,9 +257,9 @@ func TestNotify_BackToBackWakesAnswerInOrderWhileTheFirstDeliveryIsHeld(t *testi
 	})
 }
 
-// A wake taken at once whose turn then fails to open was already answered accepted, so it follows every queued
-// wake's rule: it waits paused for the next clean close, never lost, and the caller's next send replaces its text.
-func TestNotify_AWakeWhoseLaunchFailsAfterItsAnswerWaitsPaused(t *testing.T) {
+// A wake taken at once whose turn then fails to open was already answered accepted: it waits paused, never lost and
+// never retried in a loop, and the caller's next send is the retry, which opens the turn with the later text.
+func TestNotify_AWakeWhoseLaunchFailsAfterItsAnswerIsRetriedByTheNextWake(t *testing.T) {
 	s, cs, _ := steerOpsHub(t)
 	idleChat(t, s)
 	route := notifyRoute(t, s.h, cs)
@@ -276,20 +277,55 @@ func TestNotify_AWakeWhoseLaunchFailsAfterItsAnswerWaitsPaused(t *testing.T) {
 
 	requireAccepted(t, routeAnswerWithin(t, postWake(route, "grelot", "k1", "wake 1"), "wake 1"), "wake 1")
 	joinInflight(t, s.h)
-	wake, state := entryFrom(s.h, "c1", "grelot")
-	if state != marotte.RunPaused {
-		t.Fatalf("wake entry %q is %q after its failed launch, want paused", wake, state)
-	}
-
-	requireAccepted(t, routeAnswerWithin(t, postWake(route, "grelot", "k2", "wake 2"), "wake 2"), "wake 2")
-	joinInflight(t, s.h)
-	if got := rowsFrom(s.h, "c1", "grelot"); !slices.Equal(got, []string{"wake 2"}) {
-		t.Errorf("grelot rows = %q, want the paused entry carrying the later text", got)
-	}
-	if again, state := entryFrom(s.h, "c1", "grelot"); again != wake || state != marotte.RunPaused {
-		t.Errorf("grelot entry = %q %q, want %q still paused: a failed launch is never retried in a loop", again, state, wake)
+	if _, state := entryFrom(s.h, "c1", "grelot"); state != marotte.RunPaused {
+		t.Fatalf("wake entry is %q after its failed launch, want paused", state)
 	}
 	if n := len(opensOf(t, logOf(t, cs, "c1"))); n != 1 {
 		t.Errorf("turns opened = %d after the failed launch, want none", n-1)
 	}
+
+	requireAccepted(t, routeAnswerWithin(t, postWake(route, "grelot", "k2", "wake 2"), "wake 2"), "wake 2")
+	if next := nextPrompt(t, cs, "c1", 1); next.Text != "wake 2" || !fromGrelot(next.Caller) {
+		t.Errorf("turn after the resend = %q (caller %+v), want wake 2 from grelot", next.Text, next.Caller)
+	}
+}
+
+// The accept line names the run entry carrying the wake, and the line that reports its delivery names the same id, so
+// one wake's answer and delivery join in the log.
+func TestNotify_TheAcceptLineJoinsTheDeliveryLine(t *testing.T) {
+	t.Run("steered", func(t *testing.T) {
+		logs := capture.Default(t)
+		s, cs, _ := steerOpsHub(t)
+		id, _ := s.h.stagePromptTurn(t, "c1")
+		s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
+		route := notifyRoute(t, s.h, cs)
+
+		requireAccepted(t, routeAnswerWithin(t, postWake(route, "grelot", "k1", grelotWake), "the wake"), "the wake")
+		wake, _ := entryFrom(s.h, "c1", "grelot")
+		if !reachesState(s.h, "c1", wake, marotte.RunInKAS) {
+			t.Fatalf("wake entry = %q, want in_kas", stateOf(s.h, "c1", wake))
+		}
+		joinInflight(t, s.h)
+		if got, _ := logs.AttrValueExact("notify accepted", "message_id"); got != wake {
+			t.Errorf("accept line message_id = %q, want the wake entry %q", got, wake)
+		}
+		if got, _ := logs.AttrValueExact("queued message steered", "message_id"); got != wake {
+			t.Errorf("steer line message_id = %q, want the wake entry %q", got, wake)
+		}
+	})
+	t.Run("a turn of its own", func(t *testing.T) {
+		logs := capture.Default(t)
+		s, cs, _ := steerOpsHub(t)
+		idleChat(t, s)
+		route := notifyRoute(t, s.h, cs)
+
+		requireAccepted(t, routeAnswerWithin(t, postWake(route, "grelot", "k1", grelotWake), "the wake"), "the wake")
+		nextPrompt(t, cs, "c1", 1)
+		joinInflight(t, s.h)
+		accepted, _ := logs.AttrValueExact("notify accepted", "message_id")
+		if accepted == "" || !slices.Contains(logs.AttrValuesExact("queued prompt dispatched", "message_id"), accepted) {
+			t.Errorf("accept line message_id = %q, dispatch lines %q: want the accepted id among them",
+				accepted, logs.AttrValuesExact("queued prompt dispatched", "message_id"))
+		}
+	})
 }

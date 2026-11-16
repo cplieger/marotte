@@ -35,10 +35,10 @@ type TextRefusedError struct{ Reason string }
 func (e *TextRefusedError) Error() string { return "text: " + e.Reason }
 
 // Deliverer hands one message to the chat holding session, with source as the caller label. It returns once the
-// chat has accepted the message, never waiting on its delivery, or ErrUnknownSession, ErrUnavailable, a
-// *TextRefusedError or another error.
+// chat has accepted the message, never waiting on its delivery, with the id of the chat's message that carries it
+// (the key its delivery is logged under), or ErrUnknownSession, ErrUnavailable, a *TextRefusedError or another error.
 type Deliverer interface {
-	Deliver(ctx context.Context, session, text, source string) error
+	Deliver(ctx context.Context, session, text, source string) (messageID string, err error)
 }
 
 // The body's bounds. A notification is a short wake-up, so text is capped well under a prompt's 512 KiB; the body
@@ -118,13 +118,14 @@ func (h *Handler) deliver(ctx context.Context, w http.ResponseWriter, k dedupeKe
 		return
 	case reserveFresh:
 	}
-	if err := h.deliv.Deliver(ctx, k.session, text, source); err != nil {
+	messageID, err := h.deliv.Deliver(ctx, k.session, text, source)
+	if err != nil {
 		h.dedupe.release(k)
 		writeDeliveryError(w, k.session, source, err)
 		return
 	}
 	h.dedupe.commit(k, h.now())
-	slog.Info("notify accepted", "session_id", k.session, "source", source)
+	slog.Info("notify accepted", "session_id", k.session, "source", source, "message_id", messageID)
 	httpserver.WriteJSON(w, map[string]string{"delivered": DeliveredAccepted})
 }
 

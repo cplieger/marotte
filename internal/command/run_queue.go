@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -49,12 +50,14 @@ const (
 	SubmitQueued  SubmitAs = "queued"
 )
 
-// SubmitAnswer is Submit's answer. Settle says the caller owes the composer settle before it answers.
+// SubmitAnswer is Submit's answer. Settle says the caller owes the composer settle before it answers. MessageID, set
+// for a notify-door send only, is the run entry that holds its text: its own, or its caller's earlier one.
 type SubmitAnswer struct {
-	As     SubmitAs
-	TurnID string
-	Run    marotte.RunView
-	Settle bool
+	As        SubmitAs
+	TurnID    string
+	MessageID string
+	Run       marotte.RunView
+	Settle    bool
 }
 
 // Submit's refusals, which the caller answers as HTTP.
@@ -198,8 +201,12 @@ func steerEntry(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, 
 	if refuse != "" {
 		return refuse
 	}
+	key := marotte.SteerIDFor(s.Entry)
 	_ = issueSteers(ctx, t, sends, "", func(snd SteerSend, queued bool, err error) {
 		t.Queue.SteerSent(t.Key, snd, queued, err)
+		if queued && err == nil && (snd.ID == key || slices.Contains(snd.Keys, key)) {
+			slog.Info("queued message steered", "chat_id", chatID, "message_id", s.Entry)
+		}
 	})
 	return ""
 }
