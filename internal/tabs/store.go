@@ -25,7 +25,7 @@ type state struct {
 // anything; false means no bump, no write, no publish. A change also drops the entries past
 // RecentHold and recomputes the shown list: every version is announced, so the shown list may only
 // move with a change (or ExpireRecent, SetRecentWindow). On error nothing is applied and the
-// version is 0, a value no state carries. A failed persist needs no rollback: the clone was
+// version is 0. A failed persist needs no rollback: the clone was
 // mutated, so the published state is untouched.
 func (s *Store) mutate(ctx context.Context, apply func(st *state, now int64) (bool, error)) (uint64, error) {
 	s.writeMu.Lock()

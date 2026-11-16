@@ -12,7 +12,7 @@ import (
 )
 
 // RecentHold is how long tabs.json holds a close whatever the window: a wider window brings back
-// only what is still held. The longest History window choice must not pass it.
+// only what is still held.
 const RecentHold = 7 * 24 * time.Hour
 
 // maxRecent caps the list: one close of a chat with tangents lists each of them, so a smaller cap
