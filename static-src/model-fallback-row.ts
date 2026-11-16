@@ -39,7 +39,7 @@ interface FallbackRowInput {
 }
 
 /** The model card and its first panel, which the row sits last in. The list panel goes last in the card. */
-export interface FallbackHost {
+interface FallbackHost {
   readonly card: HTMLElement;
   readonly main: HTMLElement;
 }

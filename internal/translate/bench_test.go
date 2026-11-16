@@ -748,7 +748,7 @@ func (d *baseDeps) ObserveToolCall(marotte.ChatID) {
 }
 
 // ObserveCompactionFailed answers the reason unchanged: a chat whose next turn end does not try again.
-func (d *baseDeps) ObserveCompactionFailed(_ context.Context, _ marotte.ChatID, reason string) string {
+func (*baseDeps) ObserveCompactionFailed(_ context.Context, _ marotte.ChatID, reason string) string {
 	return reason
 }
 
