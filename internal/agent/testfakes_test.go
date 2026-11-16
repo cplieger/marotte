@@ -1046,6 +1046,10 @@ type testChatStore struct {
 	Gets atomic.Int64
 	// runtime receives the store's broadcasts once wire names it (storeRelay).
 	runtime atomic.Pointer[Runtime]
+	// mutated runs after each Mutate returns, and beforeDeleteIf before each DeleteIf, for a test that lands a write
+	// in another command's window.
+	mutated        atomic.Pointer[func(id marotte.ChatID)]
+	beforeDeleteIf atomic.Pointer[func(id marotte.ChatID)]
 	// tornDown names sessions SessionInTeardown reports in teardown besides the store's own, set through tearDown.
 	tornDown   map[string]bool
 	tornDownMu sync.Mutex
@@ -1117,6 +1121,21 @@ func (s *testChatStore) Get(ctx context.Context, id marotte.ChatID) (*marotte.Ch
 		(*hook)(id)
 	}
 	return s.Store.Get(ctx, id)
+}
+
+func (s *testChatStore) Mutate(ctx context.Context, id marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error) {
+	version, err := s.Store.Mutate(ctx, id, mutate)
+	if hook := s.mutated.Load(); hook != nil {
+		(*hook)(id)
+	}
+	return version, err
+}
+
+func (s *testChatStore) DeleteIf(ctx context.Context, id marotte.ChatID, doomed func(*marotte.Chat) bool) ([]string, bool, error) {
+	if hook := s.beforeDeleteIf.Load(); hook != nil {
+		(*hook)(id)
+	}
+	return s.Store.DeleteIf(ctx, id, doomed)
 }
 
 // seed writes a header for id through Mutate, staging a chat before the runtime touches it.

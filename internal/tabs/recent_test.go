@@ -1,6 +1,7 @@
 package tabs
 
 import (
+	"fmt"
 	"log/slog"
 	"slices"
 	"strconv"
@@ -709,4 +710,43 @@ func TestPrune_DropsAnEntryWhoseChatIsGone(t *testing.T) {
 			t.Errorf("Recent() = %v, want c-a kept", got)
 		}
 	})
+}
+
+func TestRelist_PutsTheEntriesFirstInTheirOrderUnderTheCap(t *testing.T) {
+	s, dir := newTestStore(t)
+	clock := withClock(s)
+	for i := range maxRecent {
+		closedChat(t, s, fmt.Sprintf("c-old-%d", i))
+	}
+	_, before := s.List()
+
+	v, err := s.Relist(t.Context(), []marotte.RecentClose{
+		{Ref: "c-kept-a", Name: "A", ClosedAt: clock.at.UnixMilli(), Bot: true},
+		{Ref: "c-kept-b", Name: "B", ClosedAt: clock.at.UnixMilli(), Bot: true},
+	})
+
+	if err != nil || v != before+1 {
+		t.Fatalf("Relist = (v%d, %v), want version %d", v, err, before+1)
+	}
+	got := s.Recent()
+	if len(got) != maxRecent || got[0].Ref != "c-kept-a" || got[1].Ref != "c-kept-b" || !got[0].Bot || got[0].Name != "A" {
+		t.Fatalf("Recent() = %v, want c-kept-a then c-kept-b first, as given, %d entries", recentRefs(got), maxRecent)
+	}
+	if got[maxRecent-1].Ref != "c-old-2" {
+		t.Errorf("last entry %q, want c-old-2: the two oldest cut", got[maxRecent-1].Ref)
+	}
+	if doc := onDisk(t, dir); len(doc.Recent) != maxRecent || doc.Recent[0].Ref != "c-kept-a" {
+		t.Errorf("tabs.json recent %v, want the relisted list", recentRefs(doc.Recent))
+	}
+}
+
+func TestRelist_NothingToListBumpsNothing(t *testing.T) {
+	s, _ := newTestStore(t)
+	_, before := s.List()
+
+	v, err := s.Relist(t.Context(), nil)
+
+	if err != nil || v != before {
+		t.Errorf("Relist(nil) = (v%d, %v), want version %d unchanged", v, err, before)
+	}
 }

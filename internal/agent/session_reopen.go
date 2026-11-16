@@ -24,6 +24,15 @@ func (rt *Runtime) markSessionsForReload(reason string) {
 	slog.Info("open chats reload their session at their next message", "reason", reason, "marked", marked)
 }
 
+// MarkBotReload marks chatID's resident session for a reload, so an edited Bot's next open re-sends its role
+// (markSessionsForReload's one-chat form).
+func (rt *Runtime) MarkBotReload(chatID marotte.ChatID) {
+	sb := rt.bridge.mgr.get(chatID)
+	if lc, ok := rt.coord.turns.closeOwner(chatID, sb); ok && lc.markReload(sb) {
+		slog.Info("bots: an edited Bot reloads its session at its next message", "chat_id", chatID)
+	}
+}
+
 // SecurityProfileChanged applies a persisted Settings profile change, the default for new chats: it reloads no
 // resident session, since each chat keeps the profile its header names. A parentless run keeps the presets its
 // lease recorded at launch.

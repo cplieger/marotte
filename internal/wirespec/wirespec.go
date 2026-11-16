@@ -82,6 +82,11 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.RunEntryView](),
 	wiregen.TypeRef[marotte.RunView](),
 	wiregen.TypeRef[marotte.BotSummary](),
+	// GET /api/bots/{id} and /memory. No `Payload` suffix, so the SSE-binding test exempts them.
+	wiregen.TypeRef[marotte.Bot](),
+	wiregen.TypeRef[marotte.BotMemoryStat](),
+	wiregen.TypeRef[marotte.BotSetup](),
+	wiregen.TypeRef[marotte.BotMemoryText](),
 	wiregen.TypeRef[marotte.ChatHeader](),
 	wiregen.TypeRef[marotte.PermissionOption](),
 	wiregen.TypeRef[marotte.ApprovalFile](),

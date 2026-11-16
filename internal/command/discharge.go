@@ -88,6 +88,9 @@ var commandDischarges = map[marotte.CommandType]dischargeVerdict{
 	// agent asked: the spec gate's own ask travels on cmdUserInputResponse, so a phase
 	// approved from the spec tab leaves any waiting claim standing.
 	marotte.CmdApproveSpecPhase: dischargeNo,
+	marotte.CmdBotSave:          dischargeNo,
+	marotte.CmdBotSetPaused:     dischargeNo,
+	marotte.CmdBotClearMemory:   dischargeNo,
 }
 
 // chatStatus is the one thing a command handler needs of the agent's self-declared

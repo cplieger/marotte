@@ -47,12 +47,15 @@ func (rt *Runtime) registerCommandHandlers() {
 		SignIn:        rt,
 		SendGate:      rt.coord,
 		Renamer:       rt,
+		BotReloads:    rt,
+		Models:        rt,
+		BotPaths:      botPaths(),
 		SpecApprovals: specApprovalsOrNil(rt.specApprovals),
 		Tangents:      rt,
 		Conversations: rt,
 	})
 
-	rt.dispatcher.RegisterChange(marotte.CmdSwitchModel, rt.cmdSwitchModel)
+	rt.dispatcher.RegisterBotWriteChange(marotte.CmdSwitchModel, rt.cmdSwitchModel)
 }
 
 func tabSetOrNil(st *tabs.Store) command.TabSet {

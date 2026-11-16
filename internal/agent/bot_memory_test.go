@@ -125,32 +125,22 @@ func TestBotDoor_MemoryOffDropsTheFileOnALoad(t *testing.T) {
 }
 
 // TestChatDoor_OnlyAStartedBotTouchesContextFiles pins that the memory file never reaches another chat's session: a
-// regular chat (a Bot's tangent among them) and a draft Bot send no context call on either door.
+// regular chat (a Bot's tangent among them) sends no context call on either door.
 func TestChatDoor_OnlyAStartedBotTouchesContextFiles(t *testing.T) {
 	for _, door := range doors {
-		for _, kind := range []string{"a regular chat", "a draft Bot"} {
-			t.Run(door.name+" "+kind, func(t *testing.T) {
-				br := reporting(marotte.DefaultModeID, marotte.DefaultModeID)
-				h, cs := botRuntime(t, br)
-				seedModeChat(t, cs, "c1", false, door.resumed)
-				if kind == "a draft Bot" {
-					if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-						c.Bot = &marotte.Bot{Goal: "Answer the weekly questions.", Memory: true}
-						return true
-					}); err != nil {
-						t.Fatal(err)
-					}
-				}
+		t.Run(door.name, func(t *testing.T) {
+			br := reporting(marotte.DefaultModeID, marotte.DefaultModeID)
+			h, cs := botRuntime(t, br)
+			seedModeChat(t, cs, "c1", false, door.resumed)
 
-				if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
-					t.Fatalf("open: %v", err)
-				}
+			if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
+				t.Fatalf("open: %v", err)
+			}
 
-				if n, p := contextCalls(br); n != 0 {
-					t.Errorf("%d %s calls (last %v), want none", n, marotte.MethodSessionContext, p)
-				}
-			})
-		}
+			if n, p := contextCalls(br); n != 0 {
+				t.Errorf("%d %s calls (last %v), want none", n, marotte.MethodSessionContext, p)
+			}
+		})
 	}
 }
 
@@ -348,8 +338,8 @@ func TestBotDoor_MemoryOnCreatesTheFile(t *testing.T) {
 	}
 }
 
-// TestBotDoor_NoMemoryCreatesNothingAndKeepsTheNotes pins that a Bot with memory off, a draft and a regular chat open
-// with no memory file made, and memory off keeps the notes a Bot already wrote.
+// TestBotDoor_NoMemoryCreatesNothingAndKeepsTheNotes pins that a Bot with memory off and a regular chat open with no
+// memory file made, and memory off keeps the notes a Bot already wrote.
 func TestBotDoor_NoMemoryCreatesNothingAndKeepsTheNotes(t *testing.T) {
 	for _, door := range doors {
 		for _, tc := range []struct {
@@ -357,13 +347,12 @@ func TestBotDoor_NoMemoryCreatesNothingAndKeepsTheNotes(t *testing.T) {
 			bot  *marotte.Bot
 		}{
 			{"a Bot with memory off", &marotte.Bot{Goal: "Answer the weekly questions.", StartedAt: 1}},
-			{"a draft with memory on", &marotte.Bot{Goal: "Answer the weekly questions.", Memory: true}},
 			{"a regular chat", nil},
 		} {
 			t.Run(door.name+" "+tc.name, func(t *testing.T) {
 				h, cs := botRuntime(t, reporting(marotte.BotRoleID, marotte.DefaultModeID, marotte.BotRoleID))
 				kiroHome, _ := botMemoryHome(t)
-				seedModeChat(t, cs, "c1", tc.bot != nil && tc.bot.StartedAt != 0, door.resumed)
+				seedModeChat(t, cs, "c1", tc.bot != nil, door.resumed)
 				if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 					c.Bot = tc.bot
 					return true

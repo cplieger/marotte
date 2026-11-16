@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -571,14 +572,15 @@ func (bc *bridgeCoordinator) LoadSession(ctx context.Context, chatID marotte.Cha
 func (bc *bridgeCoordinator) openGeneration(
 	ctx context.Context, lc *chatLifecycle, chatID marotte.ChatID, sb *sharedBridge, modelOverride string, stamp uint64,
 ) {
-	rec, exists := bc.chatStore.Get(ctx, chatID)
-	if !exists {
-		bc.failGeneration(chatID, sb, errChatUnreadable)
+	rec, refused := bc.generationRecord(ctx, chatID)
+	if refused != nil {
+		bc.failGeneration(chatID, sb, refused)
 		return
 	}
 	// A pick parked with no bridge lands here: this is the last header read before the session takes its model.
 	if rec.PendingModel != "" {
 		bc.foldParkedPick(ctx, chatID)
+		var exists bool
 		if rec, exists = bc.chatStore.Get(ctx, chatID); !exists {
 			bc.failGeneration(chatID, sb, errChatUnreadable)
 			return
@@ -648,6 +650,19 @@ func (bc *bridgeCoordinator) openGeneration(
 	bc.reportSupervisedNotApplied(ctx, chatID, rec.SupervisedMode, session.SupervisedApplied())
 	sb.setReady()
 	bc.publishGeneration(ctx, chatID, sb)
+}
+
+// generationRecord reads the record a door generation opens from: 503 when it cannot be read, 409 bot_draft for a
+// draft, which has no role to open a session on.
+func (bc *bridgeCoordinator) generationRecord(ctx context.Context, chatID marotte.ChatID) (*marotte.Chat, error) {
+	rec, found, err := bc.chatStore.Lookup(ctx, chatID)
+	switch {
+	case err != nil:
+		return nil, command.StatusError(http.StatusServiceUnavailable, fmt.Errorf("%w: %w", errChatUnreadable, err))
+	case !found:
+		return nil, errChatUnreadable
+	}
+	return rec, command.BotDraftRefusal(rec)
 }
 
 // errChatUnreadable is a session open that could not read the record it opens; failGeneration decides

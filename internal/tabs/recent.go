@@ -21,6 +21,7 @@ const maxRecent = 10
 // RecentFacts is what a closed chat's entry carries from its record, which the store cannot read.
 type RecentFacts struct {
 	Name string
+	Bot  bool
 }
 
 // expired reports whether e's window has ended at now (Unix ms).
@@ -49,7 +50,8 @@ func listClosed(recent []marotte.RecentClose, closed []marotte.TabSubject, owed 
 		if i < 0 {
 			continue
 		}
-		head = append(head, marotte.RecentClose{Ref: t.Ref, Name: facts[t.Ref].Name, ClosedAt: owed[i].ClosedAt, Pinned: t.Pinned})
+		f := facts[t.Ref]
+		head = append(head, marotte.RecentClose{Ref: t.Ref, Name: f.Name, ClosedAt: owed[i].ClosedAt, Pinned: t.Pinned, Bot: f.Bot})
 	}
 	if len(head) == 0 {
 		return recent
@@ -123,6 +125,20 @@ func (s *Store) Forget(ctx context.Context, ref string) (uint64, error) {
 		var found bool
 		st.recent, _, found = takeRecent(st.recent, ref)
 		return found, nil
+	})
+}
+
+// Relist puts entries, chats a close unlisted, at the head of the Recently closed list in their order, and cuts the
+// list to maxRecent. No entries bumps nothing.
+func (s *Store) Relist(ctx context.Context, entries []marotte.RecentClose) (uint64, error) {
+	return s.mutate(ctx, func(st *state, _ int64) (bool, error) {
+		if len(entries) == 0 {
+			return false, nil
+		}
+		// No dedupe: an unlisted chat has no entry, and no open tab to gain one.
+		head := append(slices.Clone(entries), st.recent...)
+		st.recent = head[:min(len(head), maxRecent)]
+		return true, nil
 	})
 }
 

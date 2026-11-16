@@ -30,8 +30,7 @@ var responseOK2 = map[string]bool{"ok": true}
 // errModelNotServed is the 409 body for a pick the account cannot run.
 var errModelNotServed = errors.New("that model is not available on this account")
 
-// cmdSwitchModel admits the request (admitSwitchModel), then applies what it parked when the chat
-// is idle.
+// cmdSwitchModel validates the request's shape, then switches through SwitchModel.
 func (rt *Runtime) cmdSwitchModel(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
 	if cmd.ChatID == "" {
 		return nil, command.StatusError(http.StatusBadRequest, command.ErrMissingChatID)
@@ -45,11 +44,19 @@ func (rt *Runtime) cmdSwitchModel(ctx context.Context, cmd *marotte.ClientComman
 	if !ids.ValidIdent(p.Model) || (p.Effort != "" && p.Effort != marotte.SwitchEffortOff && !p.Effort.Valid()) {
 		return nil, command.StatusError(http.StatusBadRequest, command.ErrInvalidPayload)
 	}
-	if err := rt.admitSwitchModel(ctx, cmd.ChatID, p); err != nil {
+	if err := rt.SwitchModel(ctx, cmd.ChatID, p); err != nil {
 		return nil, err
 	}
-	rt.applyPendingModel(durable.Context(ctx), cmd.ChatID)
 	return responseOK2, nil
+}
+
+// SwitchModel admits a validated pick (admitSwitchModel), then applies what it parked when the chat is idle.
+func (rt *Runtime) SwitchModel(ctx context.Context, chatID marotte.ChatID, p marotte.SwitchModelCommand) error {
+	if err := rt.admitSwitchModel(ctx, chatID, p); err != nil {
+		return err
+	}
+	rt.applyPendingModel(durable.Context(ctx), chatID)
+	return nil
 }
 
 // admitSwitchModel resolves the request once and applies that admission whole: the stop in place,
@@ -91,13 +98,13 @@ func (rt *Runtime) admitSwitchModel(ctx context.Context, chatID marotte.ChatID, 
 
 // parkSwitch writes an admitted park onto the record; an empty pair clears the one parked.
 func (rt *Runtime) parkSwitch(ctx context.Context, chatID marotte.ChatID, park pendingPair) error {
-	if _, err := rt.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
+	if _, err := rt.chatStore.Mutate(ctx, chatID, marotte.BotWriter(func(c *marotte.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
 		c.PendingModel, c.PendingEffort = park.model, park.effort
 		return true
-	}); err != nil {
+	})); err != nil {
 		slog.Error("switch_model: write pending_model", "chat_id", chatID, "error", err)
 		return command.StatusError(http.StatusInternalServerError, err)
 	}
