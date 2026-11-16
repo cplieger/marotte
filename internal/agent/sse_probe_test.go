@@ -3,6 +3,7 @@ package agent
 import (
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/go/sse/v2/ssetest"
@@ -40,30 +41,33 @@ func TestSSEProbe_CountsConnectsByWireAndServedClients(t *testing.T) {
 
 // The cut lands between frames n and n+1, and Serve returns before the peer's deadline.
 func TestCloseNextSSEAfter_CutsTheNextConnectionAfterNFrames(t *testing.T) {
-	h, _, _ := newTestHub()
-	h.CloseNextSSEAfter(2) // the hello and the connected envelope
+	synctest.Test(t, func(t *testing.T) {
+		h, _, _ := newTestHub()
+		t.Cleanup(func() { shutdownHub(t, h) })
+		h.CloseNextSSEAfter(2) // the hello and the connected envelope
 
-	started := time.Now()
-	body := liveConnectAs(t, h, false).Body.String()
-	if elapsed := time.Since(started); elapsed >= fixtureConnectDeadline {
-		t.Errorf("the cut connection ran %v, the whole fixture deadline; the stream was never cut", elapsed)
-	}
-	frames := dataFrames(t, body)
-	if len(frames) != 2 {
-		t.Fatalf("frames on the cut stream = %d, want exactly 2: %q", len(frames), body)
-	}
-	if !strings.Contains(frames[1].Data, string(marotte.EventConnected)) {
-		t.Errorf("second frame = %q, want the connected envelope", frames[1].Data)
-	}
-	if strings.Contains(body, string(marotte.EventPendingSnapshot)) {
-		t.Errorf("the cut stream carries pending_snapshot; the cut must land before frame 3")
-	}
+		started := time.Now()
+		body := liveConnectAs(t, h, false).Body.String()
+		if elapsed := time.Since(started); elapsed >= fixtureConnectDeadline {
+			t.Errorf("the cut connection ran %v, the whole fixture deadline; the stream was never cut", elapsed)
+		}
+		frames := dataFrames(t, body)
+		if len(frames) != 2 {
+			t.Fatalf("frames on the cut stream = %d, want exactly 2: %q", len(frames), body)
+		}
+		if !strings.Contains(frames[1].Data, string(marotte.EventConnected)) {
+			t.Errorf("second frame = %q, want the connected envelope", frames[1].Data)
+		}
+		if strings.Contains(body, string(marotte.EventPendingSnapshot)) {
+			t.Errorf("the cut stream carries pending_snapshot; the cut must land before frame 3")
+		}
 
-	// Single-shot: the next connection streams the whole hook.
-	next := dataFrames(t, coldConnectAs(t, h, false).Body.String())
-	if len(next) < 4 {
-		t.Errorf("the connection after the cut carried %d frames, want the full hook (hello, connected, pending_snapshot, status_snapshot)", len(next))
-	}
+		// Single-shot: the next connection streams the whole hook.
+		next := dataFrames(t, coldConnectAs(t, h, false).Body.String())
+		if len(next) < 4 {
+			t.Errorf("the connection after the cut carried %d frames, want the full hook (hello, connected, pending_snapshot, status_snapshot)", len(next))
+		}
+	})
 }
 
 // hookFrames counts the connect hook's data frames on a recorded stream: every
@@ -85,18 +89,20 @@ func TestCloseNextSSEAfter_KeepaliveSpendsNoBudget(t *testing.T) {
 	prev := keepaliveInterval
 	keepaliveInterval = 10 * time.Millisecond
 	t.Cleanup(func() { keepaliveInterval = prev })
-	h, _, _ := newTestHub()
-	t.Cleanup(func() { shutdownHub(t, h) })
-	budget := hookFrames(t, coldConnectAs(t, h, false).Body.String())
+	synctest.Test(t, func(t *testing.T) {
+		h, _, _ := newTestHub()
+		t.Cleanup(func() { shutdownHub(t, h) })
+		budget := hookFrames(t, coldConnectAs(t, h, false).Body.String())
 
-	h.CloseNextSSEAfter(budget)
-	body := liveConnectAs(t, h, false).Body.String()
-	if got := hookFrames(t, body); got != budget {
-		t.Errorf("armed connection carried %d hook frames, want %d (the budget)", got, budget)
-	}
-	if beats := strings.Count(body, string(keepaliveFrameStart)); beats == 0 {
-		t.Errorf("armed connection carried no keepalive after spending its %d-frame budget; a beat was counted as a frame and cut the stream: %q", budget, body)
-	}
+		h.CloseNextSSEAfter(budget)
+		body := liveConnectAs(t, h, false).Body.String()
+		if got := hookFrames(t, body); got != budget {
+			t.Errorf("armed connection carried %d hook frames, want %d (the budget)", got, budget)
+		}
+		if beats := strings.Count(body, string(keepaliveFrameStart)); beats == 0 {
+			t.Errorf("armed connection carried no keepalive after spending its %d-frame budget; a beat was counted as a frame and cut the stream: %q", budget, body)
+		}
+	})
 }
 
 func TestCloseNextSSEAfter_ZeroDisarms(t *testing.T) {
