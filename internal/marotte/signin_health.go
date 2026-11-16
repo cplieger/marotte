@@ -29,6 +29,9 @@ const (
 	SignInCauseRejected SignInCause = "rejected"
 	// SignInCauseRefused: Kiro refused a credential marotte served (signed_out).
 	SignInCauseRefused SignInCause = "refused"
+	// SignInCauseAPIKeyRefused: Kiro refused the KIRO_API_KEY the engine signs in with (signed_out). marotte refuses
+	// every sign-in while the key is set, so only replacing it helps.
+	SignInCauseAPIKeyRefused SignInCause = "api_key_refused"
 )
 
 // SignInHealthVersion orders snapshots that reach a reader by two paths, GET /api/whoami and the signin_health
@@ -60,6 +63,11 @@ const (
 		". marotte keeps trying, so send the message again once it answers."
 	// SignInFailedRefusedReason is a turn's failure row once Kiro refused the sign-in itself.
 	SignInFailedRefusedReason = "Kiro sign-in failed: Kiro refused the sign-in. Sign in again, then send the message again."
+	// SignInAPIKeyCause is the api_key_refused cause, and SignInAPIKeyRemedy its remedy.
+	SignInAPIKeyCause  = "Kiro refused the KIRO_API_KEY marotte signs in with"
+	SignInAPIKeyRemedy = "Replace the key in marotte's environment, then restart marotte"
+	// SignInFailedAPIKeyReason is a turn's failure row once Kiro refused the API key.
+	SignInFailedAPIKeyReason = "Kiro sign-in failed: " + SignInAPIKeyCause + ". " + SignInAPIKeyRemedy + "."
 	// SignInFailedReason is a replayed turn's failure row, whose cause at the time is not known.
 	SignInFailedReason = "Kiro sign-in failed. Sign in again if it keeps failing."
 )

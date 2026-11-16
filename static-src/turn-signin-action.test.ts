@@ -9,6 +9,7 @@ import type * as Scroll from "./scroll.js";
 import type * as ApiClient from "./api-client.js";
 import type * as ChatActions from "./actions/chat.js";
 import type * as Modals from "./modals.js";
+import type * as Status from "./status.js";
 
 for (const id of [
   "messages",
@@ -16,6 +17,7 @@ for (const id of [
   "messages-wrap-outer",
   "chat-view",
   "scroll-bottom",
+  "banner-stack",
 ]) {
   const d = document.createElement("div");
   d.id = id;
@@ -44,7 +46,14 @@ vi.mock("./modals.js", async (importOriginal) => ({
   showLoginModal,
 }));
 
+// The account button's mark has its own test (status-signin.test.ts); this file mounts no button.
+vi.mock("./status.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Status>()),
+  setSignInMark: vi.fn(),
+}));
+
 const { mountChatView, activeTranscriptView } = await import("./messages.js");
+const { adoptSignInHealth } = await import("./signin-health.js");
 const { setSessions, setActive, setPainted, bumpMessages } = await import("./store.js");
 
 mountChatView();
@@ -151,6 +160,17 @@ describe("the sign-in failure row", () => {
 
   it("is not offered for another failure", async () => {
     const [card] = await mount("c-signin-other", [turnEntries("t1", 1, otherFailure)]);
+    expect(card?.querySelector(":scope > .turn-notice")).not.toBeNull();
+    expect(button(card)).toBeNull();
+  });
+
+  it("is not offered once Kiro refused the API key, which no sign-in replaces", async () => {
+    adoptSignInHealth({
+      state: "signed_out",
+      cause: "api_key_refused",
+      version: { boot_ms: 1_760_000_000_000, seq: 1 },
+    });
+    const [card] = await mount("c-signin-key", [turnEntries("t1", 1, signInFailure)]);
     expect(card?.querySelector(":scope > .turn-notice")).not.toBeNull();
     expect(button(card)).toBeNull();
   });

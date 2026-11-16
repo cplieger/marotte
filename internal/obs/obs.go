@@ -30,7 +30,9 @@ var engineExitCauses = slices.Concat(requestedStopCauses,
 func RequestedStop(cause string) bool { return slices.Contains(requestedStopCauses, cause) }
 
 // promptFailureClasses are the names internal/command gives a failed prompt's class.
-var promptFailureClasses = []string{"fatal", "pipe_death", "busy", "transient", "throttled", "rejected", "auth"}
+var promptFailureClasses = []string{
+	"fatal", "pipe_death", "busy", "transient", "throttled", "rejected", "auth", "signin_outage",
+}
 
 // signInStates are the names marotte.SignInState gives the Kiro sign-in's state.
 var signInStates = []string{"ok", "failing", "signed_out", "none"}
@@ -94,7 +96,8 @@ var (
 		measure.WithSeed(each(engineExitCauses)...))
 	promptFailures = measure.NewLabeledCounter("prompt_failures_total",
 		"Failed prompts, failed empty-turn retries included, by failure class; "+
-			"pipe_death is a prompt the engine's own exit ended.", measure.UnitCount, []string{"class"},
+			"pipe_death is a prompt the engine's own exit ended, signin_outage one refused at once during a known "+
+			"Kiro sign-in outage.", measure.UnitCount, []string{"class"},
 		measure.WithSeed(each(promptFailureClasses)...))
 	signInSaveFailures = measure.NewLabeledCounter("signin_save_failures_total",
 		"Sign-in changes the sign-in file could not take, by backend and reason.", measure.UnitCount,

@@ -566,15 +566,14 @@ type promptSendGate interface {
 	AwaitPromptSend(ctx context.Context, chatID marotte.ChatID, turnID string) (commit func() error, err error)
 }
 
-// signInReach reads whether the identity provider, not the account, is why the engine's credential ask fails.
+// signInReach is the prompt's view of the Kiro sign-in: whether a known outage blocks a turn, and the engine's verdicts
+// it reports.
 type signInReach interface {
-	// ProviderUnreachable reports whether the identity provider gives no usable renewal, an outage no sign-in fixes.
-	ProviderUnreachable() bool
 	// TurnBlocked reports whether a turn can only fail on the sign-in: the identity provider is known down and one
 	// reprobe, shared with concurrent callers and bounded by a short deadline under ctx, did not bring it back.
 	TurnBlocked(ctx context.Context) bool
-	// NoteEngineRefusal reports a turn the engine failed on a refused credential while the provider answers;
-	// NoteEngineAccepted a turn it accepted. They feed the sign-in's health.
+	// NoteEngineRefusal reports every turn the engine failed on a refused credential, NoteEngineAccepted a turn it
+	// accepted. They feed the sign-in's health, which tells an outage's refusal from the account's.
 	NoteEngineRefusal()
 	NoteEngineAccepted()
 }

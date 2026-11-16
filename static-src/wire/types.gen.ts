@@ -112,7 +112,7 @@ export type SettledBy = "user" | "unattended" | "moot" | "ended";
 
 export type ShowRefusalCode = "too_large" | "binary" | "not_utf8";
 
-export type SignInCause = "provider_unreachable" | "rejected" | "refused";
+export type SignInCause = "provider_unreachable" | "rejected" | "refused" | "api_key_refused";
 
 export type SignInState = "ok" | "failing" | "signed_out" | "none";
 

@@ -84,15 +84,6 @@ func (l signinLink) answerability() func() signin.Answerability {
 	return func() signin.Answerability { return l.vault.Answerability(l.backend) }
 }
 
-// providerDown reports whether the engine's credential ask fails because the identity provider gave no usable
-// renewal; false when the vault answers no ask.
-func (l signinLink) providerDown() bool {
-	if l.vault == nil || l.apiKey {
-		return false
-	}
-	return l.vault.Answerability(l.backend) == signin.ProviderUnreachable
-}
-
 // turnReprobeWait bounds the reprobe a prompt that meets a known outage waits for.
 const turnReprobeWait = 3 * time.Second
 

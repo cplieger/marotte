@@ -369,6 +369,7 @@ func (v *Vault) Standing(id BackendID) Standing {
 		Answerability: s.answerabilityLocked(),
 		Lapsed:        s.effective != nil && s.effective.lapsed,
 		FailingSince:  s.failingSince,
+		LastRefusal:   s.lastRefusal,
 	}
 }
 

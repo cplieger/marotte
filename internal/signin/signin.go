@@ -152,6 +152,8 @@ type Standing struct {
 	// renewal was usable or the record was replaced since.
 	FailingSince  time.Time
 	Answerability Answerability
+	// LastRefusal is what the vault refused the engine's last credential ask with, zero when it served that ask.
+	LastRefusal Refusal
 	// Lapsed: the identity provider rejected the record's renewal.
 	Lapsed bool
 }

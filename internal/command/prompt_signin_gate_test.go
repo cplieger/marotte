@@ -40,7 +40,8 @@ func runGatedPrompt(t *testing.T, reach *reachRecorder) *gateDeps {
 // A prompt that meets a known outage, which one bounded reprobe did not end, fails at once as a sign-in failure
 // without opening a session.
 func TestPrompt_AKnownOutageFailsTheTurnBeforeAnyEngineCall(t *testing.T) {
-	reach := &reachRecorder{down: vaultUnreachable, blocked: true}
+	reach := &reachRecorder{blocked: true}
+	outage, auth := promptFailures(t, "signin_outage"), promptFailures(t, "auth")
 	deps := runGatedPrompt(t, reach)
 
 	if n := deps.opened.Load(); n != 0 {
@@ -66,25 +67,23 @@ func TestPrompt_AKnownOutageFailsTheTurnBeforeAnyEngineCall(t *testing.T) {
 	if n := reach.refusals.Load(); n != 0 {
 		t.Errorf("refusals noted = %d, want none: the outage is not the account's", n)
 	}
+	if got := promptFailures(t, "signin_outage") - outage; got != 1 {
+		t.Errorf("prompt_failures_total{class=signin_outage} moved by %v, want 1", got)
+	}
+	if got := promptFailures(t, "auth") - auth; got != 0 {
+		t.Errorf("prompt_failures_total{class=auth} moved by %v, want 0: the sign-in's own alert reports the outage", got)
+	}
 }
 
-// A prompt whose reprobe found the provider back, or one sent before the vault decided, runs as today.
+// A prompt the sign-in does not block (no outage known, or the reprobe found the provider back) runs as today.
 func TestPrompt_AnAnsweringProviderRunsThePrompt(t *testing.T) {
-	cases := map[string]*reachRecorder{
-		"the reprobe found the provider back": {down: "", blocked: false},
-		"no outage known":                     {},
+	deps := runGatedPrompt(t, &reachRecorder{})
+	if n := deps.opened.Load(); n != 1 {
+		t.Errorf("bridges opened = %d, want the prompt's session opened", n)
 	}
-	for name, reach := range cases {
-		t.Run(name, func(t *testing.T) {
-			deps := runGatedPrompt(t, reach)
-			if n := deps.opened.Load(); n != 1 {
-				t.Errorf("bridges opened = %d, want the prompt's session opened", n)
-			}
-			for _, a := range deps.abandoned {
-				if a.kind == marotte.FailureKindSignIn {
-					t.Errorf("turn closed %+v, want no sign-in failure", a)
-				}
-			}
-		})
+	for _, a := range deps.abandoned {
+		if a.kind == marotte.FailureKindSignIn {
+			t.Errorf("turn closed %+v, want no sign-in failure", a)
+		}
 	}
 }

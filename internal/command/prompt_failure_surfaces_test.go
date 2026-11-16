@@ -211,10 +211,8 @@ func TestReportPromptFailure_AnEngineNamedAuthClassRoutesToSignIn(t *testing.T) 
 	}
 }
 
-// reachRecorder answers ProviderUnreachable with down, down when it is non-empty, and counts what the command
-// layer notes for the sign-in's health.
+// reachRecorder counts what the command layer notes for the sign-in's health.
 type reachRecorder struct {
-	down     string
 	refusals atomic.Int64
 	accepts  atomic.Int64
 	gates    atomic.Int64
@@ -222,7 +220,6 @@ type reachRecorder struct {
 	blocked bool
 }
 
-func (r *reachRecorder) ProviderUnreachable() bool { return r.down != "" }
 func (r *reachRecorder) TurnBlocked(context.Context) bool {
 	r.gates.Add(1)
 	return r.blocked
@@ -236,37 +233,30 @@ const vaultUnreachable = "marotte could not reach the identity provider to renew
 // signInCard is the reason the closer stamps on a turn the engine failed on its credential while the provider is down.
 const signInCard = marotte.SignInFailedUnreachableReason
 
-// unreachableCase is one failure graded while the vault does or does not hold the provider unreachable.
+// unreachableCase is one failure graded after the vault refused the engine's ask for an unreachable provider.
 type unreachableCase struct {
 	callErr     error
 	engineClass string
-	down        string
 	wantCode    marotte.ErrorCode
-	// wantNoted: the failure reaches the sign-in's health as a refusal of the account itself.
+	// wantNoted: the failure reaches the sign-in's health, which decides whose refusal it is.
 	wantNoted bool
 }
 
-// unreachableCases are both auth shapes KAS reports, on the execution path and the catalog path, while the provider
-// is down and while it answers, and a throttle control. failed is the path's non-auth code.
+// unreachableCases are both auth shapes KAS reports, on the execution path and the catalog path, and a throttle
+// control. failed is the path's non-auth code.
 func unreachableCases(failed marotte.ErrorCode) map[string]unreachableCase {
 	execReply := &marotte.RPCError{Code: -32000, Message: "Authentication token is invalid: Auth refresh callback failed: " + vaultUnreachable + ": transport"}
 	mapped := &marotte.RPCError{Code: -32603, Message: "Internal error", Data: []byte(`{"errorType":"ModelRegistryUnauthenticatedError"}`)}
 	return map[string]unreachableCase{
-		"the turn names a credential class while the provider is down": {
-			callErr: execReply, engineClass: "CredentialAbsentError", down: vaultUnreachable,
-			wantCode: marotte.ErrCodeAuthTokenUnavailable,
-		},
-		"a mapped auth envelope while the provider is down": {
-			callErr: mapped, down: vaultUnreachable,
-			wantCode: marotte.ErrCodeAuthTokenUnavailable,
-		},
-		"the turn names a credential class while the provider answers": {
+		"the turn names a credential class": {
 			callErr: execReply, engineClass: "CredentialAbsentError",
 			wantCode: marotte.ErrCodeAuthTokenUnavailable, wantNoted: true,
 		},
-		"a throttle while the provider is down": {
-			callErr: execReply, engineClass: "ModelThrottleError", down: vaultUnreachable,
-			wantCode: failed,
+		"a mapped auth envelope": {
+			callErr: mapped, wantCode: marotte.ErrCodeAuthTokenUnavailable, wantNoted: true,
+		},
+		"a throttle": {
+			callErr: execReply, engineClass: "ModelThrottleError", wantCode: failed,
 		},
 	}
 }
@@ -284,21 +274,20 @@ func checkSignInFrame(t *testing.T, got marotte.ErrorPayload, tc unreachableCase
 		t.Error("TurnScoped = false, want true: the turn's row carries this reason")
 	}
 	if noted := reach.refusals.Load() == 1; noted != tc.wantNoted {
-		t.Errorf("refusal noted = %v (%d), want %v: only a refusal while the provider answers is the account's",
+		t.Errorf("refusal noted = %v (%d), want %v: every auth failure reaches the sign-in's health",
 			noted, reach.refusals.Load(), tc.wantNoted)
 	}
 }
 
 // A credential ask the vault refused while the provider is down is still a sign-in failure the person is told
-// about, with its Sign in again offer: the row's sentence names the outage, and the health owner, not this
-// frame, decides it is not a sign-out.
+// about: the row's sentence names the outage, and the health owner, not this frame, decides it is not a sign-out.
 func TestReportPromptFailure_AnUnreachableProviderIsASignInFailureOnTheTurn(t *testing.T) {
 	for name, tc := range unreachableCases(marotte.ErrCodePromptFailed) {
 		t.Run(name, func(t *testing.T) {
 			deps := newSurfaceDeps()
 			deps.closedReason = signInCard
 			deps.closedEngineErrorType = tc.engineClass
-			reach := &reachRecorder{down: tc.down}
+			reach := &reachRecorder{}
 			roles := promptRolesOf(deps)
 			roles.signIn = reach
 
@@ -317,7 +306,7 @@ func TestRetryEmptyTurnPrompt_AnUnreachableProviderIsASignInFailureOnTheTurn(t *
 			deps.callErr = tc.callErr
 			deps.closedReason = signInCard
 			deps.closedEngineErrorType = tc.engineClass
-			reach := &reachRecorder{down: tc.down}
+			reach := &reachRecorder{}
 			roles := promptRolesOf(deps)
 			roles.signIn = reach
 
@@ -352,7 +341,7 @@ func TestReportPromptFailure_ATurnGradedAuthFromItsLatchedClassCountsAsAuth(t *t
 			deps.closedReason = signInCard
 			deps.closedEngineErrorType = "TokenExpiredError"
 			roles := promptRolesOf(deps)
-			roles.signIn = &reachRecorder{down: vaultUnreachable}
+			roles.signIn = &reachRecorder{}
 			auth, fatal := promptFailures(t, "auth"), promptFailures(t, "fatal")
 
 			run(t.Context(), roles, deps)
@@ -778,7 +767,7 @@ func TestRetryEmptyTurnPrompt_AFailedRetryCountsAsAPromptFailure(t *testing.T) {
 // failure and no pre-set class is one no failure can have.
 func TestPromptFailureClass_NamesExactlyTheCountedClasses(t *testing.T) {
 	var got []string
-	for c := classFatal; c <= classAuth; c++ {
+	for c := classFatal; c <= classSignInOutage; c++ {
 		got = append(got, c.String())
 	}
 	slices.Sort(got)

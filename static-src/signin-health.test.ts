@@ -101,6 +101,16 @@ describe("the sign-in banner", () => {
     expect(link?.label).toBe("Sign in again");
   });
 
+  it("names the API key and its remedy, with no Sign in again, once Kiro refused the key", () => {
+    adoptSignInHealth(health("signed_out", "api_key_refused"));
+    const [, , message, level, dismissible, link] = lastShown() ?? [];
+    expect(level).toBe("error");
+    expect(dismissible).toBe(false);
+    expect(message).toContain("Kiro refused the KIRO_API_KEY marotte signs in with");
+    expect(message).toContain("Replace the key in marotte's environment, then restart marotte");
+    expect(link).toBeUndefined();
+  });
+
   it.each(["ok", "none"] as const)("clears when the state turns %s", (state) => {
     adoptSignInHealth(health("failing", "provider_unreachable"));
     expect(lastShown()).toBeDefined();

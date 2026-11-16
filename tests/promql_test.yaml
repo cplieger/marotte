@@ -186,7 +186,7 @@ tests:
                 stops. Raise Agent engine memory limit in Settings if the container
                 has memory to spare.
 
-  - name: MarottePromptFailures fires at 5 failures across classes and leaves pipe deaths out
+  - name: MarottePromptFailures fires at 5 failures across classes and leaves pipe deaths and sign-in outages out
     interval: 1m
     input_series:
       - series: 'marotte_prompt_failures_total{job="marotte",instance="a:9847",class="auth"}'
@@ -194,6 +194,8 @@ tests:
       - series: 'marotte_prompt_failures_total{job="marotte",instance="a:9847",class="throttled"}'
         values: "0 0 0 0 1 2x20"
       - series: 'marotte_prompt_failures_total{job="marotte",instance="b:9847",class="pipe_death"}'
+        values: "0 2 4 6 8 10x20"
+      - series: 'marotte_prompt_failures_total{job="marotte",instance="b:9847",class="signin_outage"}'
         values: "0 2 4 6 8 10x20"
       - series: 'marotte_prompt_failures_total{job="marotte",instance="b:9847",class="fatal"}'
         values: "0 1 1 1 1 1x20"
@@ -275,7 +277,8 @@ tests:
               description: >
                 Kiro refused marotte's sign-in or its renewal, so every chat and
                 workflow step fails. Sign in again from the account menu in
-                marotte.
+                marotte. When marotte signs in with KIRO_API_KEY, Kiro refused the
+                key: replace it in marotte's environment, then restart marotte.
       - eval_time: 3m
         alertname: MarotteSignedOut
         exp_alerts: []

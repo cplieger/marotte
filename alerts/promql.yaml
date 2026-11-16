@@ -98,10 +98,11 @@ groups:
             has memory to spare.
 
       # pipe_death is a prompt the engine's own exit ended, which the engine
-      # rules already cover.
+      # rules already cover. signin_outage is a prompt refused at once during
+      # a known Kiro sign-in outage, which MarotteSignInFailing covers.
       - alert: MarottePromptFailures
         expr: |
-          sum without (class) (increase(marotte_prompt_failures_total{class!="pipe_death"}[15m])) >= 5
+          sum without (class) (increase(marotte_prompt_failures_total{class!~"pipe_death|signin_outage"}[15m])) >= 5
         for: 0m
         labels:
           severity: warning
@@ -150,7 +151,8 @@ groups:
           description: >
             Kiro refused marotte's sign-in or its renewal, so every chat and
             workflow step fails. Sign in again from the account menu in
-            marotte.
+            marotte. When marotte signs in with KIRO_API_KEY, Kiro refused the
+            key: replace it in marotte's environment, then restart marotte.
 
       # A slot missed while marotte was not running is skipped and does not
       # count. rule_id is the schedule's id.

@@ -12,6 +12,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/signin"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 // healthPush records every notification delivered, in order.
@@ -305,6 +306,31 @@ func TestSignInHealth_ADefiniteRefusalGivesSignedOut(t *testing.T) {
 			}
 		})
 	})
+	t.Run("an engine refusal graded after the provider recovered", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			s := newHealthHub(t)
+			s.signIn(t)
+			s.failPastTheGrace(t)
+			s.b.set(false, false, nil)
+			if a := s.vault.Reprobe(t.Context(), gateBackendID); a != signin.Answerable {
+				t.Fatalf("Setup: answerability after the reprobe = %v, want answerable", a)
+			}
+			synctest.Wait()
+			if got := s.h.SignInHealth().State; got != marotte.SignInOK {
+				t.Fatalf("Setup: state after the recovery = %q, want ok", got)
+			}
+
+			s.h.NoteEngineRefusal()
+			synctest.Wait()
+
+			if got := s.h.SignInHealth().State; got != marotte.SignInOK || s.h.SignInRefused() {
+				t.Errorf("state = %q (refused %v), want ok: the engine's ask was refused for the outage", got, s.h.SignInRefused())
+			}
+			if n := len(s.push.signInPushes()); n != 1 {
+				t.Errorf("sign-in pushes = %d, want only the failing one", n)
+			}
+		})
+	})
 	t.Run("an engine refusal while the provider is down", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			s := newHealthHub(t)
@@ -391,8 +417,11 @@ func TestSignInHealth_APIKeyReadsOnlyEngineRefusals(t *testing.T) {
 
 		s.h.NoteEngineRefusal()
 		synctest.Wait()
-		if got := s.h.SignInHealth(); got.State != marotte.SignInSignedOut || got.Cause != marotte.SignInCauseRefused {
-			t.Errorf("health after an engine refusal = %s/%s, want signed_out/refused", got.State, got.Cause)
+		if got := s.h.SignInHealth(); got.State != marotte.SignInSignedOut || got.Cause != marotte.SignInCauseAPIKeyRefused {
+			t.Errorf("health after an engine refusal = %s/%s, want signed_out/api_key_refused", got.State, got.Cause)
+		}
+		if p := s.push.signInPushes(); len(p) != 1 || !strings.Contains(p[0].Body, "KIRO_API_KEY") {
+			t.Errorf("sign-in pushes = %+v, want one naming the KIRO_API_KEY to replace", p)
 		}
 		s.h.NoteEngineAccepted()
 		synctest.Wait()
@@ -400,4 +429,29 @@ func TestSignInHealth_APIKeyReadsOnlyEngineRefusals(t *testing.T) {
 			t.Errorf("state after an accepted turn = %q, want ok", got)
 		}
 	})
+}
+
+// However the moves interleave, the gauge reads the state the last move left.
+func TestSignInHealth_TheGaugeFollowsTheLastMove_Concurrent(t *testing.T) {
+	s := newHealthHub(t, WithAPIKey(true))
+	for round := range 200 {
+		var wg sync.WaitGroup
+		for i := range 16 {
+			wg.Go(func() {
+				if (i+round)%2 == 0 {
+					s.h.NoteEngineRefusal()
+				} else {
+					s.h.NoteEngineAccepted()
+				}
+			})
+		}
+		wg.Wait()
+		want := s.h.SignInHealth().State
+		for _, st := range []marotte.SignInState{marotte.SignInOK, marotte.SignInSignedOut} {
+			v := testsupport.MetricValue(t, `marotte_signin_state{state="`+string(st)+`"}`)
+			if (v == 1) != (st == want) {
+				t.Fatalf("round %d: marotte_signin_state{state=%q} = %v with the state %q", round, st, v, want)
+			}
+		}
+	}
 }

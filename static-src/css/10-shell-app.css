@@ -817,7 +817,7 @@ body.sidebar-resizing {
      normal declaration, so an `opacity: 1` in a settled state cannot stop a beat
      the base rule started. The beat MEANS unsettled, so the selector says so and
      a settled state needs to cancel nothing. */
-  &:not(.connected, .error, .signin-warn, .signin-ended) {
+  &:not(.connected, .error) {
     --beat-peak: 0.45;
 
     animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) var(--beat-phase, 0ms) infinite;
@@ -837,7 +837,7 @@ body.sidebar-resizing {
     background: var(--c-green);
 
     /* This state carries no beat at all — the animation is scoped to
-       `:not(...)` above — so `opacity: 1` is the resting value and
+       `:not(.connected, .error)` above — so `opacity: 1` is the resting value and
        there is no animation to cancel. It is declared because the unsettled rule
        and the mobile pseudo both move opacity. */
     opacity: 1;
@@ -850,16 +850,14 @@ body.sidebar-resizing {
     opacity: 1;
   }
 
-  /* The connection is up and the Kiro sign-in fails (amber) or ended (red): still discs, since
-     neither is a transition the dot waits out. Declared after `.connected`, which they sit beside. */
+  /* The connection is up and the Kiro sign-in fails (amber) or ended (red). Only ever beside
+     `.connected` (status.ts paintMark), whose colour they override, so declared after it. */
   &.signin-warn {
     background: var(--c-yellow);
-    opacity: 1;
   }
 
   &.signin-ended {
     background: var(--c-red);
-    opacity: 1;
   }
 }
 

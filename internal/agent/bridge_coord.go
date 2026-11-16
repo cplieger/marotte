@@ -174,12 +174,8 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		chatHasLiveRun: func(chatID marotte.ChatID) bool {
 			return chatHoldsLiveRun(h.runs.leaseStore().List(), chatID)
 		},
-		signInReason: func() string {
-			if h.signin.providerDown() {
-				return marotte.SignInFailedUnreachableReason
-			}
-			return marotte.SignInFailedRefusedReason
-		},
+		// Read per call: signInHealth is built after the coordinator.
+		signInReason: func() string { return h.signInHealth.refusalReason() },
 		sessionHasLiveRun: func(chatID marotte.ChatID, acpSessionID string) bool {
 			return sessionHoldsLiveRun(h.runs.leaseStore().List(), chatID, acpSessionID)
 		},

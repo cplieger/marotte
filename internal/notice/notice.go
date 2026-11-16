@@ -249,6 +249,12 @@ func SignInFailing() marotte.NotificationPayload {
 	return build(marotte.PushKindSignIn, signInTarget, "Kiro sign-in is failing", marotte.SignInUnreachableCause)
 }
 
+// SignInKeyRefused is Kiro refusing the KIRO_API_KEY the engine signs in with.
+func SignInKeyRefused() marotte.NotificationPayload {
+	return build(marotte.PushKindSignIn, signInTarget, "Kiro sign-in ended",
+		marotte.SignInAPIKeyCause+". "+marotte.SignInAPIKeyRemedy)
+}
+
 // SignInEnded is the Kiro sign-in ending without a sign-out.
 func SignInEnded() marotte.NotificationPayload {
 	return build(marotte.PushKindSignIn, signInTarget, "Kiro sign-in ended", marotte.SignInRequiredCause+" to continue")

@@ -7,7 +7,7 @@ import { BUS_RECONCILE, onBus, onSSE } from "./bus.js";
 import { showLoginModal } from "./modals.js";
 import { setSignInMark } from "./status.js";
 import { decodeWhoamiResponse } from "./wire/decoders.gen.js";
-import type { SignInHealth, SignInState } from "./wire/types.gen.js";
+import type { SignInHealth } from "./wire/types.gen.js";
 
 const CODE = "signin_health";
 
@@ -21,6 +21,11 @@ const FAILING_TEXT =
   "Chats and workflows fail until it answers, and marotte resumes held workflows by itself.";
 const SIGNED_OUT_TEXT =
   "Your Kiro sign-in ended, so chats and workflows fail. Sign in to Kiro to continue.";
+/** The API key's words (internal/marotte SignInAPIKeyCause and SignInAPIKeyRemedy): marotte refuses every sign-in
+ *  while the key is set, so this banner offers none. */
+const API_KEY_TEXT =
+  "Kiro refused the KIRO_API_KEY marotte signs in with, so chats and workflows fail. " +
+  "Replace the key in marotte's environment, then restart marotte.";
 
 /** The health shown, for readers that repaint with it (the status card's auth row). */
 export function signInHealth(): ReadonlySignal<SignInHealth | null> {
@@ -43,18 +48,28 @@ export function adoptSignInHealth(h: SignInHealth): void {
     return;
   }
   health.value = h;
-  paint(h.state);
+  paint(h);
 }
 
-function paint(state: SignInState): void {
-  setSignInMark(state);
+/** Whether a sign-in can mend the sign-in's state: not once Kiro refused the API key, which the server keeps
+ *  refusing sign-ins for. */
+export function signInMends(h: SignInHealth | null): boolean {
+  return h?.cause !== "api_key_refused";
+}
+
+function paint(h: SignInHealth): void {
+  setSignInMark(h.state);
   const link = { label: "Sign in again", onClick: showLoginModal };
-  switch (state) {
+  switch (h.state) {
     case "failing":
       showBanner(GLOBAL_BANNER, CODE, FAILING_TEXT, "warning", false, link);
       return;
     case "signed_out":
-      showBanner(GLOBAL_BANNER, CODE, SIGNED_OUT_TEXT, "error", false, link);
+      if (signInMends(h)) {
+        showBanner(GLOBAL_BANNER, CODE, SIGNED_OUT_TEXT, "error", false, link);
+      } else {
+        showBanner(GLOBAL_BANNER, CODE, API_KEY_TEXT, "error", false);
+      }
       return;
     case "ok":
     case "none":

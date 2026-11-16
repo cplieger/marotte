@@ -48,7 +48,7 @@ func TestCounters_EveryKnownValueIsOnThePageBeforeItsFirstEvent(t *testing.T) {
 	} {
 		want = append(want, `marotte_engine_exits_total{cause="`+cause+`"} `)
 	}
-	for _, class := range []string{"fatal", "pipe_death", "busy", "transient", "throttled", "rejected", "auth"} {
+	for _, class := range []string{"fatal", "pipe_death", "busy", "transient", "throttled", "rejected", "auth", "signin_outage"} {
 		want = append(want, `marotte_prompt_failures_total{class="`+class+`"} `)
 	}
 	for _, reason := range []string{"staged_copy_left", "write_failed"} {

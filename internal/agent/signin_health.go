@@ -28,9 +28,11 @@ type signInHealth struct {
 	episodeAt time.Time
 	link      signinLink
 	cur       marotte.SignInHealth
-	mu        sync.Mutex
-	// refused latches an engine refusal of a credential the vault served while the provider answered, until a turn
-	// is accepted or the account changes.
+	// episode counts failing or signed_out episodes, so a push decided for one that ended since is dropped.
+	episode uint64
+	mu      sync.Mutex
+	// refused latches an engine refusal that is not the outage's (outageRefusal), until a turn is accepted or the
+	// account changes.
 	refused bool
 	// pushed: this episode's push went; ok or none re-arms it.
 	pushed bool
@@ -68,9 +70,9 @@ func (h *signInHealth) refusedNow() bool {
 	return h.refused
 }
 
-// noteRefusal latches an engine refusal unless the identity provider is down, which makes the refusal the outage's.
+// noteRefusal latches an engine refusal unless it is the outage's (outageRefusal).
 func (h *signInHealth) noteRefusal() {
-	if st, ok := h.standing(); ok && st.Answerability == signin.ProviderUnreachable {
+	if st, ok := h.standing(); ok && outageRefusal(st) {
 		return
 	}
 	h.mu.Lock()
@@ -97,6 +99,26 @@ func (h *signInHealth) accountChanged() {
 	h.recompute()
 }
 
+// outageRefusal reports whether an engine refusal graded now is the identity provider's outage, not the account's:
+// the vault refused the engine's last ask for it, or the provider is down now. KAS grades every refused ask
+// unauthenticated, and a turn is graded after its ask, so the provider may have come back in between.
+func outageRefusal(st signin.Standing) bool {
+	return st.LastRefusal == signin.RefusedUnreachable || st.Answerability == signin.ProviderUnreachable
+}
+
+// refusalReason is the failure row of a turn the engine failed on its credential.
+func (h *signInHealth) refusalReason() string {
+	st, vaulted := h.standing()
+	switch {
+	case h.link.apiKey:
+		return marotte.SignInFailedAPIKeyReason
+	case vaulted && outageRefusal(st):
+		return marotte.SignInFailedUnreachableReason
+	default:
+		return marotte.SignInFailedRefusedReason
+	}
+}
+
 // standing reads the vault, ok false when the vault answers no ask (none wired, or the API key signs the engine in).
 func (h *signInHealth) standing() (signin.Standing, bool) {
 	if h.link.vault == nil || h.link.apiKey {
@@ -109,6 +131,8 @@ func (h *signInHealth) standing() (signin.Standing, bool) {
 func (h *signInHealth) verdict(now time.Time, refused bool) (state marotte.SignInState, cause marotte.SignInCause, since time.Time, wait time.Duration) {
 	st, vaulted := h.standing()
 	switch {
+	case !vaulted && refused && h.link.apiKey:
+		return marotte.SignInSignedOut, marotte.SignInCauseAPIKeyRefused, time.Time{}, 0
 	case !vaulted && refused:
 		return marotte.SignInSignedOut, marotte.SignInCauseRefused, time.Time{}, 0
 	case !vaulted:
@@ -137,7 +161,8 @@ func episodic(s marotte.SignInState) bool {
 	return s == marotte.SignInFailing || s == marotte.SignInSignedOut
 }
 
-// recompute reads the inputs and, on a move, versions the state and reports it.
+// recompute reads the inputs and, on a move, versions the state and reports it. The gauge and the log are written
+// under h.mu, so concurrent moves leave them at the last one; the client orders the events by version.
 func (h *signInHealth) recompute() {
 	ctx := h.lt.shutdownCtx
 	if ctx.Err() != nil {
@@ -159,22 +184,44 @@ func (h *signInHealth) recompute() {
 	lasted := now.Sub(h.episodeAt)
 	if episodic(state) && !episodic(prev.State) {
 		h.episodeAt = now
+		h.episode++
 	}
 	push := episodic(state) && !h.pushed
 	h.pushed = episodic(state)
 	h.cur = next
-	h.mu.Unlock()
-
 	obs.SignInState(string(state))
 	logSignInMove(prev, next, lasted)
+	episode := h.episode
+	h.mu.Unlock()
+
 	h.broadcast(ctx, next)
-	if push && h.notify != nil {
-		n := notice.SignInFailing()
-		if state == marotte.SignInSignedOut {
-			n = notice.SignInEnded()
-		}
-		h.notify(ctx, &n)
+	if push {
+		h.sendPush(ctx, episode)
 	}
+}
+
+// sendPush sends episode's one push in the words of its state now, which a later move inside it may have changed;
+// none once it ended.
+func (h *signInHealth) sendPush(ctx context.Context, episode uint64) {
+	if h.notify == nil {
+		return
+	}
+	h.mu.Lock()
+	cur, live := h.cur, h.episode == episode && episodic(h.cur.State)
+	h.mu.Unlock()
+	if !live {
+		return
+	}
+	var n marotte.NotificationPayload
+	switch {
+	case cur.State == marotte.SignInFailing:
+		n = notice.SignInFailing()
+	case cur.Cause == marotte.SignInCauseAPIKeyRefused:
+		n = notice.SignInKeyRefused()
+	default:
+		n = notice.SignInEnded()
+	}
+	h.notify(ctx, &n)
 }
 
 // advance is prev moved to state: the next version, and Since as the episode's start (failing: the first failed
@@ -238,8 +285,8 @@ func (rt *Runtime) SignInHealth() marotte.SignInHealth { return rt.signInHealth.
 // SignInRefused reports whether Kiro refused a credential marotte served and no turn has been accepted since.
 func (rt *Runtime) SignInRefused() bool { return rt.signInHealth.refusedNow() }
 
-// NoteEngineRefusal records a turn the engine failed on a refused credential; while the identity provider is down the
-// refusal is the outage's and changes nothing.
+// NoteEngineRefusal records a turn the engine failed on a refused credential; one that is the identity provider's
+// outage changes nothing.
 func (rt *Runtime) NoteEngineRefusal() { rt.signInHealth.noteRefusal() }
 
 // NoteEngineAccepted records a turn the engine accepted.

@@ -11,13 +11,14 @@ marotte_engine_exits_total{cause="restart_confirmed"} 0
 marotte_engine_exits_total{cause="shutdown"} 0
 marotte_engine_exits_total{cause="stdin_stalled"} 0
 marotte_engine_exits_total{cause="stopped"} 0
-# HELP marotte_prompt_failures_total Failed prompts, failed empty-turn retries included, by failure class; pipe_death is a prompt the engine's own exit ended.
+# HELP marotte_prompt_failures_total Failed prompts, failed empty-turn retries included, by failure class; pipe_death is a prompt the engine's own exit ended, signin_outage one refused at once during a known Kiro sign-in outage.
 # TYPE marotte_prompt_failures_total counter
 marotte_prompt_failures_total{class="auth"} 0
 marotte_prompt_failures_total{class="busy"} 0
 marotte_prompt_failures_total{class="fatal"} 0
 marotte_prompt_failures_total{class="pipe_death"} 0
 marotte_prompt_failures_total{class="rejected"} 0
+marotte_prompt_failures_total{class="signin_outage"} 0
 marotte_prompt_failures_total{class="throttled"} 0
 marotte_prompt_failures_total{class="transient"} 0
 # HELP marotte_unattended_run_failures_total Scheduled and triggered runs that failed with nobody watching, by origin and reason.
@@ -68,13 +69,14 @@ marotte_engine_exits_total{cause="restart_confirmed"} 0
 marotte_engine_exits_total{cause="shutdown"} 0
 marotte_engine_exits_total{cause="stdin_stalled"} 0
 marotte_engine_exits_total{cause="stopped"} 0
-# HELP marotte_prompt_failures_total Failed prompts, failed empty-turn retries included, by failure class; pipe_death is a prompt the engine's own exit ended.
+# HELP marotte_prompt_failures_total Failed prompts, failed empty-turn retries included, by failure class; pipe_death is a prompt the engine's own exit ended, signin_outage one refused at once during a known Kiro sign-in outage.
 # TYPE marotte_prompt_failures_total counter
 marotte_prompt_failures_total{class="auth"} 1
 marotte_prompt_failures_total{class="busy"} 0
 marotte_prompt_failures_total{class="fatal"} 0
 marotte_prompt_failures_total{class="pipe_death"} 0
 marotte_prompt_failures_total{class="rejected"} 0
+marotte_prompt_failures_total{class="signin_outage"} 0
 marotte_prompt_failures_total{class="throttled"} 0
 marotte_prompt_failures_total{class="transient"} 0
 # HELP marotte_signin_save_failures_total Sign-in changes the sign-in file could not take, by backend and reason.
@@ -158,13 +160,14 @@ marotte_engine_exits_total{cause="restart_confirmed"} 0
 marotte_engine_exits_total{cause="shutdown"} 0
 marotte_engine_exits_total{cause="stdin_stalled"} 0
 marotte_engine_exits_total{cause="stopped"} 0
-# HELP marotte_prompt_failures_total Failed prompts, failed empty-turn retries included, by failure class; pipe_death is a prompt the engine's own exit ended.
+# HELP marotte_prompt_failures_total Failed prompts, failed empty-turn retries included, by failure class; pipe_death is a prompt the engine's own exit ended, signin_outage one refused at once during a known Kiro sign-in outage.
 # TYPE marotte_prompt_failures_total counter
 marotte_prompt_failures_total{class="auth"} 1
 marotte_prompt_failures_total{class="busy"} 0
 marotte_prompt_failures_total{class="fatal"} 0
 marotte_prompt_failures_total{class="pipe_death"} 0
 marotte_prompt_failures_total{class="rejected"} 0
+marotte_prompt_failures_total{class="signin_outage"} 0
 marotte_prompt_failures_total{class="throttled"} 0
 marotte_prompt_failures_total{class="transient"} 0
 # HELP marotte_signin_save_failures_total Sign-in changes the sign-in file could not take, by backend and reason.
@@ -244,13 +247,14 @@ marotte_engine_exits_total{cause="restart_confirmed"} 0
 marotte_engine_exits_total{cause="shutdown"} 0
 marotte_engine_exits_total{cause="stdin_stalled"} 0
 marotte_engine_exits_total{cause="stopped"} 0
-# HELP marotte_prompt_failures_total Failed prompts, failed empty-turn retries included, by failure class; pipe_death is a prompt the engine's own exit ended.
+# HELP marotte_prompt_failures_total Failed prompts, failed empty-turn retries included, by failure class; pipe_death is a prompt the engine's own exit ended, signin_outage one refused at once during a known Kiro sign-in outage.
 # TYPE marotte_prompt_failures_total counter
 marotte_prompt_failures_total{class="auth"} 1
 marotte_prompt_failures_total{class="busy"} 0
 marotte_prompt_failures_total{class="fatal"} 0
 marotte_prompt_failures_total{class="pipe_death"} 0
 marotte_prompt_failures_total{class="rejected"} 0
+marotte_prompt_failures_total{class="signin_outage"} 0
 marotte_prompt_failures_total{class="throttled"} 0
 marotte_prompt_failures_total{class="transient"} 0
 # HELP marotte_signin_save_failures_total Sign-in changes the sign-in file could not take, by backend and reason.

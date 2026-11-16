@@ -247,7 +247,7 @@ func TestAnswerability_AShortLeaseIsUnreachableUntilAUsableRenewal(t *testing.T)
 }
 
 // Standing's FailingSince is the episode's first failed renewal: later failures keep it, a usable renewal or a new
-// account clears it, and a rejected renewal reads lapsed.
+// account clears it, and a rejected renewal reads lapsed. LastRefusal is what the last ask got.
 func TestStanding_FailingSinceIsTheFirstFailureSinceTheLastUsableRenewal(t *testing.T) {
 	fb := newFake(nil, "cb", "_test/auth/token")
 	h := newHarness(t, fb)
@@ -282,16 +282,16 @@ func TestStanding_FailingSinceIsTheFirstFailureSinceTheLastUsableRenewal(t *test
 	if _, rerr := h.answer("cb"); rerr == nil {
 		t.Fatal("answered while the provider is down")
 	}
-	if s := h.v.Standing("cb"); s.Answerability != ProviderUnreachable || !s.FailingSince.Equal(first) {
-		t.Errorf("Standing after two failed asks = %+v, want provider_unreachable failing since %v", s, first)
+	if s := h.v.Standing("cb"); s.Answerability != ProviderUnreachable || !s.FailingSince.Equal(first) || s.LastRefusal != RefusedUnreachable {
+		t.Errorf("Standing after two failed asks = %+v, want provider_unreachable failing since %v, last ask refused unreachable", s, first)
 	}
 
 	mu.Lock()
 	down = false
 	mu.Unlock()
 	h.mustAnswer("cb")
-	if s := h.v.Standing("cb"); s.Answerability != Answerable || !s.FailingSince.IsZero() {
-		t.Errorf("Standing after a usable renewal = %+v, want answerable, not failing", s)
+	if s := h.v.Standing("cb"); s.Answerability != Answerable || !s.FailingSince.IsZero() || s.LastRefusal != 0 {
+		t.Errorf("Standing after a usable renewal = %+v, want answerable, not failing, last ask served", s)
 	}
 
 	h.clk.advance(2 * time.Hour)
@@ -314,7 +314,7 @@ func TestStanding_FailingSinceIsTheFirstFailureSinceTheLastUsableRenewal(t *test
 	if _, rerr := h.answer("cb"); rerr == nil {
 		t.Fatal("a rejected renewal was answered")
 	}
-	if s := h.v.Standing("cb"); s.Answerability != NeedsSignIn || !s.Lapsed || !s.FailingSince.IsZero() {
-		t.Errorf("Standing after a rejected renewal = %+v, want needs_sign_in, lapsed, not failing", s)
+	if s := h.v.Standing("cb"); s.Answerability != NeedsSignIn || !s.Lapsed || !s.FailingSince.IsZero() || s.LastRefusal != RefusedRejected {
+		t.Errorf("Standing after a rejected renewal = %+v, want needs_sign_in, lapsed, not failing, last ask refused rejected", s)
 	}
 }

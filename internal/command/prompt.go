@@ -477,7 +477,7 @@ func refuseDuringSignInOutage(ctx context.Context, roles *promptRoles, chatID ma
 	if result, err := roles.turnOutcome.AwaitTurn(ctx, chatID, turnID); err == nil && result.Reason != "" {
 		reason = result.Reason
 	}
-	obs.PromptFailed(classAuth.String())
+	obs.PromptFailed(classSignInOutage.String())
 	slog.Warn("prompt refused: the Kiro sign-in service is unreachable", "chat_id", chatID, "turn", turnID)
 	roles.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
 		Code: marotte.ErrCodeAuthTokenUnavailable, Message: reason, TurnScoped: true,
@@ -664,8 +664,7 @@ type failedTurnGrade struct {
 
 // gradeFailedTurn reads the close of turnID, already abandoned for err, and grades it: reason is what its turn_close
 // carries (fallback when it carries none), so a toast says what the card says. A refused credential is noted to the
-// sign-in's health only while the identity provider answers: KAS grades every credential ask the vault refused as
-// unauthenticated, so a refusal during the provider's outage is the outage, not the account's.
+// sign-in's health, which decides whether it is the account's.
 func gradeFailedTurn(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, turnID string, err error, fallback string) failedTurnGrade {
 	g := failedTurnGrade{reason: fallback, class: classifyPromptFailure(err), onCard: true}
 	result, aErr := roles.turnOutcome.AwaitTurn(ctx, chatID, turnID)
@@ -676,10 +675,7 @@ func gradeFailedTurn(ctx context.Context, roles *promptRoles, chatID marotte.Cha
 		return g
 	}
 	g.class, g.auth = classAuth, true
-	if roles.signIn == nil {
-		return g
-	}
-	if !roles.signIn.ProviderUnreachable() {
+	if roles.signIn != nil {
 		roles.signIn.NoteEngineRefusal()
 	}
 	return g
@@ -768,6 +764,9 @@ const (
 	// classAuth is the backend refusing the token rather than the
 	// request. gradeFailedTurn owns when it sends marotte.ErrCodeAuthTokenUnavailable.
 	classAuth
+	// classSignInOutage is a prompt refused before any engine call during a known sign-in outage
+	// (refuseDuringSignInOutage), which the sign-in's own alert reports.
+	classSignInOutage
 )
 
 // validationErrorNames are the backend's names for a request refused as malformed or oversized
@@ -971,6 +970,8 @@ func (c promptFailureClass) String() string {
 		return "rejected"
 	case classAuth:
 		return "auth"
+	case classSignInOutage:
+		return "signin_outage"
 	case classFatal:
 		return "fatal"
 	}
