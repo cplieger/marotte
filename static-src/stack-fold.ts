@@ -1,11 +1,10 @@
-// The holding area's one fold rule, shared by the run bar and the steer stack: folded, a list shows at most
-// `FOLD_AT` lines.
+// The holding area's one fold rule, shared by the run bar and the steer stack.
 
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";
 
-/** From this many items a holding-area list starts folded until the reader chooses: the run bar behind its
- *  header, the steer stack behind its first `FOLD_AT - 1` rows and a fold row. */
+/** Folded, a holding-area list shows at most this many lines until the reader chooses: the run bar folds behind
+ *  its header from `FOLD_AT` runs, the steer stack past `FOLD_AT` rows shows its first `FOLD_AT - 1` and a fold row. */
 export const FOLD_AT = 3;
 
 /** The index the steer stack's fold row takes among `count` rows, or null when it needs none: a fold row
