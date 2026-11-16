@@ -282,7 +282,7 @@ func StampToolResult(r *EntryToolResult, call *EntryToolCall) {
 // in place, so entries must be the caller's own copy. A result's call is looked up in entries,
 // then in context; an entry that does not decode, or derives nothing, is left as stored.
 func ServeToolEntries(entries, context []Entry) {
-	calls := toolCallsByID(context, entries)
+	calls := ToolCallsByID(context, entries)
 	for i := range entries {
 		e := &entries[i]
 		switch e.Kind {
@@ -302,8 +302,8 @@ func ServeToolEntries(entries, context []Entry) {
 	}
 }
 
-// toolCallsByID decodes every tool_call in the lists, a later list's call replacing an earlier's.
-func toolCallsByID(lists ...[]Entry) map[string]*EntryToolCall {
+// ToolCallsByID decodes every tool_call in the lists by entry id, a later list's call replacing an earlier's.
+func ToolCallsByID(lists ...[]Entry) map[string]*EntryToolCall {
 	calls := make(map[string]*EntryToolCall)
 	for _, src := range lists {
 		for i := range src {

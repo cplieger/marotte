@@ -87,42 +87,52 @@ func persistBoundEntry(e *marotte.Entry) {
 	}
 }
 
-// previewEntry bounds a tool_call or tool_result payload to previewBudget in place,
-// marking HasFull when anything was cut, and leaves every other entry alone: the
-// shape the transcript GET serves, where the whole is one bulk fetch away.
-func previewEntry(e *marotte.Entry) {
+// previewEntry stamps a tool_call or tool_result payload with its card title and bounds
+// it to previewBudget in place, marking HasFull when anything was cut, and leaves every
+// other entry alone: the shape the transcript GET serves, where the whole is one bulk
+// fetch away. calls holds the decoded tool_calls by id, a result's join included. The
+// stamp reads the unbounded input, since the cut can drop the command a title is made of.
+func previewEntry(e *marotte.Entry, calls map[string]*marotte.EntryToolCall) {
 	switch e.Kind {
 	case marotte.EntryKindToolCall:
-		var call marotte.EntryToolCall
-		if json.Unmarshal(e.Payload, &call) != nil {
+		call, ok := calls[e.ID]
+		if !ok {
 			return
 		}
-		out, cut := boundToolCall(&call, previewBudget)
-		if cut == (marotte.ToolTruncation{}) {
+		stamped := *call
+		marotte.StampToolCall(&stamped)
+		out, cut := boundToolCall(&stamped, previewBudget)
+		if cut == (marotte.ToolTruncation{}) && stamped.CardTitle == "" && stamped.Loaded == nil {
 			return
 		}
-		out.OutputBytes = cut.OutputBytes
-		out.HasFull = true
+		if cut != (marotte.ToolTruncation{}) {
+			out.OutputBytes, out.HasFull = cut.OutputBytes, true
+		}
 		e.Payload = marshalBounded(e.Payload, out)
 	case marotte.EntryKindToolResult:
 		var res marotte.EntryToolResult
 		if json.Unmarshal(e.Payload, &res) != nil {
 			return
 		}
+		marotte.StampToolResult(&res, calls[marotte.ToolCallIDOfResult(e.ID)])
 		out, cut := boundToolResult(&res, previewBudget)
-		if cut == (marotte.ToolTruncation{}) {
+		if cut == (marotte.ToolTruncation{}) && res.CardTitle == "" && res.Loaded == nil {
 			return
 		}
-		out.OutputBytes = cut.OutputBytes
-		out.HasFull = true
+		if cut != (marotte.ToolTruncation{}) {
+			out.OutputBytes, out.HasFull = cut.OutputBytes, true
+		}
 		e.Payload = marshalBounded(e.Payload, out)
 	default:
 	}
 }
 
-func previewEntries(entries []marotte.Entry) []marotte.Entry {
+// previewEntries serves entries through previewEntry; context holds tool_calls outside
+// entries that a result in entries may settle.
+func previewEntries(entries, context []marotte.Entry) []marotte.Entry {
+	calls := marotte.ToolCallsByID(context, entries)
 	for i := range entries {
-		previewEntry(&entries[i])
+		previewEntry(&entries[i], calls)
 	}
 	return entries
 }

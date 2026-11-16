@@ -567,7 +567,7 @@ func TestPreviewEntry_LeavesASmallEntryAlone(t *testing.T) {
 	e := entryOf("t-1", "", "tc1:result", marotte.EntryKindToolResult,
 		marotte.EntryToolResult{Status: marotte.ToolCompleted, Output: "two lines\nhere\n"})
 	got := *e
-	previewEntry(&got)
+	previewEntry(&got, nil)
 	if &got.Payload[0] != &e.Payload[0] {
 		t.Error("previewEntry re-encoded an entry that needed no cutting")
 	}

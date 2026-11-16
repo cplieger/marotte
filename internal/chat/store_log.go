@@ -391,6 +391,8 @@ type TurnPage struct {
 	Entries     []marotte.Entry
 	OpenEntries []marotte.OpenEntry
 	Subject     []*marotte.SubjectStamp
+	// calls are the turn's tool_calls before `after`, which a result in Entries may settle.
+	calls []marotte.Entry
 }
 
 // TurnPage reads one turn from seq from INCLUSIVE: the repair read a client runs
@@ -417,10 +419,15 @@ func (s *Store) TurnPage(ctx context.Context, chatID marotte.ChatID, turn string
 	if err != nil {
 		return nil, err
 	}
+	calls, err := callsBefore(l, turn, from)
+	if err != nil {
+		return nil, err
+	}
 	page := &TurnPage{
 		Entries:     entries,
 		OpenEntries: []marotte.OpenEntry{},
 		Subject:     []*marotte.SubjectStamp{},
+		calls:       calls,
 	}
 	for _, tail := range tails {
 		if tail.ID != turn {
@@ -435,6 +442,20 @@ func (s *Store) TurnPage(ctx context.Context, chatID marotte.ChatID, turn string
 			s.restStamp(subject.KindLiveTurn, turn, liveTurnVersion(turn, newestSeq)))
 	}
 	return page, nil
+}
+
+// callsBefore is turn's tool_calls with a seq below from, none when from is 0.
+func callsBefore(l *EntryLog, turn string, from uint64) ([]marotte.Entry, error) {
+	if from == 0 {
+		return nil, nil
+	}
+	whole, _, err := l.TurnPage(turn, 0)
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(whole, func(e marotte.Entry) bool {
+		return e.Seq >= from || e.Kind != marotte.EntryKindToolCall
+	}), nil
 }
 
 // liveTurnVersion is the live_turn subject's version, `<turn>:<seq>`: the one

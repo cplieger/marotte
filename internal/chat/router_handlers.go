@@ -104,7 +104,7 @@ func (rt *router) serveChatPage(w http.ResponseWriter, r *http.Request, id marot
 	}
 	httpserver.WriteJSON(w, map[string]any{
 		"chat":         page.Chat,
-		keyEntries:     previewEntries(nonNilEntries(page.Entries)),
+		keyEntries:     previewEntries(nonNilEntries(page.Entries), nil),
 		"open_entries": page.OpenEntries,
 		"has_more":     page.HasMore,
 		"live":         page.Live,
@@ -157,7 +157,7 @@ func (rt *router) handleTurnRange(w http.ResponseWriter, r *http.Request, chatID
 		return
 	}
 	httpserver.WriteJSON(w, map[string]any{
-		keyEntries:     previewEntries(nonNilEntries(page.Entries)),
+		keyEntries:     previewEntries(nonNilEntries(page.Entries), page.calls),
 		"open_entries": page.OpenEntries,
 		keySubject:     page.Subject,
 	})
@@ -290,6 +290,7 @@ func (rt *router) handleExport(w http.ResponseWriter, r *http.Request, chatID ma
 		return
 	}
 	if format == exportFormatJSON {
+		marotte.ServeToolEntries(entries, nil)
 		w.Header().Set("Content-Disposition",
 			dispositionAttachment(exportFilename(c.Name, string(chatID), ".json")))
 		httpserver.WriteJSON(w, map[string]any{"chat": c, keyEntries: nonNilEntries(entries)})
