@@ -7,7 +7,7 @@ vi.mock("../toast.js", () =>
 
 vi.mock("../transport.js", () => ({ send: vi.fn() }));
 
-// The refetch is the success path's point, so the loader is a spy.
+// A spy, so the tests can pin that neither outcome refetches the page.
 vi.mock("../store-load.js", () => ({ loadMessages: vi.fn(() => Promise.resolve(true)) }));
 
 import { send as transportSend } from "../transport.js";
@@ -74,21 +74,13 @@ describe("rewind.revert", () => {
     expect(Object.keys(mod)).toEqual(["rewindChat"]);
   });
 
-  // Nothing on the wire says messages were REMOVED (chat_updated is header-only and upsertHeader
-  // merges the count as Math.max), so without this refetch the reader keeps the dropped turns.
-  it("refetches the chat's messages after a successful rewind", async () => {
-    mockSend.mockResolvedValue({ ok: true, status: 200 });
-    const { rewindChat } = await import("./rewind.js");
-
-    await rewindChat.dispatch({ chatID: "c-1", messageID: "m-abc" });
-
-    expect(mockLoadMessages).toHaveBeenCalledTimes(1);
-    expect(mockLoadMessages).toHaveBeenCalledWith("c-1");
-  });
-
-  // A refusal left the record untouched, so the reader's transcript is still the truth.
-  it("does not refetch when the rewind was refused", async () => {
-    mockSend.mockResolvedValue({ ok: false, status: 409, error: "no bridge" });
+  // The `turn_revert` record converges the window (messages-rewind.test.ts pins it); a page GET
+  // would only repeat it.
+  it.each([
+    ["a successful", { ok: true, status: 200 }],
+    ["a refused", { ok: false, status: 409, error: "no bridge" }],
+  ])("refetches nothing after %s rewind", async (_, answer) => {
+    mockSend.mockResolvedValue(answer);
     const { rewindChat } = await import("./rewind.js");
 
     await rewindChat.dispatch({ chatID: "c-1", messageID: "m-abc" });
