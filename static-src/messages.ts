@@ -1649,8 +1649,7 @@ async function handleRewindClick(target: EntryPrompt): Promise<void> {
     return;
   }
   const proceed = await confirmDialog(rewindConfirmation(target, turns.slice(at)));
-  // Checked again past the await: a second flight would take the map entry the first one's `finally` clears.
-  if (!proceed || refuseSecondRewind(session.id)) {
+  if (!proceed) {
     return;
   }
   rewindInFlight.set(session.id, target.id);

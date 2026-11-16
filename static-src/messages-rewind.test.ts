@@ -461,9 +461,7 @@ describe("a rewind in flight", () => {
     answer({ ok: true, status: 200 });
   });
 
-  it("refuses a confirm that resolves after another rewind of the chat began", async () => {
-    const toast = await import("./toast.js");
-    vi.mocked(toast.notice).mockClear();
+  it("sends one command when /rewind's confirm replaces an open one", async () => {
     const chatID = await paintChat(3);
     let decideFirst: (v: boolean) => void = () => undefined;
     mocks.confirm.mockImplementationOnce(
@@ -472,21 +470,27 @@ describe("a rewind in flight", () => {
           decideFirst = resolve;
         }),
     );
+    // The dialog layer settles the outgoing question with its cancel value when a new one opens.
+    mocks.confirm.mockImplementationOnce(() => {
+      decideFirst(false);
+      return Promise.resolve(true);
+    });
     const answer = holdReply();
     await rewindFirstTurn();
     void messages.rewindLatestTurn(chatID);
     await until(() => mockSend.mock.calls.length === 1, "the second door's command");
-    decideFirst(true);
-    await until(() => vi.mocked(toast.notice).mock.calls.length > 0, "the notice");
-
-    expect(mockSend, "the late confirm sends nothing").toHaveBeenCalledTimes(1);
-    expect(vi.mocked(toast.notice).mock.calls[0]?.[0]).toContain("A rewind is already running.");
     expect(
       rewindButtons().find((b) => b.getAttribute("aria-busy") === "true"),
-      "the running rewind keeps its spinner",
+      "the newest turn's rewind runs",
     ).toBe(rewindButtonOf(cards()[1]));
-
+    // Answered before counting: the action's scope queues a second dispatch behind a held first.
     answer({ ok: true, status: 200 });
+    await until(() => rewindButtons().every((b) => !b.disabled), "the rewind settled");
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(mocks.confirm).toHaveBeenCalledTimes(2);
+    expect(mockSend, "the replaced confirm sends nothing").toHaveBeenCalledTimes(1);
+    expect(mockSend.mock.calls[0]?.[0]).toMatchObject({ payload: { message_id: "t3-p" } });
   });
 
   it("clears on success: the remaining buttons come back enabled with their Rewind face", async () => {
