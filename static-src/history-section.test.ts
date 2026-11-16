@@ -109,7 +109,7 @@ vi.mock("./api-client.js", async (importOriginal) => {
 });
 
 import { adoptRetention } from "./retention.js";
-import { formatClock, setClock } from "./locale-time.js";
+import { formatClock, formatShortDate, formatWeekdayStamp, setClock } from "./locale-time.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_TAB_CHAT, ICON_TRASH } from "./icons.js";
 import { TOUCH_SLOP_PX } from "./context-hold.js";
@@ -167,6 +167,7 @@ afterAll(() => {
 });
 
 beforeEach(() => {
+  vi.setSystemTime(T0);
   localStorage.clear();
   h.headers.value = new Map();
   h.chats = [];
@@ -198,6 +199,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   if (document.querySelector(".tab-context-menu") !== null) {
     document.querySelector<HTMLElement>(".tab-context-item")?.focus();
@@ -243,7 +245,8 @@ async function settle(): Promise<void> {
   }
 }
 
-const T0 = Date.UTC(2026, 10, 10, 13, 5);
+/** Now in every case, 13:05 local time, so a close minutes or hours before it falls on its day. */
+const T0 = new Date(2026, 10, 10, 13, 5).getTime();
 const entry = (ref: string, name: string, minutesAgo = 0): RecentClose => ({
   ref,
   name,
@@ -942,6 +945,45 @@ describe("a closed row to a screen reader and the keyboard", () => {
     const row = browser.getByRole("button", { name: "Reopen Alpha", exact: true }).element();
     expect(row).toBe(rowFor("Alpha"));
     expect(description(row as HTMLElement)).toBe(`Closed at ${formatClock(T0 - 5 * 60_000)}`);
+  });
+
+  it("names a close from an earlier day by its date, and the instant to a reader", async () => {
+    const yesterday = new Date(2026, 10, 9, 22, 55).getTime();
+    await listed({ ref: "c-a", name: "Alpha", closed_at: yesterday });
+    unfold();
+    const row = rowFor("Alpha");
+    const said = `Closed ${formatWeekdayStamp(yesterday)}`;
+    expect(row.querySelector("time")?.textContent).toBe(formatShortDate(yesterday));
+    expect(row.querySelector("time")?.dateTime).toBe(new Date(yesterday).toISOString());
+    expect(description(row)).toBe(said);
+    expect(row.dataset["tooltip"]).toBe(`Reopen Alpha\n${said}`);
+  });
+
+  it("carries the year on a close from the year before", async () => {
+    vi.setSystemTime(new Date(2027, 0, 2, 9, 0));
+    const lastYear = new Date(2026, 11, 30, 18, 0).getTime();
+    await listed({ ref: "c-a", name: "Alpha", closed_at: lastYear });
+    unfold();
+    expect(rowFor("Alpha").querySelector("time")?.textContent).toBe(
+      formatShortDate(lastYear, { year: true }),
+    );
+  });
+
+  it("turns a close's clock into its date at midnight, with no new list", async () => {
+    vi.useFakeTimers({
+      toFake: ["setTimeout", "Date"],
+      shouldAdvanceTime: true,
+      now: new Date(2026, 10, 12, 23, 58),
+    });
+    const closed = new Date(2026, 10, 12, 23, 50).getTime();
+    await listed({ ref: "c-a", name: "Alpha", closed_at: closed });
+    unfold();
+    const row = rowFor("Alpha");
+    expect(row.querySelector("time")?.textContent).toBe(formatClock(closed));
+    vi.advanceTimersByTime(3 * 60_000);
+    await settle();
+    expect(row.querySelector("time")?.textContent).toBe(formatShortDate(closed));
+    expect(description(row)).toBe(`Closed ${formatWeekdayStamp(closed)}`);
   });
 
   it("redraws its time, description and tooltip on a Clock change", async () => {
