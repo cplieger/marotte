@@ -54,11 +54,73 @@ func TestRetention_KeepState(t *testing.T) {
 		"recently_closed_survives_a_restart": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
 			b1 := bootSeam(t, root, eng, logs, seamOpts{})
 			b1.create(t, "c-1", sess("c-1"))
+			b1.create(t, "c-2", sess("c-2"))
+			b1.personClose(t, "c-1")
+			b1.closeTab(t, "c-2")
+			before := b1.tabs.Recent()
+			if len(before) != 2 || before[0].Ref != "c-2" || before[0].Name != "c-2" || before[1].Ref != "c-1" || before[1].Name != "c-1" {
+				t.Fatalf("Setup: Recent() before the restart = %+v, want c-2 then c-1 under their names", before)
+			}
+			b1.shutdown(t)
+			b := bootSeam(t, root, eng, logs, seamOpts{})
+			if got := b.tabs.Recent(); !slices.Equal(got, before) {
+				t.Errorf("Recent() after the restart = %+v, want the previous boot's %+v", got, before)
+			}
+			b.pass(t)
+			if got := b.tabs.Recent(); !slices.Equal(got, before) {
+				t.Errorf("Recent() after the boot's purge pass = %+v, want the previous boot's %+v", got, before)
+			}
+		}},
+		"recently_closed_lists_nothing_with_retention_off_across_a_restart": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
+			b1 := bootSeam(t, root, eng, logs, seamOpts{})
+			b1.create(t, "c-1", sess("c-1"))
+			writeConfig(t, filepath.Join(root, "config.json"), `{"chat_retention_days":0}`)
 			b1.closeTab(t, "c-1")
 			b1.shutdown(t)
 			b := bootSeam(t, root, eng, logs, seamOpts{})
-			if got := b.tabs.Recent(); len(got) != 1 || got[0].Ref != "c-1" || got[0].Name != "c-1" {
-				t.Errorf("Recent() after the restart = %+v, want c-1 listed under its name", got)
+			if got := b.tabs.Recent(); len(got) != 0 {
+				t.Errorf("Recent() after a restart with retention off = %+v, want empty", got)
+			}
+			if b.present(t, "c-1") {
+				t.Error("c-1 is back after a restart with retention off; want deleted")
+			}
+		}},
+		"recently_closed_a_deleted_chat_never_returns": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
+			b1 := bootSeam(t, root, eng, logs, seamOpts{})
+			b1.create(t, "c-1", sess("c-1"))
+			b1.create(t, "c-2", sess("c-2"))
+			b1.closeTab(t, "c-1")
+			b1.closeTab(t, "c-2")
+			if code, body := b1.cmd(t, marotte.CmdDeleteChat, "c-1", nil); code != http.StatusOK {
+				t.Fatalf("delete_chat c-1 = %d %v", code, body)
+			}
+			if got := b1.tabs.Recent(); len(got) != 1 || got[0].Ref != "c-2" {
+				t.Errorf("Recent() after the delete = %+v, want c-2 alone", got)
+			}
+			b1.shutdown(t)
+			b := bootSeam(t, root, eng, logs, seamOpts{})
+			if got := b.tabs.Recent(); len(got) != 1 || got[0].Ref != "c-2" {
+				t.Errorf("Recent() after the restart = %+v, want c-2 alone", got)
+			}
+			if b.present(t, "c-1") {
+				t.Error("the deleted c-1 is back after the restart")
+			}
+		}},
+		"recently_closed_drops_a_chat_removed_behind_its_back_at_boot": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
+			b1 := bootSeam(t, root, eng, logs, seamOpts{})
+			b1.create(t, "c-1", sess("c-1"))
+			b1.closeTab(t, "c-1")
+			// A record gone with its entry left is what a Forget whose write failed leaves.
+			if _, err := b1.chats.Delete(t.Context(), "c-1"); err != nil {
+				t.Fatalf("Setup: remove c-1's record: %v", err)
+			}
+			if got := b1.tabs.Recent(); len(got) != 1 || got[0].Ref != "c-1" {
+				t.Fatalf("Setup: Recent() after the record's removal = %+v, want c-1 still listed", got)
+			}
+			b1.shutdown(t)
+			b := bootSeam(t, root, eng, logs, seamOpts{})
+			if got := b.tabs.Recent(); len(got) != 0 {
+				t.Errorf("Recent() after the restart = %+v, want the gone chat's entry dropped", got)
 			}
 		}},
 		"recently_closed_lists_nothing_with_retention_off": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
