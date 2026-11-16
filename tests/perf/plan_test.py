@@ -1,5 +1,5 @@
 """The performance harness's own contract: the plan cplieger/ci's perf-ci.yaml
-reads, the instance's refusal of the live port, a seeded fixture, the git shim
+reads, the instance's refusal of the live port and its ready, a seeded fixture, the git shim
 that counts fetches, the fake engine's steer answer, the window failures that fail a rep, the
 line that ends a shell drive, and the stream frames a window counts.
 
@@ -12,6 +12,7 @@ import json
 import os
 import pathlib
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -197,6 +198,154 @@ class Serve(unittest.TestCase):
         done = self.refuse('19951x')
         self.assertEqual(done.returncode, 2, done.stderr)
         self.assertIn('PERF_PORT', done.stderr)
+
+
+# The routes serve.sh calls, with the forge inventory's cycle rule of internal/forges'
+# cycleClock: a refresh joins the cycle in flight or asks for the next, and a read that finds no
+# entry asks for a cycle after any in flight. Each cycle's start and entry write go to
+# <instance>/cycles.jsonl.
+FAKE_MAROTTE = """#!/usr/bin/env python3
+import json, os, pathlib, threading, time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+inst = pathlib.Path(os.environ['KIRO_CONFIG_DIR']).parent
+lock = threading.Lock()
+wake = threading.Event()
+st = {'last': 0, 'running': False, 'signed_in': False, 'entry': None}
+
+def note(event, cycle):
+    with open(inst / 'cycles.jsonl', 'a') as f:
+        f.write(json.dumps({'event': event, 'cycle': cycle, 't': time.time()}) + '\\n')
+
+def sweeps():
+    while True:
+        wake.wait()
+        with lock:
+            wake.clear()
+            st['last'] += 1
+            st['running'] = True
+            n = st['last']
+        note('begin', n)
+        time.sleep(0.4)
+        with lock:
+            st['entry'] = {'state': 'ready', 'cycle_id': str(n)}
+        note('put', n)
+        time.sleep(0.2)
+        with lock:
+            st['running'] = False
+
+def started():
+    start = inst / 'trigger' / 'trigger-0000-start.json'
+    while not start.exists():
+        time.sleep(0.05)
+    pathlib.Path(str(start) + '.done').touch()
+
+class H(BaseHTTPRequestHandler):
+    def answer(self, code, body):
+        data = json.dumps(body).encode()
+        self.send_response(code)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        if self.path == '/api/test/sse':
+            return self.answer(200, {'clients': 0})
+        if self.path == '/api/forges/inventory':
+            with lock:
+                if not st['signed_in']:
+                    entries = []
+                elif st['entry'] is None:
+                    entries = [{'state': 'loading', 'cycle_id': '0'}]
+                    wake.set()
+                else:
+                    entries = [st['entry']]
+            return self.answer(200, {'entries': entries})
+        self.answer(404, {})
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get('Content-Length') or 0))
+        if self.path == '/api/forges/login':
+            with lock:
+                st['signed_in'] = True
+                wake.set()
+            return self.answer(200, {})
+        if self.path == '/api/forges/inventory/refresh':
+            with lock:
+                if st['running']:
+                    n = st['last']
+                else:
+                    wake.set()
+                    n = st['last'] + 1
+            return self.answer(202, {'cycle_id': str(n)})
+        self.answer(404, {})
+
+    def log_message(self, *args):
+        pass
+
+threading.Thread(target=sweeps, daemon=True).start()
+threading.Thread(target=started, daemon=True).start()
+host, port = os.environ['LISTEN_ADDR'].rsplit(':', 1)
+ThreadingHTTPServer((host, int(port)), H).serve_forever()
+"""
+
+
+def free_port_pair() -> int:
+    """A port P from 1024 to 65526 with P and P + 9 free, as serve.sh binds."""
+    for _ in range(50):
+        with socket.socket() as a, socket.socket() as b:
+            a.bind(('127.0.0.1', 0))
+            port = a.getsockname()[1]
+            if port > 65526:
+                continue
+            try:
+                b.bind(('127.0.0.1', port + 9))
+            except OSError:
+                continue
+            return port
+    raise RuntimeError('no free port pair')
+
+
+class ServeReady(unittest.TestCase):
+    """serve.sh's ready: the instance it hands over runs no forge inventory cycle, whose frame
+    would land in the first window of a page that connects soon enough."""
+
+    def test_reports_ready_only_once_no_inventory_cycle_is_queued(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build, inst = pathlib.Path(tmp, 'build'), pathlib.Path(tmp, 'instance')
+            build.mkdir()
+            fake = build / 'marotte'
+            fake.write_text(FAKE_MAROTTE)
+            fake.chmod(0o755)
+            for d in ('config', 'trigger', 'forge'):
+                (inst / d).mkdir(parents=True)
+            forge = {'owner': 'o', 'login': 'o', 'repos': [], 'prs': []}
+            (inst / 'forge' / 'forge.json').write_text(json.dumps(forge))
+            (inst / 'seeded.json').write_text('{}')
+            env = {**os.environ, 'PERF_PORT': str(free_port_pair()), 'PERF_BUILD': str(build)}
+            try:
+                done = subprocess.run(
+                    [str(PERF / 'instance' / 'serve.sh'), str(inst)],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    check=False,
+                )
+                returned = time.time()
+                self.assertEqual(done.returncode, 0, done.stderr)
+                # Longer than a fake cycle, so a queued one has begun and written by now.
+                time.sleep(1.5)
+                log = (inst / 'cycles.jsonl').read_text().splitlines()
+            finally:
+                subprocess.run(
+                    [str(PERF / 'instance' / 'stop.sh'), str(inst)], timeout=30, check=False
+                )
+        cycles = [json.loads(line) for line in log]
+        self.assertTrue(cycles, 'the sign-in started no cycle')
+        late = [c for c in cycles if c['t'] > returned]
+        self.assertEqual(late, [], f'serve.sh reported ready before these: {cycles}')
 
 
 class View(unittest.TestCase):
