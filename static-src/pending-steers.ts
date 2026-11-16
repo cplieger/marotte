@@ -40,7 +40,14 @@ import type { PendingSteer, QueuedPrompt, RunEntryView, RunView, RunWait } from 
 import type { Attachment, SendNowKind } from "./wire/types.gen.js";
 import { readQuoted, splitQuotes } from "./message-quote.js";
 import { drawParts } from "./quote-band.js";
-import { buildFoldRow, foldAt, paintFoldRow, type FoldRow } from "./stack-fold.js";
+import {
+  buildFoldRow,
+  paintFoldRow,
+  stackFold,
+  type FoldLine,
+  type FoldRow,
+  type StackFold,
+} from "./stack-fold.js";
 import { setStackOpen, stackOpen } from "./device-view.js";
 
 /** Where an unsent steer goes, from the run order: with an entry's wait, with the chat's next message
@@ -177,9 +184,9 @@ function render(
   const waiting = state.waiting;
   const rows = dockRows(steers, run);
   const open = stackOpen() === true;
-  const place = placeFold(rows);
-  if (place !== null) {
-    rows.splice(place.at, 0, { kind: "fold", hidden: place.hidden, open });
+  const folding = stackFold(rows.map(foldLine));
+  if (folding !== null) {
+    rows.splice(folding.at, 0, { kind: "fold", hidden: folding.hidden, open });
   }
 
   if (rows.length === 0) {
@@ -201,7 +208,7 @@ function render(
   // Arrival order, so the newest sits at the bottom nearest the box it was typed into and every
   // earlier one moves up.
   reconcile(stack, rows, rowSpec(state));
-  applyFold(stack, fold, open, held, foldWas);
+  applyFold(stack, fold, open ? null : folding, held, foldWas);
 
   // Announce only on the same chat, and only the WAITING count — the number the user is waiting to
   // see fall. A pure chat switch is not news.
@@ -218,35 +225,29 @@ function render(
   announced.id = id;
 }
 
-/** Where the fold row goes among `rows` and how many messages it hides, or null for none. The paused
- *  queue's head carries the queue's Resume, so the fold starts below it; a fold left hiding one row, or
- *  no message, saves no line (`foldAt`). */
-function placeFold(rows: readonly DockRow[]): { at: number; hidden: number } | null {
-  const first = foldAt(rows.length);
-  if (first === null) {
-    return null;
-  }
-  const paused = rows.findIndex((r) => r.kind === "paused");
-  const at = paused >= first ? paused + 1 : first;
-  const hidden = rows.slice(at).filter((r) => r.kind === "steer" || r.kind === "queued").length;
-  return rows.length - at > 1 && hidden > 0 ? { at, hidden } : null;
+function foldLine(r: DockRow): FoldLine {
+  return r.kind === "steer" || r.kind === "queued"
+    ? "message"
+    : r.kind === "paused"
+      ? "pinned"
+      : "other";
 }
 
-/** Marks every row after the fold row while folded (`.steer-stack > [data-folded]`, 26-dock.css), and keeps
+/** Marks the rows `folding` hides (`.steer-stack > [data-folded]`, 26-dock.css), none for null, and keeps
  *  focus a fold hid or a leaving fold row took off `<body>`: on the toggle, or on the row now at `foldWas`,
  *  the index the fold row held before this render. */
 function applyFold(
   stack: HTMLUListElement,
   fold: FoldRow,
-  open: boolean,
+  folding: StackFold | null,
   held: HTMLElement | null,
   foldWas: number,
 ): void {
-  let after = false;
+  let row = 0;
   for (const child of stack.children) {
-    child.toggleAttribute("data-folded", after && !open);
-    if (child === fold.li) {
-      after = true;
+    if (child !== fold.li) {
+      child.toggleAttribute("data-folded", folding !== null && folding.shown[row] === false);
+      row++;
     }
   }
   if (held === null) {

@@ -1157,8 +1157,8 @@ describe("the steer stack", () => {
     expect(rows().map(labelOf)).toEqual(["After the next turn"]);
   });
 
-  // Folded, a holding-area list shows at most `FOLD_AT` (3) lines: past three rows the stack shows its first
-  // two and a fold row naming the rest, as the run bar folds behind its one header line from three runs.
+  // Past three messages the stack shows its first two and a fold row naming the rest, as the run bar folds
+  // behind its one header line from three runs.
   describe("the stack's fold", () => {
     let styleEl: HTMLStyleElement | null = null;
     const extra: HTMLElement[] = [];
@@ -1352,39 +1352,61 @@ describe("the steer stack", () => {
       ];
     }
 
-    it("keeps a paused queue's head with its Resume out of the fold, folding the rows under it", () => {
+    const PAUSED = "Stopped. The messages below wait for your next message or Resume";
+
+    /** The stack's lines top to bottom as a reader sees them, the fold row by its words. */
+    function linesIn(stack: Element): string[] {
+      return Array.from(stack.children)
+        .filter((c): c is HTMLElement => c instanceof HTMLElement && c.checkVisibility())
+        .map((c) => (c === foldIn(stack) ? toggleIn(stack).textContent : textOf(c)));
+    }
+
+    it("keeps a paused queue's head with its Resume under the fold row, folding the rows after it", () => {
       withRun(stoppedBehind(2, 3), { send: "prompt" }, false);
 
-      expect(shownIn(chatStack())).toEqual([
-        "m-a1",
-        "m-a2",
-        "Stopped. The messages below wait for your next message or Resume",
-      ]);
+      expect(linesIn(chatStack())).toEqual(["m-a1", "m-a2", "+3 more", PAUSED]);
       expect(actions(rowAt(2))).toEqual(["Resume the queue"]);
       const toggle = toggleIn(chatStack());
-      expect(toggle.textContent).toBe("+3 more");
       expect(toggle.getAttribute("aria-label")).toBe("Show 3 more waiting messages");
     });
 
-    it("draws no fold when keeping the paused queue's head leaves it a single row to hide", () => {
-      withRun(stoppedBehind(2, 1), { send: "prompt" }, false);
+    it("folds the rows ahead of a paused queue's head behind their first two, the head under the fold row", () => {
+      withRun(stoppedBehind(5, 2), { send: "prompt" }, false);
 
-      expect(foldIn(chatStack())).toBeNull();
-      expect(shownIn(chatStack())).toEqual([
+      expect(linesIn(chatStack())).toEqual(["m-a1", "m-a2", "+5 more", PAUSED]);
+      expect(actions(rowAt(5))).toEqual(["Resume the queue"]);
+    });
+
+    it("opens a fold over a paused queue's head in send order", () => {
+      withRun(stoppedBehind(3, 2), { send: "prompt" }, false);
+
+      toggleIn(chatStack()).click();
+
+      expect(linesIn(chatStack())).toEqual([
         "m-a1",
         "m-a2",
-        "Stopped. The messages below wait for your next message or Resume",
+        "Show fewer",
+        "m-a3",
+        PAUSED,
         "m-p1",
+        "m-p2",
       ]);
     });
 
-    it("hands the toggle's focus to the row in its place when a fold below the paused head leaves", () => {
+    it("draws no fold over three messages and a paused queue's head", () => {
+      withRun(stoppedBehind(2, 1), { send: "prompt" }, false);
+
+      expect(foldIn(chatStack())).toBeNull();
+      expect(shownIn(chatStack())).toEqual(["m-a1", "m-a2", PAUSED, "m-p1"]);
+    });
+
+    it("hands the toggle's focus to the paused queue's Resume when the fold above it leaves", () => {
       withRun(stoppedBehind(2, 3), { send: "prompt" }, false);
       toggleIn(chatStack()).focus();
 
       withRun(stoppedBehind(2, 1), { send: "prompt" }, false);
 
-      expect(document.activeElement).toBe(rowAt(3).querySelector(".steer-act"));
+      expect(document.activeElement).toBe(actionButton(rowAt(2), "Resume the queue"));
     });
 
     it("counts only the messages it hides, never a queued compaction", () => {

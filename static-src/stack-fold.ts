@@ -3,15 +3,41 @@
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";
 
-/** Folded, a holding-area list shows this many lines until the reader chooses: the run bar folds behind its
- *  header from `FOLD_AT` runs, the steer stack past `FOLD_AT` rows shows its first `FOLD_AT - 1` and a fold
- *  row, further down only to keep the paused queue's head (`placeFold`, pending-steers.ts). */
+/** The fold threshold: the run bar folds behind its header from `FOLD_AT` runs; the steer stack, past `FOLD_AT`
+ *  messages, shows its first `FOLD_AT - 1` and a fold row (`stackFold`). */
 export const FOLD_AT = 3;
 
-/** The index the steer stack's fold row takes among `count` rows, or null when it needs none: a fold row
- *  hiding a single row would save no line. */
-export function foldAt(count: number): number | null {
-  return count > FOLD_AT ? FOLD_AT - 1 : null;
+/** A steer stack row as the fold sees it: a waiting message, counted and folded; the paused queue's head,
+ *  never folded because it carries the queue's Resume; any other row, folded uncounted. */
+export type FoldLine = "message" | "pinned" | "other";
+
+export interface StackFold {
+  /** The index among the rows the fold row goes in at. */
+  readonly at: number;
+  /** The messages it hides, at least two. */
+  readonly hidden: number;
+  /** Per row, whether it stays shown while the stack is folded. */
+  readonly shown: readonly boolean[];
+}
+
+/** The steer stack's fold over its rows in send order, or null for `FOLD_AT` messages or fewer: the fold
+ *  row goes in after the `FOLD_AT - 1`th message and hides every later row but a pinned one. */
+export function stackFold(lines: readonly FoldLine[]): StackFold | null {
+  const messages = lines.filter((l) => l === "message").length;
+  if (messages <= FOLD_AT) {
+    return null;
+  }
+  let at = 0;
+  for (let seen = 0; seen < FOLD_AT - 1; at++) {
+    if (lines[at] === "message") {
+      seen++;
+    }
+  }
+  return {
+    at,
+    hidden: messages - (FOLD_AT - 1),
+    shown: lines.map((l, i) => i < at || l === "pinned"),
+  };
 }
 
 export interface FoldRow {
