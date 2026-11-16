@@ -98,13 +98,13 @@ func (rt *Runtime) admitSwitchModel(ctx context.Context, chatID marotte.ChatID, 
 
 // parkSwitch writes an admitted park onto the record; an empty pair clears the one parked.
 func (rt *Runtime) parkSwitch(ctx context.Context, chatID marotte.ChatID, park pendingPair) error {
-	if _, err := rt.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
+	if _, err := rt.chatStore.Mutate(ctx, chatID, marotte.BotWriter(func(c *marotte.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
 		c.PendingModel, c.PendingEffort = park.model, park.effort
 		return true
-	}); err != nil {
+	})); err != nil {
 		slog.Error("switch_model: write pending_model", "chat_id", chatID, "error", err)
 		return command.StatusError(http.StatusInternalServerError, err)
 	}

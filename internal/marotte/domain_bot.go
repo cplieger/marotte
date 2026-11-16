@@ -40,10 +40,48 @@ type Bot struct {
 	StartedAt int64 `json:"started_at,omitempty"`
 	// ClosedAt is the unix ms the Bot's tab was closed; 0 while it is open.
 	ClosedAt int64 `json:"closed_at,omitempty"`
-	// SpecVersion is bumped by every bot_save that changes the Bot, which a save sends back as its base_version.
+	// SpecVersion moves once per user command write that changes the Bot's view (BotWriter), which a save sends
+	// back as its base_version.
 	SpecVersion int  `json:"spec_version"`
 	Memory      bool `json:"memory"`
 	Paused      bool `json:"paused,omitempty"`
+}
+
+// BotView is a Bot as a save states it: the model and effort its next turn runs on, so a pick parked behind a turn
+// or thinking already off compares equal to the save that sends it back.
+type BotView struct {
+	Name, Goal, Steering, Model, Effort string
+	Memory, Started, Supervised         bool
+}
+
+// BotView is c's view; c must be a Bot.
+func (c *Chat) BotView() BotView {
+	return BotView{
+		Name: c.Name, Goal: c.Bot.Goal, Steering: c.Bot.Steering, Model: c.NextModel(), Effort: c.NextEffort(),
+		Memory: c.Bot.Memory, Started: c.Bot.StartedAt != 0, Supervised: c.SupervisedMode,
+	}
+}
+
+// BotWriter wraps a user command's record mutation so it bumps SpecVersion once when it changes a Bot's view: every
+// command that writes the view goes through it, so a stale save's base check sees the change. Engine reports write
+// unwrapped and never move SpecVersion.
+func BotWriter(mutate func(c *Chat, exists bool) bool) func(c *Chat, exists bool) bool {
+	return func(c *Chat, exists bool) bool {
+		var was *BotView
+		if c.Bot != nil {
+			v := c.BotView()
+			was = &v
+		}
+		if !mutate(c, exists) {
+			return false
+		}
+		if was != nil && c.Bot != nil && c.BotView() != *was {
+			b := *c.Bot
+			b.SpecVersion++
+			c.Bot = &b
+		}
+		return true
+	}
 }
 
 // ErrBotDraft refuses a session, prompt or fork for a Bot not yet started: a draft has no role to run on.

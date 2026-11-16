@@ -79,6 +79,7 @@ type TabSet interface {
 	Open(ctx context.Context, spec marotte.OpenTab) (subject marotte.TabSubject, created bool, version uint64, err error)
 	Close(ctx context.Context, id string, unlisted []string, facts map[string]tabs.RecentFacts) ([]marotte.TabSubject, []tabs.OwedRelease, uint64, error)
 	Forget(ctx context.Context, ref string) (uint64, error)
+	Relist(ctx context.Context, entries []marotte.RecentClose) (uint64, error)
 	ExpireRecent(ctx context.Context) (uint64, error)
 	Recent() []marotte.RecentClose
 	Reorder(ctx context.Context, ids []string) (uint64, error)
@@ -105,6 +106,8 @@ type membershipChats interface {
 	// SessionInTeardown names a session of a chat whose retention teardown still runs.
 	SessionInTeardown(sessionID string) bool
 	ReconcileKeep(ctx context.Context, id marotte.ChatID, fn func(r *chat.KeepRecord)) error
+	// DeleteIf deletes id only when doomed, run on the record under its lock, says so.
+	DeleteIf(ctx context.Context, id marotte.ChatID, doomed func(*marotte.Chat) bool) (sessionChain []string, deleted bool, err error)
 }
 
 var _ membershipChats = (*chat.Store)(nil)
@@ -704,7 +707,7 @@ func (m *Membership) closeTab(ctx context.Context, id, opID string, byPerson boo
 		m.mu.Unlock()
 		return nil, 0, check.refusal(errCloseImpactChanged, "tab", id)
 	}
-	doomed := m.doomedChats(ctx, id)
+	doomed, retained := m.doomedChats(ctx, id)
 	before := m.tabs.Recent()
 	closed, owed, version, err := m.tabs.Close(ctx, id, chatRefs(doomed), m.recentFacts(ctx, chats))
 	if err != nil {
@@ -731,8 +734,9 @@ func (m *Membership) closeTab(ctx context.Context, id, opID string, byPerson boo
 	})
 	m.noticeClosed(closed)
 	stops := m.releaseForClosed(rollCtx, owed, "", byPerson && m.closeChat != nil)
-	deleted := m.deleteDoomedRecords(rollCtx, doomed)
+	deleted, kept := m.deleteDoomedRecords(rollCtx, doomed, retained)
 	m.markBotsClosed(rollCtx, closed, owed, deleted)
+	m.relistKept(rollCtx, closed, owed, kept, opID)
 	jobs, retentionTabClosed := jobsFor(closed, deleted, holds, stops, byPerson)
 	after := m.enqueueAll(jobs)
 	m.mu.Unlock()
@@ -851,35 +855,37 @@ func releaseAll(holds map[marotte.ChatID]ChatHold) {
 }
 
 // doomedChats decides what a close of id will delete among the chats whose open tabs all lie inside the closing
-// subtree: a Bot draft at every Days kept, no started Bot ever, and any other chat only with retention off. A
-// recordless chat is skipped: no chat_deleted for an id no device knows.
+// subtree, by doomedRecord, with the retention setting it read. A recordless chat is skipped: no chat_deleted for an
+// id no device knows.
 //
 // Caller holds mu.
-func (m *Membership) doomedChats(ctx context.Context, id string) []marotte.ChatID {
+func (m *Membership) doomedChats(ctx context.Context, id string) (doomed []marotte.ChatID, retained bool) {
 	if m.deleteChat == nil || m.retention == nil {
 		// Escalation unwired: a close can only close, the fail-toward-keeping direction.
-		return nil
+		return nil, true
 	}
 	refs := m.tablessChatRefs(m.tabs.Subtree(id))
 	if len(refs) == 0 {
-		return nil
+		return nil, true
 	}
-	retained := m.retention(ctx)
-	doomed := make([]marotte.ChatID, 0, len(refs))
+	retained = m.retention(ctx)
+	doomed = make([]marotte.ChatID, 0, len(refs))
 	for _, ref := range refs {
 		chatID := marotte.ChatID(ref)
-		c, ok := m.chats.Get(ctx, chatID)
-		switch {
-		case !ok:
-		case c.Bot != nil:
-			if c.Bot.StartedAt == 0 {
-				doomed = append(doomed, chatID)
-			}
-		case !retained:
+		if c, ok := m.chats.Get(ctx, chatID); ok && doomedRecord(c, retained) {
 			doomed = append(doomed, chatID)
 		}
 	}
-	return doomed
+	return doomed, retained
+}
+
+// doomedRecord reports whether a close that leaves c tabless deletes it: a Bot draft at every Days kept, no started
+// Bot ever, and any other chat only with retention off.
+func doomedRecord(c *marotte.Chat, retained bool) bool {
+	if c.Bot != nil {
+		return c.Bot.StartedAt == 0
+	}
+	return !retained
 }
 
 // Caller holds mu.
@@ -910,28 +916,69 @@ func (m *Membership) tablessChatRefs(subtree []marotte.TabSubject) []string {
 	return refs
 }
 
-// deleteDoomedRecords removes each doomed chat's record — tombstone and
-// chat_deleted happen inside Delete — and returns the session chains of
-// the ones that actually went. A failed delete logs ERROR and is left out
-// of the result, demoting that chat to the close-grade teardown.
+// deleteDoomedRecords removes each doomed chat whose record doomedRecord still dooms under its lock (tombstone and
+// chat_deleted happen inside the delete) and returns the session chains of the ones that went, and the ones a start
+// landing since doomedChats' read made a started Bot, which are kept. A failed delete logs ERROR and is in neither,
+// demoting that chat to the close-grade teardown.
 //
 // Caller holds mu; ctx is the detached roll-forward context.
-func (m *Membership) deleteDoomedRecords(ctx context.Context, doomed []marotte.ChatID) map[marotte.ChatID][]string {
+func (m *Membership) deleteDoomedRecords(
+	ctx context.Context, doomed []marotte.ChatID, retained bool,
+) (deleted map[marotte.ChatID][]string, kept []marotte.ChatID) {
 	if len(doomed) == 0 {
-		return nil
+		return nil, nil
 	}
-	deleted := make(map[marotte.ChatID][]string, len(doomed))
+	deleted = make(map[marotte.ChatID][]string, len(doomed))
+	still := func(c *marotte.Chat) bool { return doomedRecord(c, retained) }
 	for _, chatID := range doomed {
-		chain, err := m.chats.Delete(ctx, chatID)
-		if err != nil {
+		chain, gone, err := m.chats.DeleteIf(ctx, chatID, still)
+		switch {
+		case err != nil:
 			slog.Error("close: record delete failed after the tab close committed; the record survives with close-grade teardown",
 				"chat_id", chatID, keyError, err)
+		case !gone:
+			slog.Info("bots: a Bot started while its draft's tab closed; kept as a closed Bot", "chat_id", chatID)
+			kept = append(kept, chatID)
+		default:
+			slog.Info("chat deleted on close", "chat_id", chatID)
+			deleted[chatID] = chain
+		}
+	}
+	return deleted, kept
+}
+
+// relistKept puts each kept chat, which the close unlisted to delete, back on the Recently closed list as the close
+// would have listed it, and announces the list. A failed write leaves the Bot closed and reachable from History.
+// Caller holds mu.
+func (m *Membership) relistKept(
+	ctx context.Context, closed []marotte.TabSubject, owed []tabs.OwedRelease, kept []marotte.ChatID, opID string,
+) {
+	if len(kept) == 0 {
+		return
+	}
+	facts := m.recentFacts(ctx, kept)
+	entries := make([]marotte.RecentClose, 0, len(kept))
+	for _, chatID := range kept {
+		ref := string(chatID)
+		i := slices.IndexFunc(owed, func(o tabs.OwedRelease) bool { return o.Kind == marotte.TabKindChat && o.Ref == ref })
+		if i < 0 {
 			continue
 		}
-		slog.Info("chat deleted on close", "chat_id", chatID)
-		deleted[chatID] = chain
+		pinned := slices.ContainsFunc(closed, func(t marotte.TabSubject) bool {
+			return t.Kind == marotte.TabKindChat && t.Ref == ref && t.Pinned
+		})
+		f := facts[ref]
+		entries = append(entries, marotte.RecentClose{Ref: ref, Name: f.Name, ClosedAt: owed[i].ClosedAt, Pinned: pinned, Bot: f.Bot})
 	}
-	return deleted
+	before := m.tabs.Recent()
+	version, err := m.tabs.Relist(ctx, entries)
+	if err != nil {
+		slog.Warn("tabs: a kept Bot could not be listed as recently closed", "chats", kept, keyError, err)
+		return
+	}
+	if recent := m.recentChange(before); recent != nil {
+		m.emit(ctx, &marotte.TabsChangedPayload{Recent: recent, Version: version, OpID: opID})
+	}
 }
 
 // reorderTabs replaces the order. ids must name every open tab exactly

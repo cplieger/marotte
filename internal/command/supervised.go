@@ -55,13 +55,13 @@ func applySupervised(
 		return err
 	}
 
-	if _, err := chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
+	if _, err := chats.Mutate(ctx, chatID, marotte.BotWriter(func(c *marotte.Chat, exists bool) bool {
 		if !exists || c.SupervisedMode == enabled {
 			return false
 		}
 		c.SupervisedMode = enabled
 		return true
-	}); err != nil {
+	})); err != nil {
 		return StatusError(http.StatusInternalServerError, err)
 	}
 	return nil

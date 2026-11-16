@@ -291,7 +291,10 @@ export interface Bot {
   started_at?: number;
   /** ClosedAt is the unix ms the Bot's tab was closed; 0 while it is open. */
   closed_at?: number;
-  /** SpecVersion is bumped by every bot_save that changes the Bot, which a save sends back as its base_version. */
+  /**
+   * SpecVersion moves once per user command write that changes the Bot's view (BotWriter), which a save sends
+   * back as its base_version.
+   */
   spec_version: number;
   memory: boolean;
   paused?: boolean;

@@ -79,6 +79,8 @@ type chatRecords interface {
 	SetAttachments(ctx context.Context, id marotte.ChatID, paths []string) (*marotte.ComposerState, error)
 	// Delete removes the chat directory; only cmdDeleteChat calls it.
 	Delete(ctx context.Context, id marotte.ChatID) (sessionChain []string, err error)
+	// DeleteIf is the membership coordinator's conditional delete of a closed draft.
+	DeleteIf(ctx context.Context, id marotte.ChatID, doomed func(*marotte.Chat) bool) (sessionChain []string, deleted bool, err error)
 	// Revert and the other log reads are command.chatStore's and translate.chatRecords'.
 	Revert(ctx context.Context, chatID marotte.ChatID, turn, kasMessageID string) (record *marotte.Entry, minted []*marotte.Entry, err error)
 	PromptTarget(ctx context.Context, chatID marotte.ChatID, promptID string) (marotte.PromptTarget, bool, error)

@@ -216,3 +216,16 @@ func (h headerClaims) SessionOwners(ctx context.Context) chat.OwnerScan {
 	}
 	return chat.OwnerScan{Owners: owners, Listed: true, Complete: true}
 }
+
+// DeleteIf decides on the store's own record, then deletes; the fakes it wraps run one test goroutine at a time.
+func (k *keepingStore) DeleteIf(ctx context.Context, id marotte.ChatID, doomed func(*marotte.Chat) bool) ([]string, bool, error) {
+	c, found, err := k.Lookup(ctx, id)
+	if err != nil {
+		return nil, false, err
+	}
+	if found && doomed != nil && !doomed(c) {
+		return nil, false, nil
+	}
+	chain, err := k.Delete(ctx, id)
+	return chain, err == nil, err
+}

@@ -53,7 +53,7 @@ func cmdRenameChat(
 	}
 	var chain []string
 	found, changed, startedBot := false, false, false
-	if _, err := chats.Mutate(ctx, cmd.ChatID, func(c *marotte.Chat, exists bool) bool {
+	if _, err := chats.Mutate(ctx, cmd.ChatID, marotte.BotWriter(func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -62,7 +62,7 @@ func cmdRenameChat(
 		startedBot = c.Bot != nil && c.Bot.StartedAt != 0
 		changed = setUserName(c, name)
 		return changed
-	}); err != nil {
+	})); err != nil {
 		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 	if !found {

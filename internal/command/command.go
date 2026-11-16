@@ -8,6 +8,7 @@
 package command
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/apicaller"
 	"github.com/cplieger/marotte/internal/httpreply"
@@ -147,6 +149,9 @@ type Dispatcher struct {
 	merges *tangentMerges
 	// carryStop is cmdCancel's carrying out of a stop, bound at registration like prompts.
 	carryStop func(ctx context.Context, chatID marotte.ChatID, rs RunStop) error
+	// botWrites holds one user command that writes a Bot's view per chat, from its read until it answers, so a
+	// bot_save's base check stays true through its write: every other writer of the view bumps spec_version.
+	botWrites *keylock.Set[marotte.ChatID]
 	// changes is bound at registration, like prompts.
 	changes detachedChange
 	mu      sync.RWMutex
@@ -155,7 +160,7 @@ type Dispatcher struct {
 // New constructs a Dispatcher. A handler's own collaborators arrive at
 // registration (see RegisterDefaults).
 func New() *Dispatcher {
-	return &Dispatcher{handlers: make(map[marotte.CommandType]Handler)}
+	return &Dispatcher{handlers: make(map[marotte.CommandType]Handler), botWrites: keylock.New(cmp.Compare[marotte.ChatID])}
 }
 
 // register adds a handler for the given command type.
@@ -165,10 +170,25 @@ func (d *Dispatcher) register(t marotte.CommandType, h Handler) {
 	d.mu.Unlock()
 }
 
-// RegisterChange adds a handler whose engine call can outlast its request: its request answers 504
+// registerChange adds a handler whose engine call can outlast its request: its request answers 504
 // still_applying once the answer budget RegisterDefaults bound passes, and the change lands when kiro-cli answers.
-func (d *Dispatcher) RegisterChange(t marotte.CommandType, h Handler) {
+func (d *Dispatcher) registerChange(t marotte.CommandType, h Handler) {
 	d.register(t, d.changes.wrap(t, h))
+}
+
+// RegisterBotWriteChange is registerChange for a command that writes a Bot's view: it runs under the chat's botWrites
+// lock, except in-process, where the command that applies it already holds that lock.
+func (d *Dispatcher) RegisterBotWriteChange(t marotte.CommandType, h Handler) {
+	d.registerChange(t, func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
+		if ctx.Value(inProcessKey{}) == nil {
+			unlock, err := lockSessionChange(ctx, d.botWrites, cmd.ChatID)
+			if err != nil {
+				return nil, err
+			}
+			defer unlock()
+		}
+		return h(ctx, cmd)
+	})
 }
 
 func (d *Dispatcher) handler(t marotte.CommandType) (Handler, bool) {

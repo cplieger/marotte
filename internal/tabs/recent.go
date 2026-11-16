@@ -128,6 +128,20 @@ func (s *Store) Forget(ctx context.Context, ref string) (uint64, error) {
 	})
 }
 
+// Relist puts entries, chats a close unlisted, at the head of the Recently closed list in their order, and cuts the
+// list to maxRecent. No entries bumps nothing.
+func (s *Store) Relist(ctx context.Context, entries []marotte.RecentClose) (uint64, error) {
+	return s.mutate(ctx, func(st *state, _ int64) (bool, error) {
+		if len(entries) == 0 {
+			return false, nil
+		}
+		// No dedupe: an unlisted chat has no entry, and no open tab to gain one.
+		head := append(slices.Clone(entries), st.recent...)
+		st.recent = head[:min(len(head), maxRecent)]
+		return true, nil
+	})
+}
+
 // ExpireRecent drops every entry whose window has ended by the store's clock, with a version of
 // its own, and bumps nothing when none has. It is the only removal that is not part of another change.
 func (s *Store) ExpireRecent(ctx context.Context) (uint64, error) {

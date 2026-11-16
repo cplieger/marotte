@@ -22,6 +22,12 @@ const botRoleMessage = "This Bot's role did not load. Its next message retries."
 // so the role's paths sit under it.
 func botRuntime(t *testing.T, bridges ...*fakeBridge) (*Runtime, *testChatStore) {
 	t.Helper()
+	return botRuntimeWith(t, nil, bridges...)
+}
+
+// botRuntimeWith is botRuntime built with opts.
+func botRuntimeWith(t *testing.T, opts []Option, bridges ...*fakeBridge) (*Runtime, *testChatStore) {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	// KIRO_HOME exists as kiro-cli and marotte's boot steering leave it; a Bot's memory file is made below it.
@@ -41,7 +47,7 @@ func botRuntime(t *testing.T, bridges ...*fakeBridge) (*Runtime, *testChatStore)
 		return b
 	}
 	cs := newTestChatStore()
-	h := newRuntimeOn(context.Background(), "/tmp/work", fakeEngineOf(factory, nil), cs)
+	h := newRuntimeOn(context.Background(), "/tmp/work", fakeEngineOf(factory, nil), cs, opts...)
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	settleBoot(t, h)

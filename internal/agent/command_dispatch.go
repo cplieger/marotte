@@ -55,7 +55,7 @@ func (rt *Runtime) registerCommandHandlers() {
 		Conversations: rt,
 	})
 
-	rt.dispatcher.RegisterChange(marotte.CmdSwitchModel, rt.cmdSwitchModel)
+	rt.dispatcher.RegisterBotWriteChange(marotte.CmdSwitchModel, rt.cmdSwitchModel)
 }
 
 func tabSetOrNil(st *tabs.Store) command.TabSet {

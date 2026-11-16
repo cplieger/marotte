@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/marotte/internal/bot"
@@ -109,7 +110,7 @@ func newBotRoles(t *testing.T, store chatStore) (*botRoles, *botFakes) {
 		kickoff:         f.kickoff,
 		paths:           bot.Paths{KiroHome: t.TempDir()},
 		supervisedLocks: keylock.New(cmp.Compare[marotte.ChatID]),
-		saveLocks:       keylock.New(cmp.Compare[marotte.ChatID]),
+		writes:          keylock.New(cmp.Compare[marotte.ChatID]),
 	}, f
 }
 
@@ -302,6 +303,58 @@ func TestCmdBotSave_ASecondDevicesSaveWaitsAndIsRefusedOnTheStaleBase(t *testing
 				c.Bot.Goal, c.Bot.SpecVersion, c.SupervisedMode)
 		}
 	})
+}
+
+func TestCmdBotSave_ARenameArrivingDuringASaveWaitsAndLandsAfterIt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		store := testsupport.NewInMemoryChatStore()
+		seedBot(t, store, "c-bot", "Watcher", &marotte.Bot{Goal: "Old goal", StartedAt: 1, SpecVersion: 3})
+		racing := &saveAfterRead{chatStore: store}
+		roles, f := newBotRoles(t, racing)
+		d := New()
+		d.RegisterBotWriteChange(marotte.CmdRenameChat, bind3(chatStore(store), SessionRenamer(f), BotReloader(f), cmdRenameChat))
+		roles.writes = d.botWrites
+		rename, _ := d.handler(marotte.CmdRenameChat)
+		var renameErr error
+		done := make(chan struct{})
+		racing.other = func() {
+			go func() {
+				defer close(done)
+				_, renameErr = rename(t.Context(), renameReq(t, "c-bot", "CI watcher"))
+			}()
+			synctest.Wait()
+		}
+
+		body := saveBot(t, roles, "c-bot", &marotte.BotSaveCommand{Name: "Watcher", Goal: "My goal", BaseVersion: 3})
+		<-done
+
+		if body["spec_version"] != 4 || renameErr != nil {
+			t.Errorf("save answered spec_version %v, rename %v; want 4 and the rename applied after", body["spec_version"], renameErr)
+		}
+		if c := botOf(t, store, "c-bot"); c.Name != "CI watcher" || c.Bot.Goal != "My goal" || c.Bot.SpecVersion != 5 {
+			t.Errorf("name %q goal %q version %d, want the save's goal then the rename, at 5", c.Name, c.Bot.Goal, c.Bot.SpecVersion)
+		}
+	})
+}
+
+func TestDispatcher_ABotWriteRunInProcessDoesNotWaitForTheLockItsCallerHolds(t *testing.T) {
+	d := New()
+	ran := false
+	d.RegisterBotWriteChange(marotte.CmdRenameChat, func(context.Context, *marotte.ClientCommand) (any, error) {
+		ran = true
+		return nil, nil
+	})
+	unlock, err := d.botWrites.Lock(t.Context(), "c-bot")
+	if err != nil {
+		t.Fatalf("Setup: lock: %v", err)
+	}
+	defer unlock()
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if err := d.Run(ctx, &marotte.ClientCommand{Type: marotte.CmdRenameChat, ChatID: "c-bot"}); err != nil || !ran {
+		t.Errorf("Run under the caller's lock = %v ran %v, want it run at once", err, ran)
+	}
 }
 
 func TestCmdBotSave_AChangeBumpsTheSpecVersionAndAnswersIt(t *testing.T) {
