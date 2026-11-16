@@ -211,6 +211,10 @@ func (*fixedTabs) Relist(context.Context, []marotte.RecentClose) (uint64, error)
 
 func (*fixedTabs) ExpireRecent(context.Context) (uint64, error) { return 2, nil }
 
+func (*fixedTabs) SetRecentWindow(context.Context, time.Duration) (uint64, error) { return 2, nil }
+
+func (*fixedTabs) RecentExpiry() (time.Time, bool) { return time.Time{}, false }
+
 func (*fixedTabs) Recent() []marotte.RecentClose { return nil }
 
 func (*fixedTabs) Owed() []tabs.OwedRelease { return nil }

@@ -782,7 +782,9 @@ const arbModel = fc.letrec<{
       additional_directories: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       rejected_keys: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       model_fallbacks: fc.array(tie("ModelFallback"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
+      history_window_choices: fc.array(fc.double({ noNaN: true, noDefaultInfinity: true }), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       chat_retention_days: fc.double({ noNaN: true, noDefaultInfinity: true }),
+      history_window_hours: fc.double({ noNaN: true, noDefaultInfinity: true }),
       auto_compact_pct: fc.double({ noNaN: true, noDefaultInfinity: true }),
       auto_compact_pct_range: tie("PctRange"),
       terminal_command_timeout_ms: fc.double({ noNaN: true, noDefaultInfinity: true }),
@@ -815,7 +817,7 @@ const arbModel = fc.letrec<{
       model_fallback_enabled: fc.boolean(),
       hook_status_shown: fc.boolean(),
     },
-    { requiredKeys: ["last_effort_by_model", "kiro_defaults", "additional_directories_refused", "theme", "last_model", "last_merge_method", "memory_mode", "interrupt_mode", "spec_planning", "work_validation", "cloudformation_safety_check", "auto_routing", "auto_delegation", "output_style", "workflow_launch", "workflow_creator_effort", "chat_awareness_mode", "knowledge_index_type", "knowledge_include_patterns", "knowledge_exclude_patterns", "agent_ignore_files", "additional_directories", "rejected_keys", "model_fallbacks", "chat_retention_days", "auto_compact_pct", "auto_compact_pct_range", "terminal_command_timeout_ms", "engine_heap_mib", "trigger_max_live_runs", "trigger_max_launches_per_hour", "chat_message_delivery_limit", "knowledge_max_files", "knowledge_chunking", "settings_epoch", "settings_revision", "auto_compaction_enabled", "knowledge_enabled", "content_collection_enabled", "guard_payload_links", "mcp_wait_for_ready", "notifications_enabled", "notify_agent_finished", "notify_pr_status", "notify_run_outcome", "spec_planning_ask_first", "steering_reminders_enabled", "workflows_enabled", "chat_messaging_enabled", "chat_awareness_enabled", "supervised_default", "scheduled_auto_approve", "debug_logs", "high_throughput_optimizations", "model_fallback_enabled", "hook_status_shown"] },
+    { requiredKeys: ["last_effort_by_model", "kiro_defaults", "additional_directories_refused", "theme", "last_model", "last_merge_method", "memory_mode", "interrupt_mode", "spec_planning", "work_validation", "cloudformation_safety_check", "auto_routing", "auto_delegation", "output_style", "workflow_launch", "workflow_creator_effort", "chat_awareness_mode", "knowledge_index_type", "knowledge_include_patterns", "knowledge_exclude_patterns", "agent_ignore_files", "additional_directories", "rejected_keys", "model_fallbacks", "history_window_choices", "chat_retention_days", "history_window_hours", "auto_compact_pct", "auto_compact_pct_range", "terminal_command_timeout_ms", "engine_heap_mib", "trigger_max_live_runs", "trigger_max_launches_per_hour", "chat_message_delivery_limit", "knowledge_max_files", "knowledge_chunking", "settings_epoch", "settings_revision", "auto_compaction_enabled", "knowledge_enabled", "content_collection_enabled", "guard_payload_links", "mcp_wait_for_ready", "notifications_enabled", "notify_agent_finished", "notify_pr_status", "notify_run_outcome", "spec_planning_ask_first", "steering_reminders_enabled", "workflows_enabled", "chat_messaging_enabled", "chat_awareness_enabled", "supervised_default", "scheduled_auto_approve", "debug_logs", "high_throughput_optimizations", "model_fallback_enabled", "hook_status_shown"] },
   ),
   ElicitationEnumOption: fc.record(
     {

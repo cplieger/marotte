@@ -108,18 +108,22 @@ type Store struct {
 	tabs    []marotte.TabSubject  // guarded by stateMu
 	owed    []OwedRelease         // guarded by stateMu
 	recent  []marotte.RecentClose // guarded by stateMu
+	shown   []marotte.RecentClose // guarded by stateMu
 	version uint64                // guarded by stateMu
-	stateMu sync.Mutex            // guards tabs, owed, recent and version; held briefly, NEVER across I/O
-	writeMu sync.Mutex            // serialises mutate-and-persist; the I/O lock
+	// window is the History window, written under writeMu and stateMu, so either lock reads it.
+	window  time.Duration
+	stateMu sync.Mutex // guards tabs, owed, recent, shown and version; held briefly, NEVER across I/O
+	writeMu sync.Mutex // serialises mutate-and-persist; the I/O lock
 	// refuseWrites makes persist fail with errWriteRefused (see keepAside and findAside).
 	refuseWrites bool
 }
 
-// NewStore opens (or starts) the store at <dir>/tabs.json. It ALWAYS returns a store; the error is
-// diagnostic (warn and continue, invariant 6). An arrangement it cannot read is moved aside and the
-// store starts empty with Unread set; see Unread for when writes are then refused.
-func NewStore(dir string) (*Store, error) {
-	s := &Store{path: filepath.Join(dir, fileName), now: time.Now}
+// NewStore opens (or starts) the store at <dir>/tabs.json, showing the held closes inside window
+// (capped at RecentHold). It ALWAYS returns a store; the error is diagnostic (warn and continue,
+// invariant 6). An arrangement it cannot read is moved aside and the store starts empty with Unread
+// set; see Unread for when writes are then refused.
+func NewStore(dir string, window time.Duration) (*Store, error) {
+	s := &Store{path: filepath.Join(dir, fileName), now: time.Now, window: min(window, RecentHold)}
 	if err := s.load(); err != nil {
 		err = s.keepAside(err)
 		return s, err
@@ -148,7 +152,9 @@ func (s *Store) load() error {
 	}
 	s.tabs = sanitize(doc.Tabs)
 	s.owed = sanitizeOwed(doc.Owed)
-	s.recent = sanitizeRecent(doc.Recent, s.tabs, s.now().UnixMilli())
+	now := s.now().UnixMilli()
+	s.recent = sanitizeRecent(doc.Recent, s.tabs, now)
+	s.shown = shownAt(s.recent, s.window, now)
 	// The version is adopted as read even when sanitize dropped an entry: no event is emitted at
 	// load, and the list endpoint returns the sanitized set with its version.
 	s.version = doc.Version

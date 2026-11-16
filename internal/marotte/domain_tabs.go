@@ -133,7 +133,7 @@ type RunLaunch struct {
 	Chats []string `json:"chats,omitempty"`
 }
 
-// RecentClose is one chat whose last tab closed in the last tabs.RecentWindow, a row of the
+// RecentClose is one chat whose last tab closed inside the History window, a row of the
 // sidebar's History section. Field order is fieldalignment's.
 type RecentClose struct {
 	Ref string `json:"ref"`

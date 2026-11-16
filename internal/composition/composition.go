@@ -191,7 +191,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// Closed by the server once its listener has bound; the destructive session sweep
 	// waits on it. Created here because the sweep starts before the server is built.
 	listenerBound := make(chan struct{})
-	tabStore := openTabStore(cfg.ConfigDir)
+	tabStore := openTabStore(appCtx, cfg.ConfigDir)
 	approvalStore := openSpecApprovalStore(cfg.ConfigDir)
 	authReadiness := new(command.AuthReadiness)
 	lockedSettings := new(lateLockSink)
@@ -1017,10 +1017,10 @@ func ensureUploadDir() {
 	}
 }
 
-// openTabStore opens the open-tab set, ALWAYS returning a store: the arrangement is re-derivable,
-// and no store would take the four tab commands down.
-func openTabStore(dir string) *tabs.Store {
-	st, err := tabs.NewStore(dir)
+// openTabStore opens the open-tab set under the History window config.json holds in dir, ALWAYS
+// returning a store: the arrangement is re-derivable, and no store would take the four tab commands down.
+func openTabStore(ctx context.Context, dir string) *tabs.Store {
+	st, err := tabs.NewStore(dir, settings.HistoryWindow(ctx, dir))
 	if err != nil {
 		slog.Warn("tab arrangement starting empty", "error", err)
 	}

@@ -17,6 +17,10 @@ const (
 	// days. A dropped key falls back to the 7-day default, hence PATCH merges, never replaces.
 	KeyChatRetentionDays = "chat_retention_days"
 
+	// KeyHistoryWindowHours is how many hours a closed chat stays in the sidebar's History, one of
+	// HistoryWindowChoices; HistoryWindow caps it at Days kept.
+	KeyHistoryWindowHours = "history_window_hours"
+
 	KeyDebugLogs            = "debug_logs"
 	KeyLastModel            = "last_model"
 	KeyNotificationsEnabled = "notifications_enabled"
@@ -173,6 +177,7 @@ var KnownKeys = map[string]struct{}{
 	KeyDebugLogs:                {},
 	KeyEngineHeapMiB:            {},
 	KeyHighThroughput:           {},
+	KeyHistoryWindowHours:       {},
 	KeyInterruptMode:            {},
 	KeyOutputStyle:              {},
 	KeySpecPlanning:             {},

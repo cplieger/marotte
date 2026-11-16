@@ -112,10 +112,14 @@ type EffectiveSettings struct {
 	RejectedKeys []string `json:"rejected_keys"`
 	// ModelFallbacks is kiro-cli's fallback for each model it serves, empty until the engine reported a view.
 	ModelFallbacks []ModelFallback `json:"model_fallbacks"`
+	// HistoryWindowChoices are the hours HistoryWindowHours accepts, ascending; never stored.
+	HistoryWindowChoices []int `json:"history_window_choices"`
 	// ChatRetentionDays is -1 (keep forever), 0 (delete on close) or a day count.
 	// Zero is the most destructive value in the document, so absent must never
 	// resolve to it.
 	ChatRetentionDays int `json:"chat_retention_days"`
+	// HistoryWindowHours is the stored choice, served uncapped; Days kept caps it where it is used.
+	HistoryWindowHours int `json:"history_window_hours"`
 	// AutoCompactPct is inside AutoCompactPctRange; a stored value outside it reads as
 	// settings.DefaultAutoCompactPct and is listed in RejectedKeys.
 	AutoCompactPct int `json:"auto_compact_pct"`
