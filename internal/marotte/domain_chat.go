@@ -82,6 +82,8 @@ type ToolCall struct {
 	Kind   ToolKind   `json:"kind"`
 	Status ToolStatus `json:"status"`
 	Output string     `json:"output,omitempty"`
+	// CardTitle and Loaded are ToolCardTitle's and ToolLoaded's, set on a served copy only.
+	CardTitle string `json:"card_title,omitempty"`
 	// ToolName is the built-in tool's id (`update_workflow`, `web_search`) when the translator
 	// could name one the transcript distinguishes, else empty. Fixed at the create frame.
 	ToolName string `json:"tool_name,omitempty"`
@@ -125,10 +127,11 @@ type ToolCall struct {
 	// Interaction is how the call's approval or question was answered; one-way.
 	Interaction *ToolInteraction `json:"interaction,omitempty"`
 	// Truncated is what the STORE dropped to bound this call on disk, nil when it fit.
-	Truncated *ToolTruncation `json:"truncated,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	Locations []ToolLocation  `json:"locations,omitempty"`
-	Diffs     []ToolDiff      `json:"diffs,omitempty"`
+	Truncated *ToolTruncation  `json:"truncated,omitempty"`
+	Input     json.RawMessage  `json:"input,omitempty"`
+	Locations []ToolLocation   `json:"locations,omitempty"`
+	Diffs     []ToolDiff       `json:"diffs,omitempty"`
+	Loaded    []LoadedResource `json:"loaded,omitempty"`
 	// SteeringDocs are the document ids (a file URI for an on-disk doc) a steering card
 	// announces, as KAS's steering_inclusion sent them.
 	SteeringDocs []string `json:"steering_docs,omitempty"`

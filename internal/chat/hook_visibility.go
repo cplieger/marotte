@@ -27,7 +27,7 @@ func (s *Store) searchView(entries []marotte.Entry) []marotte.Entry {
 		switch e.Kind {
 		case marotte.EntryKindToolCall:
 		case marotte.EntryKindToolResult:
-			id = toolCallIDOfResult(e.ID)
+			id = marotte.ToolCallIDOfResult(e.ID)
 		default:
 			return false
 		}
@@ -315,7 +315,7 @@ func settledResults(entries []marotte.Entry) map[string]*marotte.EntryToolResult
 		}
 		var res marotte.EntryToolResult
 		if json.Unmarshal(e.Payload, &res) == nil {
-			out[toolCallIDOfResult(e.ID)] = &res
+			out[marotte.ToolCallIDOfResult(e.ID)] = &res
 		}
 	}
 	return out

@@ -344,3 +344,146 @@ func TestToolCardTitle_ArmOrder(t *testing.T) {
 		assertCardTitle(t, tc, "Loaded skill: x")
 	})
 }
+
+func toolEntry(t *testing.T, id string, kind EntryKind, payload any) Entry {
+	t.Helper()
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Entry{ID: id, Turn: "t1", Kind: kind, Payload: raw}
+}
+
+func servedCall(t *testing.T, e Entry) EntryToolCall {
+	t.Helper()
+	var c EntryToolCall
+	if err := json.Unmarshal(e.Payload, &c); err != nil {
+		t.Fatalf("decode %s: %v", e.ID, err)
+	}
+	return c
+}
+
+func servedResult(t *testing.T, e Entry) EntryToolResult {
+	t.Helper()
+	var r EntryToolResult
+	if err := json.Unmarshal(e.Payload, &r); err != nil {
+		t.Fatalf("decode %s: %v", e.ID, err)
+	}
+	return r
+}
+
+func TestServeToolEntries_StampsCallsAndJoinsResults(t *testing.T) {
+	entries := []Entry{
+		toolEntry(t, "tc-load", EntryKindToolCall, EntryToolCall{
+			ID: "tc-load", Title: "Tool Load", Kind: ToolKindOther, Status: ToolPending,
+			ToolName: "tool_load", Input: json.RawMessage(`{"id":"skill::land"}`),
+		}),
+		toolEntry(t, "tc-disclose", EntryKindToolCall, EntryToolCall{
+			ID: "tc-disclose", Title: "Disclose Context", Kind: ToolKindOther, Status: ToolPending,
+			ToolName: "disclose_context", Input: json.RawMessage(`{"name":"release-notes"}`),
+		}),
+		toolEntry(t, "tc-load:result", EntryKindToolResult, EntryToolResult{Title: "Tool Load", Status: ToolCompleted}),
+		toolEntry(t, "tc-disclose:result", EntryKindToolResult, EntryToolResult{
+			Title: "Disclose Context", Status: ToolCompleted,
+			Disclosed: &ToolDisclosed{Type: "skill", DisplayName: "release-notes"},
+		}),
+	}
+	ServeToolEntries(entries, nil)
+
+	land := []LoadedResource{{ID: "skill::land", Type: LoadedSkill, Name: "land"}}
+	if c := servedCall(t, entries[0]); c.CardTitle != "Loaded skill: land" || !slices.Equal(c.Loaded, land) {
+		t.Errorf("load call served %q %+v, want %q %+v", c.CardTitle, c.Loaded, "Loaded skill: land", land)
+	}
+	if c := servedCall(t, entries[1]); c.CardTitle != "Disclose Context" || c.Loaded != nil {
+		t.Errorf("disclose call served %q %+v, want its own title and nothing loaded", c.CardTitle, c.Loaded)
+	}
+	if r := servedResult(t, entries[2]); r.CardTitle != "Loaded skill: land" || !slices.Equal(r.Loaded, land) {
+		t.Errorf("load result served %q %+v, want its call's join %q %+v", r.CardTitle, r.Loaded, "Loaded skill: land", land)
+	}
+	notes := []LoadedResource{{ID: "skill::release-notes", Type: LoadedSkill, Name: "release-notes"}}
+	if r := servedResult(t, entries[3]); r.CardTitle != "Loaded skill: release-notes" || !slices.Equal(r.Loaded, notes) {
+		t.Errorf("disclose result served %q %+v, want %q %+v", r.CardTitle, r.Loaded, "Loaded skill: release-notes", notes)
+	}
+}
+
+func TestServeToolEntries_ContextSuppliesTheCall(t *testing.T) {
+	context := []Entry{toolEntry(t, "tc-1", EntryKindToolCall, EntryToolCall{
+		ID: "tc-1", Title: "Run Command", Kind: ToolKindExecute, Status: ToolPending,
+		Input: json.RawMessage(`{"command":"go test ./..."}`),
+	})}
+	stored := toolEntry(t, "tc-1:result", EntryKindToolResult, EntryToolResult{Title: "Run Command", Status: ToolCompleted})
+	entries := []Entry{stored}
+	ServeToolEntries(entries, context)
+	if r := servedResult(t, entries[0]); r.CardTitle != "go test ./..." {
+		t.Errorf("result served %q, want the context call's command", r.CardTitle)
+	}
+	if c := servedCall(t, context[0]); c.CardTitle != "" {
+		t.Errorf("context call stamped %q, want it untouched", c.CardTitle)
+	}
+
+	alone := []Entry{stored}
+	ServeToolEntries(alone, nil)
+	if r := servedResult(t, alone[0]); r.CardTitle != "Run Command" {
+		t.Errorf("result with no call served %q, want its own title", r.CardTitle)
+	}
+}
+
+func TestServeToolEntries_LeavesOtherKindsByteEqual(t *testing.T) {
+	text := toolEntry(t, "x-1", EntryKindText, EntryText{Text: "Run Command"})
+	broken := Entry{ID: "tc-2", Turn: "t1", Kind: EntryKindToolCall, Payload: json.RawMessage(`{"id":`)}
+	untitled := toolEntry(t, "tc-3", EntryKindToolCall, EntryToolCall{ID: "tc-3", Status: ToolPending})
+	entries := []Entry{text, broken, untitled}
+	ServeToolEntries(entries, nil)
+	for i, want := range []Entry{text, broken, untitled} {
+		if string(entries[i].Payload) != string(want.Payload) {
+			t.Errorf("entry %s payload = %s, want it byte-equal %s", want.ID, entries[i].Payload, want.Payload)
+		}
+	}
+}
+
+func TestSettledToolCall_ResultOverlaysTheTitleFields(t *testing.T) {
+	call := &EntryToolCall{
+		ID: "tc-1", Title: "Run Command", Kind: ToolKindExecute, ToolName: "execute_bash",
+		Input: json.RawMessage(`{}`),
+	}
+	res := &EntryToolResult{
+		Title: "Run Command", Kind: ToolKindExecute, Input: json.RawMessage(`{"command":"ls"}`),
+		Disclosed: &ToolDisclosed{Type: "skill", DisplayName: "x"},
+	}
+	got := SettledToolCall(call, res)
+	if got.ID != "tc-1" || got.ToolName != "execute_bash" || string(got.Input) != `{"command":"ls"}` || got.Disclosed != res.Disclosed {
+		t.Errorf("SettledToolCall = %+v, want the call's identity under the result's input and disclosed", got)
+	}
+	kept := SettledToolCall(call, &EntryToolResult{Status: ToolCompleted})
+	if kept.Title != "Run Command" || kept.Kind != ToolKindExecute || string(kept.Input) != `{}` {
+		t.Errorf("SettledToolCall with an empty result = %+v, want the call's title, kind and input", kept)
+	}
+	if alone := SettledToolCall(nil, res); alone.Title != "Run Command" || alone.ToolName != "" {
+		t.Errorf("SettledToolCall(nil, res) = %+v, want the result's fields alone", alone)
+	}
+}
+
+// The converters build the stored record, which must never carry a derived title.
+func TestEntryToolCallOf_NeverCarriesCardTitle(t *testing.T) {
+	tc := ToolCall{ID: "tc-1", CardTitle: "drawn", Loaded: []LoadedResource{{ID: "skill::x"}}}
+	if c := EntryToolCallOf(&tc); c.CardTitle != "" || c.Loaded != nil {
+		t.Errorf("EntryToolCallOf copied %q %+v", c.CardTitle, c.Loaded)
+	}
+	e := EntryToolCall{ID: "tc-1", CardTitle: "drawn", Loaded: []LoadedResource{{ID: "skill::x"}}}
+	if back := ToolCallOfEntry(&e); back.CardTitle != "" || back.Loaded != nil {
+		t.Errorf("ToolCallOfEntry copied %q %+v", back.CardTitle, back.Loaded)
+	}
+}
+
+func TestEntryToolResultOf_NeverCarriesCardTitle(t *testing.T) {
+	tc := ToolCall{ID: "tc-1", CardTitle: "drawn", Loaded: []LoadedResource{{ID: "skill::x"}}}
+	if r := EntryToolResultOf(&tc); r.CardTitle != "" || r.Loaded != nil {
+		t.Errorf("EntryToolResultOf copied %q %+v", r.CardTitle, r.Loaded)
+	}
+}
+
+func TestToolCallIDOfResult(t *testing.T) {
+	if got := ToolCallIDOfResult(ToolResultID("tc-1")); got != "tc-1" {
+		t.Errorf("ToolCallIDOfResult(ToolResultID(tc-1)) = %q", got)
+	}
+}

@@ -185,6 +185,7 @@ type EntryToolCall struct {
 	Kind           ToolKind         `json:"kind"`
 	Status         ToolStatus       `json:"status"`
 	Output         string           `json:"output,omitempty"`
+	CardTitle      string           `json:"card_title,omitempty"`
 	ToolName       string           `json:"tool_name,omitempty"`
 	AgentSubtaskID string           `json:"agent_subtask_id,omitempty"`
 	WorkflowID     string           `json:"workflow_id,omitempty"`
@@ -202,12 +203,13 @@ type EntryToolCall struct {
 	SteeringDocs   []string         `json:"steering_docs,omitempty"`
 	Diffs          []ToolDiff       `json:"diffs,omitempty"`
 	OutputSpans    []TextSpan       `json:"output_spans,omitempty"`
+	Loaded         []LoadedResource `json:"loaded,omitempty"`
 	Ts             int64            `json:"ts"`
 	DurationMs     int              `json:"duration_ms,omitempty"`
 	OutputBytes    int              `json:"output_bytes,omitempty"`
 	HasFull        bool             `json:"has_full,omitempty"`
 	Declined       bool             `json:"declined,omitempty"`
-	// ClassifierApproved and ClassifierNote are ToolCall's.
+	// ClassifierApproved, ClassifierNote, CardTitle and Loaded are ToolCall's.
 	ClassifierApproved bool `json:"classifier_approved,omitempty"`
 }
 
@@ -224,7 +226,9 @@ type EntryToolResult struct {
 	// fit; OutputBytes and HasFull mark the served PREVIEW, as on EntryToolCall.
 	Truncated *ToolTruncation `json:"truncated,omitempty"`
 	Title     string          `json:"title,omitempty"`
-	Kind      ToolKind        `json:"kind,omitempty"`
+	// CardTitle and Loaded are ToolCall's, from the result joined with its call.
+	CardTitle string   `json:"card_title,omitempty"`
+	Kind      ToolKind `json:"kind,omitempty"`
 	// Status is a closed enum because every value is marotte's own (aborted, or a
 	// normalised terminal status). The client validates it with reqOneOf, so a value
 	// copied verbatim off the wire would fail the whole window.
@@ -234,10 +238,11 @@ type EntryToolResult struct {
 	WorkflowID     string     `json:"workflow_id,omitempty"`
 	ClassifierNote string     `json:"classifier_note,omitempty"`
 	// DelegateStop is ToolCall's.
-	DelegateStop string         `json:"delegate_stop,omitempty"`
-	OutputSpans  []TextSpan     `json:"output_spans,omitempty"`
-	Diffs        []ToolDiff     `json:"diffs,omitempty"`
-	Locations    []ToolLocation `json:"locations,omitempty"`
+	DelegateStop string           `json:"delegate_stop,omitempty"`
+	OutputSpans  []TextSpan       `json:"output_spans,omitempty"`
+	Diffs        []ToolDiff       `json:"diffs,omitempty"`
+	Locations    []ToolLocation   `json:"locations,omitempty"`
+	Loaded       []LoadedResource `json:"loaded,omitempty"`
 	// Input is set only when an update revised the create's input; absent means the create's stands.
 	Input       json.RawMessage `json:"input,omitempty"`
 	DurationMs  int             `json:"duration_ms,omitempty"`
@@ -653,6 +658,11 @@ func SayIDOf(entryID string) string {
 // ToolResultID is the tool_result entry id for a tool_call entry: `<call>:result`.
 func ToolResultID(callID string) string {
 	return callID + ":result"
+}
+
+// ToolCallIDOfResult is ToolResultID's inverse.
+func ToolCallIDOfResult(resultID string) string {
+	return strings.TrimSuffix(resultID, ":result")
 }
 
 // SteeringCallIDPrefix starts every steering card's id. KAS's steering_inclusion carries

@@ -215,7 +215,7 @@ func (t *searchTurn) observe(e *marotte.Entry) {
 	case marotte.EntryKindToolResult:
 		var res marotte.EntryToolResult
 		if json.Unmarshal(e.Payload, &res) == nil && len(res.Diffs) > 0 {
-			t.callFor(toolCallIDOfResult(e.ID)).diff = res.Diffs[0].NewText
+			t.callFor(marotte.ToolCallIDOfResult(e.ID)).diff = res.Diffs[0].NewText
 		}
 	}
 }
@@ -248,10 +248,6 @@ func itemMatchesFilters(it *searchItem, q *searchQuery) bool {
 		return false
 	}
 	return q.file == "" || toolTouchesFile(it.call, it.result, q.file)
-}
-
-func toolCallIDOfResult(resultID string) string {
-	return strings.TrimSuffix(resultID, ":result")
 }
 
 // A read has a location and no diff.

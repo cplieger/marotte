@@ -79,9 +79,11 @@ type ToolProgressPayload struct {
 	Turn       string          `json:"turn"`
 	ToolCallID string          `json:"tool_call_id"`
 	// Title and Kind: KAS sends them nullish on most updates, so absent is "keep".
-	Title  string     `json:"title,omitempty"`
-	Kind   ToolKind   `json:"kind,omitempty"`
-	Status ToolStatus `json:"status,omitempty"`
+	Title string `json:"title,omitempty"`
+	// CardTitle and Loaded are ToolCall's, sent when this frame changed them.
+	CardTitle string     `json:"card_title,omitempty"`
+	Kind      ToolKind   `json:"kind,omitempty"`
+	Status    ToolStatus `json:"status,omitempty"`
 	// OutputDelta is normally the text to APPEND; when OutputReplace is set it is the
 	// whole output instead. The replace case is load-bearing: at completion a terminal's
 	// full stream wins over the ACP fragments already on the card.
@@ -100,7 +102,8 @@ type ToolProgressPayload struct {
 	// no replace case.
 	DiffsAppended []ToolDiff `json:"diffs_appended,omitempty"`
 	// Locations are REPLACED wholesale when present.
-	Locations []ToolLocation `json:"locations,omitempty"`
+	Locations []ToolLocation   `json:"locations,omitempty"`
+	Loaded    []LoadedResource `json:"loaded,omitempty"`
 	// Input is the call's whole argument object, REPLACED when present.
 	Input json.RawMessage `json:"input,omitempty"`
 	// The scalars last, so the GC scan region stops above them (govet fieldalignment).

@@ -258,7 +258,7 @@ func TestEntryFoldContract(t *testing.T) {
 			if turn[i].Kind != marotte.EntryKindToolResult {
 				continue
 			}
-			if _, paired := calls[toolCallIDOfResult(turn[i].ID)]; !paired {
+			if _, paired := calls[marotte.ToolCallIDOfResult(turn[i].ID)]; !paired {
 				t.Errorf("tool_result %s has no call in its turn; an unpaired result is outside this fixture", turn[i].ID)
 			}
 		}

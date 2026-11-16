@@ -6,6 +6,7 @@
       "title": "Read File",
       "kind": "read",
       "status": "pending",
+      "card_title": "Read File",
       "input": {
         "path": "/work/notes.txt",
         "offset": null,
@@ -21,10 +22,19 @@
       "title": "Tool Load",
       "kind": "other",
       "status": "in_progress",
+      "card_title": "Loaded capture ask_value",
       "tool_name": "tool_load",
       "input": {
         "id": "tool::capture::ask_value"
       },
+      "loaded": [
+        {
+          "id": "tool::capture::ask_value",
+          "type": "mcp",
+          "name": "ask_value",
+          "server": "capture"
+        }
+      ],
       "ts": 0
     }
   },
@@ -35,6 +45,7 @@
       "title": "@capture/ask_value",
       "kind": "other",
       "status": "pending",
+      "card_title": "ask value",
       "mcp": {
         "server_name": "capture",
         "tool_name": "ask_value"
@@ -53,6 +64,7 @@
       "title": "Update Workflow",
       "kind": "other",
       "status": "completed",
+      "card_title": "Update Workflow",
       "tool_name": "update_workflow",
       "input": {
         "tool_id": "tool::update_workflow",
@@ -72,6 +84,7 @@
       "title": "Update Workflow",
       "kind": "other",
       "status": "pending",
+      "card_title": "Update Workflow",
       "tool_name": "update_workflow",
       "input": {
         "workflowId": "wf_0123456789abcdef",
@@ -89,6 +102,7 @@
       "title": "Inspect Workflow",
       "kind": "other",
       "status": "completed",
+      "card_title": "Inspect Workflow",
       "tool_name": "inspect_workflow",
       "input": {
         "tool_id": "tool::inspect_workflow",
@@ -106,6 +120,7 @@
       "title": "Inspect Workflow",
       "kind": "other",
       "status": "pending",
+      "card_title": "Inspect Workflow",
       "tool_name": "inspect_workflow",
       "input": {
         "workflowId": "wf_0123456789abcdef"
@@ -120,6 +135,7 @@
       "title": "Run Workflow",
       "kind": "other",
       "status": "pending",
+      "card_title": "Run Workflow",
       "tool_name": "run_workflow",
       "input": {
         "workflowPrompt": "text",
@@ -136,6 +152,7 @@
       "title": "Send Message",
       "kind": "other",
       "status": "pending",
+      "card_title": "Send Message",
       "tool_name": "send_message",
       "input": {
         "sessionId": "sess_00000000-0000-0000-0000-000000000000",
@@ -152,6 +169,7 @@
       "title": "web_search",
       "kind": "other",
       "status": "pending",
+      "card_title": "web search",
       "tool_name": "web_search",
       "input": {
         "query": "text",
@@ -177,6 +195,7 @@
       "title": "web_search",
       "kind": "other",
       "status": "completed",
+      "card_title": "web search",
       "tool_name": "web_search",
       "input": {
         "tool_id": "tool::remote_web_search",
@@ -194,6 +213,7 @@
       "title": "@mailbox/send_message",
       "kind": "other",
       "status": "pending",
+      "card_title": "send message",
       "mcp": {
         "server_name": "mailbox",
         "tool_name": "send_message"
@@ -215,6 +235,7 @@
       "title": "@mailbox/fetch_inbox",
       "kind": "other",
       "status": "pending",
+      "card_title": "fetch inbox",
       "mcp": {
         "server_name": "mailbox",
         "tool_name": "fetch_inbox"
@@ -233,6 +254,7 @@
       "title": "Tool Call",
       "kind": "other",
       "status": "failed",
+      "card_title": "Tool Call",
       "tool_name": "inspect_workflow",
       "input": {
         "tool_id": "tool::inspect_workflow",
@@ -250,6 +272,7 @@
       "title": "Tool Call",
       "kind": "other",
       "status": "pending",
+      "card_title": "reply message",
       "mcp": {
         "server_name": "mailbox",
         "tool_name": "reply_message"
@@ -273,12 +296,21 @@
       "title": "Tool Load",
       "kind": "other",
       "status": "completed",
+      "card_title": "Loaded tool: inspect_workflow",
       "tool_name": "tool_load",
       "input": {
         "tool_ids": [
           "builtin::inspect_workflow"
         ]
       },
+      "loaded": [
+        {
+          "id": "builtin::inspect_workflow",
+          "type": "tool",
+          "name": "inspect_workflow",
+          "server": ""
+        }
+      ],
       "ts": 0
     }
   },
@@ -289,6 +321,7 @@
       "title": "Tool Load",
       "kind": "other",
       "status": "completed",
+      "card_title": "Loaded agent-mail fetch_inbox, agent-mail send_message",
       "tool_name": "tool_load",
       "input": {
         "tool_ids": [
@@ -296,6 +329,20 @@
           "agent-mail::send_message"
         ]
       },
+      "loaded": [
+        {
+          "id": "agent-mail::fetch_inbox",
+          "type": "mcp",
+          "name": "fetch_inbox",
+          "server": "agent-mail"
+        },
+        {
+          "id": "agent-mail::send_message",
+          "type": "mcp",
+          "name": "send_message",
+          "server": "agent-mail"
+        }
+      ],
       "ts": 0
     }
   },
@@ -306,6 +353,7 @@
       "title": "Read File",
       "kind": "read",
       "status": "pending",
+      "card_title": "Read File",
       "input": {
         "path": "/work/notes.txt",
         "offset": null,
@@ -321,6 +369,7 @@
       "title": "Write File",
       "kind": "edit",
       "status": "pending",
+      "card_title": "Write File",
       "input": {
         "path": "/work/notes.txt"
       },
@@ -334,6 +383,7 @@
       "title": "Replace in File",
       "kind": "edit",
       "status": "pending",
+      "card_title": "Replace in File",
       "input": {
         "path": "/work/notes.txt",
         "oldStr": "text",
@@ -349,6 +399,7 @@
       "title": "Append to File",
       "kind": "edit",
       "status": "pending",
+      "card_title": "Append to File",
       "input": {
         "path": "/work/notes.txt"
       },
@@ -362,6 +413,7 @@
       "title": "Delete File",
       "kind": "delete",
       "status": "pending",
+      "card_title": "Delete File",
       "input": {
         "targetFile": "/work/notes.txt",
         "explanation": "text"
@@ -376,6 +428,7 @@
       "title": "Grep Search",
       "kind": "search",
       "status": "pending",
+      "card_title": "Grep Search",
       "input": {
         "query": "text",
         "includePattern": "text"
@@ -390,6 +443,7 @@
       "title": "File Search",
       "kind": "search",
       "status": "pending",
+      "card_title": "File Search",
       "input": {
         "explanation": "text",
         "query": "text"
@@ -404,6 +458,7 @@
       "title": "List Directory",
       "kind": "search",
       "status": "pending",
+      "card_title": "List Directory",
       "input": {
         "path": "/work/notes.txt",
         "explanation": "text",
@@ -419,6 +474,7 @@
       "title": "Fetch URL",
       "kind": "fetch",
       "status": "pending",
+      "card_title": "Fetch URL",
       "input": {
         "url": "https://example.com/",
         "mode": "text"
@@ -433,6 +489,7 @@
       "title": "List the work folder",
       "kind": "execute",
       "status": "pending",
+      "card_title": "List the work folder",
       "input": {
         "command": "ls",
         "description": "text",
@@ -448,6 +505,7 @@
       "title": "Control Process",
       "kind": "execute",
       "status": "pending",
+      "card_title": "Control Process",
       "input": {
         "tool_id": "tool::control_bash_process",
         "arguments": {
@@ -465,6 +523,7 @@
       "title": "List Processes",
       "kind": "other",
       "status": "completed",
+      "card_title": "List Processes",
       "input": {},
       "ts": 0
     }
@@ -476,6 +535,7 @@
       "title": "Update Session Information",
       "kind": "other",
       "status": "completed",
+      "card_title": "Update Session Information",
       "input": {
         "title": "text",
         "description": "text"
@@ -490,6 +550,7 @@
       "title": "Save Workflow Definition",
       "kind": "other",
       "status": "pending",
+      "card_title": "Save Workflow Definition",
       "tool_name": "save_workflow_definition",
       "input": {
         "name": "text"
@@ -504,6 +565,7 @@
       "title": "Load skill: release-notes",
       "kind": "other",
       "status": "pending",
+      "card_title": "Load skill: release-notes",
       "tool_name": "disclose_context",
       "input": {
         "name": "release-notes"
@@ -518,6 +580,7 @@
       "title": "Load steering: code-style",
       "kind": "other",
       "status": "pending",
+      "card_title": "Load steering: code-style",
       "tool_name": "disclose_context",
       "input": {
         "name": "code-style"
@@ -532,10 +595,19 @@
       "title": "Load skill: sync-clones",
       "kind": "other",
       "status": "pending",
+      "card_title": "Loaded skill: sync-clones",
       "tool_name": "disclose_context",
       "input": {
         "id": "skill::sync-clones"
       },
+      "loaded": [
+        {
+          "id": "skill::sync-clones",
+          "type": "skill",
+          "name": "sync-clones",
+          "server": ""
+        }
+      ],
       "ts": 0
     }
   },
@@ -546,10 +618,19 @@
       "title": "Load steering: git-commits",
       "kind": "other",
       "status": "pending",
+      "card_title": "Loaded steering: git-commits",
       "tool_name": "disclose_context",
       "input": {
         "id": "steering::git-commits"
       },
+      "loaded": [
+        {
+          "id": "steering::git-commits",
+          "type": "steering",
+          "name": "git-commits",
+          "server": ""
+        }
+      ],
       "ts": 0
     }
   }

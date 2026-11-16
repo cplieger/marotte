@@ -238,3 +238,92 @@ func unitLen(s string) int {
 	}
 	return n
 }
+
+// SettledToolCall is a call as its card draws it: the call's stored fields with its result's
+// title, kind, input and disclosed over them, the fields ToolCardTitle reads. A nil call is a
+// result whose call is not at hand.
+func SettledToolCall(call *EntryToolCall, res *EntryToolResult) ToolCall {
+	var tc ToolCall
+	if call != nil {
+		tc = ToolCallOfEntry(call)
+	}
+	if res == nil {
+		return tc
+	}
+	if res.Title != "" {
+		tc.Title = res.Title
+	}
+	if res.Kind != "" {
+		tc.Kind = res.Kind
+	}
+	if len(res.Input) > 0 {
+		tc.Input = res.Input
+	}
+	if res.Disclosed != nil {
+		tc.Disclosed = res.Disclosed
+	}
+	return tc
+}
+
+// StampToolCall sets a served call's CardTitle and Loaded.
+func StampToolCall(c *EntryToolCall) {
+	tc := ToolCallOfEntry(c)
+	c.CardTitle, c.Loaded = ToolCardTitle(&tc), ToolLoaded(&tc)
+}
+
+// StampToolResult sets a served result's CardTitle and Loaded from its join with call, which
+// is nil when the call is not at hand.
+func StampToolResult(r *EntryToolResult, call *EntryToolCall) {
+	tc := SettledToolCall(call, r)
+	r.CardTitle, r.Loaded = ToolCardTitle(&tc), ToolLoaded(&tc)
+}
+
+// ServeToolEntries stamps every tool_call and tool_result in entries, rewriting their payloads
+// in place, so entries must be the caller's own copy. A result's call is looked up in entries,
+// then in context; an entry that does not decode, or derives nothing, is left as stored.
+func ServeToolEntries(entries, context []Entry) {
+	calls := toolCallsByID(context, entries)
+	for i := range entries {
+		e := &entries[i]
+		switch e.Kind {
+		case EntryKindToolCall:
+			if c, ok := calls[e.ID]; ok {
+				stamped := *c
+				StampToolCall(&stamped)
+				reencode(e, &stamped, stamped.CardTitle, stamped.Loaded)
+			}
+		case EntryKindToolResult:
+			var r EntryToolResult
+			if json.Unmarshal(e.Payload, &r) == nil {
+				StampToolResult(&r, calls[ToolCallIDOfResult(e.ID)])
+				reencode(e, &r, r.CardTitle, r.Loaded)
+			}
+		}
+	}
+}
+
+// toolCallsByID decodes every tool_call in the lists, a later list's call replacing an earlier's.
+func toolCallsByID(lists ...[]Entry) map[string]*EntryToolCall {
+	calls := make(map[string]*EntryToolCall)
+	for _, src := range lists {
+		for i := range src {
+			if src[i].Kind != EntryKindToolCall {
+				continue
+			}
+			var c EntryToolCall
+			if json.Unmarshal(src[i].Payload, &c) == nil {
+				calls[src[i].ID] = &c
+			}
+		}
+	}
+	return calls
+}
+
+func reencode(e *Entry, payload any, title string, loaded []LoadedResource) {
+	if title == "" && loaded == nil {
+		return
+	}
+	if raw, err := json.Marshal(payload); err == nil {
+		e.Payload = raw
+	}
+}

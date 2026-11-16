@@ -322,7 +322,7 @@ func (r *turnRender) writeToolCall(b *strings.Builder, e *marotte.Entry) {
 
 // paired results fold into their call.
 func (r *turnRender) writeUnpairedResult(b *strings.Builder, e *marotte.Entry) {
-	if _, paired := r.calls[toolCallIDOfResult(e.ID)]; paired {
+	if _, paired := r.calls[marotte.ToolCallIDOfResult(e.ID)]; paired {
 		return
 	}
 	var res marotte.EntryToolResult
@@ -516,7 +516,7 @@ func indexResults(turn []marotte.Entry) (results map[string]*marotte.EntryToolRe
 		case marotte.EntryKindToolResult:
 			var res marotte.EntryToolResult
 			if json.Unmarshal(turn[i].Payload, &res) == nil {
-				results[toolCallIDOfResult(turn[i].ID)] = &res
+				results[marotte.ToolCallIDOfResult(turn[i].ID)] = &res
 			}
 		default:
 		}

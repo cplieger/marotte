@@ -103,7 +103,7 @@ func (sc *promptScan) visitTool(e *marotte.Entry) {
 		return
 	}
 	sc.mentioned[payload.WorkflowID] = true
-	if !sc.preCutTools[toolCallIDOfResult(e.ID)] {
+	if !sc.preCutTools[marotte.ToolCallIDOfResult(e.ID)] {
 		sc.target.LaunchedRuns = append(sc.target.LaunchedRuns, payload.WorkflowID)
 	}
 }

@@ -66,7 +66,7 @@ func searchItems(entries []marotte.Entry, turns map[string]*searchTurn) []search
 	}
 	for i := range entries {
 		if e := &entries[i]; e.Kind == marotte.EntryKindToolResult {
-			b.results[toolCallIDOfResult(e.ID)] = i
+			b.results[marotte.ToolCallIDOfResult(e.ID)] = i
 		}
 	}
 	for i := range entries {
