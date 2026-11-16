@@ -8,6 +8,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/turnlog"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
@@ -249,6 +250,141 @@ func TestRunLog_StepStartsCarryAnInFlightStepsTurnAndLine(t *testing.T) {
 			t.Errorf("ended row = %q %q, want neither", gotTurn, gotTail)
 		}
 	})
+}
+
+// For every card kind, a step's dock line settles where a reload draws its card, live and read back from the log.
+func TestRunLog_TheDockSettlesOnTheReloadedCardsTitle(t *testing.T) {
+	step := workflow.PathKey([]string{"wf1", "build"})
+	placeholder := marotte.EntryToolCall{ID: "call-1", Title: "Run Command", Kind: marotte.ToolKindExecute, Input: json.RawMessage(`{}`)}
+	vet := json.RawMessage(`{"command":"go vet ./..."}`)
+	settled := marotte.EntryToolResult{Title: "Run Command", Kind: marotte.ToolKindExecute, Status: marotte.ToolCompleted, Input: vet}
+	interrupt := func(t *testing.T, r *runLog) {
+		t.Helper()
+		if _, err := r.closeHost(t.Context(), "c-1", marotte.ConcludeStopReason(marotte.StopReasonInterrupted)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tests := []struct {
+		name string
+		run  func(t *testing.T, r *runLog, turn *turnlog.Turn)
+		want string
+	}{
+		{
+			name: "a shell call whose command the call holds",
+			run: func(t *testing.T, _ *runLog, turn *turnlog.Turn) {
+				call := placeholder
+				call.Input = vet
+				sealOK(t)(turn.ToolCall(t.Context(), "", &call))
+			},
+			want: "go vet ./...",
+		},
+		{
+			name: "a placeholder shell call whose command the result holds",
+			run: func(t *testing.T, _ *runLog, turn *turnlog.Turn) {
+				sealOK(t)(turn.ToolCall(t.Context(), "", &placeholder))
+				sealOK(t)(turn.ToolResult(t.Context(), "", "call-1", &settled))
+			},
+			want: "go vet ./...",
+		},
+		{
+			name: "a load call",
+			run: func(t *testing.T, _ *runLog, turn *turnlog.Turn) {
+				call := marotte.EntryToolCall{
+					ID: "call-1", Title: "Tool Load", Kind: marotte.ToolKindOther, ToolName: "tool_load",
+					Input: json.RawMessage(`{"id":"skill::land"}`),
+				}
+				sealOK(t)(turn.ToolCall(t.Context(), "", &call))
+				sealOK(t)(turn.ToolResult(t.Context(), "", "call-1", &marotte.EntryToolResult{Title: "Tool Load", Status: marotte.ToolCompleted}))
+			},
+			want: "Loaded skill: land",
+		},
+		{
+			name: "a call the close aborts after an update revised its command",
+			run: func(t *testing.T, r *runLog, turn *turnlog.Turn) {
+				sealOK(t)(turn.ToolCall(t.Context(), "", &placeholder))
+				folded := marotte.ToolCallOfEntry(&placeholder)
+				folded.Input = vet
+				turn.SetOpenCall("call-1", &folded)
+				interrupt(t, r)
+			},
+			want: "go vet ./...",
+		},
+		{
+			name: "a late result after an interruption",
+			run: func(t *testing.T, r *runLog, turn *turnlog.Turn) {
+				sealOK(t)(turn.ToolCall(t.Context(), "", &placeholder))
+				interrupt(t, r)
+				late := &marotte.Entry{Kind: marotte.EntryKindToolResult, ID: marotte.ToolResultID("call-1")}
+				raw, err := json.Marshal(settled)
+				if err != nil {
+					t.Fatal(err)
+				}
+				late.Payload = raw
+				if err := (&Runs{log: r, bus: &frameLog{}}).RunAppendAfterClosed(t.Context(), "wf1", step, late); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "go vet ./...",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			r := newRunLog(dir)
+			turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			startTail(t, r, step)
+			tt.run(t, r, turn)
+
+			card := reloadedCardTitle(t, runLogEntries(t, r, "wf1"), "call-1")
+			_, live := startTail(t, r, step)
+			_, scanned := startTail(t, newRunLog(dir), step)
+			if card != tt.want || live != card || scanned != card {
+				t.Errorf("reloaded card %q, live dock %q, scanned dock %q; want all %q", card, live, scanned, tt.want)
+			}
+		})
+	}
+}
+
+// sealOK fails the test on a turnlog operation's error.
+func sealOK(t *testing.T) func([]turnlog.Sealed, error) {
+	t.Helper()
+	return func(_ []turnlog.Sealed, err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// reloadedCardTitle is the title call id's card draws on a reload of entries: its result's served title, else
+// its call's.
+func reloadedCardTitle(t *testing.T, entries []marotte.Entry, id string) string {
+	t.Helper()
+	marotte.ServeToolEntries(entries, nil)
+	title := ""
+	for i := range entries {
+		e := &entries[i]
+		switch {
+		case e.Kind == marotte.EntryKindToolCall && e.ID == id:
+			var c marotte.EntryToolCall
+			if err := json.Unmarshal(e.Payload, &c); err != nil {
+				t.Fatal(err)
+			}
+			title = c.CardTitle
+		case e.Kind == marotte.EntryKindToolResult && e.ID == marotte.ToolResultID(id):
+			var res marotte.EntryToolResult
+			if err := json.Unmarshal(e.Payload, &res); err != nil {
+				t.Fatal(err)
+			}
+			if res.CardTitle != "" {
+				title = res.CardTitle
+			}
+		}
+	}
+	return title
 }
 
 // A page that attaches while a step's call is in flight is seeded with the call's card title, so the result that
