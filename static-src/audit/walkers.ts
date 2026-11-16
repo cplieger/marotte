@@ -49,57 +49,41 @@ function tokenPx(name: string): number {
   return px;
 }
 
-/** Whether a reader can see `el`'s box: axe-core 4.13's `isVisibleOnScreen`, which its
- *  color-contrast check gates on, except that a closed `<details>` is judged by what Chromium
- *  paints, so a stylesheet that makes its `::details-content` visible keeps the content rendered.
- *  Not rendered: no box, `visibility`, an ancestor's `content-visibility: hidden`, an opacity
- *  folding to zero, a zero-area `clip` or `clip-path`, an `overflow` clip under 2px or missing the
- *  box, a zero-size scroller, and a box off the page where no scroll reaches. */
+/** Whether `el` paints its contents, or `child`: a closed `<details>` skips all but its summary
+ *  through a `::details-content` a stylesheet may make visible. */
+function paintsContents(el: Element, child: Element | null = null): boolean {
+  if (getComputedStyle(el).contentVisibility === "hidden") {
+    return false;
+  }
+  if (
+    el.tagName !== "DETAILS" ||
+    (child !== null && child === el.querySelector(":scope > summary"))
+  ) {
+    return true;
+  }
+  return getComputedStyle(el, "::details-content").contentVisibility !== "hidden";
+}
+
+/** Whether a reader can see `el`, or scroll it into view. Not rendered: what Chromium's
+ *  `checkVisibility` skips (no box, a skipped subtree, a closed `<details>` as painted, `visibility`,
+ *  opacity 0), a clip to nothing, an `overflow` clip, a zero-size scroller, and a box no scroll on
+ *  its containing-block chain brings into the viewport. What `content-visibility: auto` skips off
+ *  screen counts, since scrolling to it paints it. Departs from axe-core 4.13 and 4.14
+ *  `isVisibleOnScreen`, each case pinned in walkers.test.ts: a scroller under a fixed ancestor still
+ *  reaches its overflow, a scroll moves only the boxes it contains, a painted `::details-content`
+ *  counts, a clip with one zero edge hides, and a scroller hides nothing that escapes it. */
 function rendered(el: Element): boolean {
-  if (!el.checkVisibility({ visibilityProperty: true })) {
-    return false;
-  }
-  if (foldedOpacity(el) <= 0.001) {
-    return false;
-  }
-  const r = el.getBoundingClientRect();
-  // axe-core 4.13 lib/commons/dom/is-offscreen.js, judged for `el` only.
-  const offscreen = (): boolean => {
-    let fixed = false;
-    for (let cur: Element | null = el; cur !== null && !fixed; cur = cur.parentElement) {
-      fixed = getComputedStyle(cur).position === "fixed";
-    }
-    const dx = fixed ? 0 : window.scrollX;
-    const dy = fixed ? 0 : window.scrollY;
-    const [top, bottom, left, right] = [r.top + dy, r.bottom + dy, r.left + dx, r.right + dx];
-    if ((top === 0 && bottom === 0) || (left === 0 && right === 0)) {
-      return false;
-    }
-    if (bottom <= 0) {
-      let reach = bottom;
-      let scrolledBack = false;
-      for (
-        let cur = el.parentElement;
-        cur !== null && cur !== document.documentElement && !scrolledBack;
-        cur = cur.parentElement
-      ) {
-        reach += cur.scrollTop;
-        scrolledBack = cur.scrollTop !== 0 && reach >= 0;
-      }
-      if (!scrolledBack || getComputedStyle(el).position === "absolute") {
-        return true;
-      }
-    }
-    if (fixed && top >= window.innerHeight) {
-      return true;
-    }
-    const dir = getComputedStyle(document.body).direction;
-    const rightEdge = Math.max(document.documentElement.scrollWidth, window.innerWidth);
+  const own = getComputedStyle(el);
+  if (own.display === "contents") {
+    const parent = el.parentElement;
     return (
-      ((fixed || dir === "rtl") && left >= rightEdge) || ((fixed || dir === "ltr") && right <= 0)
+      parent !== null &&
+      own.visibility === "visible" &&
+      rendered(parent) &&
+      paintsContents(parent, el)
     );
-  };
-  if (offscreen()) {
+  }
+  if (!el.checkVisibility({ visibilityProperty: true, opacityProperty: true })) {
     return false;
   }
   const zeroClip = (cs: CSSStyleDeclaration): boolean => {
@@ -119,42 +103,122 @@ function rendered(el: Element): boolean {
     }
     return /^circle\(\s*0(px)?[\s)]/u.test(cs.clipPath);
   };
-  const clipsOut = (cs: CSSStyleDeclaration, box: DOMRect): boolean => {
-    const clips = (v: string): boolean => v === "hidden" || v === "clip";
-    const y = clips(cs.overflowY) && (box.height < 2 || r.bottom <= box.top || r.top >= box.bottom);
-    const x = clips(cs.overflowX) && (box.width < 2 || r.right <= box.left || r.left >= box.right);
-    return x || y;
-  };
-  // axe-core 4.13 `scrollHidden`: a scroller with a computed height or width of 0 shows nothing.
-  const scrollHidden = (cur: Element, cs: CSSStyleDeclaration): boolean => {
-    const scrolls = (v: string): boolean => v === "auto" || v === "scroll";
-    const x = scrolls(cs.overflowX) && cur.scrollWidth > cur.clientWidth;
-    const y = scrolls(cs.overflowY) && cur.scrollHeight > cur.clientHeight;
-    return (
-      (x || y) && (Number.parseInt(cs.height, 10) === 0 || Number.parseInt(cs.width, 10) === 0)
-    );
-  };
-  // An overflow clip reaches `el` only through its containing blocks: an absolute box escapes every
-  // static clipper up to its positioned ancestor, a fixed one escapes them all.
-  let escaping: "no" | "abs" | "fixed" = "no";
-  for (let cur: Element | null = el; cur !== null; cur = cur.parentElement) {
-    const cs = getComputedStyle(cur);
-    if (zeroClip(cs) || scrollHidden(cur, cs)) {
-      return false;
-    }
-    const contains = escaping === "no" || (escaping === "abs" && cs.position !== "static");
-    if (contains && clipsOut(cs, cur.getBoundingClientRect())) {
-      return false;
-    }
-    if (cs.position === "fixed" || escaping === "fixed") {
-      escaping = "fixed";
-    } else if (cs.position === "absolute") {
-      escaping = "abs";
-    } else if (cs.position !== "static") {
-      escaping = "no";
-    }
+  // CSS Position 3 and CSS Transforms 1: the containing block of fixed and absolute descendants,
+  // as layout containment is (`contain`, `container-type`, `content-visibility: auto`).
+  const holdsOutOfFlow = (cs: CSSStyleDeclaration): boolean =>
+    ["transform", "translate", "rotate", "scale", "perspective", "filter", "backdrop-filter"].some(
+      (p) => cs.getPropertyValue(p) !== "none",
+    ) ||
+    /paint|layout|strict|content/u.test(cs.contain) ||
+    /transform|perspective|filter/u.test(cs.willChange) ||
+    cs.containerType !== "normal" ||
+    cs.contentVisibility === "auto";
+  const escapeOf = (position: string): "no" | "abs" | "fixed" =>
+    position === "fixed" ? "fixed" : position === "absolute" ? "abs" : "no";
+  interface Axis {
+    now: number;
+    lo: number;
+    hi: number;
   }
-  return true;
+  // A reversed axis scrolls from 0 down to -extent: Chromium's scroll origin for rtl and a reversed flex.
+  const axis = (now: number, extent: number, reversed: boolean): Axis => {
+    const span = Math.max(0, extent);
+    return reversed ? { now, lo: -span, hi: 0 } : { now, lo: 0, hi: span };
+  };
+  // Whether a scroll offset in [lo, hi] puts [start, end] inside [from, to); an empty box is a point.
+  const reaches = (start: number, end: number, a: Axis, from: number, to: number): boolean => {
+    const first = start + a.now - to;
+    const last = end + a.now - from;
+    return first < a.hi && (end === start ? last >= a.lo : last > a.lo);
+  };
+  const clips = (v: string): boolean => v === "hidden" || v === "clip";
+  const scrolls = (v: string): boolean => v === "auto" || v === "scroll";
+
+  let r = el.getBoundingClientRect();
+  // `el`'s own clip or scroller bounds the text a walker judges in it.
+  const shut = (v: string, size: number): boolean => (clips(v) || scrolls(v)) && size < 2;
+  if (zeroClip(own) || shut(own.overflowX, r.width) || shut(own.overflowY, r.height)) {
+    return false;
+  }
+  let escaping = escapeOf(own.position);
+  // The viewport's own scroller is the document's, judged after the loop.
+  for (
+    let cur = el.parentElement;
+    cur !== null && cur !== document.body && cur !== document.documentElement;
+    cur = cur.parentElement
+  ) {
+    const cs = getComputedStyle(cur);
+    if (zeroClip(cs)) {
+      return false;
+    }
+    // A clip or a scroll reaches `el` only through its containing blocks (CSS Position 3 §2.1).
+    const contains =
+      escaping === "no" || holdsOutOfFlow(cs) || (escaping === "abs" && cs.position !== "static");
+    if (!contains) {
+      continue;
+    }
+    escaping = escapeOf(cs.position);
+    const box = cur.getBoundingClientRect();
+    const port = new DOMRect(
+      box.left + cur.clientLeft,
+      box.top + cur.clientTop,
+      cur.clientWidth,
+      cur.clientHeight,
+    );
+    const overflowsX = scrolls(cs.overflowX) && cur.scrollWidth > cur.clientWidth;
+    const overflowsY = scrolls(cs.overflowY) && cur.scrollHeight > cur.clientHeight;
+    // axe-core 4.13 `scrollHidden`: a scroller with a computed height or width of 0 clips what it contains.
+    if (
+      (overflowsX || overflowsY) &&
+      (Number.parseInt(cs.height, 10) === 0 || Number.parseInt(cs.width, 10) === 0)
+    ) {
+      return false;
+    }
+    const flex = cs.display.endsWith("flex") ? cs.flexDirection : "";
+    let [left, right, top, bottom] = [r.left, r.right, r.top, r.bottom];
+    if (clips(cs.overflowY)) {
+      if (port.height < 2 || r.bottom <= port.top || r.top >= port.bottom) {
+        return false;
+      }
+      [top, bottom] = [Math.max(r.top, port.top), Math.min(r.bottom, port.bottom)];
+    } else if (scrolls(cs.overflowY)) {
+      const y = axis(cur.scrollTop, cur.scrollHeight - cur.clientHeight, flex === "column-reverse");
+      if (!reaches(r.top, r.bottom, y, port.top, port.bottom)) {
+        return false;
+      }
+      [top, bottom] = [port.top, port.bottom];
+    }
+    if (clips(cs.overflowX)) {
+      if (port.width < 2 || r.right <= port.left || r.left >= port.right) {
+        return false;
+      }
+      [left, right] = [Math.max(r.left, port.left), Math.min(r.right, port.right)];
+    } else if (scrolls(cs.overflowX)) {
+      const reversed = (cs.direction === "rtl") !== (flex === "row-reverse");
+      const x = axis(cur.scrollLeft, cur.scrollWidth - cur.clientWidth, reversed);
+      if (!reaches(r.left, r.right, x, port.left, port.right)) {
+        return false;
+      }
+      [left, right] = [port.left, port.right];
+    }
+    r = new DOMRect(left, top, right - left, bottom - top);
+  }
+  const doc = document.documentElement;
+  const [x, y] =
+    escaping === "fixed"
+      ? [axis(0, 0, false), axis(0, 0, false)]
+      : [
+          axis(
+            window.scrollX,
+            doc.scrollWidth - doc.clientWidth,
+            getComputedStyle(document.body).direction === "rtl",
+          ),
+          axis(window.scrollY, doc.scrollHeight - doc.clientHeight, false),
+        ];
+  return (
+    reaches(r.left, r.right, x, 0, window.innerWidth) &&
+    reaches(r.top, r.bottom, y, 0, window.innerHeight)
+  );
 }
 
 /** The nearest ancestor whose transform is not a pure TRANSLATION, or null. Under a rotation a
@@ -926,13 +990,15 @@ function contrastRatio(
 }
 
 /** Every `opacity` from this element to the root, multiplied; applied to the text's alpha and to
- *  each background layer, so dimmed text is not measured against an undimmed surface. */
+ *  each background layer, so dimmed text is not measured against an undimmed surface. A
+ *  `display: contents` element has no box, so its opacity and background paint nothing. */
 function foldedOpacity(el: Element): number {
   let out = 1;
   let cur: Element | null = el;
   while (cur !== null) {
-    const o = Number.parseFloat(getComputedStyle(cur).opacity);
-    if (Number.isFinite(o)) {
+    const cs = getComputedStyle(cur);
+    const o = Number.parseFloat(cs.opacity);
+    if (Number.isFinite(o) && cs.display !== "contents") {
       out *= o;
     }
     cur = cur.parentElement;
@@ -944,8 +1010,9 @@ function dimmedBy(el: Element): string[] {
   const out: string[] = [];
   let cur: Element | null = el;
   while (cur !== null) {
-    const o = Number.parseFloat(getComputedStyle(cur).opacity);
-    if (Number.isFinite(o) && o < 1) {
+    const cs = getComputedStyle(cur);
+    const o = Number.parseFloat(cs.opacity);
+    if (Number.isFinite(o) && o < 1 && cs.display !== "contents") {
       out.push(`${describeEl(cur)}@${Math.round(o * 100) / 100}`);
     }
     cur = cur.parentElement;
@@ -964,11 +1031,12 @@ function surfaceUnder(el: Element): {
   let cur: Element | null = el;
   while (cur !== null) {
     const cs = getComputedStyle(cur);
-    if (cs.backgroundImage !== "none") {
+    const boxed = cs.display !== "contents";
+    if (boxed && cs.backgroundImage !== "none") {
       return { color: null, from: describeEl(cur), imageFrom: describeEl(cur) };
     }
     const c = parseColor(cs.backgroundColor);
-    if (c.a > 0) {
+    if (boxed && c.a > 0) {
       const dim = foldedOpacity(cur);
       layers.push({ c: { ...c, a: c.a * dim }, who: describeEl(cur) });
       if (c.a >= 1 && dim >= 1) {
@@ -1113,19 +1181,10 @@ function contrast(opts: { inkToken?: string | null }): unknown {
         break;
       }
     }
-    if (!hasText || !rendered(el)) {
+    if (!hasText || !rendered(el) || !paintsContents(el)) {
       continue;
     }
     const cs = getComputedStyle(el);
-    // `rendered` judges the box; these two skip the box's own text while painting the box. A closed
-    // details' own text sits in its `::details-content`, which a stylesheet may make visible.
-    if (
-      cs.contentVisibility === "hidden" ||
-      (el.tagName === "DETAILS" &&
-        getComputedStyle(el, "::details-content").contentVisibility === "hidden")
-    ) {
-      continue;
-    }
     const paintedAlpha = foldedOpacity(el);
     // WCAG 1.4.3 exempts an INACTIVE component's text; counted, since "really disabled" is a judgement.
     if (el.closest(":disabled, [aria-disabled='true']") !== null) {
@@ -1348,6 +1407,7 @@ const HELPERS = {
   lenPx,
   routeOf,
   tokenPx,
+  paintsContents,
   rendered,
   distortedUnder,
   scrolledEdges,
