@@ -422,6 +422,13 @@ func TestNotify_AWakeBackUnreadGoesBehindTheUsersQueuedRow(t *testing.T) {
 		t.Fatal("Setup: the wake was never steered into the running turn")
 	}
 	queueTextDuring(t, s.h, "m-user", "then run the tests")
+	// Once the user's turn's prompt is written, marotte.Deliver may steer the wake into it, so that write is held
+	// while the test reads the list.
+	userPrompt := make(chan struct{})
+	t.Cleanup(func() { close(userPrompt) })
+	br.mu.Lock()
+	br.blockWriteOn = map[string]chan struct{}{marotte.MethodPrompt: userPrompt}
+	br.mu.Unlock()
 
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newChunkMsg("done"))
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnEndMsg("end_turn"))
@@ -433,6 +440,9 @@ func TestNotify_AWakeBackUnreadGoesBehindTheUsersQueuedRow(t *testing.T) {
 	}
 	if got := k.steered(); !slices.Equal(got, []string{grelotWake}) {
 		t.Errorf("steers sent = %q, want the wake once", got)
+	}
+	if !grelotWaits(s.h, "c1", "n-1") {
+		t.Errorf("list = %+v, want the wake waiting behind the user's turn", listOf(s.h, "c1"))
 	}
 }
 
