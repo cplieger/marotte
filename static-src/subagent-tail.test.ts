@@ -181,14 +181,14 @@ describe("subagentTail reads the lane", () => {
   });
 
   // KAS titles a shell call with no description "Run Command", so a delegate running
-  // three commands would tail three identical lines. The command is what it ran.
-  it("takes the command as a description-less shell call's line", () => {
+  // three commands would tail three identical lines. The served card title is the command.
+  it("takes the card title as a tool call's line", () => {
     const shell = makeToolCall({
       id: "tc-shell",
       title: "Run Command",
+      card_title: "make lint",
       kind: "execute",
       status: "completed",
-      input: { command: "make lint" },
     });
     seed([text(1, "checking", SUB), toolCall(2, shell, SUB)]);
     expect(subagentTail(CHAT, SUB)).toEqual(["checking", "make lint"]);

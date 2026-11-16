@@ -3,6 +3,7 @@ import fc from "fast-check";
 import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
 import { makeToolCall } from "./__test-helpers__/model.js";
 import type { EntryToolCall, ToolCall } from "./types.js";
+import type { LoadedResource, LoadedType } from "./wire/types.gen.js";
 
 // The root is module state, and every case but one asserts the pass-through form.
 // Here rather than at the end of that case, which a failed assertion would skip.
@@ -109,7 +110,11 @@ describe("extractSubtitle", () => {
   ];
 
   it.each(cases)("$name", ({ input, expected }) => {
-    expect(extractSubtitle(input)).toBe(expected);
+    expect(extractSubtitle(input).text).toBe(expected);
+  });
+
+  it("returns the value a cut subtitle was cut from", () => {
+    expect(extractSubtitle({ path: "/x", command: "a".repeat(121) }).source).toBe("a".repeat(121));
   });
 });
 
@@ -567,14 +572,15 @@ describe("disclose_context and policy denials", () => {
   // The card names the DOCUMENT rather than the tool that fetched it.
   it("names the skill a disclose_context call loaded", async () => {
     const { buildToolCard } = await import("./tool-card.js");
-    const card = buildToolCard({
+    const call = makeToolCall({
       id: "t1",
       title: "disclose_context",
+      card_title: "Loaded skill: code-review",
       kind: "other",
       status: "completed",
-      live: false,
       disclosed: { type: "skill", display_name: "code-review", uri: "file:///x/code-review" },
     });
+    const card = buildToolCard(toolCardOptsFor(call, false));
     expect(card.dataset["title"]).toBe("Loaded skill: code-review");
     expect(card.dataset["disclosed"]).toBe("skill");
   });
@@ -585,6 +591,7 @@ describe("disclose_context and policy denials", () => {
     const call = makeToolCall({
       id: "t1-live",
       title: "disclose_context",
+      card_title: "Loaded skill: code-review",
       kind: "other",
       status: "in_progress",
       disclosed: { type: "skill", display_name: "code-review", uri: "file:///x/code-review" },
@@ -597,19 +604,6 @@ describe("disclose_context and policy denials", () => {
     );
     expect(card.dataset["title"]).toBe("Loaded skill: code-review");
     expect(card.querySelector(".tool-title")?.textContent).toBe("Loaded skill: code-review");
-  });
-
-  it("distinguishes a steering document from a skill", async () => {
-    const { buildToolCard } = await import("./tool-card.js");
-    const card = buildToolCard({
-      id: "t2",
-      title: "disclose_context",
-      kind: "other",
-      status: "completed",
-      live: false,
-      disclosed: { type: "steering", display_name: "marotte", uri: "file:///x/marotte.md" },
-    });
-    expect(card.dataset["title"]).toBe("Loaded steering: marotte");
   });
 
   // A refusal is not a failure: the state, the badge shape and the accessible name all
@@ -882,20 +876,6 @@ describe("tool card: whole-header disclosure", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
 
     card.remove();
-  });
-
-  it("shows non-MCP tool names without underscores", () => {
-    const card = buildToolCard({
-      id: "hdr-human-title",
-      title: "remote_web_search",
-      kind: "fetch",
-      status: "completed",
-      input: { query: "marotte" },
-      live: false,
-    });
-    const title = card.querySelector<HTMLElement>(".tool-title")!;
-    expect(title.textContent).toBe("remote web search");
-    expect(card.dataset["title"]).toBe("remote web search");
   });
 
   it("the chevron still toggles exactly once", () => {
@@ -1647,37 +1627,61 @@ describe("a card's title", () => {
     ];
   }
 
-  // KAS sends the static "Run Command" whenever the model wrote no description,
-  // which is most shell calls, so the placeholder told a reader nothing.
-  it("titles a description-less shell card with its command and drops the repeat row", () => {
+  // The server derives the title (`internal/marotte` ToolCardTitle); the card draws it as sent.
+  it("draws the server's title verbatim on every channel", () => {
+    const card = buildToolCard({
+      id: "title-verbatim",
+      title: "Running: tool_load",
+      kind: "other",
+      status: "completed",
+      live: false,
+    });
+    expect(channels(card)).toEqual([
+      "Running: tool_load",
+      "Running: tool_load",
+      "Running: tool_load",
+    ]);
+    expect(card.getAttribute("aria-label")).toBe("Running: tool_load, succeeded");
+  });
+
+  it("drops the subtitle under a title that is its command", () => {
     const card = buildToolCard({
       id: "title-shell",
-      title: "Run Command",
+      title: "go test ./...",
       kind: "execute",
       status: "completed",
-      input: { command: "go test ./..." },
+      input: { command: "go test  ./...\n" },
       live: false,
     });
     expect(channels(card)).toEqual(["go test ./...", "go test ./...", "go test ./..."]);
     expect(card.querySelector(".tool-subtitle")).toBeNull();
-    expect(card.getAttribute("aria-label")).toBe("go test ./..., succeeded");
   });
 
-  it("keeps the command's hyphens and underscores byte for byte", () => {
+  it("drops the subtitle under a command title the server cut", () => {
     const card = buildToolCard({
-      id: "title-shell-flags",
-      title: "Run Command",
+      id: "title-heredoc",
+      title: "cat <<'EOF' > out.txt " + "x".repeat(97) + "\u2026",
       kind: "execute",
       status: "completed",
-      input: { command: "go test -run Test_parse ./internal/x-y" },
+      input: { command: "cat <<'EOF' > out.txt\n" + "x".repeat(300) + "\nEOF\n" },
       live: false,
     });
-    expect(card.querySelector(".tool-title")?.textContent).toBe(
-      "go test -run Test_parse ./internal/x-y",
-    );
+    expect(card.querySelector(".tool-subtitle")).toBeNull();
   });
 
-  it("lets a model-written description outrank the command, which stays below it", () => {
+  it("keeps the subtitle under a title its command only starts with", () => {
+    const card = buildToolCard({
+      id: "title-prefix",
+      title: "git",
+      kind: "execute",
+      status: "completed",
+      input: { command: "git status" },
+      live: false,
+    });
+    expect(card.querySelector(".tool-subtitle")?.textContent).toBe("git status");
+  });
+
+  it("keeps the command below a described title", () => {
     const card = buildToolCard({
       id: "title-described",
       title: "Check vet output",
@@ -1690,59 +1694,28 @@ describe("a card's title", () => {
     expect(card.querySelector(".tool-subtitle")?.textContent).toBe("go vet ./...");
   });
 
-  it("collapses a multi-line command to one bounded line", () => {
+  it("keeps the command below a placeholder title the server sent", () => {
     const card = buildToolCard({
-      id: "title-heredoc",
+      id: "title-placeholder",
       title: "Run Command",
       kind: "execute",
       status: "completed",
-      input: { command: "cat <<'EOF' > out.txt\n" + "x".repeat(300) + "\nEOF\n" },
-      live: false,
-    });
-    expect(card.dataset["title"]).toBe("cat <<'EOF' > out.txt " + "x".repeat(97) + "\u2026");
-  });
-
-  it("keeps the placeholder when the call carries no command", () => {
-    const card = buildToolCard({
-      id: "title-no-input",
-      title: "Run Command",
-      kind: "execute",
-      status: "completed",
+      input: { command: "go vet ./..." },
       live: false,
     });
     expect(channels(card)).toEqual(["Run Command", "Run Command", "Run Command"]);
+    expect(card.querySelector(".tool-subtitle")?.textContent).toBe("go vet ./...");
   });
 
-  // KAS titles a described shell call with the model's own sentence, and that
-  // sentence is full of paths and flags a name humanizer would turn into spaces.
-  it("renders a described title verbatim on all three channels", () => {
-    const card = buildToolCard({
-      id: "title-prose",
-      title: "Run go test with --dry-run in ./internal/foo_bar",
-      kind: "execute",
-      status: "completed",
-      input: { command: "go test --dry-run ./internal/foo_bar" },
-      live: false,
-    });
-    expect(channels(card)).toEqual([
-      "Run go test with --dry-run in ./internal/foo_bar",
-      "Run go test with --dry-run in ./internal/foo_bar",
-      "Run go test with --dry-run in ./internal/foo_bar",
-    ]);
+  it("toolCardOptsFor draws the card title, else the wire title", () => {
+    const served = makeToolCall({ title: "Run Command", card_title: "make lint" });
+    expect(toolCardOptsFor(served, false).title).toBe("make lint");
+    expect(toolCardOptsFor(makeToolCall({ title: "Running: x_y" }), false).title).toBe(
+      "Running: x_y",
+    );
   });
 
-  it("keeps a hook card's own hook name", () => {
-    const card = buildToolCard({
-      id: "title-hook",
-      title: "Hook fired: lint-on-save",
-      kind: "hook",
-      status: "completed",
-      live: false,
-    });
-    expect(card.querySelector(".tool-title")?.textContent).toBe("Hook fired: lint-on-save");
-  });
-
-  it("samples the commands, not the placeholder, in a group of shell calls", async () => {
+  it("samples the cards' command titles in a group of shell calls", async () => {
     const { buildToolGroupShell, groupBody, refreshGroupHeader } = await import("./tool-group.js");
     const group = buildToolGroupShell();
     for (const [id, command] of [
@@ -1752,7 +1725,7 @@ describe("a card's title", () => {
       groupBody(group).appendChild(
         buildToolCard({
           id,
-          title: "Run Command",
+          title: command,
           kind: "execute",
           status: "completed",
           input: { command },
@@ -1972,7 +1945,7 @@ describe("an MCP card is built from the server's identity", () => {
   it("names the server and tool from opts.mcp", () => {
     const card = buildToolCard({
       id: "mcp-direct",
-      title: "@probe/echo_text",
+      title: "echo text",
       kind: "other",
       status: "completed",
       mcp: { server_name: "probe", tool_name: "echo_text" },
@@ -1985,7 +1958,7 @@ describe("an MCP card is built from the server's identity", () => {
   it("badges a Power route's card with its server, not the Power", () => {
     const card = buildToolCard({
       id: "mcp-power",
-      title: "@pw/srv/do_thing",
+      title: "do thing",
       kind: "other",
       status: "completed",
       mcp: { server_name: "srv", tool_name: "do_thing" },
@@ -1998,6 +1971,7 @@ describe("an MCP card is built from the server's identity", () => {
     const tc = makeToolCall({
       id: "mcp-deferred",
       title: "@github/create_issue",
+      card_title: "create issue",
       kind: "other",
       input: { tool_id: "tool::github::create_issue", arguments: {} },
       mcp: { server_name: "github", tool_name: "create_issue" },
@@ -2026,6 +2000,7 @@ describe("an MCP card is built from the server's identity", () => {
     const call = makeToolCall({
       id: "mcp-live",
       title: "@probe/echo_text",
+      card_title: "echo text",
       kind: "other",
       status: "in_progress",
       mcp: { server_name: "probe", tool_name: "echo_text" },
@@ -2046,19 +2021,35 @@ describe("an MCP card is built from the server's identity", () => {
   });
 });
 
-// The id's prefix says what loaded; the card names it and draws that thing's glyph.
+// The server names what a load loaded (`loaded`) and titles it; the card draws that thing's glyph.
 describe("a tool_load or load_resource card names what it loaded", () => {
   // A document draws its docs page tab's glyph (the tab whose list holds it).
   type Glyph = "mcp" | "tool" | "skills" | "steering" | "powers";
-  const cases: { id: string; title: string; glyph: Glyph }[] = [
-    { id: "tool::agent-mail::fetch_inbox", title: "Loaded agent-mail fetch_inbox", glyph: "mcp" },
-    { id: "tool::inspect_workflow", title: "Loaded tool: inspect_workflow", glyph: "tool" },
-    { id: "skill::land", title: "Loaded skill: land", glyph: "skills" },
-    { id: "steering::code-style", title: "Loaded steering: code-style", glyph: "steering" },
-    { id: "power::aws::overview", title: "Loaded power overview: aws", glyph: "powers" },
-    { id: "power::aws::tool::docs::search_docs", title: "Loaded docs search_docs", glyph: "mcp" },
-    { id: "plugin::kit::skill::release", title: "Loaded skill: release", glyph: "skills" },
-    { id: "plugin::kit::steering::style", title: "Loaded steering: style", glyph: "steering" },
+  function res(id: string, type: LoadedType, name: string, server = ""): LoadedResource {
+    return { id, type, name, server };
+  }
+  const cases: { loaded: LoadedResource; title: string; glyph: Glyph }[] = [
+    {
+      loaded: res("tool::agent-mail::fetch_inbox", "mcp", "fetch_inbox", "agent-mail"),
+      title: "Loaded agent-mail fetch_inbox",
+      glyph: "mcp",
+    },
+    {
+      loaded: res("tool::inspect_workflow", "tool", "inspect_workflow"),
+      title: "Loaded tool: inspect_workflow",
+      glyph: "tool",
+    },
+    { loaded: res("skill::land", "skill", "land"), title: "Loaded skill: land", glyph: "skills" },
+    {
+      loaded: res("steering::code-style", "steering", "code-style"),
+      title: "Loaded steering: code-style",
+      glyph: "steering",
+    },
+    {
+      loaded: res("power::aws::overview", "overview", "aws"),
+      title: "Loaded power overview: aws",
+      glyph: "powers",
+    },
   ];
 
   async function glyphOf(g: Glyph): Promise<string> {
@@ -2082,15 +2073,15 @@ describe("a tool_load or load_resource card names what it loaded", () => {
 
   for (const tool of ["load_resource", "tool_load"]) {
     for (const c of cases) {
-      it(`${tool} ${c.id}`, async () => {
+      it(`${tool} ${c.loaded.id}`, async () => {
         const { buildToolCard } = await import("./tool-card.js");
         const card = buildToolCard({
-          id: `load-${tool}-${c.id}`,
-          title: tool === "tool_load" ? "Tool Load" : "Load Resource",
+          id: `load-${tool}-${c.loaded.id}`,
+          title: c.title,
           kind: "other",
           status: "completed",
           toolName: tool,
-          input: { id: c.id },
+          loaded: [c.loaded],
           output: "loaded",
           live: false,
         });
@@ -2106,25 +2097,27 @@ describe("a tool_load or load_resource card names what it loaded", () => {
         const loaded = card.querySelector(".tool-loaded");
         card.remove();
         expect(card.dataset["depth1"]).toBe("load");
-        expect(loaded?.textContent).toContain(c.id);
+        expect(loaded?.textContent).toContain(c.loaded.id);
       });
     }
   }
 
-  // A live card takes title frames after its build; each one re-derives the same claim.
+  // A live card's frames repeat the wire title; the folded card title is what it keeps drawing.
   for (const tool of ["load_resource", "tool_load"]) {
     for (const c of cases) {
-      it(`${tool} ${c.id} keeps its claim through a live card's update frames`, async () => {
+      it(`${tool} ${c.loaded.id} keeps its claim through a live card's update frames`, async () => {
         const { buildToolCard } = await import("./tool-card.js");
         const { applyToolCallUpdate } = await import("./messages-tools.js");
         const wireTitle = tool === "tool_load" ? "Tool Load" : "Load Resource";
         const call = makeToolCall({
-          id: `live-${tool}-${c.id}`,
+          id: `live-${tool}-${c.loaded.id}`,
           title: wireTitle,
+          card_title: c.title,
           kind: "other",
           status: "in_progress",
           tool_name: tool,
-          input: { id: c.id },
+          input: { id: c.loaded.id },
+          loaded: [c.loaded],
         });
         const card = buildToolCard(toolCardOptsFor(call, true, "c-load"));
         applyToolCallUpdate(card, { ...call, status: "completed", output: "loaded" }, "c-load");
@@ -2135,14 +2128,14 @@ describe("a tool_load or load_resource card names what it loaded", () => {
     }
   }
 
-  // A create frame without the id paints the kind's glyph; the frame that brings the id re-picks it, and the settle
-  // keeps the re-picked glyph as the card's identity.
+  // A create frame without the id paints the kind's glyph; the frame that brings the server's `loaded` re-picks it,
+  // and the settle keeps the re-picked glyph as the card's identity.
   for (const c of cases) {
-    it(`a live card whose id ${c.id} arrives after its build draws that thing's glyph`, async () => {
+    it(`a live card whose id ${c.loaded.id} arrives after its build draws that thing's glyph`, async () => {
       const { buildToolCard } = await import("./tool-card.js");
       const { applyToolCallUpdate } = await import("./messages-tools.js");
       const call = makeToolCall({
-        id: `late-${c.id}`,
+        id: `late-${c.loaded.id}`,
         title: "Tool Load",
         kind: "other",
         status: "in_progress",
@@ -2150,16 +2143,18 @@ describe("a tool_load or load_resource card names what it loaded", () => {
       });
       const card = buildToolCard(toolCardOptsFor(call, true, "c-load"));
       const want = drawing(await glyphOf(c.glyph));
-      applyToolCallUpdate(card, { ...call, input: { id: c.id } }, "c-load");
+      const arrived = {
+        ...call,
+        card_title: c.title,
+        input: { id: c.loaded.id },
+        loaded: [c.loaded],
+      };
+      applyToolCallUpdate(card, arrived, "c-load");
       expect(card.dataset["title"]).toBe(c.title);
       expect(drawing(card.querySelector(".tool-icon")?.innerHTML ?? ""), "while it runs").toBe(
         want,
       );
-      applyToolCallUpdate(
-        card,
-        { ...call, input: { id: c.id }, status: "completed", output: "loaded" },
-        "c-load",
-      );
+      applyToolCallUpdate(card, { ...arrived, status: "completed", output: "loaded" }, "c-load");
       expect(drawing(card.querySelector(".tool-icon")?.innerHTML ?? ""), "once it settles").toBe(
         want,
       );
@@ -2170,7 +2165,7 @@ describe("a tool_load or load_resource card names what it loaded", () => {
       card.querySelector<HTMLElement>(".tool-disclosure")?.click();
       const rows = [...card.querySelectorAll(".tool-loaded li")].map((li) => li.textContent);
       card.remove();
-      expect(rows).toEqual([c.id]);
+      expect(rows).toEqual([c.loaded.id]);
     });
   }
 
@@ -2186,27 +2181,37 @@ describe("a tool_load or load_resource card names what it loaded", () => {
       tool_name: "tool_load",
     });
     const card = buildToolCard({ ...toolCardOptsFor(call, true, "c-load"), detailsOpen: true });
-    applyToolCallUpdate(card, { ...call, input: { id: "skill::land" } }, "c-load");
-    applyToolCallUpdate(card, { ...call, input: { id: "skill::land" } }, "c-load");
+    const loaded = [res("skill::land", "skill", "land")];
+    const arrived = { ...call, input: { id: "skill::land" }, loaded };
+    applyToolCallUpdate(card, arrived, "c-load");
+    applyToolCallUpdate(card, arrived, "c-load");
     const rows = [...card.querySelectorAll(".tool-loaded li")].map((li) => li.textContent);
     expect(rows).toEqual(["skill::land"]);
   });
 
-  it("names every id an older tool_load's tool_ids carried", async () => {
+  it("lists every id an older tool_load's tool_ids carried", async () => {
     const { buildToolCard } = await import("./tool-card.js");
     const card = buildToolCard({
       id: "load-ids",
-      title: "Tool Load",
+      title: "Loaded tool: inspect_workflow, mailbox reply_message",
       kind: "other",
       status: "completed",
       toolName: "tool_load",
       input: { tool_ids: ["builtin::inspect_workflow", "tool::mailbox::reply_message"] },
+      loaded: [
+        res("builtin::inspect_workflow", "tool", "inspect_workflow"),
+        res("tool::mailbox::reply_message", "mcp", "reply_message", "mailbox"),
+      ],
       live: false,
     });
-    expect(card.dataset["title"]).toBe("Loaded tool: inspect_workflow, mailbox reply_message");
     expect(drawing(card.querySelector(".tool-icon")?.innerHTML ?? "")).toBe(
       drawing(await glyphOf("tool")),
     );
+    document.body.appendChild(card);
+    card.querySelector<HTMLElement>(".tool-disclosure")?.click();
+    const rows = [...card.querySelectorAll(".tool-loaded li")].map((li) => li.textContent);
+    card.remove();
+    expect(rows).toEqual(["builtin::inspect_workflow", "tool::mailbox::reply_message"]);
   });
 
   // KAS 3.3.0's own disclose_context call, as a chat log records it: `{id}` on the create, disclosedContext on the
@@ -2216,18 +2221,22 @@ describe("a tool_load or load_resource card names what it loaded", () => {
     { id: "steering::git-commits", type: "steering", name: "git-commits", glyph: "steering" },
   ];
   for (const d of disclosures) {
+    const claim = `Loaded ${d.type}: ${d.name}`;
+    const doc = res(d.id, d.type, d.name);
     const create = (): ToolCall =>
       makeToolCall({
         id: `disclose-${d.id}`,
         title: `Load ${d.type}: ${d.name}`,
+        card_title: claim,
         kind: "other",
         status: "pending",
         tool_name: "disclose_context",
         input: { id: d.id },
+        loaded: [doc],
       });
     const settled = (): ToolCall => ({
       ...create(),
-      title: `Loaded ${d.type}: ${d.name}`,
+      title: claim,
       status: "completed",
       disclosed: { type: d.type, display_name: d.name, uri: `file:///x/${d.name}` },
       output: "body",
@@ -2261,10 +2270,17 @@ describe("a tool_load or load_resource card names what it loaded", () => {
     it(`an older disclose_context of a ${d.type} takes its glyph from the settle, and keeps it on reload`, async () => {
       const { buildToolCard } = await import("./tool-card.js");
       const { applyToolCallUpdate } = await import("./messages-tools.js");
-      const older = (tc: ToolCall): ToolCall => ({ ...tc, input: { name: d.name } });
-      const live = buildToolCard(toolCardOptsFor(older(create()), true, "c-disclose"));
-      applyToolCallUpdate(live, older(settled()), "c-disclose");
-      const reloaded = buildToolCard(toolCardOptsFor(older(settled()), false, "c-disclose"));
+      const olderCreate: ToolCall = { ...create(), card_title: `Load ${d.type}: ${d.name}` };
+      olderCreate.input = { name: d.name };
+      delete olderCreate.loaded;
+      const olderSettled: ToolCall = {
+        ...settled(),
+        input: { name: d.name },
+        loaded: [res(`${d.type}::${d.name}`, d.type, d.name)],
+      };
+      const live = buildToolCard(toolCardOptsFor(olderCreate, true, "c-disclose"));
+      applyToolCallUpdate(live, olderSettled, "c-disclose");
+      const reloaded = buildToolCard(toolCardOptsFor(olderSettled, false, "c-disclose"));
       const want = drawing(await glyphOf(d.glyph));
       expect(drawing(live.querySelector(".tool-icon")?.innerHTML ?? ""), "live").toBe(want);
       expect(drawing(reloaded.querySelector(".tool-icon")?.innerHTML ?? ""), "reloaded").toBe(want);
@@ -2272,24 +2288,28 @@ describe("a tool_load or load_resource card names what it loaded", () => {
   }
 
   // One slot, one glyph: a multi-id load draws the glyph its ids share, else the wrench.
-  const multi: { ids: string[]; glyph: Glyph }[] = [
-    { ids: ["agent-mail::fetch_inbox", "agent-mail::send_message"], glyph: "mcp" },
-    { ids: ["tool::agent-mail::fetch_inbox", "tool::docs::search"], glyph: "mcp" },
-    { ids: ["skill::land", "plugin::kit::skill::release"], glyph: "skills" },
-    { ids: ["steering::a", "power::aws::steering::b"], glyph: "steering" },
-    { ids: ["skill::land", "steering::a"], glyph: "tool" },
-    { ids: ["skill::land", "tool::agent-mail::fetch_inbox"], glyph: "tool" },
+  const mail = res("agent-mail::fetch_inbox", "mcp", "fetch_inbox", "agent-mail");
+  const land = res("skill::land", "skill", "land");
+  const steer = res("steering::a", "steering", "a");
+  const multi: { loaded: LoadedResource[]; glyph: Glyph }[] = [
+    { loaded: [mail, res("agent-mail::send", "mcp", "send", "agent-mail")], glyph: "mcp" },
+    { loaded: [mail, res("tool::docs::search", "mcp", "search", "docs")], glyph: "mcp" },
+    { loaded: [land, res("plugin::kit::skill::release", "skill", "release")], glyph: "skills" },
+    { loaded: [steer, res("power::aws::steering::b", "steering", "b")], glyph: "steering" },
+    { loaded: [land, steer], glyph: "tool" },
+    { loaded: [land, mail], glyph: "tool" },
   ];
   for (const m of multi) {
-    it(`a tool_load of ${m.ids.join(", ")} draws the ${m.glyph} glyph`, async () => {
+    const ids = m.loaded.map((r) => r.id);
+    it(`a tool_load of ${ids.join(", ")} draws the ${m.glyph} glyph`, async () => {
       const { buildToolCard } = await import("./tool-card.js");
       const card = buildToolCard({
-        id: `multi-${m.ids.join("+")}`,
+        id: `multi-${ids.join("+")}`,
         title: "Tool Load",
         kind: "other",
         status: "completed",
         toolName: "tool_load",
-        input: { tool_ids: m.ids },
+        loaded: m.loaded,
         live: false,
       });
       expect(drawing(card.querySelector(".tool-icon")?.innerHTML ?? "")).toBe(
@@ -2299,21 +2319,22 @@ describe("a tool_load or load_resource card names what it loaded", () => {
   }
 
   for (const tool of ["disclose_context", "load_resource", "tool_load"]) {
-    it(`a ${tool} of an id outside KAS's grammar draws the wrench and names the id`, async () => {
+    it(`a ${tool} of an id outside KAS's grammar draws the wrench and opens on the id`, async () => {
       const { buildToolCard } = await import("./tool-card.js");
       const card = buildToolCard({
         id: `unknown-${tool}`,
-        title: "Load Resource",
+        title: "Loaded memory::x",
         kind: "other",
         status: "completed",
         toolName: tool,
         input: { id: "memory::x" },
+        loaded: [res("memory::x", "unknown", "memory::x")],
         live: false,
       });
       expect(drawing(card.querySelector(".tool-icon")?.innerHTML ?? "")).toBe(
         drawing(await glyphOf("tool")),
       );
-      expect(card.dataset["title"]).toBe("Loaded memory::x");
+      expect(card.dataset["depth1"]).toBe("load");
     });
   }
 });

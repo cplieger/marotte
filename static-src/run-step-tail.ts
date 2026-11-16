@@ -42,20 +42,24 @@ function turnLine(turn: TurnState): string {
   return "";
 }
 
-/** What one sealed entry of the step's own lane prints: a text's or thinking's last line, a tool
- *  call's title. The server's twin, which seeds a tail cell, is `internal/agent` `printedLine`. */
+/** What one sealed entry of the step's own lane prints: a text's or thinking's last line, the title
+ *  a tool call's card draws. The server's twin, which seeds a tail cell, is `internal/agent`
+ *  `printedLine`. */
 function entryLine(e: Entry): string {
   if ((e.lane ?? "") !== "") {
     return "";
   }
-  const field =
-    e.kind === "text" || e.kind === "thinking" ? "text" : e.kind === "tool_call" ? "title" : "";
-  if (field === "") {
+  const fields =
+    e.kind === "text" || e.kind === "thinking"
+      ? ["text"]
+      : e.kind === "tool_call"
+        ? ["card_title", "title"]
+        : [];
+  const p = e.payload;
+  if (p === null || typeof p !== "object") {
     return "";
   }
-  const p = e.payload;
-  const value =
-    p !== null && typeof p === "object" ? (p as Record<string, unknown>)[field] : undefined;
+  const value = fields.map((f) => (p as Record<string, unknown>)[f]).find((v) => v !== undefined);
   return typeof value === "string" ? lastLine(value) : "";
 }
 

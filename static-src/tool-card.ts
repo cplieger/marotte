@@ -25,8 +25,6 @@ import {
 import { createDisclosure, type DisclosureController } from "./legacy-ui/disclosure.js";
 import {
   renderInfoFor,
-  cardTitle,
-  commandTitle,
   toolDepth1,
   cardDepth1,
   isToolActive,
@@ -46,6 +44,7 @@ function renderInfoOf(opts: BuildToolCardOpts): ToolRenderInfo {
     sourcePath: opts.sourcePath,
     toolName: opts.toolName,
     mcp: opts.mcp,
+    loaded: opts.loaded,
   });
 }
 
@@ -54,8 +53,7 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   const info = renderInfoOf(opts);
   const depth1 = cardDepth1(info);
   const withToggle = depth1 !== "none";
-  const shellTitle = commandTitle(opts.title, opts.kind, opts.input);
-  const displayTitle = cardTitle(info, opts.title, opts.kind, opts.input);
+  const displayTitle = opts.title;
 
   const node = el("div", { className: `tool-call tool-depth1-${depth1}` }) as HTMLDivElement;
   node.dataset["kind"] = info.kind;
@@ -106,14 +104,11 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   applyOutcome(node, opts.status, displayTitle, info);
 
   // The subtitle sits in the summary, so the box is one disclosure and one hover
-  // target; a card titled by its command carries none.
-  if (
-    shellTitle === null &&
-    (depth1 === "search" || depth1 === "fetch" || depth1 === "generic" || depth1 === "output")
-  ) {
+  // target.
+  if (depth1 === "search" || depth1 === "fetch" || depth1 === "generic" || depth1 === "output") {
     const subtitle = extractSubtitle(opts.input);
-    if (subtitle !== "") {
-      summary.appendChild(el("div", { className: "tool-subtitle" }, subtitle));
+    if (subtitle.text !== "" && !repeatsTitle(subtitle.source, displayTitle)) {
+      summary.appendChild(el("div", { className: "tool-subtitle" }, subtitle.text));
     }
   }
 
@@ -305,18 +300,30 @@ function moveRow(input: Record<string, unknown> | undefined): HTMLElement | null
   );
 }
 
-/** A one-line subtitle from tool input. */
-export function extractSubtitle(input: Record<string, unknown> | undefined): string {
-  if (input === undefined) {
-    return "";
-  }
-  for (const key of ["query", "pattern", "command", "url", "path", "explanation"]) {
-    const val = input[key];
-    if (typeof val === "string" && val !== "") {
-      return truncate(val, 120);
+/** A one-line subtitle from tool input: the shown `text` and the input value it was cut from. */
+export function extractSubtitle(input: Record<string, unknown> | undefined): {
+  text: string;
+  source: string;
+} {
+  if (input !== undefined) {
+    for (const key of ["query", "pattern", "command", "url", "path", "explanation"]) {
+      const val = input[key];
+      if (typeof val === "string" && val !== "") {
+        return { text: truncate(val, 120), source: val };
+      }
     }
   }
-  return "";
+  return { text: "", source: "" };
+}
+
+/** Whether a subtitle's source would repeat the title above it: the title is that value on one
+ *  line, whole or cut with a trailing `…` (a description-less shell card's command title). */
+function repeatsTitle(source: string, title: string): boolean {
+  const line = source.replace(/\s+/g, " ").trim();
+  if (line === title) {
+    return true;
+  }
+  return title.length > 1 && title.endsWith("\u2026") && line.startsWith(title.slice(0, -1));
 }
 
 // --- HTML fragments ---

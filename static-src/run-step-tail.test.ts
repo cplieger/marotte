@@ -52,6 +52,14 @@ describe("lastPrintedLine", () => {
     ).toBe("Run the tests");
   });
 
+  it("is a tool call's card title over its wire title, as the dock line's server twin reads it", () => {
+    const call = { title: "Run Command", card_title: "go test ./...", id: "c1" };
+    expect(lineOf(turn([entry(1, "tool_call", call)]))).toBe("go test ./...");
+    expect(lineOf(turn([entry(1, "tool_call", { title: "Run Command", id: "c1" })]))).toBe(
+      "Run Command",
+    );
+  });
+
   it("skips a delegate's lane and an entry with nothing to say", () => {
     const t = turn([
       entry(1, "text", { text: "mine" }),

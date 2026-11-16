@@ -6,7 +6,7 @@ import { effect, touch } from "@cplieger/reactive";
 import { get, messagesVersionOf } from "./store.js";
 import { laneSig } from "./store-signals.js";
 import { payloadOf } from "./turns.js";
-import { commandTitle, isInternalToolTitle, isSubagentInvocation } from "./tool-schema.js";
+import { isInternalToolTitle, isSubagentInvocation } from "./tool-schema.js";
 import { readLane, type LaneRead } from "./subagent-slice.js";
 
 /** How many trailing lines a card's tail shows. */
@@ -31,9 +31,7 @@ function tailOf(s: string, want: number): string[] {
   return out;
 }
 
-/** The line a `tool_call` entry contributes: its title, or the command a
- *  description-less shell call ran. `commandTitle` owns that derivation for the
- *  card and this line alike. */
+/** The line a `tool_call` entry contributes: the title its card draws. */
 function toolLine(e: Entry): string[] {
   const call = payloadOf(e, "tool_call");
   if (
@@ -44,7 +42,7 @@ function toolLine(e: Entry): string[] {
   ) {
     return [];
   }
-  return tailOf(commandTitle(call.title, call.kind, call.input) ?? call.title, 1);
+  return tailOf(call.card_title ?? call.title, 1);
 }
 
 function textOf(e: Entry): string | null {

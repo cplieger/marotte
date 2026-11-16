@@ -200,6 +200,7 @@
       "before": {
         "id": "c1",
         "title": "Running: x",
+        "card_title": "x",
         "kind": "other",
         "status": "pending",
         "ts": 1
@@ -214,6 +215,7 @@
       "after": {
         "id": "c1",
         "title": "Reading file",
+        "card_title": "Reading file",
         "kind": "read",
         "status": "pending",
         "ts": 1

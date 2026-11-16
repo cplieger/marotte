@@ -1520,6 +1520,20 @@ describe("one entry that fails to render does not take its turn with it", () => 
     expect(r.body.querySelector("img")).toBeNull();
   });
 
+  it("names a tool call that cannot be displayed by the title its card would draw", () => {
+    const input = {};
+    Object.defineProperty(input, "path", {
+      enumerable: true,
+      get: (): never => {
+        throw new Error("boom");
+      },
+    });
+    const call = toolCall("tool-broken", { card_title: "go test ./...", kind: "edit", input });
+    const r = render([callEntry("t", 1, call)]);
+    const fallback = r.body.querySelector(".entry-fallback");
+    expect(fallback?.querySelector(".entry-fallback-text")?.textContent).toBe("go test ./...");
+  });
+
   it("contains a throw outside every entry, and logs a repeating one once", () => {
     const turnID = nextTurnID();
     // Iterating the body throws, so the pass fails before any entry is placed.
