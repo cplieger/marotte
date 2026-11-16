@@ -12,7 +12,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// recallCommandsFrame is the menu KAS sends once a prompt was renamed to recall.md.
+// recallCommandsFrame is the menu KAS sends once a prompt was renamed so its command reads recall.
 func recallCommandsFrame(t *testing.T, sid string) *marotte.RPCResponse {
 	t.Helper()
 	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: mustJSON(t, map[string]any{
