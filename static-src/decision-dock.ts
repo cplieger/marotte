@@ -820,8 +820,8 @@ function lower(box: HTMLElement | null, prop: string, over: number, share: numbe
   return over - give;
 }
 
-/** The holding area's floor under a question: its content down to the end of its first waiting message, the run bar
- *  above it whole, or all of it with none; never past its cap. */
+/** The holding area's floor under a question: its content down to the end of the steer stack's first shown row, the
+ *  run bar above it whole, or all of it when the stack shows no row; never past its cap. */
 function holdFloor(area: HTMLElement): number {
   // Measured from the boxes, never `scrollHeight`, which is at least the area's own height: a floor read from it
   // would hold whatever height the area already had.
