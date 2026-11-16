@@ -548,14 +548,11 @@ func (l *runList) mayLaunch(e *runEntry) bool {
 // back paused like the released rows (afterSend), so it waits for the next clean close and is never steered into the
 // send's reply. A send that lifts a hold also ends a failed launch's retry (failedLaunch) for the rows it releases.
 func (l *runList) releaseHold(send bool) {
-	held := send && (l.pausing != 0 || l.held())
 	for _, e := range l.entries {
-		if held && e.state == marotte.RunPaused {
-			e.failedLaunch = false
-		}
 		switch {
 		case l.stopPaused(e):
 			e.pausedBy, e.pausedBefore = 0, false
+			e.failedLaunch = e.failedLaunch && !send
 			l.touch()
 		case e.inFlight() && e.pausedBy != 0:
 			e.pausedBy, e.afterSend = 0, send
