@@ -190,7 +190,7 @@ class Elements {
   get pinnedList(): HTMLDivElement {
     return byId("pinned-list");
   }
-  /** The scroller holding every tab section and the History row. */
+  /** The scroller holding every sidebar section. */
   get tabSections(): HTMLDivElement {
     return byId("tab-sections");
   }
@@ -464,8 +464,8 @@ class Elements {
     return byId("fb-drop-overlay");
   }
 
-  get historyBtn(): HTMLButtonElement {
-    return byId("history-btn");
+  get historyMore(): HTMLButtonElement {
+    return byId("history-more");
   }
   get historyTabBar(): HTMLElement {
     return byId("history-tab-bar");

@@ -31,6 +31,7 @@ export function tabsMock(): Record<string, unknown> {
     toggleDocsView: vi.fn(async () => {}),
     showHistoryView: vi.fn(),
     leaveHistoryView: vi.fn(),
+    focusHistoryEntry: vi.fn(() => false),
 
     adoptSubject: vi.fn(),
     // Resolves like the real door, whose promise settles once the activation half has run.
@@ -44,6 +45,7 @@ export function tabsMock(): Record<string, unknown> {
     paintProvisionalTabs: vi.fn(),
     renameTab: vi.fn(),
     setTabStatus: vi.fn(),
+    statusDotEl: vi.fn(() => document.createElement("span")),
     setTabRunStatus: vi.fn(),
     setTabDirty: vi.fn(),
     setSettingsTab: vi.fn(),

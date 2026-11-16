@@ -134,11 +134,12 @@ export const VIEWS = {
     shell: true,
     ready: `${chatReady(s.small[0])} && ${shown("#shell-panel", 5)}`,
   }),
-  // History is no tab: its sidebar row reopens it on the list it last showed.
-  history: (s) => ({ ...page(s, "/history", null, "#history-view"), opener: "#history-btn" }),
+  // History is no tab: More, in the sidebar's History section, reopens it on the list it last
+  // showed; a scripted click reaches More even while the section is hidden or folded.
+  history: (s) => ({ ...page(s, "/history", null, "#history-view"), opener: "#history-more" }),
   "history-runs": (s) => ({
     ...page(s, "/history/runs", null, "#history-view"),
-    opener: "#history-btn",
+    opener: "#history-more",
   }),
 };
 

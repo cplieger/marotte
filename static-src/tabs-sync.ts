@@ -26,7 +26,7 @@ const VERIFY_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000] as const;
 
 /** What the sync layer needs from the row holder: two verbs, declared at the consumer. */
 export interface TabsTarget {
-  /** Replace the projection and the Recently closed list from a version-checked, overlaid snapshot
+  /** Replace the projection and the list of recent closes from a version-checked, overlaid snapshot
    *  (boot list and re-lists only). */
   reset: (tabs: readonly TabSubject[], recent: readonly RecentClose[]) => void;
   /** Apply ONE version-checked mutation; `local` marks this device's own echo (mechanism 4). */

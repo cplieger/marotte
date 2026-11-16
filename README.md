@@ -159,4 +159,6 @@ This project was built with AI assistance. The human maintainer defines architec
 
 AGPL-3.0-or-later. See [LICENSE](LICENSE). The image carries the license text of every bundled component under `/usr/share/licenses/`.
 
+Third-party attributions are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 The terminal's two web fonts ship under their own licences, each licence text served beside the font files under `/vendor/fonts/`: [Monaspace](https://github.com/githubnext/monaspace) Neon NF under SIL Open Font License 1.1, and [web-terminal-glyphs](https://github.com/cplieger/web-terminal-glyphs) under Apache-2.0.

@@ -706,6 +706,7 @@ func (rt *Runtime) RegisterRoutes(mux *http.ServeMux) {
 	rt.powers.register(mux)
 	rt.runRoutes.register(mux)
 	rt.registerEngineRoutes(mux)
+	rt.registerBotRoutes(mux)
 	// The pre-session catalog (kiro-cli 2.14 _kiro/config/template).
 	mux.HandleFunc("GET /api/config-template", rt.handleConfigTemplate)
 	mux.HandleFunc("GET /api/sessions", rt.handleSessionList)

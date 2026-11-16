@@ -206,8 +206,10 @@
 
 /* Idle — a chat that exists with nothing happening in it. HOLLOW, and the fill
    is the channel that separates it from every filled state without hue (WCAG
-   1.4.1). --c-dot-idle is sized by measurement; see 01-tokens.css. */
-.tab-status-dot[data-status="idle"] {
+   1.4.1). --c-dot-idle is sized by measurement; see 01-tokens.css. A closed
+   chat's row in the History section draws the same empty ring. */
+.tab-status-dot[data-status="idle"],
+.tab-status-dot[data-status="closed"] {
   background: transparent;
   border: 1.5px solid var(--dot-color);
 }
@@ -978,8 +980,7 @@
   cursor: default;
 }
 
-/* THE SIDEBAR'S SECTIONS (Open, Pinned, Recently closed): a disclosure header over each list, and
-   History as one row at their foot. */
+/* THE SIDEBAR'S SECTIONS (Open, Pinned, History): a disclosure header over each list. */
 .side-section + .side-section {
   margin-block-start: var(--sp-1);
 }
@@ -1042,31 +1043,22 @@
   font-variant-numeric: tabular-nums;
 }
 
-.recent-list {
+.history-list {
   margin: 0;
   list-style: none;
 }
 
-/* A tab row's geometry, so the closed rows and History line up with the tab rows above them. */
-:is(.recent-row, .side-history-row) {
+/* A tab row's geometry, so the closed rows and More line up with the tab rows above them. A closed
+   row's box is its item, as on the History page: the reopen target and Delete sit side by side in
+   it, so the hover wash covers both and neither target lies over the other. */
+:is(.history-item, .history-more) {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
-  padding-block: var(--sp-2);
-  padding-inline: var(--sp-3) var(--sp-2);
   min-block-size: var(--tab-row-h);
-  border: 1px solid transparent;
   border-radius: var(--r);
-  background: transparent;
   color: var(--c-text-secondary);
   font-size: var(--fs-sm);
-  text-align: start;
-  cursor: pointer;
   transition: background var(--dur-micro);
-
-  & > svg {
-    flex-shrink: 0;
-  }
 
   @media (any-hover: hover) {
     &:hover {
@@ -1076,15 +1068,46 @@
   }
 
   /* The row a context menu acts on keeps its hover look while the menu shows; a touch has no hover. */
-  &[data-menu-open] {
+  &:has(> .history-row[data-menu-open]) {
     background: var(--c-hover);
     color: var(--c-text-primary);
   }
 }
 
-/* A touch hold opens the row menu, so the row selects no text. */
-.recent-row {
+:is(.history-row, .history-more) {
+  gap: var(--sp-2);
+  padding-block: var(--sp-2);
+  padding-inline: var(--sp-3) var(--sp-2);
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+
+  & > svg {
+    flex-shrink: 0;
+  }
+}
+
+.history-more {
   inline-size: 100%;
+}
+
+/* At least half the touch floor's spare, so Delete's expanded target meets the row's edge. */
+.history-item {
+  gap: max(var(--sp-2), var(--tap-gap-sm) / 2);
+  padding-inline-end: var(--sp-2);
+}
+
+/* A touch hold opens the row menu, so the row selects no text. */
+.history-row {
+  flex: 1;
+  min-inline-size: 0;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  color: inherit;
+  font: inherit;
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
@@ -1094,7 +1117,7 @@
   }
 }
 
-.recent-row-name {
+.history-row-name {
   flex: 1;
   min-inline-size: 0;
   overflow: hidden;
@@ -1102,16 +1125,41 @@
   white-space: nowrap;
 }
 
-.recent-row-time {
+.history-row-time {
   color: var(--c-text-tertiary);
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
 }
 
-.side-history-row {
-  margin: 0.125rem var(--sp-2) 0;
+/* Delete PAINTS 24px and its target is --hit-floor (44px on touch) through the shared expander
+   (61-mcp-tools.css). Neither rule may set `overflow`, which would clip that target. */
+.history-row-delete {
+  flex: none;
+  inline-size: var(--ctl-h-sm);
+  block-size: var(--ctl-h-sm);
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--c-text-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    background var(--dur-micro),
+    color var(--dur-micro) var(--ease-standard);
 
-  &[hidden] {
-    display: none;
+  &[aria-busy="true"] {
+    cursor: progress;
+  }
+
+  @media (any-hover: hover) {
+    &:hover {
+      background: var(--c-hover-raised);
+      color: var(--c-danger);
+    }
   }
 }

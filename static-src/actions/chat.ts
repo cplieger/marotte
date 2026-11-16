@@ -886,7 +886,7 @@ export const sendPrompt = defineAction<SendPromptArgs, SendPromptAnswer>({
           // A tombstoned chat: there is no record to prompt.
           return "gone";
         case "chat_closed":
-          // The chat's close committed after this send began: the reopened chat never runs it.
+          // The chat was closed, so the send never runs; the text stays as its draft.
           return "closed";
         case "starting":
         default:

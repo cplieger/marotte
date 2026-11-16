@@ -76,6 +76,9 @@ func cmdForkChat(ctx context.Context, bridges bridgeAccess, chats chatStore, ws 
 	if !ok {
 		return nil, StatusError(http.StatusNotFound, errForkParentUnknown)
 	}
+	if refusal := BotDraftRefusal(parent); refusal != nil {
+		return nil, refusal
+	}
 
 	atMessage, err := branchPoint(ctx, chats, p)
 	if err != nil {

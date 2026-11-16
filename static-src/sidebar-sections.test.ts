@@ -212,11 +212,11 @@ const accessibleName = (b: HTMLElement): string =>
     .join(" ");
 
 describe("which sections show", () => {
-  it("lays Open out before Pinned, and the History row last", () => {
+  it("lays Open out before Pinned, and the History section last", () => {
     const column = el("tab-sections");
     const kids = [...column.children].map((c) => c.id);
     expect(kids.indexOf("open-section")).toBeLessThan(kids.indexOf("pinned-section"));
-    expect(column.lastElementChild?.id).toBe("history-btn");
+    expect(column.lastElementChild?.id).toBe("history-section");
     expect(el("tab-list").parentElement?.id).toBe("open-section");
     expect(el("pinned-list").parentElement?.id).toBe("pinned-section");
   });
@@ -524,7 +524,7 @@ describe("the keyboard across sections", () => {
     expect(stops("pinned-list")).toEqual([]);
   });
 
-  it("tabs through Open's header and stop, Pinned's header and stop, then the History row", async () => {
+  it("tabs through Open's header and stop, Pinned's header and stop, then out of the sections", async () => {
     await openChats("p", "a");
     await setTabPinned(chatID("p"), true);
     await paint();
@@ -534,7 +534,10 @@ describe("the keyboard across sections", () => {
       await userEvent.keyboard("{Tab}");
       seen.push(document.activeElement);
     }
-    expect(seen).toEqual([row("a"), toggle("pinned"), row("p"), el("history-btn")]);
+    expect(seen.slice(0, 3)).toEqual([row("a"), toggle("pinned"), row("p")]);
+    expect(el("tab-sections").contains(seen[3] ?? null), "nothing closed, so no History stop").toBe(
+      false,
+    );
   });
 
   it("tabs from a folded header with no row stop straight past its section", async () => {
@@ -545,7 +548,8 @@ describe("the keyboard across sections", () => {
     await paint();
     toggle("pinned").focus();
     await userEvent.keyboard("{Tab}");
-    expect(document.activeElement).toBe(el("history-btn"));
+    expect(el("tab-sections").contains(document.activeElement)).toBe(false);
+    expect(document.activeElement).not.toBe(document.body);
   });
 
   it("keeps the arrows, Home and End inside the list", async () => {
@@ -1120,9 +1124,9 @@ describe("a header's box and motion", () => {
         path: "a drop that commits",
         lifts: 1,
         run: async () => {
-          const history = el("history-btn");
-          const r = await lift("p", midY(history));
-          pointerAt("pointerup", r, r.getBoundingClientRect().left + 10, midY(history));
+          const tailY = el("tab-sections").getBoundingClientRect().bottom - 4;
+          const r = await lift("p", tailY);
+          pointerAt("pointerup", r, r.getBoundingClientRect().left + 10, tailY);
           await paint();
           expect(
             [...el("tab-list").querySelectorAll<HTMLElement>(":scope > [data-tab-id]")].map(refOf),

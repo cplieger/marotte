@@ -50,7 +50,7 @@ var (
 	// deleting, and for a create that would bind the session that run belongs to.
 	errRunPurging = errors.New("that workflow run is being deleted")
 	// errRunLauncherUnread is the 503 for a new run tab whose launching chat
-	// could not be read: Parent is immutable, so guessing top level is permanent.
+	// could not be read: open_tab never re-parents an open tab, so guessing top level would stick.
 	errRunLauncherUnread = errors.New("could not tell which chat launched that workflow run. Try again")
 	// errRunUnknown is the 503 for a new run tab of a run no source names, so its launcher is unknown.
 	errRunUnknown = errors.New("this run could not be found, so the chat that launched it is unknown")
@@ -79,6 +79,7 @@ type TabSet interface {
 	Open(ctx context.Context, spec marotte.OpenTab) (subject marotte.TabSubject, created bool, version uint64, err error)
 	Close(ctx context.Context, id string, unlisted []string, facts map[string]tabs.RecentFacts) ([]marotte.TabSubject, []tabs.OwedRelease, uint64, error)
 	Forget(ctx context.Context, ref string) (uint64, error)
+	Relist(ctx context.Context, entries []marotte.RecentClose) (uint64, error)
 	ExpireRecent(ctx context.Context) (uint64, error)
 	Recent() []marotte.RecentClose
 	Reorder(ctx context.Context, ids []string) (uint64, error)
@@ -105,6 +106,8 @@ type membershipChats interface {
 	// SessionInTeardown names a session of a chat whose retention teardown still runs.
 	SessionInTeardown(sessionID string) bool
 	ReconcileKeep(ctx context.Context, id marotte.ChatID, fn func(r *chat.KeepRecord)) error
+	// DeleteIf deletes id only when doomed, run on the record under its lock, says so.
+	DeleteIf(ctx context.Context, id marotte.ChatID, doomed func(*marotte.Chat) bool) (sessionChain []string, deleted bool, err error)
 }
 
 var _ membershipChats = (*chat.Store)(nil)
@@ -525,6 +528,33 @@ func (m *Membership) ReopenForMessage(ctx context.Context, chatID marotte.ChatID
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.reopenUnderMu(ctx, chatID)
+}
+
+// BeginMessage answers stamp(), the life stamp a message into chatID presents to its submit, where its intent
+// begins: a close that commits after it ends the message. reopen first opens the chat's tab (ReopenForMessage), for
+// an outside caller's message, in the same hold of mu. A Bot is checked and stamped in one hold, so a Bot left with
+// no tab, by a close that committed first or a reopen that opened none, refuses with 409 chat_closed: no turn runs
+// in a closed Bot.
+func (m *Membership) BeginMessage(ctx context.Context, chatID marotte.ChatID, reopen bool, stamp func() uint64) (uint64, error) {
+	c, ok := m.chats.Get(ctx, chatID)
+	bot := ok && c.Bot != nil
+	if m.tabs == nil || (!reopen && !bot) {
+		return stamp(), nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if reopen {
+		m.reopenUnderMu(ctx, chatID)
+	}
+	if bot && m.tabForChat(chatID) == "" {
+		return 0, StatusErrorReason(http.StatusConflict, reasonChatClosed, errChatClosed)
+	}
+	return stamp(), nil
+}
+
+// reopenUnderMu is ReopenForMessage's body. Caller holds mu.
+func (m *Membership) reopenUnderMu(ctx context.Context, chatID marotte.ChatID) {
 	if m.tabForChat(chatID) != "" {
 		return
 	}
@@ -540,7 +570,8 @@ func (m *Membership) ReopenForMessage(ctx context.Context, chatID marotte.ChatID
 
 // openRunTabLocked opens a run tab. An open one only gains focus. A new one is refused unless its owners were
 // read and named (refuseRunTab), then holds the run-tab fact on every holder before it opens; any later failure
-// rolls those holds back. Parent is immutable, so a run whose launcher could not be read never opens top level.
+// rolls those holds back. open_tab never re-parents an open tab, so a run whose launcher could not be read never
+// opens top level.
 // Caller holds mu.
 func (m *Membership) openRunTabLocked(ctx context.Context, spec marotte.OpenTab, opID string, launcher launcherAnswer) (TabOpened, error) {
 	if m.runTabOpen(spec.Ref) {
@@ -592,7 +623,7 @@ func (m *Membership) refuseRunTab(spec marotte.OpenTab, launcher *launcherAnswer
 	if launcher.owner.Verdict == RunUnknown {
 		return StatusError(http.StatusServiceUnavailable, errRunUnknown)
 	}
-	// The store would promote a run under a closed parent, and Parent is immutable.
+	// The store would promote a run under a closed parent, and open_tab never re-parents an open tab.
 	if spec.Parent != "" && !m.tabOpen(spec.Parent) {
 		return errSuppliedParentClosed
 	}
@@ -681,12 +712,12 @@ func (m *Membership) launcherTab(ctx context.Context, launcher marotte.ChatID) (
 	return opened.Subject.ID, nil
 }
 
-// closeTab closes a tab and its descendants and, with retention off, deletes each chat
-// the close left tabless. An id that is not open closes nothing and is not an error.
+// closeTab closes a tab and its descendants and deletes each chat the close left tabless that doomedChats dooms.
+// An id that is not open closes nothing and is not an error.
 //
 // Under mu it holds each closed chat's life gate, refuses a stale impact with 409
 // close_impact_changed (holds released, nothing committed), then commits with tabs.Close (the doomed chats unlisted),
-// swaps a person's close's tab facts for stop holds, deletes the doomed records and enqueues
+// swaps a person's close's tab facts for stop holds, deletes the doomed records, marks each kept Bot closed and enqueues
 // each chat's teardown; it answers without waiting for the teardowns (teardownRunner.enqueue
 // owns the draining exception). Past the commit there is no rollback, only roll-forward.
 func (m *Membership) closeTab(ctx context.Context, id, opID string, byPerson bool, impact *marotte.CloseImpact) (closed []marotte.TabSubject, version uint64, err error) {
@@ -703,7 +734,7 @@ func (m *Membership) closeTab(ctx context.Context, id, opID string, byPerson boo
 		m.mu.Unlock()
 		return nil, 0, check.refusal(errCloseImpactChanged, "tab", id)
 	}
-	doomed := m.doomedChats(ctx, id)
+	doomed, retained := m.doomedChats(ctx, id)
 	before := m.tabs.Recent()
 	closed, owed, version, err := m.tabs.Close(ctx, id, chatRefs(doomed), m.recentFacts(ctx, chats))
 	if err != nil {
@@ -730,7 +761,9 @@ func (m *Membership) closeTab(ctx context.Context, id, opID string, byPerson boo
 	})
 	m.noticeClosed(closed)
 	stops := m.releaseForClosed(rollCtx, owed, "", byPerson && m.closeChat != nil)
-	deleted := m.deleteDoomedRecords(rollCtx, doomed)
+	deleted, kept := m.deleteDoomedRecords(rollCtx, doomed, retained)
+	m.markBotsClosed(rollCtx, closed, owed, deleted)
+	m.relistKept(rollCtx, closed, owed, kept, opID)
 	jobs, retentionTabClosed := jobsFor(closed, deleted, holds, stops, byPerson)
 	after := m.enqueueAll(jobs)
 	m.mu.Unlock()
@@ -742,6 +775,38 @@ func (m *Membership) closeTab(ctx context.Context, id, opID string, byPerson boo
 		m.wakeRetention()
 	}
 	return closed, version, nil
+}
+
+// markBotsClosed writes closed_at, the close's own time, on each Bot the close left with no tab and kept. Under mu,
+// so the message hook never sees a closed Bot's tab gone with its record still open. A failed write is left to the
+// boot heal, which reopens the tab.
+func (m *Membership) markBotsClosed(
+	ctx context.Context, closed []marotte.TabSubject, owed []tabs.OwedRelease, deleted map[marotte.ChatID][]string,
+) {
+	for i := range owed {
+		e := &owed[i]
+		chatID := marotte.ChatID(e.Ref)
+		if _, gone := deleted[chatID]; gone || e.Kind != marotte.TabKindChat || !closedBotTab(closed, e.Ref) {
+			continue
+		}
+		if _, err := m.chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
+			if !exists || c.Bot == nil || c.Bot.ClosedAt != 0 {
+				return false
+			}
+			b := *c.Bot
+			b.ClosedAt = e.ClosedAt
+			c.Bot = &b
+			return true
+		}); err != nil {
+			slog.Warn("bots: a closed Bot's record could not be marked closed", "chat_id", chatID, keyError, err)
+		}
+	}
+}
+
+func closedBotTab(closed []marotte.TabSubject, ref string) bool {
+	return slices.ContainsFunc(closed, func(t marotte.TabSubject) bool {
+		return t.Kind == marotte.TabKindChat && t.Ref == ref && t.Bot
+	})
 }
 
 // jobsFor builds one teardown job per chat the close took, each carrying that chat's committed hold: the delete
@@ -816,29 +881,38 @@ func releaseAll(holds map[marotte.ChatID]ChatHold) {
 	}
 }
 
-// doomedChats decides what a retention-off close of id will delete: every chat whose
-// open tabs all lie inside the closing subtree and whose record exists. A recordless chat
-// is skipped — no chat_deleted for an id no device knows.
+// doomedChats decides what a close of id will delete among the chats whose open tabs all lie inside the closing
+// subtree, by doomedRecord, with the retention setting it read. A recordless chat is skipped: no chat_deleted for an
+// id no device knows.
 //
 // Caller holds mu.
-func (m *Membership) doomedChats(ctx context.Context, id string) []marotte.ChatID {
+func (m *Membership) doomedChats(ctx context.Context, id string) (doomed []marotte.ChatID, retained bool) {
 	if m.deleteChat == nil || m.retention == nil {
-		// Escalation unwired: a close can only close. Retention defaults
-		// on — the fail-toward-keeping direction.
-		return nil
+		// Escalation unwired: a close can only close, the fail-toward-keeping direction.
+		return nil, true
 	}
 	refs := m.tablessChatRefs(m.tabs.Subtree(id))
-	if len(refs) == 0 || m.retention(ctx) {
-		return nil
+	if len(refs) == 0 {
+		return nil, true
 	}
-	doomed := make([]marotte.ChatID, 0, len(refs))
+	retained = m.retention(ctx)
+	doomed = make([]marotte.ChatID, 0, len(refs))
 	for _, ref := range refs {
 		chatID := marotte.ChatID(ref)
-		if _, ok := m.chats.Get(ctx, chatID); ok {
+		if c, ok := m.chats.Get(ctx, chatID); ok && doomedRecord(c, retained) {
 			doomed = append(doomed, chatID)
 		}
 	}
-	return doomed
+	return doomed, retained
+}
+
+// doomedRecord reports whether a close that leaves c tabless deletes it: a Bot draft at every Days kept, no started
+// Bot ever, and any other chat only with retention off.
+func doomedRecord(c *marotte.Chat, retained bool) bool {
+	if c.Bot != nil {
+		return c.Bot.StartedAt == 0
+	}
+	return !retained
 }
 
 // Caller holds mu.
@@ -869,28 +943,69 @@ func (m *Membership) tablessChatRefs(subtree []marotte.TabSubject) []string {
 	return refs
 }
 
-// deleteDoomedRecords removes each doomed chat's record — tombstone and
-// chat_deleted happen inside Delete — and returns the session chains of
-// the ones that actually went. A failed delete logs ERROR and is left out
-// of the result, demoting that chat to the close-grade teardown.
+// deleteDoomedRecords removes each doomed chat whose record doomedRecord still dooms under its lock (tombstone and
+// chat_deleted happen inside the delete) and returns the session chains of the ones that went, and the ones a start
+// landing since doomedChats' read made a started Bot, which are kept. A failed delete logs ERROR and is in neither,
+// demoting that chat to the close-grade teardown.
 //
 // Caller holds mu; ctx is the detached roll-forward context.
-func (m *Membership) deleteDoomedRecords(ctx context.Context, doomed []marotte.ChatID) map[marotte.ChatID][]string {
+func (m *Membership) deleteDoomedRecords(
+	ctx context.Context, doomed []marotte.ChatID, retained bool,
+) (deleted map[marotte.ChatID][]string, kept []marotte.ChatID) {
 	if len(doomed) == 0 {
-		return nil
+		return nil, nil
 	}
-	deleted := make(map[marotte.ChatID][]string, len(doomed))
+	deleted = make(map[marotte.ChatID][]string, len(doomed))
+	still := func(c *marotte.Chat) bool { return doomedRecord(c, retained) }
 	for _, chatID := range doomed {
-		chain, err := m.chats.Delete(ctx, chatID)
-		if err != nil {
-			slog.Error("close: retention-off record delete failed after the tab close committed; the record survives with close-grade teardown",
+		chain, gone, err := m.chats.DeleteIf(ctx, chatID, still)
+		switch {
+		case err != nil:
+			slog.Error("close: record delete failed after the tab close committed; the record survives with close-grade teardown",
 				"chat_id", chatID, keyError, err)
+		case !gone:
+			slog.Info("bots: a Bot started while its draft's tab closed; kept as a closed Bot", "chat_id", chatID)
+			kept = append(kept, chatID)
+		default:
+			slog.Info("chat deleted on close", "chat_id", chatID)
+			deleted[chatID] = chain
+		}
+	}
+	return deleted, kept
+}
+
+// relistKept puts each kept chat, which the close unlisted to delete, back on the Recently closed list as the close
+// would have listed it, and announces the list. A failed write leaves the Bot closed and reachable from History.
+// Caller holds mu.
+func (m *Membership) relistKept(
+	ctx context.Context, closed []marotte.TabSubject, owed []tabs.OwedRelease, kept []marotte.ChatID, opID string,
+) {
+	if len(kept) == 0 {
+		return
+	}
+	facts := m.recentFacts(ctx, kept)
+	entries := make([]marotte.RecentClose, 0, len(kept))
+	for _, chatID := range kept {
+		ref := string(chatID)
+		i := slices.IndexFunc(owed, func(o tabs.OwedRelease) bool { return o.Kind == marotte.TabKindChat && o.Ref == ref })
+		if i < 0 {
 			continue
 		}
-		slog.Info("chat deleted on close (retention off)", "chat_id", chatID)
-		deleted[chatID] = chain
+		pinned := slices.ContainsFunc(closed, func(t marotte.TabSubject) bool {
+			return t.Kind == marotte.TabKindChat && t.Ref == ref && t.Pinned
+		})
+		f := facts[ref]
+		entries = append(entries, marotte.RecentClose{Ref: ref, Name: f.Name, ClosedAt: owed[i].ClosedAt, Pinned: pinned, Bot: f.Bot})
 	}
-	return deleted
+	before := m.tabs.Recent()
+	version, err := m.tabs.Relist(ctx, entries)
+	if err != nil {
+		slog.Warn("tabs: a kept Bot could not be listed as recently closed", "chats", kept, keyError, err)
+		return
+	}
+	if recent := m.recentChange(before); recent != nil {
+		m.emit(ctx, &marotte.TabsChangedPayload{Recent: recent, Version: version, OpID: opID})
+	}
 }
 
 // reorderTabs replaces the order. ids must name every open tab exactly
@@ -923,7 +1038,7 @@ func (m *Membership) reorderTabs(ctx context.Context, ids []string, opID string)
 //
 // An id that is not open is errTabUnknown (404), unlike a close: a pin is
 // a statement about a tab, so success would tell the caller its tab is
-// pinned when it is not.
+// pinned when it is not. A Bot's tab is 409 bot_tab either way: its place is its section.
 func (m *Membership) setPinned(ctx context.Context, id string, pinned bool, opID string) (uint64, error) {
 	if m.tabs == nil {
 		return 0, StatusError(http.StatusServiceUnavailable, errTabsUnavailable)
@@ -931,8 +1046,12 @@ func (m *Membership) setPinned(ctx context.Context, id string, pinned bool, opID
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	open, before := m.tabs.List()
-	if indexOfTab(open, id) < 0 {
+	i := indexOfTab(open, id)
+	if i < 0 {
 		return 0, StatusError(http.StatusNotFound, errTabUnknown)
+	}
+	if open[i].Bot {
+		return 0, StatusErrorReason(http.StatusConflict, reasonBotTab, errBotTab)
 	}
 	recent := m.tabs.Recent()
 	version, err := m.tabs.SetPinned(ctx, id, pinned)
@@ -1005,8 +1124,8 @@ func (m *Membership) ackTab(ctx context.Context, id string, seen uint64, opID st
 // as it now reads. Idempotent when the parent is unchanged: nothing commits,
 // nothing is emitted.
 //
-// errTabUnknown (404) for an id that is not open, like a pin; 409 when parent
-// is not an open TabKindChat tab or sits inside the tab's own subtree. The
+// errTabUnknown (404) for an id that is not open, like a pin; 409 bot_tab for a Bot's tab, which stays top level so
+// no other chat's close reaches it; 409 when parent is not an open TabKindChat tab or sits inside the tab's own subtree. The
 // frame carries Order beside Changed because the row moved.
 func (m *Membership) reparent(ctx context.Context, id, parent, opID string) (marotte.TabSubject, uint64, error) {
 	if m.tabs == nil {
@@ -1015,8 +1134,12 @@ func (m *Membership) reparent(ctx context.Context, id, parent, opID string) (mar
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	open, before := m.tabs.List()
-	if indexOfTab(open, id) < 0 {
+	i := indexOfTab(open, id)
+	if i < 0 {
 		return marotte.TabSubject{}, 0, StatusError(http.StatusNotFound, errTabUnknown)
+	}
+	if open[i].Bot {
+		return marotte.TabSubject{}, 0, StatusErrorReason(http.StatusConflict, reasonBotTab, errBotTab)
 	}
 	if p := indexOfTab(open, parent); p < 0 || open[p].Kind != marotte.TabKindChat {
 		return marotte.TabSubject{}, 0, StatusError(http.StatusConflict, errParentNotChat)
@@ -1399,6 +1522,56 @@ func (m *Membership) ReconcileTabs(ctx context.Context, chatID marotte.ChatID, f
 	return m.chats.ReconcileKeep(ctx, chatID, func(r *chat.KeepRecord) { fn(r, open) })
 }
 
+// BotHeal is one HealBotTabs pass: Opened tabs reopened, Cleared closes cleared, Failed Bots left for the next pass.
+type BotHeal struct {
+	Opened, Cleared, Failed int
+}
+
+// HealBotTabs makes each Bot in ids agree with the tab set, from a complete chat scan only: an open Bot with no tab
+// gets an owning top-level one past MaxOpenTabs, and a Bot whose tab is open has its closed_at cleared. A closed Bot
+// with no tab was closed by the user and is left alone.
+func (m *Membership) HealBotTabs(ctx context.Context, ids []marotte.ChatID) BotHeal {
+	var out BotHeal
+	if m.tabs == nil {
+		return out
+	}
+	for _, id := range ids {
+		m.healBotTab(ctx, id, &out)
+	}
+	return out
+}
+
+func (m *Membership) healBotTab(ctx context.Context, id marotte.ChatID, out *BotHeal) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, found, err := m.chats.Lookup(ctx, id)
+	if err != nil {
+		slog.Warn("bots: a Bot's tab was not healed; its record could not be read", "chat_id", id, keyError, err)
+		out.Failed++
+		return
+	}
+	if !found || c.Bot == nil {
+		return
+	}
+	shown := m.tabForChat(id) != ""
+	switch {
+	case shown && c.Bot.ClosedAt != 0:
+		if m.clearBotClosed(ctx, id) {
+			out.Cleared++
+		} else {
+			out.Failed++
+		}
+	case !shown && c.Bot.ClosedAt == 0:
+		spec := marotte.OpenTab{Kind: marotte.TabKindChat, Ref: string(id), Owns: true, OverCap: true}
+		if _, err := m.openChatTabUnderMu(ctx, spec, ""); err != nil {
+			slog.Warn("bots: an open Bot's lost tab was not reopened", "chat_id", id, keyError, err)
+			out.Failed++
+			return
+		}
+		out.Opened++
+	}
+}
+
 // SetLaunchChats grows run tab tabID's holders and resolves it (tabs.Store.SetLaunchChats), under mu like every tab
 // write. It emits nothing: the client renders neither field.
 func (m *Membership) SetLaunchChats(ctx context.Context, tabID string, chats []string, resolved bool) error {
@@ -1476,12 +1649,29 @@ func (m *Membership) sessionPurging(sessionID string) bool {
 	return m.purgingSessions[sessionID] > 0
 }
 
-// openTab opens and, when something was committed, emits. Caller holds mu.
+// openTab opens and, when something was committed, emits. A chat tab's Bot fact and a Bot's top-level place come
+// from the record, never the caller, so a record that cannot be read fails the open with errChatUnread; an open
+// Bot's tab clears its closed_at, which makes the open its reopen. Caller holds mu.
 func (m *Membership) openTab(ctx context.Context, spec marotte.OpenTab, opID string) (TabOpened, error) {
+	reopened := false
+	if spec.Kind == marotte.TabKindChat {
+		c, ok := m.chats.Get(ctx, marotte.ChatID(spec.Ref))
+		if !ok {
+			return TabOpened{}, StatusError(http.StatusServiceUnavailable, errChatUnread)
+		}
+		spec.Bot = c.Bot != nil
+		if spec.Bot {
+			spec.Parent = ""
+			reopened = c.Bot.ClosedAt != 0
+		}
+	}
 	recent := m.tabs.Recent()
 	subject, created, version, err := m.tabs.Open(ctx, spec)
 	if err != nil {
 		return TabOpened{}, tabStatus(err)
+	}
+	if reopened {
+		m.clearBotClosed(ctx, marotte.ChatID(spec.Ref))
 	}
 	if created {
 		slog.Info("tab opened", "kind", spec.Kind, "ref", spec.Ref)
@@ -1494,6 +1684,22 @@ func (m *Membership) openTab(ctx context.Context, spec marotte.OpenTab, opID str
 		})
 	}
 	return TabOpened{Subject: subject, Version: version, Created: created}, nil
+}
+
+// clearBotClosed writes a reopened Bot's closed_at back to 0 and reports whether the record now says open. A failed
+// write is left to the boot heal, which clears closed_at for a Bot whose tab is open.
+func (m *Membership) clearBotClosed(ctx context.Context, id marotte.ChatID) bool {
+	_, err := m.chats.Mutate(ctx, id, func(c *marotte.Chat, exists bool) bool {
+		if !exists || c.Bot == nil || c.Bot.ClosedAt == 0 {
+			return false
+		}
+		c.Bot.ClosedAt = 0
+		return true
+	})
+	if err != nil {
+		slog.Warn("bots: a reopened Bot's record could not be marked open", "chat_id", id, keyError, err)
+	}
+	return err == nil
 }
 
 // closeTabsFor closes every tab showing chatID. A close that fails after the record is gone is retried once, and if

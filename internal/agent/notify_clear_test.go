@@ -25,7 +25,7 @@ func queueInsteadCmd(key string) marotte.ClientCommand {
 
 // wakeInKAS runs a prompted turn in c1 and steers a grelot wake n-1 into it, then the user's sends in order, each
 // into kiro-cli's buffer.
-func wakeInKAS(t *testing.T, users ...[2]string) (*steerHarness, *testChatStore, *kas320Steering, string) {
+func wakeInKAS(t *testing.T, users ...[2]string) (*steerHarness, *testChatStore, *fakeBridge, *kas320Steering, string) {
 	t.Helper()
 	s, cs, br := steerOpsHub(t)
 	k := kas320On(s.h, "c1", br)
@@ -40,7 +40,7 @@ func wakeInKAS(t *testing.T, users ...[2]string) (*steerHarness, *testChatStore,
 			t.Fatalf("Setup: %s answered %q, want steered", u[0], got)
 		}
 	}
-	return s, cs, k, id
+	return s, cs, br, k, id
 }
 
 // A wake still being handed to kiro-cli cannot be discarded: the discard is refused as already sending, and the wake
@@ -83,7 +83,7 @@ func TestNotify_ADiscardOfAWakeBeingSentIsRefusedAndItIsSentOnce(t *testing.T) {
 
 // Discarding a wake kiro-cli already holds clears it from kiro-cli's buffer: it leaves the list and no turn takes it.
 func TestNotify_ADiscardOfAWakeTheAgentHoldsClearsIt(t *testing.T) {
-	s, cs, k, id := wakeInKAS(t)
+	s, cs, _, k, id := wakeInKAS(t)
 
 	rec := postCmd(t, s.h, unqueueCmd("n-1"))
 
@@ -115,7 +115,7 @@ func TestNotify_ADiscardOfAWakeTheAgentHoldsClearsIt(t *testing.T) {
 // wake's words never join a user's steer, and the wake waits behind the user's resent steer, then goes once the
 // agent read it.
 func TestNotify_DeletingAUserSteerBesideAWakeResendsOnlyTheUsersKeptSteers(t *testing.T) {
-	s, _, k, _ := wakeInKAS(t, [2]string{"m-u1", "first"}, [2]string{"m-u2", "second"}, [2]string{"m-u3", "third"})
+	s, _, _, k, _ := wakeInKAS(t, [2]string{"m-u1", "first"}, [2]string{"m-u2", "second"}, [2]string{"m-u3", "third"})
 
 	rec := postCmd(t, s.h, removeCmd("steer-m-u1"))
 
@@ -145,7 +145,7 @@ func TestNotify_DeletingAUserSteerBesideAWakeResendsOnlyTheUsersKeptSteers(t *te
 
 // Deleting the wake beside the user's steer resends the user's steer alone.
 func TestNotify_DeletingAWakeResendsTheUsersSteerAlone(t *testing.T) {
-	s, _, k, _ := wakeInKAS(t, [2]string{"m-u1", "first"})
+	s, _, _, k, _ := wakeInKAS(t, [2]string{"m-u1", "first"})
 
 	rec := postCmd(t, s.h, removeCmd("steer-n-1"))
 
@@ -164,7 +164,7 @@ func TestNotify_DeletingAWakeResendsTheUsersSteerAlone(t *testing.T) {
 // "Queue this message instead" on the user's steer beside a wake kiro-cli holds takes both out of kiro-cli's buffer
 // and resends neither: the user's message waits as a queued row ahead of the wake, and opens the next turn.
 func TestNotify_QueueInsteadPutsTheUsersSteerAheadOfTheWake(t *testing.T) {
-	s, cs, k, id := wakeInKAS(t, [2]string{"m-u1", "first"})
+	s, cs, br, k, id := wakeInKAS(t, [2]string{"m-u1", "first"})
 
 	rec := postCmd(t, s.h, queueInsteadCmd("steer-m-u1"))
 
@@ -185,6 +185,7 @@ func TestNotify_QueueInsteadPutsTheUsersSteerAheadOfTheWake(t *testing.T) {
 		t.Errorf("the user's dock frame = %q, want removed: the message is a queued row now", f.State)
 	}
 
+	holdUserPrompt(t, br)
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnEndMsg("end_turn"))
 	s.h.coord.releaseTurn("c1", id)
 
@@ -198,7 +199,7 @@ func TestNotify_QueueInsteadPutsTheUsersSteerAheadOfTheWake(t *testing.T) {
 
 // "Queue this message instead" is the user's own: a wake's steer cannot be moved to the queue, and stays where it is.
 func TestNotify_QueueInsteadOfAWakeIsRefused(t *testing.T) {
-	s, _, k, _ := wakeInKAS(t)
+	s, _, _, k, _ := wakeInKAS(t)
 
 	rec := postCmd(t, s.h, queueInsteadCmd("steer-n-1"))
 

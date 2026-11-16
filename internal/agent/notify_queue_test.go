@@ -400,6 +400,17 @@ func nextPrompt(t *testing.T, cs *testChatStore, chatID marotte.ChatID, n int) *
 	return p
 }
 
+// holdUserPrompt parks the next turn's session/prompt before its write until the test ends. Once that prompt is
+// written, marotte.Deliver may steer a waiting wake into the turn, so a test reading the list after nextPrompt holds it.
+func holdUserPrompt(t *testing.T, br *fakeBridge) {
+	t.Helper()
+	write := make(chan struct{})
+	t.Cleanup(func() { close(write) })
+	br.mu.Lock()
+	br.blockWriteOn = map[string]chan struct{}{marotte.MethodPrompt: write}
+	br.mu.Unlock()
+}
+
 // grelotWaits reports whether the wake still stands on chatID's list under grelot's name, not delivered as a prompt.
 func grelotWaits(h *Runtime, chatID marotte.ChatID, id string) bool {
 	for _, e := range listOf(h, chatID) {
@@ -422,6 +433,7 @@ func TestNotify_AWakeBackUnreadGoesBehindTheUsersQueuedRow(t *testing.T) {
 		t.Fatal("Setup: the wake was never steered into the running turn")
 	}
 	queueTextDuring(t, s.h, "m-user", "then run the tests")
+	holdUserPrompt(t, br)
 
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newChunkMsg("done"))
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnEndMsg("end_turn"))
@@ -433,6 +445,9 @@ func TestNotify_AWakeBackUnreadGoesBehindTheUsersQueuedRow(t *testing.T) {
 	}
 	if got := k.steered(); !slices.Equal(got, []string{grelotWake}) {
 		t.Errorf("steers sent = %q, want the wake once", got)
+	}
+	if !grelotWaits(s.h, "c1", "n-1") {
+		t.Errorf("list = %+v, want the wake waiting behind the user's turn", listOf(s.h, "c1"))
 	}
 }
 

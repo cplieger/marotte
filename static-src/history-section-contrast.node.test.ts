@@ -1,4 +1,4 @@
-// A Recently closed row's inks and the History row's, over the sidebar and over their own hover,
+// The History section's closed rows' inks and More's, over the sidebar and over their own hover,
 // in both themes (WCAG 1.4.3, 4.5:1: the name and the time are `--fs-sm` text). Every ink and fill
 // is read from the stylesheet and measured by css-contrast.py, so a CSS change cannot pass silently.
 
@@ -78,19 +78,17 @@ function row(selector: string): { rule: string; hover: string; hoverFill: string
   };
 }
 
-/** The rule both rows paint from; each row's own rule adds only its geometry. */
-const ROWS = ":is(.recent-row, .side-history-row)";
+/** The rule the closed rows' items and More paint from; a closed row's button takes its item's ink. */
+const ROWS = ":is(.history-item, .history-more)";
 
 // The script lives outside static-src, and Stryker's sandbox copies static-src alone.
-describe.skipIf(!existsSync(script))("a Recently closed row's inks", () => {
-  it.each([".recent-row", ".side-history-row"])(
-    "leaves %s's inks and fills to the shared rule",
-    (sel) => {
-      const body = uncommented(ruleBody(tabs, sel));
-      expect(body).not.toMatch(/(?:^|[;{\s])(?:color|background(?:-color)?):/);
-      expect(body).not.toContain(":hover");
-    },
-  );
+describe.skipIf(!existsSync(script))("the History section's row inks", () => {
+  it("leaves the closed row's inks and fills to its item", () => {
+    const body = uncommented(ruleBody(tabs, ".history-row"));
+    expect(decl(body, "color"), "the row inherits its item's ink").toBe("inherit");
+    expect(body).not.toMatch(/(?:^|[;{\s])background(?:-color)?:/);
+    expect(body).not.toContain(":hover");
+  });
 
   it("paints the rows' hover with --c-hover", () => {
     expect(row(ROWS).hoverFill).toBe("var(--c-hover)");
@@ -99,7 +97,7 @@ describe.skipIf(!existsSync(script))("a Recently closed row's inks", () => {
   // The hover floors below then hold the row a menu is open on too.
   it("paints a row whose menu is open with the hover's fill and ink", () => {
     const r = row(ROWS);
-    const mark = nestedBlock(r.rule, "&[data-menu-open]");
+    const mark = nestedBlock(r.rule, "&:has(> .history-row[data-menu-open])");
     expect(decl(mark, "background")).toBe(r.hoverFill);
     expect(decl(mark, "color")).toBe(decl(r.hover, "color"));
   });
@@ -118,15 +116,50 @@ describe.skipIf(!existsSync(script))("a Recently closed row's inks", () => {
 
   it("holds the close time's tertiary ink to 4.5:1 at rest and hovered", () => {
     const r = row(ROWS);
-    const ink = own(ruleBody(tabs, ".recent-row-time"), "color");
+    const ink = own(ruleBody(tabs, ".history-row-time"), "color");
     expect(ink).toBe("var(--c-text-tertiary)");
     expectFloor("the time at rest", ink, sidebar());
     expectFloor("the time hovered", ink, `over(${r.hoverFill}, ${sidebar()})`);
   });
 
+  // WCAG 1.4.11: the trash glyph is a graphical object, 3:1, over the hovered row and over its own hover.
+  it("holds Delete's glyph to 3:1 on a hovered row and on its own hover", () => {
+    const r = row(ROWS);
+    const del = ruleBody(tabs, ".history-row-delete");
+    const ink = own(del, "color");
+    expect(ink).toBe("var(--c-text-tertiary)");
+    const own3 = decl(hoverBlock(del), "background") ?? "";
+    for (const [what, fg, bg] of [
+      ["Delete on a hovered row", ink, `over(${r.hoverFill}, ${sidebar()})`],
+      ["Delete hovered", decl(hoverBlock(del), "color") ?? ink, `over(${own3}, ${sidebar()})`],
+    ] as const) {
+      for (const m of ratios(fg, bg)) {
+        expect(m.ratio, `${m.theme}: ${what} (${fg} on ${bg})`).toBeGreaterThanOrEqual(3);
+      }
+    }
+  });
+
+  // WCAG 1.4.11: the closed ring is the row's one state mark, 3:1 at rest and on a hovered row.
+  it("holds the closed ring to 3:1 at rest and on a hovered row", () => {
+    const r = row(ROWS);
+    const ring = ruleBody(tabs, '.tab-status-dot[data-status="closed"]');
+    expect(decl(ring, "background"), "hollow").toBe("transparent");
+    const ink = decl(ruleBody(tabs, ".tab-status-dot"), "--dot-color") ?? "";
+    expect(ink).toBe("var(--c-dot-idle)");
+    for (const [what, bg] of [
+      ["the ring at rest", sidebar()],
+      ["the ring on a hovered row", `over(${r.hoverFill}, ${sidebar()})`],
+    ] as const) {
+      // The ring's ink is translucent, so it is composited over the fill it sits on.
+      for (const m of ratios(`over(${ink}, ${bg})`, bg)) {
+        expect(m.ratio, `${m.theme}: ${what} (${ink} on ${bg})`).toBeGreaterThanOrEqual(3);
+      }
+    }
+  });
+
   it("declares no token of its own", () => {
     const tokens = readFileSync(join(here, "css", "01-tokens.css"), "utf8");
-    for (const sel of [ROWS, ".recent-row", ".recent-row-time", ".side-history-row"]) {
+    for (const sel of [ROWS, ".history-row", ".history-row-time"]) {
       const body = uncommented(ruleBody(tabs, sel));
       expect(/(?:^|[;{\s])--[\w-]+\s*:/.test(body), `${sel} declares a custom property`).toBe(
         false,

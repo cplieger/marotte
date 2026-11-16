@@ -222,8 +222,7 @@ body.sidebar-resizing {
   }
 }
 
-/* The sidebar's one scroll region: every section, its header and the History row
- * scroll together, so no section hides another's rows behind a nested scrollbar. */
+/* The sidebar's one scroll region: every section and its header scroll together, so no section hides another's rows behind a nested scrollbar. */
 [id="tab-sections"] {
   flex: 1;
   overflow-y: auto;
@@ -235,7 +234,7 @@ body.sidebar-resizing {
 }
 
 .side-section-list,
-.recent-list {
+.history-list {
   /* THE SAME INSET `.sidebar-actions` TAKES, so a tab's border box and the New chat
    button's are the same box: the list carries no border and no inset of its own
    beyond this, so there is no second expression to keep in step. */

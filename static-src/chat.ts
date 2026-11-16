@@ -646,7 +646,7 @@ export async function attachPathsToActiveChat(paths: readonly string[]): Promise
 }
 
 /**
- * Open a closed chat's tab, the door History and Recently closed share: loads the chat list first
+ * Open a closed chat's tab, the door the History page and the sidebar's History section share: loads the chat list first
  * when the store lacks the chat, so the activation finds its Session; a failed read still opens,
  * and activation's heal is the fallback. Answers the open's outcome; moves no focus.
  */

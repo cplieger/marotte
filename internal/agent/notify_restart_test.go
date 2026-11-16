@@ -148,7 +148,7 @@ func TestBeginChatTeardown_ACloseNotesEverySteerTheAgentHolds(t *testing.T) {
 		keep bool
 	}{{"close", true}, {"delete", false}} {
 		t.Run(tc.name, func(t *testing.T) {
-			s, cs, _, _ := wakeInKAS(t, [2]string{"m-u1", "first"})
+			s, cs, _, _, _ := wakeInKAS(t, [2]string{"m-u1", "first"})
 
 			s.h.BeginChatTeardown("c1", tc.keep)
 

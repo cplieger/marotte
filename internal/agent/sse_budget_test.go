@@ -171,7 +171,9 @@ func hookOnlyContext(t *testing.T) context.Context {
 	return ctx
 }
 
-// liveConnectAs runs the live loop until fixtureConnectDeadline.
+// liveConnectAs runs the live loop until fixtureConnectDeadline. Call it inside a synctest bubble, with rt built
+// there: on the wall clock a slow runner can spend the whole window in the connect hook, before the live loop's
+// first keepalive tick.
 func liveConnectAs(t *testing.T, rt *Runtime, legacy bool) *httptest.ResponseRecorder {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), fixtureConnectDeadline)

@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 
 import indexHtml from "../static/index.html?raw";
-import { manifestSheets, mountAppCSS } from "./__test-helpers__/css-rules.js";
-import { settingsPayload } from "./__test-helpers__/settings.js";
+import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import type * as Router from "./router.js";
 import type * as History from "./history.js";
 import type * as DeviceView from "./device-view.js";
@@ -20,7 +19,7 @@ vi.mock("./router.js", async (importOriginal) => ({
   pushRoute: vi.fn(),
   replaceRoute: vi.fn(),
 }));
-// The History page's own content is not this suite's subject; its row and view are.
+// The History page's content is not this suite's subject.
 vi.mock("./history.js", async (importOriginal) => ({
   ...(await importOriginal<typeof History>()),
   loadHistoryView: vi.fn(),
@@ -84,11 +83,8 @@ vi.mock("./api-client.js", async (importOriginal) => {
   };
 });
 
-import { initSidebarHistory } from "./sidebar-history.js";
-import { adoptRetention } from "./retention.js";
 import {
   tabIdFor,
-  getActiveTabId,
   toggleDocsView,
   toggleGitView,
   toggleSettingsView,
@@ -104,7 +100,7 @@ bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
 let shell: HTMLElement;
 let style: HTMLStyleElement;
 
-/** The shipped body, so the row, the toolbar and the History view are index.html's own. */
+/** The shipped body, so the sections, the toolbar and the pages are index.html's own. */
 beforeAll(async () => {
   const doc = new DOMParser().parseFromString(indexHtml, "text/html");
   for (const s of doc.querySelectorAll("script")) {
@@ -116,7 +112,6 @@ beforeAll(async () => {
   }
   document.body.appendChild(shell);
   style = mountAppCSS();
-  initSidebarHistory();
   // Showing History imports this lazily and unawaited; loaded here, once the shell exists, its
   // real graph is not still resolving through the mock route when the file ends.
   await import("./history.js");
@@ -152,8 +147,6 @@ beforeEach(() => {
 
 afterEach(() => {
   _resetTabsSyncForTest();
-  const root = document.documentElement;
-  delete root.dataset["pointer"];
 });
 
 function el<T extends HTMLElement>(id: string): T {
@@ -173,64 +166,8 @@ async function settle(): Promise<void> {
   }
 }
 
-describe("the sidebar's History button", () => {
-  it("shows History with no tab and selects the row, closing the phone drawer", async () => {
-    const sidebar = el("sidebar");
-    sidebar.classList.add("open");
-
-    el("history-btn").click();
-    expect(sidebar.classList.contains("open")).toBe(false);
-    await settle();
-
-    expect(tabServer.subjects()).toHaveLength(0);
-    expect(getActiveTabId()).toBe("");
-    expect(el("history-view").classList.contains("hidden")).toBe(false);
-    expect(el("history-btn").classList.contains("active")).toBe(true);
-    expect(el("history-btn").getAttribute("aria-current")).toBe("page");
-  });
-
-  it("is a row named by its visible label, with no tooltip", () => {
-    const b = el("history-btn");
-    expect(b.classList.contains("side-history-row")).toBe(true);
-    expect(b.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
-    expect(b.querySelector(".side-history-label")?.textContent).toBe("History");
-    expect(b.textContent.trim(), "the name from content").toBe("History");
-    expect(b.hasAttribute("aria-label")).toBe(false);
-    expect(b.hasAttribute("data-tooltip")).toBe(false);
-    expect(b.hasAttribute("title")).toBe(false);
-  });
-
-  it("sits at the foot of the sections, leaving New chat alone in the actions row", () => {
-    const actions = shell.querySelector(".sidebar-actions");
-    expect([...(actions?.children ?? [])].map((c) => c.id)).toEqual(["new-chat"]);
-    expect(el("tab-sections").lastElementChild).toBe(el("history-btn"));
-  });
-
-  it.each(["fine", "coarse"] as const)(
-    "is a full-width row at the tab row height on a %s pointer",
-    (tier) => {
-      document.documentElement.dataset["pointer"] = tier;
-      const history = el("history-btn").getBoundingClientRect();
-      const column = el("tab-sections").getBoundingClientRect();
-      // `--tab-row-h` on each tier, 42px on a mouse and 44px under a finger.
-      expect(history.height).toBe(tier === "fine" ? 42 : 44);
-      expect(history.width).toBeGreaterThan(column.width / 2);
-    },
-  );
-
-  it("is shown with no tab open, no closed chat and retention off", async () => {
-    await settle();
-    expect(tabServer.subjects()).toHaveLength(0);
-    for (const days of [0, 7]) {
-      adoptRetention(settingsPayload({ chat_retention_days: days }));
-      const b = el("history-btn");
-      expect(b.hidden, `days ${String(days)}`).toBe(false);
-      expect(b.classList.contains("hidden"), `days ${String(days)}`).toBe(false);
-      expect(b.getBoundingClientRect().height, `days ${String(days)}`).toBeGreaterThan(0);
-    }
-  });
-
-  it("says in the Days kept hint that 0 deletes on close, never that it hides History", () => {
+describe("the Days kept hint", () => {
+  it("says 0 deletes on close, never that it hides History", () => {
     const hint = new DOMParser()
       .parseFromString(indexHtml, "text/html")
       .querySelector("#general-retention-section .section-hint");
@@ -247,11 +184,6 @@ describe("the sidebar's scroll region", () => {
     expect(getComputedStyle(el("tab-sections")).overflowY).toBe("auto");
     expect(getComputedStyle(el("tab-list")).overflowY).toBe("visible");
     expect(getComputedStyle(el("pinned-list")).overflowY).toBe("visible");
-  });
-
-  it("leaves no rule naming the old square History button", () => {
-    const stale = manifestSheets().filter((s) => s.css.includes("sidebar-history-btn"));
-    expect(stale.map((s) => s.name)).toEqual([]);
   });
 });
 

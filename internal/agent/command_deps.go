@@ -2,8 +2,10 @@ package agent
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
+	"github.com/cplieger/marotte/internal/bot"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -60,9 +62,9 @@ func (b bridgeRole) CallBudget(ctx context.Context, d time.Duration) (context.Co
 	return b.coord.engine.stallAware(ctx, d)
 }
 
-// DeleteChatStateByChain deletes a chat's runs and KAS sessions from a captured chain. Order is
+// DeleteChatStateByChain deletes a chat's runs, KAS sessions and Bot directory from a captured chain. Order is
 // the contract: runs before sessions (KAS refuses a session owning a live run), sessions
-// before the bridge closes, Reap last.
+// before the bridge closes, Reap, and the Bot directory last, so no session outlives the memory file it lists.
 func (rt *Runtime) DeleteChatStateByChain(ctx context.Context, chatID marotte.ChatID, sessionChain []string, cause command.RunStopCause) {
 	stop := runStop{}
 	switch cause {
@@ -77,6 +79,9 @@ func (rt *Runtime) DeleteChatStateByChain(ctx context.Context, chatID marotte.Ch
 	rt.deleteSessions(ctx, chatID, sessionChain)
 	rt.cleanupChatState(ctx, chatID)
 	rt.reapSessions(sessionChain)
+	if err := bot.RemoveDir(string(chatID), botPaths()); err != nil {
+		slog.Warn("bots: a deleted Bot's directory could not be removed; marotte's next start removes it", "chat_id", chatID, "error", err)
+	}
 }
 
 // CloseChatState tears down in-memory state without touching the KAS session, so a reopen session/loads it, and

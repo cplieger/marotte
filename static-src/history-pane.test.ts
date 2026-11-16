@@ -96,7 +96,6 @@ vi.mock("./api-client.js", async (importOriginal) => {
   };
 });
 
-import { initSidebarHistory } from "./sidebar-history.js";
 import {
   activateTab,
   adoptSubject,
@@ -144,7 +143,9 @@ beforeAll(async () => {
   }
   document.body.appendChild(shell);
   style = mountAppCSS();
-  initSidebarHistory();
+  // Imported once the shell exists: its graph reads the shipped DOM at import.
+  const { initHistorySection } = await import("./history-section.js");
+  initHistorySection();
   // Loaded once the shell exists, so the lazy import showing History makes resolves at once.
   await import("./history.js");
   ({ applyRoute } = await import("./route-apply.js"));
@@ -178,7 +179,7 @@ beforeEach(() => {
   resetActionFramework();
   _resetForTest();
   // A row an earlier case closed may still be playing its exit, still marked selected.
-  for (const id of SECTIONS) {
+  for (const id of ["tab-list", "pinned-list"]) {
     el(id).replaceChildren();
   }
   vi.mocked(pushRoute).mockClear();
@@ -207,7 +208,7 @@ async function settle(): Promise<void> {
   await new Promise((r) => requestAnimationFrame(r));
 }
 
-const SECTIONS = ["tab-list", "pinned-list", "recent-list"] as const;
+const SECTIONS = ["tab-list", "pinned-list", "history-list"] as const;
 
 /** Every row the sidebar's sections draw, by its visible name. */
 function sectionRowNames(): string[] {
@@ -231,13 +232,27 @@ function historyShown(): boolean {
 }
 
 function footRowSelected(): boolean {
-  const row = el("history-btn");
+  const row = el("history-more");
   return row.classList.contains("active") && row.getAttribute("aria-current") === "page";
 }
 
 function footRowDeselected(): boolean {
-  const row = el("history-btn");
+  const row = el("history-more");
   return !row.classList.contains("active") && !row.hasAttribute("aria-current");
+}
+
+/** Press More, the History section's last row: a closed chat in the server's list draws the
+ *  section, and an unfold shows More. */
+async function pressMore(): Promise<void> {
+  if (el("history-section").hidden) {
+    tabServer.emitRecent([{ ref: "c-closed", name: "Closed", closed_at: Date.now() }]);
+    await Promise.resolve();
+  }
+  const toggle = el("history-section").querySelector<HTMLButtonElement>(".side-section-toggle");
+  if (toggle?.getAttribute("aria-expanded") === "false") {
+    toggle.click();
+  }
+  el("history-more").click();
 }
 
 function lastRoute(): unknown {
@@ -253,7 +268,7 @@ function expectHistoryPane(opens: number, tab: "chats" | "runs" = "chats"): void
   expect(opensSent(), "no open_tab is sent").toBe(opens);
   expect(selectedRows(), "no section row is drawn selected").toEqual([]);
   expect(historyShown(), "the History view shows").toBe(true);
-  expect(footRowSelected(), "the foot row is selected").toBe(true);
+  expect(footRowSelected(), "More is selected").toBe(true);
   expect(getActiveTabId()).toBe("");
   expect(getActiveTabKind()).toBeNull();
   expect(lastRoute()).toEqual({ kind: "history", tab });
@@ -270,21 +285,21 @@ function opensSent(): number {
   return tabServer.sentOfType("open_tab").length;
 }
 
-describe("History as the sidebar's foot row, with no tab", () => {
-  it("shows the History view from the foot row, adding no row and no tab", async () => {
+describe("History from the History section's More, with no tab", () => {
+  it("shows the History view from More, adding no tab", async () => {
     const { git } = await openSingletons();
     const opens = opensSent();
     const count = tabServer.subjects().length;
     const sidebar = el("sidebar");
     sidebar.classList.add("open");
 
-    el("history-btn").click();
+    await pressMore();
     expect(sidebar.classList.contains("open"), "the phone drawer closes").toBe(false);
     await settle();
 
     expectHistoryPane(opens);
     expect(tabServer.subjects()).toHaveLength(count);
-    expect(el("history-btn").hasAttribute("aria-pressed"), "a destination, not a toggle").toBe(
+    expect(el("history-more").hasAttribute("aria-pressed"), "a destination, not a toggle").toBe(
       false,
     );
     expect(getActiveTabRoute()).toEqual({ kind: "history", tab: "chats" });
@@ -309,20 +324,20 @@ describe("History as the sidebar's foot row, with no tab", () => {
     expectHistoryPane(opens);
   });
 
-  it("keeps History on a second press of the foot row", async () => {
-    el("history-btn").click();
+  it("keeps History on a second press of More", async () => {
+    await pressMore();
     await settle();
-    el("history-btn").click();
+    await pressMore();
     await settle();
 
     expect(historyShown()).toBe(true);
     expect(footRowSelected()).toBe(true);
   });
 
-  it("leaves History for the tab under it and for another tab, deselecting the foot row", async () => {
+  it("leaves History for the tab under it and for another tab, deselecting More", async () => {
     const { settings, git } = await openSingletons();
     for (const to of [git, settings]) {
-      el("history-btn").click();
+      await pressMore();
       await settle();
       expect(historyShown()).toBe(true);
 
@@ -338,7 +353,7 @@ describe("History as the sidebar's foot row, with no tab", () => {
 
   it("leaves History for a new chat and for an open that activates", async () => {
     await openSingletons();
-    el("history-btn").click();
+    await pressMore();
     await settle();
 
     // New chat's door: chat.ts adopts the minted subject, then activates it. The outgoing view stays
@@ -350,7 +365,7 @@ describe("History as the sidebar's foot row, with no tab", () => {
     expect(selectedRows()).toEqual(["t-new"]);
     expect(getActiveTabId()).toBe("t-new");
 
-    el("history-btn").click();
+    await pressMore();
     await settle();
     await openTab({ kind: "docs" });
     await settle();
@@ -361,7 +376,7 @@ describe("History as the sidebar's foot row, with no tab", () => {
 
   it("leaves History on Back to a tab's route", async () => {
     const { settings } = await openSingletons();
-    el("history-btn").click();
+    await pressMore();
     await settle();
 
     await applyRoute({ kind: "settings", tab: "general" }, "history");
@@ -374,7 +389,7 @@ describe("History as the sidebar's foot row, with no tab", () => {
 
   it("stays up when the tab under it closes, and leaving lands on its successor", async () => {
     const { settings, git } = await openSingletons();
-    el("history-btn").click();
+    await pressMore();
     await settle();
 
     await closeTab(git);
@@ -393,7 +408,7 @@ describe("History as the sidebar's foot row, with no tab", () => {
 
   it("stays up when a refused close puts the tab under it back", async () => {
     const { git } = await openSingletons();
-    el("history-btn").click();
+    await pressMore();
     await settle();
 
     tabServer.failNext("close_tab", 500);
@@ -411,7 +426,7 @@ describe("History as the sidebar's foot row, with no tab", () => {
     await settle();
     const onEmpty = vi.fn();
     setOnEmpty(onEmpty);
-    el("history-btn").click();
+    await pressMore();
     await settle();
 
     await closeTab(tabIdFor("settings"));
@@ -437,7 +452,7 @@ describe("History as the sidebar's foot row, with no tab", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(onEmpty, "armed, not yet fired").not.toHaveBeenCalled();
 
-      el("history-btn").click();
+      await pressMore();
       await vi.advanceTimersByTimeAsync(EMPTY_RESPAWN_MS + 100);
     } finally {
       vi.useRealTimers();
@@ -458,7 +473,7 @@ describe("History as the sidebar's foot row, with no tab", () => {
         ? Promise.reject(new ActionError("bad request", { status: 400 }))
         : Promise.resolve(),
     );
-    el("history-btn").click();
+    await pressMore();
     await settle();
 
     el("tab-list").querySelector<HTMLElement>('[data-tab-id="t-b"]')?.focus();
@@ -466,7 +481,7 @@ describe("History as the sidebar's foot row, with no tab", () => {
     await settle();
 
     expect(historyShown(), "back on History").toBe(true);
-    expect(document.activeElement, "focus followed the return").toBe(el("history-btn"));
+    expect(document.activeElement, "focus followed the return").toBe(el("history-more"));
     expect(footRowSelected()).toBe(true);
     expect(selectedRows()).toEqual([]);
     expect(getActiveTabRoute()).toEqual({ kind: "history", tab: "chats" });
@@ -475,6 +490,29 @@ describe("History as the sidebar's foot row, with no tab", () => {
     await applyRoute({ kind: "chat", id: "" }, "deeplink");
     await settle();
     expect(getActiveTabId(), "the tab under History is the one it covered").toBe(git);
+  });
+
+  it("puts focus on History's pane pill when a switch from it fails and no More is drawn", async () => {
+    await openSingletons();
+    adoptSubject(fakeSubject("t-b", { kind: "chat", ref: "c-b" }));
+    await settle();
+    chatRefresh.mockImplementation((chatID) =>
+      chatID === "c-b"
+        ? Promise.reject(new ActionError("bad request", { status: 400 }))
+        : Promise.resolve(),
+    );
+    await applyRoute({ kind: "history" }, "deeplink");
+    await settle();
+    expect(el("history-section").hidden, "nothing closed, so no section").toBe(true);
+
+    el("tab-list").querySelector<HTMLElement>('[data-tab-id="t-b"]')?.focus();
+    await activateTab("t-b");
+    await settle();
+
+    expect(historyShown(), "back on History").toBe(true);
+    const pill = el("history-view").querySelector('[data-history-tab][aria-selected="true"]');
+    expect(pill, "the shown pane's pill").not.toBeNull();
+    expect(document.activeElement).toBe(pill);
   });
 
   it("says only what failed when a switch from History fails offline", async () => {
@@ -486,7 +524,7 @@ describe("History as the sidebar's foot row, with no tab", () => {
         ? Promise.reject(new ActionError("network", { status: 0, code: "network" }))
         : Promise.resolve(),
     );
-    el("history-btn").click();
+    await pressMore();
     await settle();
 
     vi.mocked(toastError).mockClear();
@@ -510,7 +548,7 @@ describe("History as the sidebar's foot row, with no tab", () => {
     await settle();
     await activateTab("t-a");
     await settle();
-    el("history-btn").click();
+    await pressMore();
     await settle();
     chatRefresh.mockImplementation((chatID) =>
       chatID === "c-a"
@@ -533,7 +571,7 @@ describe("History as the sidebar's foot row, with no tab", () => {
     await settle();
     await activateTab("t-a");
     await settle();
-    el("history-btn").click();
+    await pressMore();
     await settle();
     const { refreshHistoryView } = await import("./history.js");
     chatRefresh.mockClear();
@@ -548,7 +586,7 @@ describe("History as the sidebar's foot row, with no tab", () => {
 
   it("leaves for the tab under it on an open naming the root route", async () => {
     const { git } = await openSingletons();
-    el("history-btn").click();
+    await pressMore();
     await settle();
 
     await applyRoute({ kind: "chat", id: "" }, "deeplink");
@@ -566,7 +604,7 @@ describe("History as the sidebar's foot row, with no tab", () => {
     await settle();
     const onEmpty = vi.fn();
     setOnEmpty(onEmpty);
-    el("history-btn").click();
+    await pressMore();
     await settle();
     await closeTab(tabIdFor("settings"));
     await settle();
@@ -582,14 +620,14 @@ describe("History as the sidebar's foot row, with no tab", () => {
 
   it("reopens on the pane it last showed", async () => {
     const { git } = await openSingletons();
-    el("history-btn").click();
+    await pressMore();
     await settle();
     queryEl<HTMLButtonElement>('[data-history-tab="runs"]')?.click();
     await settle();
     await activateTab(git);
     await settle();
 
-    el("history-btn").click();
+    await pressMore();
     await settle();
 
     expect(historyShown()).toBe(true);
@@ -606,7 +644,7 @@ describe("History as the sidebar's foot row, with no tab", () => {
     await activateTab(git);
     await settle();
 
-    el("history-btn").click();
+    await pressMore();
     await settle();
 
     expect(getActiveTabRoute()).toEqual({ kind: "history", tab: "runs" });
@@ -614,7 +652,7 @@ describe("History as the sidebar's foot row, with no tab", () => {
 
   it("routes its Chats and Runs pills with no tab", async () => {
     const opens = opensSent();
-    el("history-btn").click();
+    await pressMore();
     await settle();
 
     queryEl<HTMLButtonElement>('[data-history-tab="runs"]')?.click();
@@ -634,7 +672,7 @@ describe("History as the sidebar's foot row, with no tab", () => {
   });
 
   it("sends Ctrl-F to History's find while it shows", async () => {
-    el("history-btn").click();
+    await pressMore();
     await settle();
     const open = vi.fn(() => true);
     const stub: PageFind = {
@@ -660,7 +698,7 @@ describe("History as the sidebar's foot row, with no tab", () => {
     await settle();
     const opens = opensSent();
 
-    el("history-btn").click();
+    await pressMore();
     await settle();
 
     expectHistoryPane(opens);

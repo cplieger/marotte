@@ -195,6 +195,30 @@ function plantTabs(): void {
   }
 }
 
+/** The History section unfolded with one closed chat above More, as `history-section.ts` draws it. */
+export function plantHistorySection(): void {
+  q("#history-section").hidden = false;
+  const list = q("#history-list");
+  list.hidden = false;
+  const row = make("button", "history-row", {
+    type: "button",
+    "aria-label": "Reopen Yesterday's fix",
+  });
+  row.append(
+    make("span", "tab-status-dot", { "aria-hidden": "true", "data-status": "closed" }),
+    text("bdi", "history-row-name", "Yesterday's fix"),
+    text("time", "history-row-time", "14:05"),
+  );
+  const remove = make("button", "history-row-delete", {
+    type: "button",
+    "aria-label": "Delete Yesterday's fix",
+  });
+  remove.appendChild(glyph());
+  const li = make("li", "history-item");
+  li.append(row, remove);
+  list.prepend(li);
+}
+
 export function turn(...body: HTMLElement[]): HTMLElement {
   const t = make("div", "turn");
   const header = buildTurnHeader({
@@ -1293,6 +1317,7 @@ export const SURFACES: readonly Surface[] = [
     sizes: ALL,
     setup: (size) => {
       plantTabs();
+      plantHistorySection();
       q("#pointer-mode-btn").classList.remove("hidden");
       if (size === 390) {
         q("#sidebar").classList.add("open");
@@ -1300,7 +1325,9 @@ export const SURFACES: readonly Surface[] = [
     },
     controls: [
       "#new-chat",
-      "#history-btn",
+      "#history-list .history-row",
+      "#history-list .history-row-delete",
+      "#history-more",
       "#theme-btn",
       "#pointer-mode-btn",
       "#account-btn",
@@ -1310,7 +1337,7 @@ export const SURFACES: readonly Surface[] = [
     rows: ["#tab-list .tab"],
     rowStep: {
       row: "#tab-list .tab",
-      controls: ["#new-chat", "#history-btn"],
+      controls: ["#new-chat", "#history-list .history-row", "#history-more"],
     },
   },
   {

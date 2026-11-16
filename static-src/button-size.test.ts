@@ -31,6 +31,7 @@ import {
   VIEWPORTS as CATALOGUE_VIEWPORTS,
   clearSurface,
   mountSurface as mountCatalogue,
+  plantHistorySection,
   type Size,
   type Surface as CatalogueSurface,
 } from "./__test-helpers__/app-surfaces.js";
@@ -912,7 +913,8 @@ const CENSUS: readonly Family[] = [
       "15-input.css `.attachment-open::after, .attachment-close::after`: a block-only reach keeps the destructive x off the filename",
   },
   { name: "new chat", selector: "#new-chat", kind: "tab-row" },
-  { name: "history", selector: "#history-btn", kind: "tab-row" },
+  { name: "closed row", selector: "#history-list .history-row", kind: "tab-row" },
+  { name: "history more", selector: "#history-more", kind: "tab-row" },
   { name: "sidebar header", selector: ".sidebar-header-actions .icon-btn", kind: "toolbar" },
   { name: "account", selector: "#account-btn", kind: "toolbar" },
   { name: "log out", selector: "#logout-btn", kind: "toolbar" },
@@ -934,6 +936,13 @@ const CENSUS: readonly Family[] = [
     kind: "dense",
     paint: "--ctl-h-sm",
     documented: "10-shell-app.css `.tab-close`: a row action",
+  },
+  {
+    name: "closed row delete",
+    selector: ".history-row-delete",
+    kind: "dense",
+    paint: "--ctl-h-sm",
+    documented: "12-tabs.css `.history-row-delete`: a row action",
   },
   {
     name: "dialog buttons",
@@ -1295,7 +1304,9 @@ async function mountSurface(
 /** The sidebar controls the checks must reach at every preset. */
 const SIDEBAR_COVERS = [
   "#new-chat",
-  "#history-btn",
+  "#history-list .history-row",
+  ".history-row-delete",
+  "#history-more",
   "#theme-btn",
   "#account-btn",
   "#logout-btn",
@@ -1303,7 +1314,8 @@ const SIDEBAR_COVERS = [
 ];
 
 /** The sidebar with its drawer open (a phone's closed drawer is off screen) and one chat tab in the
- *  child order `tabs.ts` builds, the row New chat and History are held to. */
+ *  child order `tabs.ts` builds, the row New chat, a closed row and More are held to, and the
+ *  History section unfolded with that closed row. */
 async function mountSidebar(
   viewport: readonly [number, number],
   pointer: Pointer,
@@ -1329,6 +1341,7 @@ async function mountSidebar(
   close.appendChild(iconEl(ICON_CLOSE));
   tab.append(name, close);
   byId("tab-list").replaceChildren(tab);
+  plantHistorySection();
   // `pointer-mode.ts` shows the Touch mode toggle on a touch-capable device; `settings.ts` writes the address.
   byId("pointer-mode-btn").classList.remove("hidden");
   byId("user-email").textContent = "reader@example.com";

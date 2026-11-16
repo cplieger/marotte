@@ -289,9 +289,9 @@ describe("a stale snapshot", () => {
   });
 });
 
-// --- The Recently closed list rides the same version ---
+// --- The list of recent closes rides the same version ---
 
-describe("the recently closed list", () => {
+describe("the list of recent closes", () => {
   const closed = { ref: "c-a", name: "Alpha", closed_at: 1_700_000_000_000 };
 
   it("applies a frame carrying only the list, as the expiry runner sends it", async () => {

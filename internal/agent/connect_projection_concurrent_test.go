@@ -5,6 +5,7 @@ package agent
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 
@@ -44,6 +45,18 @@ func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
 	badRun := make(chan string, 1)
 	var wg sync.WaitGroup
 
+	// A connect drains nothing until its hook returns, and the hub evicts a client whose queue
+	// (replayBufSize deep) fills. The lease writers publish two frames an iteration at CPU speed and
+	// fill it within one scheduler slice, a rate no real publisher reaches, so they hold off near half
+	// of it. The lifecycle writers publish almost nothing, so they keep mutating through the hook.
+	floodHeld := func() bool {
+		if rt.bus.fanout.QueuedFrames() < replayBufSize/2 {
+			return false
+		}
+		runtime.Gosched()
+		return true
+	}
+
 	// Writers of lc.reserved and lc.reservedSource.
 	for _, id := range chatIDs[1:] {
 		wg.Go(func() {
@@ -66,6 +79,9 @@ func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
 				case <-stop:
 					return
 				default:
+				}
+				if floodHeld() {
+					continue
 				}
 				_ = store.Put(ctx, &runlease.Lease{
 					WorkflowID: id,
