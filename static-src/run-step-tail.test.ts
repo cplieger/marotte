@@ -74,6 +74,17 @@ describe("lastPrintedLine", () => {
     expect(lineOf(turn([entry(2, "text", { text: "mine" }), settled]))).toBe("mine");
   });
 
+  it("reads no result against a card appended settled, as the dock line's server twin holds none", () => {
+    const hook = {
+      ...entry(1, "tool_call", { status: "completed", card_title: "Hook fired: lint" }),
+      id: "h1",
+    };
+    const res = { ...entry(3, "tool_result", { card_title: "other" }), id: "h1:result" };
+    expect(lineOf(turn([hook, entry(2, "text", { text: "Reading the brief" }), res]))).toBe(
+      "Reading the brief",
+    );
+  });
+
   // A description-less shell call's card title is its command, which markdown would read as markup.
   it("keeps a card title whole where a text would lose its block markers", () => {
     const call = { title: "Run Command", card_title: "> /tmp/out", id: "c1" };
@@ -167,6 +178,18 @@ describe("a tail cell moved by appended entries", () => {
     const late = { status: "completed", card_title: "go vet ./..." };
     tailAppended(wf, { ...entry(4, "tool_result", late), id: "c1:result" });
     expect(stepTail(wf, "s")).toBe("go vet ./...");
+    forgetStepTails(wf);
+  });
+
+  it("holds nothing for a card appended settled", () => {
+    const wf = "wf_cell_hook";
+    noteStepTurn(wf, "t1", "s");
+    const hook = { status: "completed", card_title: "Hook fired: lint" };
+    tailAppended(wf, { ...entry(1, "tool_call", hook), id: "hook-1" });
+    expect(stepTail(wf, "s")).toBe("Hook fired: lint");
+    tailAppended(wf, entry(2, "text", { text: "Reading the brief" }));
+    tailAppended(wf, { ...entry(3, "tool_result", { card_title: "other" }), id: "hook-1:result" });
+    expect(stepTail(wf, "s")).toBe("Reading the brief");
     forgetStepTails(wf);
   });
 

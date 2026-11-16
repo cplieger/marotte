@@ -416,6 +416,52 @@ func TestRunLog_StepStartsCarryTheOpenTurnsUnsettledCalls(t *testing.T) {
 	}
 }
 
+// A card appended settled, as a hook's is, takes no result, so the dock prints its title and holds nothing for it.
+func TestRunLog_ABornSettledCardIsNotHeldForAResult(t *testing.T) {
+	step := workflow.PathKey([]string{"wf1", "build"})
+	hook := &marotte.EntryToolCall{ID: "hook-1", Title: "Hook fired: lint", Kind: marotte.ToolKindHook, Status: marotte.ToolCompleted}
+	t.Run("the dock prints its title", func(t *testing.T) {
+		calls := make(stepCalls)
+		raw, err := json.Marshal(hook)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e := &marotte.Entry{Kind: marotte.EntryKindToolCall, ID: hook.ID, Turn: "t1", Payload: raw}
+		if got := printedLine(e, calls); got != "Hook fired: lint" {
+			t.Errorf("printedLine = %q, want the hook's title", got)
+		}
+		if len(calls) != 0 {
+			t.Errorf("held %v, want nothing", calls)
+		}
+	})
+	t.Run("the row", func(t *testing.T) {
+		r := newRunLog(t.TempDir())
+		turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := turn.ToolCall(t.Context(), "", hook); err != nil {
+			t.Fatal(err)
+		}
+		if got := startCalls(t, r, step); len(got) != 0 {
+			t.Errorf("calls = %v, want none", got)
+		}
+	})
+	t.Run("the scan", func(t *testing.T) {
+		r := newRunLog(t.TempDir())
+		turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := turn.ToolCall(t.Context(), "", hook); err != nil {
+			t.Fatal(err)
+		}
+		if got := scanStepFacts(runLogEntries(t, r, "wf1")).calls; len(got) != 0 {
+			t.Errorf("scan held %v, want nothing", got)
+		}
+	})
+}
+
 // startCalls is the calls a step's step_starts row carries, read off its wire form.
 func startCalls(t *testing.T, r *runLog, path string) map[string]string {
 	t.Helper()

@@ -116,7 +116,7 @@ export function isToolActive(s: ToolStatus): boolean {
 }
 
 /** Reports whether a tool call has settled (completed, failed or aborted). */
-export function isToolDone(s: ToolStatus): boolean {
+export function isToolDone(s: string): boolean {
   return s === "completed" || s === "failed" || s === "aborted";
 }
 

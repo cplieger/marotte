@@ -6,6 +6,7 @@ import { signal, type Signal } from "@cplieger/reactive";
 import type { Entry, OpenEntry, TurnState } from "./types.js";
 import type { RunStepStart } from "./wire/types.gen.js";
 import { callIDOfToolResult } from "./entry-ids.js";
+import { isToolDone } from "./tool-schema.js";
 
 /** Longer than any dock row shows; the CSS ellipsizes the rest. */
 const MAX_CHARS = 200;
@@ -44,12 +45,12 @@ function turnLine(turn: TurnState): string {
 }
 
 /** The card title of the root-lane `tool_call` `id` among `entries` before `at`, undefined when
- *  none is held. */
+ *  none a result can settle is held. */
 function heldCallTitle(entries: readonly Entry[], at: number, id: string): string | undefined {
   for (let i = at - 1; i >= 0; i--) {
     const e = entries[i];
     if (e?.kind === "tool_call" && e.id === id && (e.lane ?? "") === "") {
-      return field(e, "card_title") ?? "";
+      return settleable(e) ? (field(e, "card_title") ?? "") : undefined;
     }
   }
   return undefined;
@@ -76,6 +77,12 @@ function entryLine(e: Entry, callTitle: (callID: string) => string | undefined):
     return own === undefined || own === title ? "" : titleLine(title);
   }
   return "";
+}
+
+/** Whether a result can still settle the tool call `e`: a card appended settled, as a hook's is,
+ *  takes none. */
+function settleable(e: Entry): boolean {
+  return !isToolDone(field(e, "status") ?? "");
 }
 
 /** A string member of the entry's payload, undefined when absent or not a string. */
@@ -137,8 +144,8 @@ interface TailCell {
   /** The line was moved by a frame since the run entered this page's scope, so a read's older
    *  seed does not overwrite it. */
   live: boolean;
-  /** The card titles of the root-lane tool calls appended to the cell's turn, by call id, until
-   *  a result that is not an abort arrives or the step's next turn opens. */
+  /** The card titles of the root-lane tool calls a result can still settle appended to the cell's
+   *  turn, by call id, until a result that is not an abort arrives or the step's next turn opens. */
   readonly calls: Map<string, string>;
 }
 
@@ -353,7 +360,7 @@ export function tailAppended(workflowID: string, entry: Entry): void {
   if (c === undefined) {
     return;
   }
-  if (entry.kind === "tool_call" && (entry.lane ?? "") === "") {
+  if (entry.kind === "tool_call" && (entry.lane ?? "") === "" && settleable(entry)) {
     c.calls.set(entry.id, field(entry, "card_title") ?? "");
   }
   const line = entryLine(entry, (id) => {

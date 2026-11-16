@@ -20,8 +20,8 @@ var tailStructureOnly = regexp.MustCompile("^(?:(?:`{3,}|~{3,})[^`]*|\\|?(?:\\s*
 var tailBlockMarkers = regexp.MustCompile(`^(?:#{1,6}\s+|>\s?|[-*+]\s+|\d{1,9}[.)]\s+)+`)
 
 // printedLine is the line a step's dock row shows for one sealed entry of its own lane, "" when the entry prints
-// nothing there. calls holds the lane's tool_calls until their results: a call joins it, its result settles it. The
-// client's twin, which also reads a streaming entry, is run-step-tail.ts lastPrintedLine: both must cut a line the
+// nothing there. calls holds the lane's tool_calls a result can still settle: a call appended unsettled joins it,
+// its result settles it. The client's twin, which also reads a streaming entry, is run-step-tail.ts lastPrintedLine: both must cut a line the
 // same way.
 func printedLine(e *marotte.Entry, calls stepCalls) string {
 	if e.Lane != "" {
@@ -45,7 +45,9 @@ func printedLine(e *marotte.Entry, calls stepCalls) string {
 		if json.Unmarshal(e.Payload, &c) != nil {
 			return ""
 		}
-		calls[stepCallKey{e.Turn, e.ID}] = &c
+		if !c.Status.Terminal() {
+			calls[stepCallKey{e.Turn, e.ID}] = &c
+		}
 		tc := marotte.ToolCallOfEntry(&c)
 		title, _ := marotte.ToolCard(&tc)
 		return titleLine(title)
@@ -56,7 +58,8 @@ func printedLine(e *marotte.Entry, calls stepCalls) string {
 	}
 }
 
-// stepCalls is a step's root-lane tool_calls no result but an abort has settled, by turn and call id.
+// stepCalls is a step's root-lane tool_calls a result can still settle, by turn and call id: each was appended
+// unsettled, and no result but an abort has settled it.
 type stepCalls map[stepCallKey]*marotte.EntryToolCall
 
 type stepCallKey struct{ turn, id string }
