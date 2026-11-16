@@ -50,10 +50,11 @@ function tokenPx(name: string): number {
 }
 
 /** Whether a reader can see `el`'s box: axe-core 4.13's `isVisibleOnScreen`, which its
- *  color-contrast check gates on. Not rendered: no box, `visibility`, an ancestor's
- *  `content-visibility: hidden`, a closed `<details>` beyond its first summary, an opacity folding
- *  to zero, a zero-area `clip` or `clip-path`, an `overflow` clip under 2px or missing the box, and
- *  a box before the page's start. Off-viewport but scrollable is rendered. */
+ *  color-contrast check gates on, except that a closed `<details>` is judged by what Chromium
+ *  paints, so a stylesheet that makes its `::details-content` visible keeps the content rendered.
+ *  Not rendered: no box, `visibility`, an ancestor's `content-visibility: hidden`, an opacity
+ *  folding to zero, a zero-area `clip` or `clip-path`, an `overflow` clip under 2px or missing the
+ *  box, a zero-size scroller, and a box off the page where no scroll reaches. */
 function rendered(el: Element): boolean {
   if (!el.checkVisibility({ visibilityProperty: true })) {
     return false;
@@ -62,7 +63,43 @@ function rendered(el: Element): boolean {
     return false;
   }
   const r = el.getBoundingClientRect();
-  if (r.bottom + window.scrollY <= 0 || r.right + window.scrollX <= 0) {
+  // axe-core 4.13 lib/commons/dom/is-offscreen.js, judged for `el` only.
+  const offscreen = (): boolean => {
+    let fixed = false;
+    for (let cur: Element | null = el; cur !== null && !fixed; cur = cur.parentElement) {
+      fixed = getComputedStyle(cur).position === "fixed";
+    }
+    const dx = fixed ? 0 : window.scrollX;
+    const dy = fixed ? 0 : window.scrollY;
+    const [top, bottom, left, right] = [r.top + dy, r.bottom + dy, r.left + dx, r.right + dx];
+    if ((top === 0 && bottom === 0) || (left === 0 && right === 0)) {
+      return false;
+    }
+    if (bottom <= 0) {
+      let reach = bottom;
+      let scrolledBack = false;
+      for (
+        let cur = el.parentElement;
+        cur !== null && cur !== document.documentElement && !scrolledBack;
+        cur = cur.parentElement
+      ) {
+        reach += cur.scrollTop;
+        scrolledBack = cur.scrollTop !== 0 && reach >= 0;
+      }
+      if (!scrolledBack || getComputedStyle(el).position === "absolute") {
+        return true;
+      }
+    }
+    if (fixed && top >= window.innerHeight) {
+      return true;
+    }
+    const dir = getComputedStyle(document.body).direction;
+    const rightEdge = Math.max(document.documentElement.scrollWidth, window.innerWidth);
+    return (
+      ((fixed || dir === "rtl") && left >= rightEdge) || ((fixed || dir === "ltr") && right <= 0)
+    );
+  };
+  if (offscreen()) {
     return false;
   }
   const zeroClip = (cs: CSSStyleDeclaration): boolean => {
@@ -88,20 +125,21 @@ function rendered(el: Element): boolean {
     const x = clips(cs.overflowX) && (box.width < 2 || r.right <= box.left || r.left >= box.right);
     return x || y;
   };
+  // axe-core 4.13 `scrollHidden`: a scroller with a computed height or width of 0 shows nothing.
+  const scrollHidden = (cur: Element, cs: CSSStyleDeclaration): boolean => {
+    const scrolls = (v: string): boolean => v === "auto" || v === "scroll";
+    const x = scrolls(cs.overflowX) && cur.scrollWidth > cur.clientWidth;
+    const y = scrolls(cs.overflowY) && cur.scrollHeight > cur.clientHeight;
+    return (
+      (x || y) && (Number.parseInt(cs.height, 10) === 0 || Number.parseInt(cs.width, 10) === 0)
+    );
+  };
   // An overflow clip reaches `el` only through its containing blocks: an absolute box escapes every
   // static clipper up to its positioned ancestor, a fixed one escapes them all.
   let escaping: "no" | "abs" | "fixed" = "no";
   for (let cur: Element | null = el; cur !== null; cur = cur.parentElement) {
     const cs = getComputedStyle(cur);
-    const parent: Element | null = cur.parentElement;
-    if (
-      parent?.tagName === "DETAILS" &&
-      !parent.hasAttribute("open") &&
-      parent.querySelector(":scope > summary") !== cur
-    ) {
-      return false;
-    }
-    if (zeroClip(cs)) {
+    if (zeroClip(cs) || scrollHidden(cur, cs)) {
       return false;
     }
     const contains = escaping === "no" || (escaping === "abs" && cs.position !== "static");
@@ -1079,10 +1117,12 @@ function contrast(opts: { inkToken?: string | null }): unknown {
       continue;
     }
     const cs = getComputedStyle(el);
-    // `rendered` judges the box; these two skip the box's own text while painting the box.
+    // `rendered` judges the box; these two skip the box's own text while painting the box. A closed
+    // details' own text sits in its `::details-content`, which a stylesheet may make visible.
     if (
       cs.contentVisibility === "hidden" ||
-      (el.tagName === "DETAILS" && !el.hasAttribute("open"))
+      (el.tagName === "DETAILS" &&
+        getComputedStyle(el, "::details-content").contentVisibility === "hidden")
     ) {
       continue;
     }
@@ -1232,7 +1272,7 @@ function focusUnreached(): string[] {
     if (st.seen.has(c) || c.matches(":disabled") || c.closest("[inert]") !== null) {
       continue;
     }
-    if ((c instanceof HTMLElement && c.tabIndex < 0) || !rendered(c)) {
+    if (((c instanceof HTMLElement || c instanceof SVGElement) && c.tabIndex < 0) || !rendered(c)) {
       continue;
     }
     out.push(describeEl(c));
