@@ -2,7 +2,7 @@
 // action, tool, outcome and tab glyphs. Everything draws in `currentColor`.
 
 import type { ToolKind } from "./types.js";
-import type { LoadedResource, LoadedType } from "./tool-schema.js";
+import type { LoadedResource, LoadedType } from "./wire/types.gen.js";
 import { extToIconKey } from "./file-extensions.js";
 import { ICON_MASK_ID } from "./icon-mask.js";
 

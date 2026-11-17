@@ -7,7 +7,7 @@ import type { ToolCall, ToolStatus, ToolDiff, TextSpan } from "./types.js";
 import { ensureToolCallSig, toolCallSigs, toolCallSigKey } from "./store-signals.js";
 import { effect, el } from "@cplieger/reactive";
 
-import { isToolDone, cardTitle, renderInfoFor, type ToolKind } from "./tool-schema.js";
+import { isToolDone, renderInfoFor, type ToolKind } from "./tool-schema.js";
 import {
   adoptDenial,
   syncClassifierMarks,
@@ -593,7 +593,7 @@ export function mountToolCallCard(
 /** Apply a ToolCall snapshot's updatable fields to its DOM card. Idempotent. */
 export function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall, chatID: string): void {
   linkTerminal(chatID, tc);
-  if (tc.title !== undefined) {
+  if (tc.card_title !== undefined || tc.title !== undefined) {
     applyTitleUpdate(el, tc);
   }
   // Before the status, since `applyOutcome` reads it off the dataset on the same frame. Only ever set: the wire field
@@ -667,12 +667,7 @@ function applyTitleUpdate(el: HTMLDivElement, tc: ToolCall): void {
   }
   const t = el.querySelector(".tool-title");
   if (t !== null) {
-    const info = renderInfoFor(tc.kind, tc.input as Record<string, unknown> | undefined, {
-      disclosed: tc.disclosed,
-      toolName: tc.tool_name,
-      mcp: tc.mcp,
-    });
-    const display = cardTitle(info, tc.title, tc.kind, tc.input);
+    const display = tc.card_title ?? tc.title;
     t.textContent = display;
     const header = t.closest<HTMLElement>(".tool-header");
     if (header !== null) {
@@ -680,9 +675,16 @@ function applyTitleUpdate(el: HTMLDivElement, tc: ToolCall): void {
     }
     // Status updates read this for the accessible outcome label.
     el.dataset["title"] = display;
-    if (info.loaded !== null) {
-      setToolIdentity(el, info);
-    }
+  }
+  if (tc.loaded !== undefined && tc.loaded.length > 0) {
+    setToolIdentity(
+      el,
+      renderInfoFor(tc.kind, tc.input as Record<string, unknown> | undefined, {
+        toolName: tc.tool_name,
+        mcp: tc.mcp,
+        loaded: tc.loaded,
+      }),
+    );
   }
 }
 

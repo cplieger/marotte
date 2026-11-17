@@ -319,19 +319,20 @@ func (rs *Runs) RunOpenTurn(runID, nodePath string) (*turnlog.Turn, bool) {
 	return t, t != nil
 }
 
-// RunAppendAfterClosed files an entry after the path's newest closed turn and announces it; no closed turn is an error.
+// RunAppendAfterClosed files an entry after the path's newest closed turn and announces it, a tool_result titled from
+// the call that turn's close aborted; no closed turn is an error.
 func (rs *Runs) RunAppendAfterClosed(ctx context.Context, runID, nodePath string, e *marotte.Entry) error {
 	if rs.log == nil {
 		return errRunLogRemoved
 	}
-	filed, err := rs.log.appendAfterClosed(ctx, runID, nodePath, e)
+	filed, call, err := rs.log.appendAfterClosed(ctx, runID, nodePath, e)
 	if err != nil {
 		return err
 	}
 	if !filed {
 		return errRunNoClosedTurn
 	}
-	translate.PublishAppended(ctx, rs.bus, "", runID, e)
+	translate.PublishSealed(ctx, rs.bus, "", runID, []turnlog.Sealed{{Entry: e, Call: call}})
 	return nil
 }
 

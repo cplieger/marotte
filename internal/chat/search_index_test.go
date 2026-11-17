@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -401,6 +402,55 @@ func TestChatFilter_HoldsWordsSplitAcrossAMessagesEntries(t *testing.T) {
 				t.Errorf("filter built over %d entries and extended with the rest rejects %s", over, q)
 			}
 		}
+	}
+}
+
+// A card's title can come from its result alone (a disclosed block); a filter extended by appends holds it as the
+// scan finds it, whichever entry the build stopped at.
+func TestChatFilter_HoldsATitleOnlyTheResultSettles(t *testing.T) {
+	entries, _ := chatOf(openTurn("t-1", 1, nil).
+		tool(marotte.EntryToolCall{
+			ID: "tc1", Title: "Disclose Context", Kind: marotte.ToolKindOther, Status: marotte.ToolPending,
+			ToolName: "disclose_context", Input: json.RawMessage(`{"name":"release-notes"}`),
+		}, &marotte.EntryToolResult{
+			Title: "Disclose Context", Status: marotte.ToolCompleted,
+			Disclosed: &marotte.ToolDisclosed{Type: "skill", DisplayName: "release-notes"},
+		}))
+	if got := search(entries, map[string]struct{}{"t-1": {}}, `"Loaded skill"`, false); len(got.Matches) != 1 {
+		t.Fatalf("Setup: the scan finds %d hits for \"Loaded skill\", want 1", len(got.Matches))
+	}
+	want := trigramsOf(`"Loaded skill"`)
+	for over := range len(entries) + 1 {
+		f := buildChatFilter("", entries[:over])
+		for i := over; i < len(entries); i++ {
+			f.addEntry(&entries[i])
+		}
+		if !f.holdsAll(want) {
+			t.Errorf("filter built over %d entries and extended with the rest rejects \"Loaded skill\"", over)
+		}
+		if held := f.turns["t-1"]; held != nil && held.calls["tc1"] != nil {
+			t.Errorf("filter built over %d entries and extended with the rest still holds the settled call", over)
+		}
+	}
+}
+
+// A tool entry filed after its turn's close, which turnlog refuses to write, still builds and is indexed.
+func TestChatFilter_BuildsAToolEntryAfterItsTurnsClose(t *testing.T) {
+	entries, _ := chatOf(openTurn("t-1", 1, nil).
+		close(marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted}).
+		tool(marotte.EntryToolCall{
+			ID: "tc1", Title: "Disclose Context", Kind: marotte.ToolKindOther, Status: marotte.ToolPending,
+			ToolName: "disclose_context",
+		}, &marotte.EntryToolResult{
+			Title: "Disclose Context", Status: marotte.ToolCompleted,
+			Disclosed: &marotte.ToolDisclosed{Type: "skill", DisplayName: "release-notes"},
+		}))
+	f := buildChatFilter("", entries)
+	if !f.holdsAll(trigramsOf(`"Loaded skill"`)) {
+		t.Error("filter over a result after its turn's close rejects its title \"Loaded skill\"")
+	}
+	if f.turns != nil {
+		t.Errorf("filter holds %d turns for a closed turn, want none", len(f.turns))
 	}
 }
 

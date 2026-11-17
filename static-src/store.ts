@@ -1461,6 +1461,8 @@ export function foldToolCallDelta(prev: ToolCall, d: ToolProgressPayload): ToolC
   return {
     ...prev,
     ...(d.title !== undefined && { title: d.title }),
+    ...(d.card_title !== undefined && { card_title: d.card_title }),
+    ...(d.loaded !== undefined && { loaded: d.loaded }),
     ...(d.kind !== undefined && { kind: d.kind }),
     ...(d.status !== undefined && { status: d.status }),
     ...(output !== undefined && { output }),
@@ -1537,6 +1539,8 @@ export function settledToolCall(
     // starting state rather than a verdict.
     status: result.status,
     ...(result.title !== undefined && { title: result.title }),
+    ...(result.card_title !== undefined && { card_title: result.card_title }),
+    ...(result.loaded !== undefined && { loaded: result.loaded }),
     ...(result.kind !== undefined && { kind: result.kind }),
     ...(result.output !== undefined && { output: result.output }),
     ...(result.output_spans !== undefined && { output_spans: result.output_spans }),
@@ -1559,14 +1563,16 @@ export function settledToolCall(
 }
 
 /** Whether a mounted card built from `shown` would paint `next` identically: the fields
- *  `applyToolCallUpdate` READS, which is a narrower set than a `ToolCall`'s own — the title, the
- *  output and the spans that style it, the diffs and the input a resting diff is drawn from, the
+ *  `applyToolCallUpdate` READS, which is a narrower set than a `ToolCall`'s own — the titles and
+ *  loaded ids, the output and the spans that style it, the diffs and the input a resting diff is drawn from, the
  *  status with its duration, a delegate's stop, the terminal id `linkTerminal` claims, the offload link, the
  *  refusal marks (declined, and whether a denial is held: the card adopts the first one only), the
  *  answered fact and the safety check's marks. */
 export function paintsTheSame(shown: ToolCall, next: ToolCall): boolean {
   return (
     shown.title === next.title &&
+    shown.card_title === next.card_title &&
+    sameLoaded(shown.loaded, next.loaded) &&
     shown.status === next.status &&
     shown.duration_ms === next.duration_ms &&
     shown.output === next.output &&
@@ -1582,6 +1588,12 @@ export function paintsTheSame(shown: ToolCall, next: ToolCall): boolean {
     sameSpans(shown.output_spans, next.output_spans) &&
     sameDiffs(shown.diffs, next.diffs)
   );
+}
+
+function sameLoaded(a: ToolCall["loaded"], b: ToolCall["loaded"]): boolean {
+  const x = a ?? [];
+  const y = b ?? [];
+  return x.length === y.length && x.every((r, i) => r.id === y[i]?.id);
 }
 
 function factOf(tc: ToolCall): string {

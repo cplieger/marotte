@@ -295,6 +295,18 @@ describe("settledToolCall carries every member the result sends", () => {
     });
   });
 
+  it("takes the result's card title and loaded list, which the server derived from the settled call", () => {
+    const loaded = [{ id: "skill::land", type: "skill" as const, name: "land", server: "" }];
+    const merged = settledToolCall(
+      toolCall("c1", { card_title: "Disclose Context" }),
+      toolResult({ card_title: "Loaded skill: land", loaded }),
+    );
+    expect({ card_title: merged.card_title, loaded: merged.loaded }).toEqual({
+      card_title: "Loaded skill: land",
+      loaded,
+    });
+  });
+
   it("never writes declined false, because the wire only ever sends true", () => {
     // The field is a ONE-WAY latch: `declined: false` on the result would be absent on the wire, so
     // a spread of it would be the one way a later frame could clear the mark.
@@ -338,6 +350,18 @@ describe("foldToolCallDelta carries every member a progress frame sends", () => 
         source: "permissions.yaml",
         rule: { capability: "shell", effect: "deny" },
       },
+    });
+  });
+
+  it("takes the card title and loaded list a frame sends", () => {
+    const loaded = [{ id: "tool::x", type: "tool" as const, name: "x", server: "" }];
+    const next = foldToolCallDelta(
+      toolCall("c1", { card_title: "Run Command" }),
+      delta({ card_title: "go test ./...", loaded }),
+    );
+    expect({ card_title: next.card_title, loaded: next.loaded }).toEqual({
+      card_title: "go test ./...",
+      loaded,
     });
   });
 
@@ -410,6 +434,29 @@ describe("paintsTheSame reads every field the card's update reads", () => {
         toolCall("c1", { input: { path: "a", text: "x" } }),
       ),
     ).toBe(false);
+  });
+
+  it("is false when only the card title differs, since the card draws it", () => {
+    expect(
+      paintsTheSame(
+        toolCall("c1", { card_title: "Run Command" }),
+        toolCall("c1", { card_title: "go test ./..." }),
+      ),
+    ).toBe(false);
+  });
+
+  it("is false when only the loaded ids differ, since the glyph and depth read them", () => {
+    const one = { id: "skill::a", type: "skill" as const, name: "a", server: "" };
+    expect(paintsTheSame(toolCall("c1"), toolCall("c1", { loaded: [one] }))).toBe(false);
+    expect(
+      paintsTheSame(
+        toolCall("c1", { loaded: [one] }),
+        toolCall("c1", { loaded: [{ ...one, id: "skill::b", name: "b" }] }),
+      ),
+    ).toBe(false);
+    expect(
+      paintsTheSame(toolCall("c1", { loaded: [one] }), toolCall("c1", { loaded: [{ ...one }] })),
+    ).toBe(true);
   });
 
   it("is false when only the declined mark differs", () => {

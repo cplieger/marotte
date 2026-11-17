@@ -36,9 +36,10 @@ const (
 
 // searchItem is one item and every segment it renders.
 type searchItem struct {
-	// call and result are a tool item's payloads, which `tool:` and `file:` read.
+	// call and result are a tool item's payloads, which `file:` reads; title is its drawn title, which `tool:` reads.
 	call   *marotte.EntryToolCall
 	result *marotte.EntryToolResult
+	title  string
 	kind   ItemKind
 	turn   string
 	lane   string
@@ -66,7 +67,7 @@ func searchItems(entries []marotte.Entry, turns map[string]*searchTurn) []search
 	}
 	for i := range entries {
 		if e := &entries[i]; e.Kind == marotte.EntryKindToolResult {
-			b.results[toolCallIDOfResult(e.ID)] = i
+			b.results[marotte.ToolCallIDOfResult(e.ID)] = i
 		}
 	}
 	for i := range entries {
@@ -266,7 +267,7 @@ func (b *itemBuilder) observePlan(i int, e *marotte.Entry, k toolRunKey, t *sear
 func (b *itemBuilder) addTool(i int, e *marotte.Entry, t *searchTurn) {
 	it := newItem(itemTool, i, e, t, e.Lane)
 	if c := t.calls[e.ID]; c != nil {
-		it.call = c.call
+		it.call, it.title = c.call, c.title()
 	}
 	if it.call != nil && it.call.Title == internalToolTitle {
 		return

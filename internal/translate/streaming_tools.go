@@ -68,8 +68,9 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID marotte.ChatID, 
 		t.trackFileChanges(turn, content.diffs, isNew)
 		t.lines.RecordFromDiffs(chatID, content.diffs, recency(), string(tc.Kind))
 	}
+	title, _ := marotte.ToolCard(&call)
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventWorkingLabel, chatID,
-		marotte.WorkingLabelPayload{Label: marotte.WorkingLabelForKind(tc.Kind, tc.Title)}))
+		marotte.WorkingLabelPayload{Label: marotte.WorkingLabelForKind(tc.Kind, title)}))
 }
 
 func (*Translator) trackFileChanges(turn *turnlog.Turn, diffs []marotte.ToolDiff, isNew bool) {
@@ -158,7 +159,7 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID marotte.Ch
 		return
 	}
 	res := marotte.EntryToolResultOf(&tc)
-	if !bytes.Equal(tc.Input, open.CreatedInput) {
+	if !bytes.Equal(tc.Input, open.Created.Input) {
 		res.Input = tc.Input
 	}
 	sealed, err := turn.ToolResult(ctx, tu.Meta.Kiro.AgentSubtaskID, tu.ToolCallID, &res)
@@ -201,9 +202,7 @@ func (t *Translator) lateStepResult(ctx context.Context, chatID marotte.ChatID, 
 	setPayload(&e, res)
 	if err := t.runs.RunAppendAfterClosed(ctx, attr.RunID, attr.NodePath, &e); err != nil {
 		appendFailed(runScope(attr.RunID), "late tool_result", err)
-		return
 	}
-	t.publishAppended(ctx, runScope(attr.RunID), &e)
 }
 
 // Every omitted field means "unchanged", so applying it to `before` reconstructs `after` exactly;
@@ -226,7 +225,20 @@ func toolProgress(turn string, before, after *marotte.ToolCall) marotte.ToolProg
 	deltaContent(&d, before, after)
 	deltaAttachments(&d, before, after)
 	deltaMarks(&d, before, after)
+	deltaCard(&d, before, after)
 	return d
+}
+
+// deltaCard sends the card title and loaded list when the frame changed them.
+func deltaCard(d *marotte.ToolProgressPayload, before, after *marotte.ToolCall) {
+	title, loaded := marotte.ToolCard(after)
+	was, wasLoaded := marotte.ToolCard(before)
+	if title != was {
+		d.CardTitle = title
+	}
+	if !slices.Equal(loaded, wasLoaded) {
+		d.Loaded = loaded
+	}
 }
 
 // Only Diffs accumulates; the others are absolute and go entire whenever they change.

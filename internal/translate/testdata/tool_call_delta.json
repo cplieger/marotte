@@ -200,6 +200,7 @@
       "before": {
         "id": "c1",
         "title": "Running: x",
+        "card_title": "x",
         "kind": "other",
         "status": "pending",
         "ts": 1
@@ -208,11 +209,13 @@
         "message_id": "m1",
         "tool_call_id": "c1",
         "title": "Reading file",
+        "card_title": "Reading file",
         "kind": "read"
       },
       "after": {
         "id": "c1",
         "title": "Reading file",
+        "card_title": "Reading file",
         "kind": "read",
         "status": "pending",
         "ts": 1

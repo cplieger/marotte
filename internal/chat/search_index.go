@@ -17,7 +17,7 @@ import (
 // and a rewind, rewrite, run_named, header write or remove drops it.
 
 const (
-	// filterBytes is one chat's bits, and with its open turns' tails (a few bytes per lane) the index's cost per chat.
+	// filterBytes is one chat's bits, and with its open turns' tails and tool calls the index's cost per chat.
 	filterBytes = 64 << 10
 	filterWords = filterBytes / 8
 	filterBits  = filterBytes * 8
@@ -33,6 +33,9 @@ type chatFilter struct {
 	// tails is each open (turn, lane)'s last message text runes a trigram across the next text entry takes
 	// (indexEntry). Written only under the chat's lock, never read by a query.
 	tails map[toolRunKey]string
+	// turns is each open turn's unsettled calls, held only for a turn with one, so an appended result's title reads
+	// its call; the result, else the turn's close, drops each. Same lock as tails.
+	turns map[string]*searchTurn
 	// words is its own allocation: beside the map it would round the filter up to the next 8 KiB page.
 	words *[filterWords]uint64
 }
@@ -48,18 +51,48 @@ func buildChatFilter(name string, entries []marotte.Entry) *chatFilter {
 	f.addText(name)
 	turns := indexSearchTurns(entries, nil)
 	names := wakeFactsOf(entries).names
+	closed := make(map[string]struct{})
 	for i := range entries {
 		f.indexEntry(&entries[i], turns[entries[i].Turn], names)
+		if entries[i].Kind == marotte.EntryKindTurnClose {
+			closed[entries[i].Turn] = struct{}{}
+		}
+	}
+	// Copied into a fresh map, which holds only the open turns' unsettled calls, not a whole chat's buckets.
+	for id, t := range turns {
+		if _, done := closed[id]; done || len(t.calls) == 0 {
+			continue
+		}
+		if f.turns == nil {
+			f.turns = make(map[string]*searchTurn, len(turns))
+		}
+		f.turns[id] = t
 	}
 	return f
 }
 
-// addEntry records one appended entry, read as its own turn, so a tool_call's input is indexed whole before any diff
-// drops a leaf at query time. A filter may hold more than the scan reads, never less.
+// addEntry records one appended entry into its open turn, so a tool_call's input is indexed whole before its
+// result's diff drops a leaf at query time. A filter may hold more than the scan reads, never less.
 func (f *chatFilter) addEntry(e *marotte.Entry) {
 	t := newSearchTurn(false)
+	if e.Kind == marotte.EntryKindToolCall || e.Kind == marotte.EntryKindToolResult {
+		t = f.toolTurn(e.Turn)
+	}
 	t.observe(e)
 	f.indexEntry(e, t, nil)
+}
+
+// toolTurn is turn's held calls, minted on its first tool entry; only a tool entry reads another entry's state.
+func (f *chatFilter) toolTurn(turn string) *searchTurn {
+	if f.turns == nil {
+		f.turns = make(map[string]*searchTurn)
+	}
+	t := f.turns[turn]
+	if t == nil {
+		t = newSearchTurn(false)
+		f.turns[turn] = t
+	}
+	return t
 }
 
 // indexEntry adds an entry's entrySegments, a text entry's through appendProse after its lane's tail, whatever a view
@@ -71,9 +104,16 @@ func (f *chatFilter) indexEntry(e *marotte.Entry, t *searchTurn, names map[strin
 		for _, seg := range segs {
 			f.addText(seg.text)
 		}
-		if e.Kind == marotte.EntryKindTurnClose {
-			// No text follows its turn's close (only lane-less between-turns kinds do), so its tails are dead.
+		switch e.Kind {
+		case marotte.EntryKindToolResult:
+			f.settle(e, t)
+		case marotte.EntryKindTurnClose:
+			// No text or result follows its turn's close (only lane-less between-turns kinds do), so its state is dead.
 			maps.DeleteFunc(f.tails, func(k toolRunKey, _ string) bool { return k.turn == e.Turn })
+			delete(f.turns, e.Turn)
+			if len(f.turns) == 0 {
+				f.turns = nil
+			}
 		}
 		return
 	}
@@ -88,6 +128,20 @@ func (f *chatFilter) indexEntry(e *marotte.Entry, t *searchTurn, names map[strin
 	f.addText(text)
 	// A clone: the slice would keep the whole joined text alive.
 	f.tails[k] = strings.Clone(trigramTail(text))
+}
+
+// settle indexes the title the scan files under a result's call, which was indexed before the result arrived, and
+// drops the call: nothing reads a settled one again. A call not yet seen stays for its own entry to join.
+func (f *chatFilter) settle(e *marotte.Entry, t *searchTurn) {
+	id := marotte.ToolCallIDOfResult(e.ID)
+	c := t.calls[id]
+	if c == nil {
+		return
+	}
+	f.addText(c.title())
+	if c.call != nil {
+		delete(t.calls, id)
+	}
 }
 
 // trigramTail is the runes of s a trigram can still take from it: the last trigramRunes-1, or s when it has fewer.

@@ -49,9 +49,12 @@ type Sink interface {
 
 // Sealed is one entry a step froze, with the steer carry that seal released into it (Delta,
 // broadcast as entry_delta before entry_sealed). N is the delta count at the seal; 0 marks
-// an entry born sealed, which travels as one entry_appended frame.
+// an entry born sealed, which travels as one entry_appended frame. Call is the call a tool_result
+// settles as its tool_call entry stored it, the pair its card is titled from (marotte.ToolCard);
+// nil for any other entry.
 type Sealed struct {
 	Entry *marotte.Entry
+	Call  *marotte.EntryToolCall
 	Delta string
 	N     uint64
 }
@@ -61,10 +64,11 @@ type Sealed struct {
 // tool_call entry's own stamp, so a duration needs no clock in here.
 type OpenCall struct {
 	Lane string
-	// CreatedInput is the create frame's input, so a result persists Input only when an update revised it.
-	CreatedInput json.RawMessage
-	Call         marotte.ToolCall
-	StartedTs    int64
+	// Created is the call as its tool_call entry stored it: a result persists Input only when an update revised
+	// the created one, and its seal carries Created as the call it settles (Sealed.Call).
+	Created   marotte.EntryToolCall
+	Call      marotte.ToolCall
+	StartedTs int64
 }
 
 // lane is one agent's state inside a turn: at most one open entry, and the bytes
@@ -474,16 +478,23 @@ func (t *Turn) ToolResult(ctx context.Context, updateLane, callID string, res *m
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	key := updateLane
+	var call *marotte.EntryToolCall
 	if c, known := t.calls[callID]; known {
 		if updateLane != c.Lane {
 			slog.Warn("turnlog: tool_call_update lane disagrees with its call's lane",
 				"turn", t.id, "tool_call", callID, "call_lane", c.Lane, "update_lane", updateLane)
 		}
 		key = c.Lane
+		call = &c.Created
 	}
-	return t.laned(ctx, key, marotte.EntryKindToolResult, marotte.ToolResultID(callID), t.agg.facts.WithInteraction(callID, res), func(*marotte.Entry) {
+	sealed, err := t.laned(ctx, key, marotte.EntryKindToolResult, marotte.ToolResultID(callID), t.agg.facts.WithInteraction(callID, res), func(*marotte.Entry) {
 		t.settleCall(callID)
 	})
+	if err == nil && len(sealed) > 0 {
+		// laned's own entry is its last seal.
+		sealed[len(sealed)-1].Call = call
+	}
+	return sealed, err
 }
 
 // SteerAck appends the acknowledgement the marker filter stripped out of a chunk,
@@ -687,12 +698,12 @@ func (t *Turn) Close(ctx context.Context, c marotte.TurnConclusion) ([]Sealed, e
 			t.settleCall(id)
 			continue
 		}
-		key := open.Lane
-		res := t.agg.facts.WithInteraction(id, &marotte.EntryToolResult{Status: marotte.ToolAborted})
-		s, aerr := t.append(ctx, key, marotte.EntryKindToolResult, marotte.ToolResultID(id), res, "")
+		res := t.agg.facts.WithInteraction(id, abortedResult(open))
+		s, aerr := t.append(ctx, open.Lane, marotte.EntryKindToolResult, marotte.ToolResultID(id), res, "")
 		if aerr != nil {
 			return sealed, aerr
 		}
+		s.Call = &open.Created
 		t.settleCall(id)
 		sealed = append(sealed, s)
 	}
@@ -888,8 +899,20 @@ func (t *Turn) trackCall(id, key string, call *marotte.EntryToolCall, ts int64) 
 	if _, dup := t.calls[id]; dup {
 		return
 	}
-	t.calls[id] = &OpenCall{Call: marotte.ToolCallOfEntry(call), CreatedInput: call.Input, Lane: key, StartedTs: ts}
+	t.calls[id] = &OpenCall{Call: marotte.ToolCallOfEntry(call), Created: *call, Lane: key, StartedTs: ts}
 	t.callOrder = append(t.callOrder, id)
+}
+
+// abortedResult is a close's result for a call still in flight: aborted, with the fields of the fold its card
+// title reads, so a reload titles the card as the live one was (marotte.SettledToolCall).
+func abortedResult(open *OpenCall) *marotte.EntryToolResult {
+	res := &marotte.EntryToolResult{
+		Title: open.Call.Title, Kind: open.Call.Kind, Status: marotte.ToolAborted, Disclosed: open.Call.Disclosed,
+	}
+	if !bytes.Equal(open.Call.Input, open.Created.Input) {
+		res.Input = open.Call.Input
+	}
+	return res
 }
 
 func (t *Turn) settleCall(id string) {

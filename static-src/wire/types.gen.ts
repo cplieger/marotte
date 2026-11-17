@@ -38,6 +38,8 @@ export type KnowledgeIndexingPhase = "started" | "completed";
 
 export type KnowledgeIndexingStatus = "success" | "failed";
 
+export type LoadedType = "mcp" | "tool" | "skill" | "steering" | "overview" | "unknown";
+
 export type MCPOrigin = "user" | "workspace" | "power" | "bundled" | "unknown";
 
 export type MCPPrewarmState = "installing" | "done" | "failed";
@@ -102,7 +104,7 @@ export type RunWant = "either" | "prompt";
 
 export type SafetyStatus = "idle" | "formalizing" | "evaluating" | "blocked" | "error";
 
-export type SegmentKind = "content" | "reasoning" | "tool_title" | "tool_disclosed" | "tool_diff" | "tool_denial" | "tool_input" | "tool_output" | "steer" | "prompt" | "plan" | "attachment" | "turn_failure" | "wake";
+export type SegmentKind = "content" | "reasoning" | "tool_title" | "tool_diff" | "tool_denial" | "tool_input" | "tool_output" | "steer" | "prompt" | "plan" | "attachment" | "turn_failure" | "wake";
 
 export type SendNowKind = "stop" | "stop_then_compaction" | "after_compaction" | "now";
 
@@ -1465,6 +1467,7 @@ export interface EntryToolCall {
   kind: ToolKind;
   status: ToolStatus;
   output?: string;
+  card_title?: string;
   tool_name?: string;
   agent_subtask_id?: string;
   workflow_id?: string;
@@ -1482,12 +1485,13 @@ export interface EntryToolCall {
   steering_docs?: string[];
   diffs?: ToolDiff[];
   output_spans?: TextSpan[];
+  loaded?: LoadedResource[];
   ts: number;
   duration_ms?: number;
   output_bytes?: number;
   has_full?: boolean;
   declined?: boolean;
-  /** ClassifierApproved and ClassifierNote are ToolCall's. */
+  /** ClassifierApproved, ClassifierNote, CardTitle and Loaded are ToolCall's. */
   classifier_approved?: boolean;
 }
 
@@ -1508,6 +1512,8 @@ export interface EntryToolResult {
    */
   truncated?: ToolTruncation;
   title?: string;
+  /** CardTitle and Loaded are ToolCall's, from the result joined with its call. */
+  card_title?: string;
   kind?: ToolKind;
   /**
    * Status is a closed enum because every value is marotte's own (aborted, or a
@@ -1524,6 +1530,7 @@ export interface EntryToolResult {
   output_spans?: TextSpan[];
   diffs?: ToolDiff[];
   locations?: ToolLocation[];
+  loaded?: LoadedResource[];
   /** Input is set only when an update revised the create's input; absent means the create's stands. */
   input?: unknown;
   duration_ms?: number;
@@ -2278,6 +2285,20 @@ export interface LiveRunsResponse {
    */
   subject?: SubjectStamp;
   runs: LiveRun[];
+}
+
+/** LoadedResource is one resource a load call loaded. */
+export interface LoadedResource {
+  /**
+   * ID is the id as the call sent it, or `<type>::<display_name>` for a disclose_context that
+   * sent none and is known only by its disclosed block.
+   */
+  id: string;
+  type: LoadedType;
+  /** Name is the tool, skill, document or Power name. */
+  name: string;
+  /** Server is a LoadedMCP resource's server, else empty. */
+  server: string;
 }
 
 /**
@@ -3661,6 +3682,11 @@ export interface RunStepStart {
    * finished line that prints, all the dock line reads of it.
    */
   open?: OpenEntry;
+  /**
+   * Calls is set on an attempt in flight: the card titles of its newest turn's own-lane tool_calls a result can still
+   * settle, by call id, so a dock line seeded mid-call moves when the result settles another title.
+   */
+  calls?: { [key: string]: string };
   /** StartedAt is RFC 3339. */
   started_at: string;
   /**
@@ -4537,6 +4563,8 @@ export interface ToolCall {
   kind: ToolKind;
   status: ToolStatus;
   output?: string;
+  /** CardTitle and Loaded are never set on a ToolCall in Go: the client folds them in from served entries and frames. */
+  card_title?: string;
   /**
    * ToolName is the built-in tool's id (`update_workflow`, `web_search`) when the translator
    * could name one the transcript distinguishes, else empty. Fixed at the create frame.
@@ -4606,6 +4634,7 @@ export interface ToolCall {
   input?: unknown;
   locations?: ToolLocation[];
   diffs?: ToolDiff[];
+  loaded?: LoadedResource[];
   /**
    * SteeringDocs are the document ids (a file URI for an on-disk doc) a steering card
    * announces, as KAS's steering_inclusion sent them.
@@ -4839,6 +4868,8 @@ export interface ToolProgressPayload {
   tool_call_id: string;
   /** Title and Kind: KAS sends them nullish on most updates, so absent is "keep". */
   title?: string;
+  /** CardTitle and Loaded are ToolCall's, sent when this frame changed them. */
+  card_title?: string;
   kind?: ToolKind;
   status?: ToolStatus;
   /**
@@ -4868,6 +4899,7 @@ export interface ToolProgressPayload {
   diffs_appended?: ToolDiff[];
   /** Locations are REPLACED wholesale when present. */
   locations?: ToolLocation[];
+  loaded?: LoadedResource[];
   /** Input is the call's whole argument object, REPLACED when present. */
   input?: unknown;
   /**

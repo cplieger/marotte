@@ -91,29 +91,29 @@ describe("applyOutputUpdate (cumulative output → replace, not append)", () => 
 });
 
 describe("applyToolCallUpdate title", () => {
-  it("keeps a late title frame human-readable", () => {
-    const card = document.createElement("div");
-    card.className = "tool-call";
-    card.dataset["title"] = "Running";
-    const header = document.createElement("div");
-    header.className = "tool-header";
-    const title = document.createElement("span");
-    title.className = "tool-title";
-    header.appendChild(title);
-    card.appendChild(header);
-
+  it("draws a frame's card title over its wire title", () => {
+    const { card, header, title } = titledCard("Running");
     applyToolCallUpdate(
       card,
       {
         id: "late-title",
         title: "Running: remote_web_search",
+        card_title: "remote web search",
       } as ToolCall,
       "c1",
     );
+    expect([title.textContent, header.title, card.dataset["title"]]).toEqual([
+      "remote web search",
+      "remote web search",
+      "remote web search",
+    ]);
+  });
 
-    expect(title.textContent).toBe("remote web search");
-    expect(header.title).toBe("remote web search");
-    expect(card.dataset["title"]).toBe("remote web search");
+  // A card title the server did not send (a call cached before it served one) leaves the wire title as written.
+  it("draws the wire title verbatim when the frame carries no card title", () => {
+    const { card, title } = titledCard("Running");
+    applyToolCallUpdate(card, { id: "raw", title: "Running: remote_web_search" } as ToolCall, "c1");
+    expect(title.textContent).toBe("Running: remote_web_search");
   });
 
   function titledCard(text: string): {
@@ -134,7 +134,7 @@ describe("applyToolCallUpdate title", () => {
     return { card, header, title };
   }
 
-  // KAS repeats its placeholder on routine frames; the update must not put "Run Command" back over the command title.
+  // KAS repeats its placeholder on routine frames; the folded card title keeps the command over it.
   it("keeps a shell card's command title through a placeholder update frame", () => {
     const { card, header, title } = titledCard("make lint");
     applyToolCallUpdate(
@@ -142,8 +142,8 @@ describe("applyToolCallUpdate title", () => {
       {
         id: "shell-update",
         title: "Run Command",
+        card_title: "make lint",
         kind: "execute",
-        input: { command: "make lint" },
       } as ToolCall,
       "c1",
     );
@@ -159,6 +159,7 @@ describe("applyToolCallUpdate title", () => {
       {
         id: "prose-update",
         title: "Run tests in ./internal/foo_bar with --dry-run",
+        card_title: "Run tests in ./internal/foo_bar with --dry-run",
         kind: "execute",
         input: { command: "go test --dry-run ./internal/foo_bar" },
       } as ToolCall,

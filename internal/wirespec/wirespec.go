@@ -25,6 +25,7 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.ToolDiff](),
 	wiregen.TypeRef[marotte.ToolCheckpoint](),
 	wiregen.TypeRef[marotte.ToolDisclosed](),
+	wiregen.TypeRef[marotte.LoadedResource](),
 	wiregen.TypeRef[marotte.ToolDenialRule](),
 	wiregen.TypeRef[marotte.ToolDenial](),
 	wiregen.TypeRef[marotte.ToolOffload](),
@@ -354,6 +355,8 @@ var wireTypes = []wiregen.Type{
 var wireEnums = []wiregen.EnumRef{
 	wiregen.StringEnum[marotte.ToolKind](),
 	wiregen.StringEnum[marotte.ToolStatus](),
+	// The load card's glyph is picked by it, so the icon table must be total.
+	wiregen.StringEnum[marotte.LoadedType](),
 	// The denial block words each basis, so its Record must be total.
 	wiregen.StringEnum[marotte.DenialBasis](),
 	wiregen.StringEnum[marotte.PlanStatus](),

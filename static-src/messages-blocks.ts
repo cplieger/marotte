@@ -1131,12 +1131,13 @@ function failPlacement(st: TurnRender, p: Placement, err: unknown): void {
   appendEntry(st, st.bodyEl, row);
 }
 
-/** The row a failed entry renders as, text only: its words, a tool's title, else its kind. */
+/** The row a failed entry renders as, text only: its words, a tool's card title, else its kind. */
 function buildEntryFallback(st: TurnRender, seqs: readonly number[]): HTMLElement {
   const first = seqs[0] === undefined ? undefined : entryAt(st.turn, seqs[0]);
   let text = proseText(st, seqs);
   if (text === "" && first !== undefined) {
-    text = payloadOf(first, "tool_call")?.title ?? first.kind;
+    const call = payloadOf(first, "tool_call");
+    text = call?.card_title ?? call?.title ?? first.kind;
   }
   const row = document.createElement("div");
   row.className = "entry-fallback";
