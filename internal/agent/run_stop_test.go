@@ -321,7 +321,7 @@ func TestRunList_AStopBetweenASubmitsPlacingAndItsWaitAnswersAtOnce(t *testing.T
 		case <-time.After(time.Second):
 			t.Fatalf("the send had no answer 1s after the Stop; the admission wait is %v", command.AdmissionWait)
 		}
-		joinInflight(t, s.h)
+		joinInflight(s.h)
 		synctest.Wait()
 	})
 }

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -506,36 +507,39 @@ func TestFinalizeTurn_PersistsOnACancelledContext(t *testing.T) {
 // TestFinalizeTurn_DoesNotDetachThePositionWait pins that the detach sits below awaitPosition, whose only timed exit is
 // ctx.Done(); above it a wedged kiro-cli hangs shutdown, hence the elapsed-time assertion.
 func TestFinalizeTurn_DoesNotDetachThePositionWait(t *testing.T) {
-	h, cs, _ := newTestHub()
-	id, log := streamingPromptTurn(t, h, "c1", "half an answer")
+	synctest.Test(t, func(t *testing.T) {
+		h, cs, _ := newTestHub()
+		t.Cleanup(func() { shutdownHub(t, h) })
+		id, log := streamingPromptTurn(t, h, "c1", "half an answer")
 
-	// Unreachable: nothing advances it.
-	const unreachable = 99
-	settled := make(chan struct{})
-	start := time.Now()
-	go func() {
-		defer close(settled)
-		h.coord.finalizeTurn(deadContext(t), "c1", &turnClose{
-			Closer: closerPromptResponse,
-			Turn:   id,
-			Seq:    unreachable,
-			Resp:   &marotte.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)},
-		})
-	}()
-	select {
-	case <-settled:
-	case <-time.After(5 * time.Second):
-		t.Fatal("finalizeTurn parked on a position the folder cannot reach; the detach is above awaitPosition")
-	}
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Errorf("finalizeTurn took %v to abandon an unreachable position, want a prompt return", elapsed)
-	}
+		// Unreachable: nothing advances it.
+		const unreachable = 99
+		settled := make(chan struct{})
+		start := time.Now()
+		go func() {
+			defer close(settled)
+			h.coord.finalizeTurn(deadContext(t), "c1", &turnClose{
+				Closer: closerPromptResponse,
+				Turn:   id,
+				Seq:    unreachable,
+				Resp:   &marotte.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)},
+			})
+		}()
+		select {
+		case <-settled:
+		case <-time.After(5 * time.Second):
+			t.Fatal("finalizeTurn parked on a position the folder cannot reach; the detach is above awaitPosition")
+		}
+		if elapsed := time.Since(start); elapsed > time.Second {
+			t.Errorf("finalizeTurn took %v to abandon an unreachable position, want a prompt return", elapsed)
+		}
 
-	// It claimed nothing; the bridge-death closer owns the open turn.
-	if own, ok := h.coord.OwnTurn("c1"); !ok || own != log {
-		t.Errorf("own turn = (%p, %t), want turn %q still open", own, ok, id)
-	}
-	if got := closesOf(t, logOf(t, cs, "c1")); len(got) != 0 {
-		t.Errorf("an abandoned settle closed the turn: %+v", got)
-	}
+		// It claimed nothing; the bridge-death closer owns the open turn.
+		if own, ok := h.coord.OwnTurn("c1"); !ok || own != log {
+			t.Errorf("own turn = (%p, %t), want turn %q still open", own, ok, id)
+		}
+		if got := closesOf(t, logOf(t, cs, "c1")); len(got) != 0 {
+			t.Errorf("an abandoned settle closed the turn: %+v", got)
+		}
+	})
 }

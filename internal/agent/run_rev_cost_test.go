@@ -65,7 +65,7 @@ func liveCost(t *testing.T, lanes int) (perFrame, perSince uint64) {
 	evt := marotte.NewEvent(marotte.EventTurnOpened, "", marotte.TurnOpenedPayload{WorkflowID: "wf_1", Entry: *opened})
 	perFrame = bytesPer(20, func() {
 		h.runs.noteRunEvent(&evt)
-		joinInflight(t, h)
+		joinInflight(h)
 	})
 	since := "since=" + strconv.FormatUint(rev, 10)
 	perSince = bytesPer(20, func() { getRunAt(t, h, since) })
@@ -101,7 +101,7 @@ func TestRunRev_AStepFrameRevisesThatStep(t *testing.T) {
 	h.bus.Broadcast(t.Context(), marotte.NewEvent(marotte.EventTurnOpened, "", marotte.TurnOpenedPayload{
 		WorkflowID: "wf_1", Entry: *opened,
 	}))
-	joinInflight(t, h)
+	joinInflight(h)
 
 	var got struct {
 		StepStarts map[string]marotte.RunStepStart `json:"step_starts"`

@@ -514,7 +514,7 @@ func TestHandleSSE_ThePendingSnapshotNamesEveryLeasedRunAndNoEndedOne(t *testing
 		t.Fatalf("the v3 pending_snapshot does not carry the run's asks: %q", v3)
 	}
 	// The connect re-read the run on the engine; its republish is a live frame, not the legacy connect's replay.
-	joinInflight(t, h)
+	joinInflight(h)
 	if legacy := coldConnectAs(t, h, true).Body.String(); strings.Contains(legacy, `"type":"run_asks"`) {
 		t.Errorf("a legacy connect carried run_asks, which a v2 bundle cannot decode: %q", legacy)
 	}

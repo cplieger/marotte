@@ -42,7 +42,7 @@ func TestCmdPrompt_ASendBehindASteerInFlightIsSteeredAfterIt(t *testing.T) {
 			t.Errorf("the %s send answered %q, want steered", name, got)
 		}
 	}
-	joinInflight(t, s.h)
+	joinInflight(s.h)
 	if sent, want := k.steered(), []string{"first", "second"}; !slices.Equal(sent, want) {
 		t.Errorf("steers sent = %q, want %q", sent, want)
 	}
@@ -111,7 +111,7 @@ func TestCmdPrompt_ASteeredSendTakenLaterAsATurnLeavesTheComposer(t *testing.T) 
 	if next == nil || next.Text != "first" {
 		t.Fatalf("next turn = %+v, want the unread steer's words", next)
 	}
-	joinInflight(t, s.h)
+	joinInflight(s.h)
 	if c, _ := cs.Get(t.Context(), "c1"); c.Draft != "my next thought" {
 		t.Errorf("draft = %q, want the user's next words kept", c.Draft)
 	}

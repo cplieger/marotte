@@ -321,7 +321,7 @@ func TestSecretSignInStateDiesWithTheEngineGeneration(t *testing.T) {
 	h := newRuntimeOn(context.Background(), t.TempDir(), src, cs, WithConfigDir(t.TempDir()))
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	settleBoot(t, h)
+	awaitBoot(h)
 
 	const verifierKey = "kiro.mcp.2a0a3d1d4672ffaff77fcbe95f21be210e2e444f1b152fb537773dd72a3ddf3a.verifier"
 	first := src.current()

@@ -31,9 +31,6 @@ func awaitingSignIn(name string, src marotte.MCPSource) translate.MCPServerRepor
 func signInHub(t *testing.T, names ...string) (*Runtime, *fakeBridge) {
 	t.Helper()
 	h := newHubWithMCPConfig(t, enabledConfig(names...))
-	if !awaitEngine(h) {
-		t.Fatal("the engine never became ready")
-	}
 	for _, n := range names {
 		reportMCP(t, h, sessionOf(n), awaitingSignIn(n, marotte.MCPSource{}))
 	}
@@ -100,7 +97,7 @@ func TestSignIn_SendsStartOAuthOnce(t *testing.T) {
 		t.Fatalf("sign-in = %d %s, want 202", code, body)
 	}
 	awaitResets(t, lane, 1)
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if n := countCalls(lane, methodV3MCPResetServer); n != 1 {
 		t.Errorf("resets sent = %d, want exactly 1", n)
@@ -151,9 +148,6 @@ func TestSignIn_RefusesAConnectedServer(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			h := newHubWithMCPConfig(t, enabledConfig("linear"))
-			if !awaitEngine(h) {
-				t.Fatal("the engine never became ready")
-			}
 			tc.record(t, h)
 
 			code, body := postSignIn(h, "linear")
@@ -161,7 +155,7 @@ func TestSignIn_RefusesAConnectedServer(t *testing.T) {
 			if code != http.StatusConflict || !strings.Contains(body, tc.want) {
 				t.Errorf("sign-in = %d %s, want 409 %q", code, body, tc.want)
 			}
-			joinInflight(t, h)
+			joinInflight(h)
 			if n := countCalls(fakeSourceOf(t, h).lane, methodV3MCPResetServer); n != 0 {
 				t.Errorf("resets sent = %d, want none", n)
 			}
@@ -183,7 +177,7 @@ func TestSignIn_RefusesAServerAlreadySigningIn(t *testing.T) {
 	if code, body := postSignIn(h, "linear"); code != http.StatusConflict || !strings.Contains(body, errSignInInProgress.Error()) {
 		t.Errorf("second sign-in = %d %s, want 409 in progress", code, body)
 	}
-	joinInflight(t, h)
+	joinInflight(h)
 	if n := countCalls(lane, methodV3MCPResetServer); n != 1 {
 		t.Errorf("resets sent = %d, want 1", n)
 	}
@@ -203,9 +197,6 @@ func TestSignIn_RefusesAnUnknownServer(t *testing.T) {
 // its own server's row.
 func TestSignIn_TwoServersSignInAtOnce(t *testing.T) {
 	h := newHubWithMCPConfig(t, enabledConfig("linear", "github"))
-	if !awaitEngine(h) {
-		t.Fatal("the engine never became ready")
-	}
 	lane := fakeSourceOf(t, h).lane
 	reportMCP(t, h, "sess-both", awaitingSignIn("linear", marotte.MCPSource{}), awaitingSignIn("github", marotte.MCPSource{}))
 
@@ -215,7 +206,7 @@ func TestSignIn_TwoServersSignInAtOnce(t *testing.T) {
 		}
 	}
 	awaitResets(t, lane, 2)
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if got := standingSignIn(h); got != "github,linear" {
 		t.Errorf("standing sign-ins = %q, want both", got)
@@ -239,7 +230,7 @@ func TestSignIn_ConsentURLForAnotherServerIsNotTakenByTheStandingSignIn(t *testi
 		t.Fatalf("sign-in = %d, want 202", code)
 	}
 	awaitResets(t, lane, 1)
-	joinInflight(t, h)
+	joinInflight(h)
 
 	req := consentRequest{URL: "https://p.example/a?state=s", Server: "github", FlowID: "f1"}
 	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), req, true); shown.how != consentBanner {
@@ -314,7 +305,7 @@ func TestSignIn_EngineErrorEndsTheStandingSignIn(t *testing.T) {
 		t.Fatalf("sign-in = %d, want 202", code)
 	}
 	awaitResets(t, lane, 1)
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if got := standingSignIn(h); got != "" {
 		t.Errorf("standing sign-in = %q after a refused reset, want none", got)
@@ -332,16 +323,13 @@ func TestSignIn_EngineErrorEndsTheStandingSignIn(t *testing.T) {
 		t.Errorf("retry = %d %s, want 202", code, body)
 	}
 	awaitResets(t, lane, 2)
-	joinInflight(t, h)
+	joinInflight(h)
 }
 
 // A refused Sign in in a waiting session leaves the row on that session even while another has the server
 // connected: the row keeps the reason and a retry goes back to the waiting session.
 func TestSignIn_ARefusedSignInLeavesTheWaitingSessionRetryable(t *testing.T) {
 	h := newHubWithMCPConfig(t, enabledConfig("linear"))
-	if !awaitEngine(h) {
-		t.Fatal("the engine never became ready")
-	}
 	lane := fakeSourceOf(t, h).lane
 	reportMCP(t, h, "sess-a", connectedMCP("linear", marotte.MCPSource{}))
 	reportMCP(t, h, "sess-b", awaitingSignIn("linear", marotte.MCPSource{}))
@@ -350,7 +338,7 @@ func TestSignIn_ARefusedSignInLeavesTheWaitingSessionRetryable(t *testing.T) {
 		t.Fatalf("sign-in = %d %s, want 202", code, body)
 	}
 	awaitResets(t, lane, 1)
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if row := rowOf(t, h, "linear"); row.State != mcpStateOAuth || !strings.Contains(row.Error, "listener busy") {
 		t.Errorf("row = %+v, want needs_auth with the engine's reason", row)
@@ -359,7 +347,7 @@ func TestSignIn_ARefusedSignInLeavesTheWaitingSessionRetryable(t *testing.T) {
 		t.Fatalf("retry = %d %s, want 202", code, body)
 	}
 	awaitResets(t, lane, 2)
-	joinInflight(t, h)
+	joinInflight(h)
 	if p := lane.paramsFor(methodV3MCPResetServer); p[marotte.KeySessionID] != marotte.SessionID("sess-b") || p[keyStartOAuth] != true {
 		t.Errorf("retry params = %v, want startOAuth in sess-b", p)
 	}
@@ -375,7 +363,7 @@ func TestSignIn_ARefusalsReasonEndsWithTheNextStatusOrClaim(t *testing.T) {
 			t.Fatalf("sign-in = %d, want 202", code)
 		}
 		awaitResets(t, lane, 1)
-		joinInflight(t, h)
+		joinInflight(h)
 		if row := rowOf(t, h, "linear"); row.Error == "" {
 			t.Fatalf("row = %+v, want the refusal's reason", row)
 		}
@@ -423,7 +411,7 @@ func TestSignIn_EngineErrorKeepsAForeignRowsOrigin(t *testing.T) {
 		t.Fatalf("sign-in = %d, want 202", code)
 	}
 	awaitResets(t, lane, 1)
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if row := rowOf(t, h, "theirs"); row.State != mcpStateOAuth || row.Error == "" || row.Origin != marotte.OriginWorkspace || row.OriginRoot != "/w" {
 		t.Errorf("row = %+v, want needs_auth with the reason and still the workspace's", row)
@@ -528,7 +516,7 @@ func TestSignIn_LivesOnTheBindingSessionsView(t *testing.T) {
 		t.Fatalf("sign-in = %d, want 202", code)
 	}
 	awaitResets(t, lane, 1)
-	joinInflight(t, h)
+	joinInflight(h)
 	if p := lane.paramsFor(methodV3MCPResetServer); p[marotte.KeySessionID] != sessionOf("linear") {
 		t.Errorf("reset session = %v, want the oldest binding session %s", p[marotte.KeySessionID], sessionOf("linear"))
 	}
@@ -562,9 +550,6 @@ func TestSignIn_GoesToTheSessionWaitingWhileAnotherIsConnected(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			h := newHubWithMCPConfig(t, enabledConfig("linear"))
-			if !awaitEngine(h) {
-				t.Fatal("the engine never became ready")
-			}
 			lane := fakeSourceOf(t, h).lane
 			reportMCP(t, h, "sess-older", tc.older)
 			reportMCP(t, h, "sess-newer", tc.newer)
@@ -580,7 +565,7 @@ func TestSignIn_GoesToTheSessionWaitingWhileAnotherIsConnected(t *testing.T) {
 				t.Fatalf("sign-in = %d %s, want 202", code, body)
 			}
 			awaitResets(t, lane, 1)
-			joinInflight(t, h)
+			joinInflight(h)
 
 			if p := lane.paramsFor(methodV3MCPResetServer); p[marotte.KeySessionID] != waiting || p[keyStartOAuth] != true {
 				t.Errorf("reset params = %v, want startOAuth in the waiting session %s", p, waiting)
@@ -620,7 +605,7 @@ func TestSignIn_AnExpiredSignInReturnsItsServerToNeedsAuth(t *testing.T) {
 		t.Errorf("sign-in after the deadline = %d %s, want 202", code, body)
 	}
 	awaitResets(t, lane, 2)
-	joinInflight(t, h)
+	joinInflight(h)
 }
 
 // The deadline ends a sign-in by itself, with no frame and no request, and one mcp_status row tells the clients the
@@ -652,7 +637,7 @@ func TestSignIn_TheDeadlineEndsTheSignInWithNoFrame(t *testing.T) {
 		if got := standingSignIn(h); got != "" {
 			t.Errorf("standing sign-in = %q past the deadline, want none", got)
 		}
-		joinInflight(t, h)
+		joinInflight(h)
 	})
 }
 
@@ -670,7 +655,7 @@ func TestOpenExternalURL_ClaimedBySignInRecordsTheAnchor(t *testing.T) {
 	h.engineFrame(fakeSourceOf(t, h).current(), openExternalURLMsg(t, 21, "theirs", consent))
 
 	answer := awaitLaneAnswer(t, lane, 21)
-	joinInflight(t, h)
+	joinInflight(h)
 	if answer.err != nil {
 		t.Fatalf("answer error = %v, want success so KAS keeps its listener waiting", answer.err)
 	}
@@ -777,7 +762,7 @@ func TestSignIn_AnEarlierAttemptsLateFailureLeavesTheNextOneAlone(t *testing.T) 
 	}
 	awaitResets(t, lane, 2)
 	close(late)
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if got := standingSignIn(h); got != "linear" {
 		t.Errorf("standing sign-in = %q after the first attempt failed late, want the second attempt's kept", got)

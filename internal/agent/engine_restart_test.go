@@ -25,7 +25,7 @@ const quietWindow = 50 * time.Millisecond
 func restartFixture(t *testing.T) (*Runtime, string, *fakeEngineSource) {
 	t.Helper()
 	h, dir := reopenFixture(t)
-	settleBoot(t, h)
+	awaitBoot(h)
 	return h, dir, fakeSourceOf(t, h)
 }
 

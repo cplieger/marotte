@@ -197,7 +197,7 @@ func (*flowBackend) Poll(context.Context, signin.DeviceStart) (signin.Credential
 func TestSignIn_AnotherBackendsSignInLeavesTheEngineSessionsAlone(t *testing.T) {
 	vault := openVault(t, t.TempDir(), &flowBackend{id: "test"}, &flowBackend{id: "other"})
 	h, _ := reopenFixture(t, WithSignIn(vault, "test"))
-	settleBoot(t, h)
+	awaitBoot(h)
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestEnsureResident_ACallerWaitsOnlyItsOwnContextAndALaterCallerJoinsTheLoad
 		doors.Add(1)
 		br.startGate = gate
 	})
-	settleBoot(t, h)
+	awaitBoot(h)
 	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1", ParentSessionID: "sess_host", Host: hostSec()})
 
 	short, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
@@ -272,7 +272,7 @@ func TestEnsureResident_ACallerWaitsOnlyItsOwnContextAndALaterCallerJoinsTheLoad
 func TestUnreadableConfig_AResidentSessionIsNotMarkedUntilTheRepairMovesAValue(t *testing.T) {
 	dir := writeSettings(t, `{"memory_mode":"learn"}`)
 	h := reopenFixtureIn(t, dir, nil)
-	settleBoot(t, h)
+	awaitBoot(h)
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}

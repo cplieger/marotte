@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -121,35 +122,37 @@ func parkTeardownAt(t *testing.T, h *Runtime, step string) (reached <-chan struc
 // A committed close answers at once on a busy engine; the session's close, which the engine is slow to confirm, ends
 // in the background.
 func TestCloseTab_ABusyEngineAnswersAtOnceAndClosesTheSessionLater(t *testing.T) {
-	logs := captureLogs(t)
-	h, _, br, tab := closeTabHub(t)
-	t.Cleanup(func() { shutdownHub(t, h) })
-	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
-		t.Fatalf("Setup: open session: %v", err)
-	}
-	gate := make(chan struct{})
-	br.mu.Lock()
-	br.stopGate = gate
-	br.mu.Unlock()
+	synctest.Test(t, func(t *testing.T) {
+		logs := captureLogs(t)
+		h, _, br, tab := closeTabHub(t)
+		t.Cleanup(func() { shutdownHub(t, h) })
+		if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
+			t.Fatalf("Setup: open session: %v", err)
+		}
+		gate := make(chan struct{})
+		br.mu.Lock()
+		br.stopGate = gate
+		br.mu.Unlock()
 
-	start := time.Now()
-	code := postCloseTab(t, h, tab)
-	took := time.Since(start)
-	close(gate)
-	if code != http.StatusOK {
-		t.Fatalf("close_tab = %d, want 200", code)
-	}
-	if took > time.Second {
-		t.Errorf("close_tab answered after %v, want at once: the close commits before the session teardown", took)
-	}
-	awaitTeardown(t, h, "c1")
-	awaitSessionClosed(t, br)
-	if sb := h.bridge.mgr.get("c1"); sb != nil {
-		t.Error("the closed chat still has a registered session")
-	}
-	if strings.Contains(logs.String(), "did not drain in time") {
-		t.Errorf("a slow but confirmed close was logged as a drain failure: %s", logs.String())
-	}
+		start := time.Now()
+		code := postCloseTab(t, h, tab)
+		took := time.Since(start)
+		close(gate)
+		if code != http.StatusOK {
+			t.Fatalf("close_tab = %d, want 200", code)
+		}
+		if took > time.Second {
+			t.Errorf("close_tab answered after %v, want at once: the close commits before the session teardown", took)
+		}
+		awaitTeardown(t, h, "c1")
+		awaitSessionClosed(t, br)
+		if sb := h.bridge.mgr.get("c1"); sb != nil {
+			t.Error("the closed chat still has a registered session")
+		}
+		if strings.Contains(logs.String(), "did not drain in time") {
+			t.Errorf("a slow but confirmed close was logged as a drain failure: %s", logs.String())
+		}
+	})
 }
 
 // A prompt waiting on its session door when the tab closes ends cancelled with no error frame, and no second door
@@ -177,7 +180,7 @@ func TestCloseTab_APromptWaitingOnItsDoorEndsCancelledAndOpensNoSecondDoor(t *te
 	}
 	awaitTeardown(t, h, "c1")
 	close(gate)
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if got := doors.Load(); got != 1 {
 		t.Errorf("session doors = %d, want 1: a closed chat opens no second session", got)
@@ -228,7 +231,7 @@ func TestCloseTab_ARunningTurnIsCancelledBeforeItsSessionCloses(t *testing.T) {
 	}
 	close(release)
 	awaitTeardown(t, h, "c1")
-	joinInflight(t, h)
+	joinInflight(h)
 
 	switch openAtCancel.Load() {
 	case 0:
@@ -410,42 +413,44 @@ func TestCloseTab_APromptWaitingOnATeardownIsEndedByASecondClose(t *testing.T) {
 // The teardown lets its session go when kiro-cli never answers its close: close_tab has answered, the job returns,
 // and a reopen's door for the same session waits until the engine confirms the close.
 func TestCloseTab_TheTeardownReleasesItsSession(t *testing.T) {
-	h, _, br, tab := closeTabHub(t)
-	t.Cleanup(func() { shutdownHub(t, h) })
-	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
-		t.Fatalf("Setup: open session: %v", err)
-	}
-	gate := make(chan struct{})
-	br.mu.Lock()
-	br.stopGate = gate
-	br.mu.Unlock()
-	t.Cleanup(func() {
-		select {
-		case <-gate:
-		default:
-			close(gate)
+	synctest.Test(t, func(t *testing.T) {
+		h, _, br, tab := closeTabHub(t)
+		t.Cleanup(func() { shutdownHub(t, h) })
+		if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
+			t.Fatalf("Setup: open session: %v", err)
 		}
-	})
+		gate := make(chan struct{})
+		br.mu.Lock()
+		br.stopGate = gate
+		br.mu.Unlock()
+		t.Cleanup(func() {
+			select {
+			case <-gate:
+			default:
+				close(gate)
+			}
+		})
 
-	start := time.Now()
-	if code := postCloseTab(t, h, tab); code != http.StatusOK {
-		t.Fatalf("close_tab = %d, want 200", code)
-	}
-	awaitTeardown(t, h, "c1")
-	if took := time.Since(start); took > 2*time.Second {
-		t.Errorf("the teardown returned after %v, want once the session was let go, not at a close budget", took)
-	}
-	if !br.Released() {
-		t.Error("the teardown returned without letting its session go")
-	}
-	if br.isClosed() {
-		t.Fatal("Setup: the close was confirmed before the engine answered")
-	}
-	if sb := h.bridge.mgr.get("c1"); sb != nil {
-		t.Error("the closed chat still has a registered session")
-	}
-	close(gate)
-	awaitSessionClosed(t, br)
+		start := time.Now()
+		if code := postCloseTab(t, h, tab); code != http.StatusOK {
+			t.Fatalf("close_tab = %d, want 200", code)
+		}
+		awaitTeardown(t, h, "c1")
+		if took := time.Since(start); took > 2*time.Second {
+			t.Errorf("the teardown returned after %v, want once the session was let go, not at a close budget", took)
+		}
+		if !br.Released() {
+			t.Error("the teardown returned without letting its session go")
+		}
+		if br.isClosed() {
+			t.Fatal("Setup: the close was confirmed before the engine answered")
+		}
+		if sb := h.bridge.mgr.get("c1"); sb != nil {
+			t.Error("the closed chat still has a registered session")
+		}
+		close(gate)
+		awaitSessionClosed(t, br)
+	})
 }
 
 // holdPrompt parks b's session/prompt until the returned release runs.
@@ -489,7 +494,7 @@ func TestCloseTab_ALatePromptReplyAfterTheCloseMintsNothing(t *testing.T) {
 	}
 	awaitTeardown(t, h, "c1")
 	release()
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if _, ok := h.coord.turns.lookup("c1"); ok {
 		t.Error("a lifecycle exists for the closed chat after its prompt's reply")
@@ -609,7 +614,7 @@ func TestCloseTab_TheTeardownsOwnTurnCloseStartsNoTail(t *testing.T) {
 	}
 	awaitTeardown(t, h, "c1")
 	release()
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if slices.Contains(br.callLog(), marotte.MethodSetConfigOption) {
 		t.Errorf("calls = %v, want no model apply for a closed chat", br.callLog())
@@ -623,58 +628,60 @@ func TestCloseTab_TheTeardownsOwnTurnCloseStartsNoTail(t *testing.T) {
 // closes cancelled with no frame, and the record keeps its kiro-cli session for the reopen to load, with no fresh
 // session tried in its place.
 func TestCloseTab_ADoorInFlightAtTheCloseEndsAtOnce(t *testing.T) {
-	logs := captureLogs(t)
-	h, cs, br, tab := closeTabHub(t)
-	t.Cleanup(func() { shutdownHub(t, h) })
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.RecordSession("sess-keep")
-		return true
-	}); err != nil {
-		t.Fatalf("Setup: record a session: %v", err)
-	}
-	gate := make(chan struct{})
-	t.Cleanup(func() {
-		select {
-		case <-gate:
-		default:
-			close(gate)
+	synctest.Test(t, func(t *testing.T) {
+		logs := captureLogs(t)
+		h, cs, br, tab := closeTabHub(t)
+		t.Cleanup(func() { shutdownHub(t, h) })
+		if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+			c.RecordSession("sess-keep")
+			return true
+		}); err != nil {
+			t.Fatalf("Setup: record a session: %v", err)
+		}
+		gate := make(chan struct{})
+		t.Cleanup(func() {
+			select {
+			case <-gate:
+			default:
+				close(gate)
+			}
+		})
+		br.mu.Lock()
+		br.startGate = gate
+		doors := doorCounter(br)
+		br.mu.Unlock()
+		if code := postPrompt(t, h, "hi"); code != http.StatusOK {
+			t.Fatalf("prompt = %d, want its ack", code)
+		}
+		for deadline := time.Now().Add(5 * time.Second); doors.Load() == 0; {
+			if time.Now().After(deadline) {
+				t.Fatal("the prompt's door never opened")
+			}
+			time.Sleep(time.Millisecond)
+		}
+
+		start := time.Now()
+		if code := postCloseTab(t, h, tab); code != http.StatusOK {
+			t.Fatalf("close_tab = %d, want 200", code)
+		}
+		awaitTeardown(t, h, "c1")
+		if took := time.Since(start); took > time.Second {
+			t.Errorf("the close's job returned after %v, want at once: the close ends the door", took)
+		}
+		if got := closedBroadcasts(t, h); len(got) != 1 || got[0].Outcome != marotte.TurnOutcomeCancelled {
+			t.Errorf("turn_closed = %+v, want the prompt's turn cancelled", got)
+		}
+		if errs := eventsOfType(h, marotte.EventError); len(errs) != 0 {
+			t.Errorf("error frames = %+v, want none for a chat the user closed", errs)
+		}
+		if got := recordSessionID(t, cs); got != "sess-keep" {
+			t.Errorf("record session = %q, want sess-keep kept for the reopen", got)
+		}
+		joinInflight(h)
+		if out := logs.String(); strings.Contains(out, "session/load failed, starting new") {
+			t.Errorf("logs = %s, want the cut load ended, not retried as a new session", out)
 		}
 	})
-	br.mu.Lock()
-	br.startGate = gate
-	doors := doorCounter(br)
-	br.mu.Unlock()
-	if code := postPrompt(t, h, "hi"); code != http.StatusOK {
-		t.Fatalf("prompt = %d, want its ack", code)
-	}
-	for deadline := time.Now().Add(5 * time.Second); doors.Load() == 0; {
-		if time.Now().After(deadline) {
-			t.Fatal("the prompt's door never opened")
-		}
-		time.Sleep(time.Millisecond)
-	}
-
-	start := time.Now()
-	if code := postCloseTab(t, h, tab); code != http.StatusOK {
-		t.Fatalf("close_tab = %d, want 200", code)
-	}
-	awaitTeardown(t, h, "c1")
-	if took := time.Since(start); took > time.Second {
-		t.Errorf("the close's job returned after %v, want at once: the close ends the door", took)
-	}
-	if got := closedBroadcasts(t, h); len(got) != 1 || got[0].Outcome != marotte.TurnOutcomeCancelled {
-		t.Errorf("turn_closed = %+v, want the prompt's turn cancelled", got)
-	}
-	if errs := eventsOfType(h, marotte.EventError); len(errs) != 0 {
-		t.Errorf("error frames = %+v, want none for a chat the user closed", errs)
-	}
-	if got := recordSessionID(t, cs); got != "sess-keep" {
-		t.Errorf("record session = %q, want sess-keep kept for the reopen", got)
-	}
-	joinInflight(t, h)
-	if out := logs.String(); strings.Contains(out, "session/load failed, starting new") {
-		t.Errorf("logs = %s, want the cut load ended, not retried as a new session", out)
-	}
 }
 
 // A door generation the close overtakes before it opens its session writes nothing: its forward's attach is refused,
@@ -774,7 +781,7 @@ func TestCloseTab_TheJobWaitsForEveryLeaseBeforeItsCancel(t *testing.T) {
 		t.Fatalf("close_tab = %d, want 200", code)
 	}
 	awaitTeardown(t, h, "c1")
-	joinInflight(t, h)
+	joinInflight(h)
 
 	wire := br.wireLog()
 	cancelAt := slices.Index(wire, marotte.MethodCancel)
@@ -831,7 +838,7 @@ func TestEffortHeal_AfterTheCommitSendsNothing(t *testing.T) {
 		t.Fatalf("close_tab = %d, want 200", code)
 	}
 	awaitTeardown(t, h, "c1")
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if got := br.lastEffort(); got != "" {
 		t.Errorf("effort applied = %q after the close committed, want nothing sent", got)
@@ -923,7 +930,7 @@ func TestCloseTab_APromptBetweenStartTurnAndItsSendEndsCancelled(t *testing.T) {
 	}
 	awaitTeardown(t, h, "c1")
 	close(resume)
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if slices.Contains(br.wireLog(), marotte.MethodPrompt) {
 		t.Errorf("wire = %v, want no session/prompt for the closed chat", br.wireLog())

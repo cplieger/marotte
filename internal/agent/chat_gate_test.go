@@ -104,7 +104,8 @@ func TestChatGates_AwaitNoCloseWaitsForTheHold(t *testing.T) {
 			t.Errorf("waited %v err %v, want false nil", waited, err)
 		}
 	})
-	t.Run("a standing hold", func(t *testing.T) {
+	inBubble(t, "a standing hold", func(t *testing.T) {
+		g := newChatGates()
 		h := g.hold("c1")
 		go func() {
 			time.Sleep(20 * time.Millisecond)

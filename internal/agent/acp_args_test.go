@@ -14,9 +14,6 @@ func engineOptsAfterBoot(t *testing.T, opts ...Option) []string {
 	h := newRuntimeOn(context.Background(), "/tmp/work", src, cs, opts...)
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	if !awaitEngine(h) {
-		t.Fatal("the engine never became ready")
-	}
 	e := src.current()
 	e.mu.Lock()
 	defer e.mu.Unlock()

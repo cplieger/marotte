@@ -18,7 +18,7 @@ func newWithholdHub(t *testing.T) (*Runtime, *runOutcomePush) {
 	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs, WithPush(fp))
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	settleBoot(t, h)
+	awaitBoot(h)
 	// A closing turn's chat has a record; a finish for a chat with none is dropped.
 	cs.seed(t, "c1", nil)
 	return h, fp
@@ -42,7 +42,7 @@ func seedRunLease(t *testing.T, h *Runtime, workflowID, chatID string) {
 // awaitNoPush joins the lifecycle's inflight group before reading, so an empty read means no push was scheduled.
 func awaitNoPush(t *testing.T, h *Runtime, fp *runOutcomePush, why string) {
 	t.Helper()
-	joinInflight(t, h)
+	joinInflight(h)
 	select {
 	case got := <-fp.sent:
 		t.Errorf("push sent %q (kind %q); %s", got.body, got.kind, why)

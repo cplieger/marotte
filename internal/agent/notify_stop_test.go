@@ -40,7 +40,7 @@ func idleAfter(t *testing.T, h *Runtime, chatID marotte.ChatID, turnID string) {
 		}
 		return true
 	})
-	joinInflight(t, h)
+	joinInflight(h)
 }
 
 func plainStop(t *testing.T, h *Runtime) {
@@ -96,7 +96,7 @@ func TestNotify_AWakeBehindTheUsersRowPausedByAStopWaitsForThatRow(t *testing.T)
 			}
 
 			if tc.want == "" {
-				joinInflight(t, s.h)
+				joinInflight(s.h)
 				if n := len(opensOf(t, logOf(t, cs, "c1"))); n != 1 {
 					t.Errorf("turns opened after the discard = %d, want none: the wake stays paused", n-1)
 				}

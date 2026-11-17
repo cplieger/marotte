@@ -32,7 +32,7 @@ func TestNotify_ReportsANoSubscriberDropOncePerEpisode(t *testing.T) {
 		h.coord.Notify(ctx, "c1", &dropAsk)
 	}
 
-	joinInflight(t, h)
+	joinInflight(h)
 	got := logs.String()
 	if n := strings.Count(got, noSubscriberLine); n != 1 {
 		t.Errorf("3 drops logged the no-subscriber line %d times, want 1; the latch is what keeps a"+

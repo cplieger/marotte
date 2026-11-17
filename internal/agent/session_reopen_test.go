@@ -47,9 +47,7 @@ func reopenFixtureIn(t *testing.T, configDir string, seed func(*fakeBridge), opt
 	t.Cleanup(func() { shutdownHub(t, h) })
 	// The boot observer pass reports the account it read at its door; landing after a test's own report, it would
 	// move the locks back and fire a lock hook the test never awaits.
-	if err := awaitBoot(h); err != nil {
-		t.Fatal(err)
-	}
+	awaitBoot(h)
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	return h
 }

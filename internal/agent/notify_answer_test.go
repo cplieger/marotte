@@ -250,7 +250,7 @@ func TestNotify_BackToBackWakesAnswerInOrderWhileTheFirstDeliveryIsHeld(t *testi
 			t.Fatalf("turn after the release = %q (caller %+v), want wake 1 from grelot", next.Text, next.Caller)
 		}
 		waitFor(t, func() bool { return sentAfterTurn(t, k, cs, "c1", 1, "wake 3") })
-		joinInflight(t, s.h)
+		joinInflight(s.h)
 		if sentAfterTurn(t, k, cs, "c1", 0, "wake 2") {
 			t.Errorf("wake 2 reached kiro-cli, want its text replaced by wake 3")
 		}
@@ -276,7 +276,7 @@ func TestNotify_AWakeWhoseLaunchFailsAfterItsAnswerIsRetriedByTheNextWake(t *tes
 	}
 
 	requireAccepted(t, routeAnswerWithin(t, postWake(route, "grelot", "k1", "wake 1"), "wake 1"), "wake 1")
-	joinInflight(t, s.h)
+	joinInflight(s.h)
 	if _, state := entryFrom(s.h, "c1", "grelot"); state != marotte.RunPaused {
 		t.Fatalf("wake entry is %q after its failed launch, want paused", state)
 	}
@@ -305,7 +305,7 @@ func TestNotify_TheAcceptLineJoinsTheDeliveryLine(t *testing.T) {
 		if !reachesState(s.h, "c1", wake, marotte.RunInKAS) {
 			t.Fatalf("wake entry = %q, want in_kas", stateOf(s.h, "c1", wake))
 		}
-		joinInflight(t, s.h)
+		joinInflight(s.h)
 		if got, _ := logs.AttrValueExact("notify accepted", "message_id"); got != wake {
 			t.Errorf("accept line message_id = %q, want the wake entry %q", got, wake)
 		}
@@ -321,7 +321,7 @@ func TestNotify_TheAcceptLineJoinsTheDeliveryLine(t *testing.T) {
 
 		requireAccepted(t, routeAnswerWithin(t, postWake(route, "grelot", "k1", grelotWake), "the wake"), "the wake")
 		nextPrompt(t, cs, "c1", 1)
-		joinInflight(t, s.h)
+		joinInflight(s.h)
 		accepted, _ := logs.AttrValueExact("notify accepted", "message_id")
 		if accepted == "" || !slices.Contains(logs.AttrValuesExact("queued prompt dispatched", "message_id"), accepted) {
 			t.Errorf("accept line message_id = %q, dispatch lines %q: want the accepted id among them",

@@ -128,7 +128,7 @@ func TestNotify_OnceShutdownBeganStillPushesWithoutJoiningInflight(t *testing.T)
 	h.coord.Notify(t.Context(), "c1", &marotte.NotificationPayload{ChatID: "c1", Title: "t", Body: "b"})
 
 	awaitClosed(t, p.entered, "the push send")
-	joinInflight(t, h)
+	joinInflight(h)
 }
 
 func TestTurnClose_OnceShutdownBeganLeavesAParkedModelPickParked(t *testing.T) {
@@ -144,7 +144,7 @@ func TestTurnClose_OnceShutdownBeganLeavesAParkedModelPickParked(t *testing.T) {
 	h.coord.finalizeTurn(t.Context(), "c1", &turnClose{
 		Closer: closerWireEnd, Stop: marotte.StopReasonEndTurn, Turn: turnID,
 	})
-	joinInflight(t, h)
+	joinInflight(h)
 
 	// A pipeline started off inflight would land within this window.
 	for deadline := time.Now().Add(300 * time.Millisecond); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {

@@ -296,26 +296,28 @@ func TestStepTranscript_AnUnreadableRunIsUnavailable(t *testing.T) {
 // TestStepTranscript_TheBudgetBoundsTheBarrier pins that a replay the engine lane never drains answers unavailable
 // inside the budget.
 func TestStepTranscript_TheBudgetBoundsTheBarrier(t *testing.T) {
-	shortStepBudget(t, 40*time.Millisecond)
-	h, _, br := newTestHub()
-	t.Cleanup(func() { shutdownHub(t, h) })
-	fakeSourceOf(t, h).withholdLane(true)
-	armStepInspect(br)
-	armStepReplay(br, "sess_pass0", "never drained")
+	synctest.Test(t, func(t *testing.T) {
+		shortStepBudget(t, 40*time.Millisecond)
+		h, _, br := newTestHub()
+		t.Cleanup(func() { shutdownHub(t, h) })
+		fakeSourceOf(t, h).withholdLane(true)
+		armStepInspect(br)
+		armStepReplay(br, "sess_pass0", "never drained")
 
-	start := time.Now()
-	got, err := h.Runs().stepTranscript(t.Context(), "wf_1", "wf_1:loop:iter-0:build")
-	elapsed := time.Since(start)
-	if err != nil {
-		t.Fatalf("StepTranscript: %v", err)
-	}
-	if got.State != marotte.RunStepTranscriptUnavailable {
-		t.Errorf("state = %q, want unavailable", got.State)
-	}
-	// It answers; the ceiling is generous.
-	if elapsed > 5*time.Second {
-		t.Errorf("answered after %v, want inside the budget", elapsed)
-	}
+		start := time.Now()
+		got, err := h.Runs().stepTranscript(t.Context(), "wf_1", "wf_1:loop:iter-0:build")
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatalf("StepTranscript: %v", err)
+		}
+		if got.State != marotte.RunStepTranscriptUnavailable {
+			t.Errorf("state = %q, want unavailable", got.State)
+		}
+		// It answers; the ceiling is generous.
+		if elapsed > 5*time.Second {
+			t.Errorf("answered after %v, want inside the budget", elapsed)
+		}
+	})
 }
 
 // TestStepTranscript_ARefusedLoadLeavesNoReplayOpen pins that every exit takes the replay, so a retry is not refused by a corpse.
@@ -406,9 +408,6 @@ func TestStepTranscript_TheLoadOpensNoSessionLane(t *testing.T) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
 	armStepReplay(br, "sess_pass0", "hello")
-	if !awaitEngine(h) {
-		t.Fatal("Setup: the engine never became ready")
-	}
 	doors := br.startCount()
 	lanes := len(h.bridge.mgr.all())
 	keep, _ := h.HeldSessions(t.Context())

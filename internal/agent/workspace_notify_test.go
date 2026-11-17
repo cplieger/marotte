@@ -37,7 +37,7 @@ func countedHub(t *testing.T) (*Runtime, *testChatStore, *fakeBridge, func(metho
 	t.Cleanup(func() { shutdownHub(t, h) })
 	count := countWorkspaceHandlers(h)
 	close(gate)
-	settleBoot(t, h)
+	awaitBoot(h)
 	br.forgetCalls()
 	return h, cs, br, count
 }

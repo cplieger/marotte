@@ -277,7 +277,7 @@ func TestTurnClosed_OnceShutdownBeganSendsNoClear(t *testing.T) {
 	h.coord.finalizeTurn(t.Context(), "c1", &turnClose{
 		Closer: closerWireEnd, Stop: marotte.StopReasonCancelled, Turn: turnID,
 	})
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if slices.Contains(br.callLog(), marotte.MethodSessionSteerClear) {
 		t.Errorf("_session/steer/clear went out once Shutdown began: %v", br.callLog())
@@ -296,7 +296,7 @@ func TestTurnClosed_LeavesAChatHoldingNoNoticeAlone(t *testing.T) {
 		Closer: closerWireEnd, Stop: marotte.StopReasonCancelled, Turn: turnID,
 	})
 
-	joinInflight(t, h)
+	joinInflight(h)
 	if slices.Contains(br.callLog(), marotte.MethodSessionSteerClear) {
 		t.Errorf("_session/steer/clear went out for a chat holding no run notice: %v", br.callLog())
 	}

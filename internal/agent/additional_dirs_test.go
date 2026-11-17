@@ -144,7 +144,7 @@ func TestUnreadableConfig_EverySessionDoorOpensOnTheLastReadableSettings(t *test
 		h := newRuntimeOn(context.Background(), f.work, src, cs, WithConfigDir(f.config))
 		cs.wire(h)
 		t.Cleanup(func() { shutdownHub(t, h) })
-		settleBoot(t, h)
+		awaitBoot(h)
 		_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 		rewriteConfigByHand(t, f.config, `{"security_profile":`)
 		return h, f

@@ -83,7 +83,7 @@ func TestEngineLane_APeerMessageToAnUnknownSessionAnswersItsAsks(t *testing.T) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 
 	peerWakeFrames(t, h, "sess_nobody", 92)
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if r, ok := fakeSourceOf(t, h).lane.responseTo(92); !ok || !isCancelledOutcome(r.result) {
 		t.Errorf("the ask = %+v (answered %v), want answered cancelled on the engine lane", r, ok)

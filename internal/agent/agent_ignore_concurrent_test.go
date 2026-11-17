@@ -67,9 +67,7 @@ func TestEngineSpawn_AConcurrentIgnoreSaveReachesTheSpawningEngine(t *testing.T)
 	}
 
 	probe.released()
-	if !awaitEngine(h) {
-		t.Fatal("the engine never became ready")
-	}
+	awaitEngine(h)
 	want := settings.AgentIgnoreList([]string{"post.ignore"})
 	if got, _ := probe.src.current().StartLive(); !slices.Equal(got, want) {
 		t.Errorf("list the spawn sent = %v, want %v: IgnoreFiles must resolve at send time", got, want)
@@ -90,9 +88,7 @@ func TestEngineSpawn_AConcurrentTimeoutSaveReachesTheSpawningEngine(t *testing.T
 	}
 
 	probe.released()
-	if !awaitEngine(h) {
-		t.Fatal("the engine never became ready")
-	}
+	awaitEngine(h)
 	if _, ms := probe.src.current().StartLive(); ms != 300000 {
 		t.Errorf("timeout the spawn resolved = %d, want 300000: TerminalTimeout must read at send time", ms)
 	}

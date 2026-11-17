@@ -513,9 +513,7 @@ func newRuntimeOn(ctx context.Context, workDir string, src *fakeEngineSource, ch
 	// Park the cancel-retry ladder: its untracked timers outlive the test.
 	h.runs.cancelRetryBase = time.Hour
 	if bootComing(h) {
-		if err := awaitBoot(h); err != nil {
-			panic(err)
-		}
+		awaitBoot(h)
 	}
 	return h
 }
@@ -528,15 +526,9 @@ func laneOf(s engineSession) *fakeBridge {
 	return nil
 }
 
-// awaitEngine waits until h's engine is ready, or fails after 5 s.
-func awaitEngine(h *Runtime) bool {
-	select {
-	case <-h.EngineReady():
-		return true
-	case <-time.After(5 * time.Second):
-		return false
-	}
-}
+// awaitEngine blocks until h's first engine is ready, forever when none can start: call it only for a hub whose
+// engine is ready or coming.
+func awaitEngine(h *Runtime) { <-h.EngineReady() }
 
 // hostSec is a launch's recorded host security for the Custom profile, so a test lease loads its host session.
 func hostSec() *runlease.HostSecurity { return &runlease.HostSecurity{Presets: []string{}} }

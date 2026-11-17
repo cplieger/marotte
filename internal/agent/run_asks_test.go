@@ -46,7 +46,7 @@ func askCoreHub(t *testing.T, workflowID string, reply json.RawMessage) (*Runtim
 	h.runs.cancelRetryBase = time.Hour
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	settleBoot(t, h)
+	awaitBoot(h)
 	leaseRun(t, h, runlease.Lease{WorkflowID: workflowID, ParentSessionID: testLaunchSession})
 	h.insertBridgeNow(runChatID(workflowID), testBridge(br, bridgeReady))
 	if reply != nil {
@@ -505,7 +505,7 @@ func TestRunAsks_AnEndMidVerb(t *testing.T) {
 		if err := <-done; err != nil {
 			t.Errorf("the answer the end overtook = %v, want it to complete", err)
 		}
-		joinInflight(t, h)
+		joinInflight(h)
 		if n := len(runAsksFrames(t, h, "wf_1")); n != ended {
 			t.Errorf("%d frames after the run's final one, want none: a client would resurrect the card", n-ended)
 		}
@@ -595,7 +595,7 @@ func TestRunAsks_AnAnsweredStepsWakeTurnRaisesNoSecondQuestion(t *testing.T) {
 	h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusRunning,
 		parkedStep("review", "sess_step"), askStepNode{id: "build", status: "running", session: "sess_build"}))
 	raised := func() int {
-		joinInflight(t, h)
+		joinInflight(h)
 		return strings.Count(logs.String(), "a workflow step is waiting for an answer")
 	}
 	h.runs.askTurnEdge("wf_1", "sess_step", translate.TurnEdgeStart)

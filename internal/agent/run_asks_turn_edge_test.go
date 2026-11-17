@@ -54,7 +54,7 @@ func TestRunAsks_TurnBracketsArriveThroughEitherDoor(t *testing.T) {
 				"severity": "warning", "sender": "step", "workflowId": wf,
 			}))
 			send(stepTurnEnd(t, session))
-			joinInflight(t, h)
+			joinInflight(h)
 
 			a := readNow(t, h, wf).asks[0]
 			if a.ID == before {
