@@ -322,7 +322,7 @@ func TestMergeRoute_GitHubAndGiteaWithoutAStrategyAre400(t *testing.T) {
 	})
 }
 
-// The library arms each forge's own auto-merge on every family (ADR-0103), so a
+// The library arms each forge's own auto-merge on every family, so a
 // merge asked to wait reaches it with AutoMerge set on each of them.
 func TestMergeRoute_AutoReachesTheLibraryOnEveryFamily(t *testing.T) {
 	for name, row := range map[string]mergeRow{

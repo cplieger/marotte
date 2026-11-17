@@ -172,10 +172,10 @@ func copied(words string, placed ...string) string {
 // placedIDs are the ids the row-state tests place themselves.
 var placedIDs = []string{"m-a", "x", "x2", "x3", "u", "v", "y", "t-w"}
 
-// The row-state table: one case per cell of (sender, state, event), DESIGN section 3b. The events are Stop, a failed
-// launch, a second wake from the same caller, a process restart and the chat's close. The rule under test is the
-// user's: Stop pauses the chat's whole queue, every sender's rows alike, and nothing launches by itself after it; one
-// caller has at most one waiting row.
+// The row-state table: one case per cell of (sender, state, event). The events are Stop, a failed launch, a second wake
+// from the same caller, a process restart and the chat's close. The rule under test is the user's: Stop pauses the
+// chat's whole queue, every sender's rows alike, and nothing launches by itself after it; one caller has at most one
+// waiting row.
 func TestRunList_RowStates(t *testing.T) {
 	type cell struct {
 		sender, state, event string

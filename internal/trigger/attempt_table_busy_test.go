@@ -12,7 +12,7 @@ import (
 	"github.com/cplieger/marotte/internal/runlease"
 )
 
-// The busy lines of the design's test table, run by TestAttemptTable.
+// The busy lines of the attempt table, run by TestAttemptTable.
 
 // errClaimed is a cancel KAS was not sent because another stop of the run held its claim.
 var errClaimed = errors.New("another stop of this run is in progress")

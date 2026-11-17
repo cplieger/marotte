@@ -69,10 +69,10 @@ func TestBundledTools_NamesNoForgeCLI(t *testing.T) {
 	}
 	for _, cli := range forgeCLIs {
 		if _, ok := entries[cli]; ok {
-			t.Errorf("bundled-tools.json bundles %q, want no forge CLI (ADR-0003)", cli)
+			t.Errorf("bundled-tools.json bundles %q, want no forge CLI", cli)
 		}
 		if slices.Contains(required, cli) {
-			t.Errorf("required-tools.txt requires %q, want no forge CLI (ADR-0003)", cli)
+			t.Errorf("required-tools.txt requires %q, want no forge CLI", cli)
 		}
 	}
 }
@@ -107,15 +107,15 @@ func TestToolsSeed_IsTheFourLanguageServerTemplates(t *testing.T) {
 	}
 	for _, cli := range forgeCLIs {
 		if _, ok := m.Tools[cli]; ok {
-			t.Errorf("a fresh volume seeds %q, want no forge CLI template (ADR-0003)", cli)
+			t.Errorf("a fresh volume seeds %q, want no forge CLI template", cli)
 		}
 	}
 }
 
 // installedForgeCLIs is what an existing install's manifest holds: the three
-// CLIs Marotte installed on demand before ADR-0003, each row hydrated with the
-// source its install ran. The sources here are offline stand-ins writing the
-// binary each probe looks for.
+// CLIs Marotte installed on demand before the bundle dropped them, each row
+// hydrated with the source its install ran. The sources here are offline
+// stand-ins writing the binary each probe looks for.
 var installedForgeCLIs = []struct{ name, bin string }{
 	{"github-cli", "gh"},
 	{"glab", "glab"},
@@ -154,9 +154,9 @@ func waitDone(t *testing.T, e *toolbelt.Engine, jv *toolbelt.Job, what string) {
 	}
 }
 
-// TestToolsReconcile_KeepsInstalledForgeCLIsWithoutTheirOverlayRows is
-// ADR-0003's accepted path: the boot after the bundle drops the forge CLIs
-// converges an existing volume without uninstalling them.
+// TestToolsReconcile_KeepsInstalledForgeCLIsWithoutTheirOverlayRows: the boot
+// after the bundle drops the forge CLIs converges an existing volume without
+// uninstalling them.
 func TestToolsReconcile_KeepsInstalledForgeCLIsWithoutTheirOverlayRows(t *testing.T) {
 	entries := readBundleEntries(t)
 	for _, c := range installedForgeCLIs {

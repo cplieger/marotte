@@ -1011,7 +1011,7 @@ func closeBlankLoad(
 
 // loadOnEngine runs chatID's session/load and reports the forward attachment its lane position is comparable within
 // (replay_drain.go), and the channel that attachment's forward closes on exit. A load the engine's end failed is still
-// KAS's to load (design 4.5.3), so it runs again on the next engine, once the first attempt's forward has folded what
+// KAS's to load, so it runs again on the next engine, once the first attempt's forward has folded what
 // it replayed, into a fresh projection.
 func (bc *bridgeCoordinator) loadOnEngine(
 	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, so *marotte.SessionOpts, replayed *sessionSettle, stamp uint64,

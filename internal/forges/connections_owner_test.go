@@ -9,7 +9,7 @@ import (
 )
 
 // An owner the connection stores is one the family's ListMyPRs accepts, and a
-// refusal is the library's own answer before any request (ADR-0101), so the
+// refusal is the library's own answer before any request, so the
 // rule has one home.
 func TestOwnerScopes_RefusesWhatTheLibraryRefuses(t *testing.T) {
 	owners := []string{"acme", "acme/team", "acme/team/sub", "", "a//b", "../x", "acme team", "acme/", strings.Repeat("a", 256)}

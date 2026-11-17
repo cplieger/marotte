@@ -752,10 +752,10 @@ func stepTurnEnds(t *testing.T, h *Runtime, path []string, e marotte.EngineError
 	h.runs.RunNodePaused(t.Context(), gateRunID, path)
 }
 
-// TestRunTransitions_AThrottledTurnWhoseAskWasAnsweredMidTurnIsHealed replays wf_21c4c7533f79f52d pf-build and
-// wf_cf06f8bc97924fc8 build (2026-11-07): the parent answered a step's warning while the step's turn ran, a throttle
-// then failed that turn, and KAS paused the run on the stale question. KAS continues such a step only when a message
-// resumes it (acp-server.js executeNode, KAS 3.1.0), so marotte answers the question instead of resuming the run.
+// TestRunTransitions_AThrottledTurnWhoseAskWasAnsweredMidTurnIsHealed: the parent answered a step's warning while the
+// step's turn ran, a throttle then failed that turn, and KAS paused the run on the stale question. KAS continues such a
+// step only when a message resumes it (acp-server.js executeNode, KAS 3.1.0), so marotte answers the question instead
+// of resuming the run.
 func TestRunTransitions_AThrottledTurnWhoseAskWasAnsweredMidTurnIsHealed(t *testing.T) {
 	answered := func(t *testing.T, br *fakeBridge) {
 		t.Helper()

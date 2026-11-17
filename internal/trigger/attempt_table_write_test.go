@@ -9,7 +9,7 @@ import (
 	"github.com/cplieger/marotte/internal/launchrule"
 )
 
-// The write-failure lines of the design's test table, run by TestAttemptTable.
+// The write-failure lines of the attempt table, run by TestAttemptTable.
 
 // errDiskFull is a state file write the disk refused.
 var errDiskFull = errors.New("write launch-state: no space left on device")

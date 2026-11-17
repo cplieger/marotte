@@ -36,7 +36,7 @@ func appendText(t *testing.T, s *Store, turn, id, text string) error {
 
 // The refusal reaches the caller as ErrFileTooLarge and the log keeps what it held:
 // the total cap is checked BEFORE the line is written, so a refused append loses one
-// entry and never the record. Unlimited is the live setting and the design's default.
+// entry and never the record. Unlimited is the live setting and the default.
 func TestStoreCap_OverCapRefusalLeavesTheLogIntact(t *testing.T) {
 	s, turn, _ := cappedStoreWithTurn(t, 2<<10)
 	if err := appendText(t, s, turn, "say-1", "small"); err != nil {
