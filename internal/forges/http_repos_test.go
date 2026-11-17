@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // The embedded Core is nil, so any other method panics.
@@ -442,15 +442,13 @@ func TestReadRoutes_AStateOnAStatelessListIsTheLibrarysRefusal(t *testing.T) {
 	}
 }
 
-func TestReleaseAndLabelRoutes_AbsentRoleIs501(t *testing.T) {
-	t.Run("a client with neither role", func(t *testing.T) {
+func TestReleaseAndLabelRoutes_ServeTheRoleOr501(t *testing.T) {
+	t.Run("a client without the releases role", func(t *testing.T) {
 		core := &pagedCore{}
 		mux := repoRoutes(recordManager(t, core))
-		for _, tail := range []string{"releases", "labels"} {
-			rec := getRoute(t, mux, githubRepoPath("v1.6f2f72", tail))
-			if rec.Code != http.StatusNotImplemented || decodeBody(t, rec)["code"] != "not_supported" {
-				t.Errorf("GET %s = %d %s, want 501 not_supported", tail, rec.Code, rec.Body)
-			}
+		rec := getRoute(t, mux, githubRepoPath("v1.6f2f72", "releases"))
+		if rec.Code != http.StatusNotImplemented || decodeBody(t, rec)["code"] != "not_supported" {
+			t.Errorf("GET releases = %d %s, want 501 not_supported", rec.Code, rec.Body)
 		}
 		if asked, _, _ := core.calls(); len(asked) != 0 {
 			t.Errorf("the library was asked %+v, want nothing", asked)

@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 func ownersRoutes(t *testing.T, recs ...connectionSpec) (*Manager, *http.ServeMux) {

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 )
@@ -518,15 +518,9 @@ func (h *HTTPHandler) handleAffordances(w http.ResponseWriter, r *http.Request, 
 	httpserver.WriteJSON(w, aff)
 }
 
-// Labels is an optional role, so a client without it answers errNotSupported.
 func handleLabels(w http.ResponseWriter, r *http.Request, core forgeapi.Core, ref forgeapi.RepoRef) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
-	lab, ok := core.(forgeapi.Labels)
-	if !ok {
-		writeOpsError(w, r, errNotSupported)
 		return
 	}
 	req, err := listRequestOf(r.URL.Query())
@@ -534,7 +528,7 @@ func handleLabels(w http.ResponseWriter, r *http.Request, core forgeapi.Core, re
 		writeOpsError(w, r, err)
 		return
 	}
-	page, err := lab.ListLabels(r.Context(), ref, req.opts...)
+	page, err := core.ListLabels(r.Context(), ref, req.opts...)
 	if err != nil {
 		writeOpsError(w, r, err)
 		return
