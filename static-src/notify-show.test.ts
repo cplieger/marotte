@@ -27,10 +27,12 @@ vi.mock("./sse-adapter.js", async (importOriginal) => ({
 const notify = await import("./notify.js");
 
 let shown: { title: string; body: string | undefined }[] = [];
+let icons: (string | undefined)[] = [];
 
 function shadowNotification(permission = "granted"): void {
   const fake = function fakeNotification(title: string, o?: NotificationOptions): void {
     shown.push({ title, body: o?.body });
+    icons.push(o?.icon);
   } as unknown as {
     (title: string, o?: NotificationOptions): void;
     permission: string;
@@ -57,6 +59,7 @@ function reports(): { body: unknown; tag: string | null }[] {
 
 beforeEach(() => {
   shown = [];
+  icons = [];
   fetchSpy.mockClear();
   vi.stubGlobal("fetch", fetchSpy);
   shadowNotification();
@@ -77,6 +80,11 @@ describe("showNotice", () => {
     expect(notify.showNotice(n)).toBe(true);
     expect(shown).toEqual([{ title: "Fix it", body: "Permission required · git push" }]);
     expect(reports()).toEqual([{ body: { id: n.id, outcome: "shown" }, tag: "tag-A" }]);
+  });
+
+  it("shows the PNG app icon, which logo.test.ts pins", () => {
+    notify.showNotice(noticeFor(chatTarget("c1"), "Response complete", "agent_finished", "Fix it"));
+    expect(icons).toEqual(["/icon-192.png"]);
   });
 
   it("shows while the page is visible: the server judged the screen", () => {
