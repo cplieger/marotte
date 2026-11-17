@@ -848,6 +848,16 @@ body.sidebar-resizing {
     background: var(--c-red);
     opacity: 1;
   }
+
+  /* The connection is up and the Kiro sign-in fails (amber) or ended (red). Only ever beside
+     `.connected` (status.ts paintMark), whose colour they override, so declared after it. */
+  &.signin-warn {
+    background: var(--c-yellow);
+  }
+
+  &.signin-ended {
+    background: var(--c-red);
+  }
 }
 
 /* THE FOOTER'S PHONE GAP. `status-dot-css.test.ts` requires exactly one rule in this block

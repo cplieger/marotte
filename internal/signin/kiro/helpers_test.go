@@ -269,12 +269,12 @@ var noProfiles = scripted{status: 200, body: `{"profiles":[]}`}
 
 func (h *vaultHarness) answer() (answer, bool) {
 	h.t.Helper()
-	res, rerr := h.v.Answer(h.t.Context(), ID)
-	if rerr != nil {
+	rep := h.v.Answer(h.t.Context(), ID)
+	if rep.Err != nil {
 		return answer{}, false
 	}
 	var a answer
-	if err := json.Unmarshal(res, &a); err != nil {
+	if err := json.Unmarshal(rep.Result, &a); err != nil {
 		h.t.Fatalf("answer shape: %v", err)
 	}
 	return a, true

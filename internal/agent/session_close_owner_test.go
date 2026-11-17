@@ -1407,7 +1407,7 @@ var ownerHolds = map[holdKind]struct {
 		o.lc.mu.Lock()
 		tr := o.lc.openLocked("c1", &marotte.Entry{ID: "w-owner"}, marotte.TurnSourceWireTurnStart, "", turnlog.Open("w-owner", nil))
 		o.lc.mu.Unlock()
-		return func() { o.r.finish(tr, marotte.TurnResult{}) }
+		return func() { o.r.finish(tr, &marotte.TurnResult{}) }
 	}},
 	holdKAS: {name: "KAS", take: func(_ *testing.T, o *ownerLife) func() {
 		o.r.noteKASActivity("c1", true)
@@ -1445,7 +1445,7 @@ var ownerHolds = map[holdKind]struct {
 			o.lc.mu.Lock()
 			tr := o.lc.openLocked("c1", &marotte.Entry{ID: "w-wake"}, marotte.TurnSourceWireTurnStart, "", turnlog.Open("w-wake", nil))
 			o.lc.mu.Unlock()
-			o.r.finish(tr, marotte.TurnResult{})
+			o.r.finish(tr, &marotte.TurnResult{})
 		}
 	}},
 }
@@ -1783,7 +1783,7 @@ func TestCloseOwner_OnlyAWireTurnTakesAWake(t *testing.T) {
 				o.lc.mu.Lock()
 				own := o.lc.openLocked("c1", &marotte.Entry{ID: "p-wake"}, row.source, "", turnlog.Open("p-wake", nil))
 				o.lc.mu.Unlock()
-				o.r.finish(own, marotte.TurnResult{})
+				o.r.finish(own, &marotte.TurnResult{})
 				if got := o.blocker(0); got != holdWake {
 					t.Errorf("the hold after marotte's own turn ended = %d, want the wake hold standing for KAS's turn", got)
 				}
@@ -1797,7 +1797,7 @@ func TestCloseOwner_OnlyAWireTurnTakesAWake(t *testing.T) {
 				if wakes != 0 {
 					t.Errorf("%d wake holds after KAS's wake turn opened, want it to take the hold", wakes)
 				}
-				o.r.finish(wake, marotte.TurnResult{})
+				o.r.finish(wake, &marotte.TurnResult{})
 				if o.state().closing == nil {
 					t.Error("KAS's wake turn ended and the release stayed pending")
 				}

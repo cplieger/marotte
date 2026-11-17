@@ -168,7 +168,7 @@ func TestOpenBridge_AHandEditPushesExactlyTheLiveSurfacesItMoved(t *testing.T) {
 			name: "notification_toggle", body: `{"notify_pr_status":true}`,
 			want: livePushesSeen{prefs: []map[marotte.PushKind]bool{{
 				marotte.PushKindAgentFinished: true, marotte.PushKindPermission: true,
-				marotte.PushKindPRStatus: true, marotte.PushKindRunOutcome: true,
+				marotte.PushKindPRStatus: true, marotte.PushKindRunOutcome: true, marotte.PushKindSignIn: true,
 			}}},
 		},
 		{name: "an_unrelated_key", body: `{"last_merge_method":"squash"}`},

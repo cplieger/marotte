@@ -398,13 +398,13 @@ describe("a turn-scoped failure on the chat in front of you", () => {
   });
 
   it("still raises one when the route carries its own remedy", () => {
-    // `auth_token_unavailable` is turn-scoped and action-bearing: the row cannot offer Sign in.
+    // A turn-scoped failure whose remedy the row does not offer keeps its toast for that action.
     watching();
-    const action = { label: "Sign in", onClick: vi.fn() };
-    reportFailure("c1", "no access token", action, true);
+    const action = { label: "Open custom instructions", onClick: vi.fn() };
+    reportFailure("c1", "the agent config is invalid", action, true);
     expect(toastCount()).toBe(1);
     // On screen the remedy takes the sticky entry point.
-    expect(lastStickyAction()?.label).toBe("Sign in");
+    expect(lastStickyAction()?.label).toBe("Open custom instructions");
   });
 
   it("still raises one for a workspace-global failure that names no chat", () => {

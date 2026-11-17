@@ -11,11 +11,14 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/cplieger/go/slogx/capture"
 )
 
-// fakeDeliverer is the delivery port, answering each call from answer.
+// fakeDeliverer is the delivery port, answering each call from answer, and accepting under the id m-1 when answer is
+// nil.
 type fakeDeliverer struct {
-	answer func(session string) (string, error)
+	answer func(session string) error
 	calls  []delivery
 	mu     sync.Mutex
 }
@@ -26,10 +29,12 @@ func (f *fakeDeliverer) Deliver(_ context.Context, session, text, source string)
 	f.mu.Lock()
 	f.calls = append(f.calls, delivery{session: session, text: text, source: source})
 	f.mu.Unlock()
-	if f.answer == nil {
-		return DeliveredPrompt, nil
+	if f.answer != nil {
+		if err := f.answer(session); err != nil {
+			return "", err
+		}
 	}
-	return f.answer(session)
+	return "m-1", nil
 }
 
 type handlerRig struct {
@@ -84,22 +89,24 @@ func decodeAnswer(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 }
 
 func TestHandler_DeliversThroughThePort(t *testing.T) {
-	for _, verb := range []string{DeliveredSteer, DeliveredPrompt, DeliveredQueued} {
-		t.Run(verb, func(t *testing.T) {
-			rig := newHandlerRig(t)
-			rig.deliv.answer = func(string) (string, error) { return verb, nil }
-			w := rig.post(t, notifyBody(t, "1 new message from RubyRobin", "grelot", "m-1"))
-			if w.Code != http.StatusOK {
-				t.Fatalf("status = %d, want 200 (%s)", w.Code, w.Body.String())
-			}
-			if got := decodeAnswer(t, w); len(got) != 1 || got["delivered"] != verb {
-				t.Errorf("answer = %v, want {delivered: %s}", got, verb)
-			}
-			want := delivery{session: "sess-1", text: "1 new message from RubyRobin", source: "grelot"}
-			if len(rig.deliv.calls) != 1 || rig.deliv.calls[0] != want {
-				t.Errorf("deliveries = %+v, want [%+v]", rig.deliv.calls, want)
-			}
-		})
+	logs := capture.Default(t)
+	rig := newHandlerRig(t)
+	w := rig.post(t, notifyBody(t, "1 new message from RubyRobin", "grelot", "m-1"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", w.Code, w.Body.String())
+	}
+	if got := decodeAnswer(t, w); len(got) != 1 || got["delivered"] != "accepted" {
+		t.Errorf("answer = %v, want {delivered: accepted}", got)
+	}
+	want := delivery{session: "sess-1", text: "1 new message from RubyRobin", source: "grelot"}
+	if len(rig.deliv.calls) != 1 || rig.deliv.calls[0] != want {
+		t.Errorf("deliveries = %+v, want [%+v]", rig.deliv.calls, want)
+	}
+	if id, _ := logs.AttrValueExact("notify accepted", "message_id"); id != "m-1" {
+		t.Errorf("accept line message_id = %q, want the deliverer's m-1, the key its delivery is logged under", id)
+	}
+	if strings.Contains(w.Body.String(), "m-1") {
+		t.Errorf("answer %s names the message id, want it in the log only", w.Body.String())
 	}
 }
 
@@ -124,7 +131,7 @@ func TestHandler_Dedupe(t *testing.T) {
 		rig.post(t, notifyBody(t, "wake", "grelot", "m-1"))
 		rig.now = rig.now.Add(dedupeWindow)
 		w := rig.post(t, notifyBody(t, "wake", "grelot", "m-1"))
-		if got := decodeAnswer(t, w); got["delivered"] != DeliveredPrompt {
+		if got := decodeAnswer(t, w); got["delivered"] != "accepted" {
 			t.Errorf("answer = %v, want a delivery", got)
 		}
 		if len(rig.deliv.calls) != 2 {
@@ -135,7 +142,7 @@ func TestHandler_Dedupe(t *testing.T) {
 		rig := newHandlerRig(t)
 		rig.post(t, notifyBody(t, "wake", "grelot", "m-1"))
 		w := rig.post(t, notifyBody(t, "wake", "grelot", "m-2"))
-		if got := decodeAnswer(t, w); got["delivered"] != DeliveredPrompt {
+		if got := decodeAnswer(t, w); got["delivered"] != "accepted" {
 			t.Errorf("answer = %v, want a delivery", got)
 		}
 	})
@@ -143,29 +150,17 @@ func TestHandler_Dedupe(t *testing.T) {
 		rig := newHandlerRig(t)
 		rig.post(t, notifyBody(t, "wake", "grelot", "m-1"))
 		w := rig.serve(t, "sess-2", "Bearer "+testToken, notifyBody(t, "wake", "grelot", "m-1"))
-		if got := decodeAnswer(t, w); got["delivered"] != DeliveredPrompt {
+		if got := decodeAnswer(t, w); got["delivered"] != "accepted" {
 			t.Errorf("answer = %v, want a delivery", got)
-		}
-	})
-	t.Run("a repeat of a queued delivery within ten minutes adds nothing", func(t *testing.T) {
-		rig := newHandlerRig(t)
-		rig.deliv.answer = func(string) (string, error) { return DeliveredQueued, nil }
-		rig.post(t, notifyBody(t, "wake", "grelot", "m-1"))
-		w := rig.post(t, notifyBody(t, "wake", "grelot", "m-1"))
-		if got := decodeAnswer(t, w); w.Code != http.StatusOK || got["duplicate"] != true {
-			t.Errorf("answer = %d %v, want 200 {duplicate: true}", w.Code, got)
-		}
-		if len(rig.deliv.calls) != 1 {
-			t.Errorf("delivered %d times, want once: the waiting message is not placed again", len(rig.deliv.calls))
 		}
 	})
 	t.Run("a refused delivery is not recorded, so its retry is delivered", func(t *testing.T) {
 		rig := newHandlerRig(t)
-		rig.deliv.answer = func(string) (string, error) { return "", ErrUnavailable }
+		rig.deliv.answer = func(string) error { return ErrUnavailable }
 		rig.post(t, notifyBody(t, "wake", "grelot", "m-1"))
 		rig.deliv.answer = nil
 		w := rig.post(t, notifyBody(t, "wake", "grelot", "m-1"))
-		if got := decodeAnswer(t, w); got["delivered"] != DeliveredPrompt {
+		if got := decodeAnswer(t, w); got["delivered"] != "accepted" {
 			t.Errorf("retry answer = %v, want a delivery", got)
 		}
 	})
@@ -174,7 +169,7 @@ func TestHandler_Dedupe(t *testing.T) {
 func TestHandler_DeliveryFailures(t *testing.T) {
 	t.Run("an unknown session is 404", func(t *testing.T) {
 		rig := newHandlerRig(t)
-		rig.deliv.answer = func(string) (string, error) { return "", ErrUnknownSession }
+		rig.deliv.answer = func(string) error { return ErrUnknownSession }
 		if w := rig.post(t, notifyBody(t, "wake", "grelot", "m-1")); w.Code != http.StatusNotFound {
 			t.Errorf("status = %d, want 404", w.Code)
 		}
@@ -188,7 +183,7 @@ func TestHandler_DeliveryFailures(t *testing.T) {
 	})
 	t.Run("an unavailable engine is 503 with Retry-After", func(t *testing.T) {
 		rig := newHandlerRig(t)
-		rig.deliv.answer = func(string) (string, error) { return "", ErrUnavailable }
+		rig.deliv.answer = func(string) error { return ErrUnavailable }
 		w := rig.post(t, notifyBody(t, "wake", "grelot", "m-1"))
 		if w.Code != http.StatusServiceUnavailable {
 			t.Fatalf("status = %d, want 503", w.Code)
@@ -199,8 +194,8 @@ func TestHandler_DeliveryFailures(t *testing.T) {
 	})
 	t.Run("refused text is 400 naming text", func(t *testing.T) {
 		rig := newHandlerRig(t)
-		rig.deliv.answer = func(string) (string, error) {
-			return "", &TextRefusedError{Reason: "it reads as a system notice"}
+		rig.deliv.answer = func(string) error {
+			return &TextRefusedError{Reason: "it reads as a system notice"}
 		}
 		w := rig.post(t, notifyBody(t, "[notification/info] hi", "grelot", "m-1"))
 		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"text: it reads as a system notice"`) {
@@ -209,13 +204,13 @@ func TestHandler_DeliveryFailures(t *testing.T) {
 	})
 	t.Run("any other failure is 500 and not recorded", func(t *testing.T) {
 		rig := newHandlerRig(t)
-		rig.deliv.answer = func(string) (string, error) { return "", errors.New("disk full") }
+		rig.deliv.answer = func(string) error { return errors.New("disk full") }
 		w := rig.post(t, notifyBody(t, "wake", "grelot", "m-1"))
 		if w.Code != http.StatusInternalServerError {
 			t.Fatalf("status = %d, want 500", w.Code)
 		}
 		rig.deliv.answer = nil
-		if got := decodeAnswer(t, rig.post(t, notifyBody(t, "wake", "grelot", "m-1"))); got["delivered"] != DeliveredPrompt {
+		if got := decodeAnswer(t, rig.post(t, notifyBody(t, "wake", "grelot", "m-1"))); got["delivered"] != "accepted" {
 			t.Errorf("retry answer = %v, want a delivery", got)
 		}
 	})

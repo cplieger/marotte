@@ -66,8 +66,8 @@ func TestAnswer_AnAskerGivingUpDoesNotCancelTheSharedRefresh(t *testing.T) {
 	gaveUp := make(chan struct{})
 	go func() {
 		defer close(gaveUp)
-		if _, rerr := h.v.Answer(ctx, "cb"); rerr == nil || rerr.Message != "cb: unreachable" {
-			t.Errorf("the asker that gave up got %v, want the unreachable refusal", rerr)
+		if rep := h.v.Answer(ctx, "cb"); rep.Err == nil || rep.Err.Message != "cb: unreachable" || rep.Refusal != RefusedUnreachable {
+			t.Errorf("the asker that gave up got %+v, want the unreachable refusal", rep)
 		}
 	}()
 	eventually(t, "the refresh to start", func() bool { return fb.refreshCount() == 1 })
@@ -109,8 +109,7 @@ func TestSignOutDuringRefreshDiscardsTheRefresh(t *testing.T) {
 	release := blockRefresh(h, fb)
 	result := make(chan error, 1)
 	go func() {
-		_, rerr := h.v.Answer(context.Background(), "cb")
-		if rerr == nil {
+		if h.v.Answer(context.Background(), "cb").Err == nil {
 			result <- errors.New("answered a token")
 			return
 		}
@@ -424,7 +423,7 @@ func TestAnswer_ARejectionLapsesTheRecordAndFiresTheEdge(t *testing.T) {
 
 func TestAnswer_UnknownBackendIsRefused(t *testing.T) {
 	h := newHarness(t, newFake(nil, "cb", "_test/auth/token"))
-	if _, rerr := h.v.Answer(t.Context(), "absent"); rerr == nil {
+	if rep := h.v.Answer(t.Context(), "absent"); rep.Err == nil || rep.Refusal != RefusedSignedOut {
 		t.Error("Answer(absent) answered")
 	}
 	if st := h.v.Status("absent"); st.Kind != statusUnavailable {

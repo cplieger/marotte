@@ -37,6 +37,7 @@ const (
 	KeyNotifyAgentFinished = "notify_agent_finished"
 	KeyNotifyPRStatus      = "notify_pr_status"
 	KeyNotifyRunOutcome    = "notify_run_outcome"
+	KeyNotifySignIn        = "notify_sign_in"
 	KeySupervisedDefault   = "supervised_default"
 
 	// KeySecurityProfile is the security profile a new chat starts on, and the one observer passes
@@ -210,6 +211,7 @@ var KnownKeys = map[string]struct{}{
 	KeyNotifyAgentFinished:      {},
 	KeyNotifyPRStatus:           {},
 	KeyNotifyRunOutcome:         {},
+	KeyNotifySignIn:             {},
 	KeySupervisedDefault:        {},
 	KeyScheduledAutoApprove:     {},
 	KeySecurityProfile:          {},

@@ -40,6 +40,7 @@ describe("resolveIdentity", () => {
       startUrl: "https://example.awsapps.com/start",
       region: "eu-west-1",
       apiKey: false,
+      health: null,
     });
   });
 
@@ -52,6 +53,7 @@ describe("resolveIdentity", () => {
       startUrl: "",
       region: "",
       apiKey: true,
+      health: null,
     });
   });
 });

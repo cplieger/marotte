@@ -116,7 +116,7 @@ func TestUnreadableConfig_AnAccountSwitchIsQueuedAndAppliedOnceConfigReads(t *te
 		}
 	}
 	signIn()
-	if _, rerr := vault.Answer(t.Context(), "test"); rerr != nil {
+	if rerr := vault.Answer(t.Context(), "test").Err; rerr != nil {
 		t.Fatalf("Setup: the first sign-in did not answer the engine: %v", rerr)
 	}
 

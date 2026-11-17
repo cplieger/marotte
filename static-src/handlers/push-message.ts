@@ -17,6 +17,7 @@ const PUSH_KINDS: Readonly<Record<PushKind, true>> = {
   permission: true,
   pr_status: true,
   run_outcome: true,
+  sign_in: true,
 };
 
 function isPushKind(kind: string): kind is PushKind {

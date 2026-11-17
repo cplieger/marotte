@@ -60,11 +60,12 @@ var errAutoCompactPctRange = fmt.Errorf("%s must be a whole number from %d to %d
 	KeyAutoCompactPct, autoCompactPctMin, autoCompactPctMax, autoCompactPctStep)
 
 // DefaultNotifyPRStatus is OFF while its siblings are ON: a PR's CI verdict is already on the
-// forge, where the other two report unobserved work.
+// forge, where the others report unobserved work or a sign-in that stops every chat and run.
 const (
 	DefaultNotifyAgentFinished = true
 	DefaultNotifyPRStatus      = false
 	DefaultNotifyRunOutcome    = true
+	DefaultNotifySignIn        = true
 )
 
 // defaultHighThroughput is ON because the flags carry 3 to 4 times the prompt load on one engine.
@@ -127,6 +128,7 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		NotifyAgentFinished: DefaultNotifyAgentFinished,
 		NotifyPRStatus:      DefaultNotifyPRStatus,
 		NotifyRunOutcome:    DefaultNotifyRunOutcome,
+		NotifySignIn:        DefaultNotifySignIn,
 		// Everything else is its zero value deliberately (scheduled auto-approve fail-closed).
 	}
 }
@@ -213,6 +215,7 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 		KeyNotifyAgentFinished:  func(r json.RawMessage) error { return decodeInto(&out.NotifyAgentFinished, r) },
 		KeyNotifyPRStatus:       func(r json.RawMessage) error { return decodeInto(&out.NotifyPRStatus, r) },
 		KeyNotifyRunOutcome:     func(r json.RawMessage) error { return decodeInto(&out.NotifyRunOutcome, r) },
+		KeyNotifySignIn:         func(r json.RawMessage) error { return decodeInto(&out.NotifySignIn, r) },
 		KeySupervisedDefault:    func(r json.RawMessage) error { return decodeInto(&out.SupervisedDefault, r) },
 		KeyScheduledAutoApprove: func(r json.RawMessage) error { return decodeInto(&out.ScheduledAutoApprove, r) },
 		KeyDebugLogs:            func(r json.RawMessage) error { return decodeInto(&out.DebugLogs, r) },

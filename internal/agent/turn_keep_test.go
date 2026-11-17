@@ -115,7 +115,7 @@ func (p *lockProbeRecords) AnnounceHeader(context.Context, marotte.ChatID) {
 func TestTurnRelease_RunsUnderTheLifecycleLockAndAnnouncesAfter(t *testing.T) {
 	cases := map[string]func(reg *turnRegistry, chatID marotte.ChatID){
 		"finish": func(reg *turnRegistry, chatID marotte.ChatID) {
-			reg.finish(openTestTurn(t, reg, chatID), marotte.TurnResult{})
+			reg.finish(openTestTurn(t, reg, chatID), &marotte.TurnResult{})
 		},
 		"release reservation": func(reg *turnRegistry, chatID marotte.ChatID) {
 			res, ok := reg.tryReserve(chatID, marotte.TurnSourcePrompt, reg.gates.stamp())

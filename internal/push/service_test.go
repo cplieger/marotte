@@ -289,14 +289,16 @@ func TestResolvePreferences_ResolvesEveryKeyedKindAgainstItsOwnDefault(t *testin
 			want: map[marotte.PushKind]bool{
 				marotte.PushKindAgentFinished: true, marotte.PushKindPermission: true,
 				marotte.PushKindPRStatus: false, marotte.PushKindRunOutcome: true,
+				marotte.PushKindSignIn: true,
 			},
 		},
 		{
 			name: "each_stored_toggle_moves_only_its_kind",
-			body: `{"notify_run_outcome":false,"notify_pr_status":true}`,
+			body: `{"notify_run_outcome":false,"notify_pr_status":true,"notify_sign_in":false}`,
 			want: map[marotte.PushKind]bool{
 				marotte.PushKindAgentFinished: true, marotte.PushKindPermission: true,
 				marotte.PushKindPRStatus: true, marotte.PushKindRunOutcome: false,
+				marotte.PushKindSignIn: false,
 			},
 		},
 		{
@@ -305,6 +307,7 @@ func TestResolvePreferences_ResolvesEveryKeyedKindAgainstItsOwnDefault(t *testin
 			want: map[marotte.PushKind]bool{
 				marotte.PushKindAgentFinished: true, marotte.PushKindPermission: true,
 				marotte.PushKindPRStatus: false, marotte.PushKindRunOutcome: true,
+				marotte.PushKindSignIn: true,
 			},
 		},
 		{
@@ -313,6 +316,7 @@ func TestResolvePreferences_ResolvesEveryKeyedKindAgainstItsOwnDefault(t *testin
 			want: map[marotte.PushKind]bool{
 				marotte.PushKindAgentFinished: false, marotte.PushKindPermission: false,
 				marotte.PushKindPRStatus: false, marotte.PushKindRunOutcome: false,
+				marotte.PushKindSignIn: false,
 			},
 		},
 	} {
@@ -340,7 +344,7 @@ func TestPreferences_ReportsTheTogglesInForceAsACopy(t *testing.T) {
 	got := s.Preferences()
 	want := map[marotte.PushKind]bool{
 		marotte.PushKindAgentFinished: true, marotte.PushKindPermission: true,
-		marotte.PushKindPRStatus: true, marotte.PushKindRunOutcome: false,
+		marotte.PushKindPRStatus: true, marotte.PushKindRunOutcome: false, marotte.PushKindSignIn: true,
 	}
 	if !maps.Equal(got, want) {
 		t.Errorf("Preferences() over notify_pr_status true then run_outcome set off = %v, want %v", got, want)

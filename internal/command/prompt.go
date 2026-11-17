@@ -9,7 +9,6 @@ import (
 	"math"
 	"net/http"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -204,8 +203,8 @@ func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, res Reservati
 		if stop != marotte.StopReasonCancelled {
 			// Suppressed on a cancel, the reader's own Stop and the chat's close included. The abandon above
 			// already stamped the reason on the retry's turn_close.
-			logPromptFailure("retry prompt failed", chatID, retryErr)
 			g := gradeFailedTurn(ctx, roles, chatID, retryTurn, retryErr, reason)
+			logPromptFailure("retry prompt failed", chatID, g.class, retryErr)
 			code := marotte.ErrCodeRecoveryFailed
 			if g.auth {
 				code = marotte.ErrCodeAuthTokenUnavailable
@@ -451,6 +450,11 @@ func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *prompt
 	defer cancel()
 	chatID := res.Chat
 	defer roles.turnOutcome.ReleaseTurn(chatID, turnID)
+	if roles.signIn != nil && roles.signIn.TurnBlocked(ctx) {
+		roles.admission.ReleaseTurnReservation(res)
+		refuseDuringSignInOutage(ctx, roles, chatID, turnID)
+		return
+	}
 	sb, release, err := roles.bridges.OpenBridgeAt(ctx, chatID, p.Model, res)
 	defer release()
 	if closedCancelled(err) {
@@ -467,6 +471,22 @@ func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *prompt
 		return
 	}
 	promptAdmittedTurn(ctx, roles, sb, res, turnID, p)
+}
+
+// refuseDuringSignInOutage closes a turn that met a known sign-in outage before any engine call: every credential
+// ask would wait out the vault's answer window and fail. The client hands the unsent prompt back (its turn has no
+// turn_bind).
+func refuseDuringSignInOutage(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, turnID string) {
+	reason := marotte.SignInFailedUnreachableReason
+	roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, turnID, marotte.StopReasonInterrupted, reason, marotte.FailureKindSignInUnreachable, 0)
+	if result, err := roles.turnOutcome.AwaitTurn(ctx, chatID, turnID); err == nil && result.Reason != "" {
+		reason = result.Reason
+	}
+	obs.PromptFailed(classSignInOutage.String())
+	slog.Warn("prompt refused: the Kiro sign-in service is unreachable", "chat_id", chatID, "turn", turnID)
+	roles.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
+		Code: marotte.ErrCodeAuthTokenUnavailable, Message: reason, TurnScoped: true,
+	}))
 }
 
 // closedCancelled reports a prompt the chat's close ended past its ack: its door refused or its lease was cut
@@ -538,8 +558,8 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, res 
 		return
 	}
 	slog.Info("prompt complete", "chat_id", chatID, "elapsed", elapsed)
-	if roles.auth != nil {
-		roles.auth.record(nil)
+	if roles.signIn != nil {
+		roles.signIn.NoteEngineAccepted()
 	}
 
 	// The close settles the withheld steer carry and decides the turn's empty retry on the run order; the
@@ -595,11 +615,10 @@ func historyInlineImages(ctx context.Context, chats chatStore, chatID marotte.Ch
 
 const logMsgPromptEngineEnded = "prompt ended because the agent engine exited"
 
-// logPromptFailure logs a failed prompt and counts it under its class. It logs at Error under msg,
-// except an engine-exit casualty: the engine's one exit line is that failure, so the casualty is a
+// logPromptFailure logs a failed prompt and counts it under class, its graded class (gradeFailedTurn). It logs at
+// Error under msg, except an engine-exit casualty: the engine's one exit line is that failure, so the casualty is a
 // Warn under logMsgPromptEngineEnded.
-func logPromptFailure(msg string, chatID marotte.ChatID, err error, attrs ...any) {
-	class := classifyPromptFailure(err)
+func logPromptFailure(msg string, chatID marotte.ChatID, class promptFailureClass, err error, attrs ...any) {
 	obs.PromptFailed(class.String())
 	attrs = append([]any{"chat_id", chatID, "class", class.String(), keyError, err}, attrs...)
 	if class == classPipeDeath {
@@ -626,9 +645,9 @@ func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID marotte
 		roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, turnID, stop, reason, kind, seq)
 		return
 	}
-	logPromptFailure("prompt failed", chatID, err, "elapsed", elapsed)
 	roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, turnID, stop, reason, kind, seq)
 	g := gradeFailedTurn(ctx, roles, chatID, turnID, err, reason)
+	logPromptFailure("prompt failed", chatID, g.class, err, "elapsed", elapsed)
 	code := marotte.ErrCodePromptFailed
 	if g.auth {
 		code = marotte.ErrCodeAuthTokenUnavailable
@@ -640,35 +659,29 @@ func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID marotte
 // failedTurnGrade is how a failed prompt's error frame reports it.
 type failedTurnGrade struct {
 	reason string
+	// class is the failure's class, auth when the turn's latched engine class is one even if err names none.
+	class promptFailureClass
 	// auth: a refused credential, the one failure whose remedy is not "send again".
 	auth bool
 	// onCard: reason is the text the turn's card carries (ErrorPayload.TurnScoped).
 	onCard bool
 }
 
-// gradeFailedTurn reads the close of turnID, already abandoned for err, and grades it: reason is
-// what its turn_close carries (fallback when it carries none), so a toast says what the card
-// says, and a refused credential latches AuthReadiness. A failure inside the execution names its
-// class only on the turn.
+// gradeFailedTurn reads the close of turnID, already abandoned for err, and grades it: reason is what its turn_close
+// carries (fallback when it carries none), so a toast says what the card says. A refused credential is noted to the
+// sign-in's health with the kind the close carries, which the closer drew from the asks the turn depended on.
 func gradeFailedTurn(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, turnID string, err error, fallback string) failedTurnGrade {
-	g := failedTurnGrade{reason: fallback, onCard: true}
+	g := failedTurnGrade{reason: fallback, class: classifyPromptFailure(err), onCard: true}
 	result, aErr := roles.turnOutcome.AwaitTurn(ctx, chatID, turnID)
 	if aErr == nil && result.Reason != "" {
 		g.reason = result.Reason
 	}
-	if classifyPromptFailure(err) != classAuth && (aErr != nil || !authClass(result.EngineErrorType)) {
+	if g.class != classAuth && (aErr != nil || !rpcerr.AuthClass(result.EngineErrorType)) {
 		return g
 	}
-	// KAS grades every refused credential ask as unauthenticated, so only the vault knows the provider was
-	// down; the card then carries KAS's sign-in sentence, which the vault's reason replaces.
+	g.class, g.auth = classAuth, true
 	if roles.signIn != nil {
-		if why, down := roles.signIn.ProviderUnreachable(); down {
-			return failedTurnGrade{reason: why}
-		}
-	}
-	g.auth = true
-	if roles.auth != nil {
-		roles.auth.record(err)
+		roles.signIn.NoteEngineRefusal(result.FailureKind)
 	}
 	return g
 }
@@ -754,9 +767,11 @@ const (
 	// Non-retryable by construction: the payload is what was refused.
 	classRejected
 	// classAuth is the backend refusing the token rather than the
-	// request. gradeFailedTurn owns when it sends marotte.ErrCodeAuthTokenUnavailable,
-	// the only code the client routes to a Sign in CTA.
+	// request. gradeFailedTurn owns when it sends marotte.ErrCodeAuthTokenUnavailable.
 	classAuth
+	// classSignInOutage is a prompt refused before any engine call during a known sign-in outage
+	// (refuseDuringSignInOutage), which the sign-in's own alert reports.
+	classSignInOutage
 )
 
 // validationErrorNames are the backend's names for a request refused as malformed or oversized
@@ -774,27 +789,6 @@ var validationErrorNames = []string{
 	"DocumentSizeExceeded",
 	"DocumentMaximumPagesExceeded",
 	"DocumentCountExceeded",
-}
-
-// authErrorNames are the backend's own names for a request refused because
-// the credential was not usable; kascap.TestAuthClassesMatchBundle pins them
-// to the pinned bundle's auth classes.
-//
-// ModelRegistryAccessDeniedError is deliberately absent: upstream tells
-// that user the account lacks model access, which no sign-in fixes.
-var authErrorNames = []string{
-	"TokenInvalidError",
-	"TokenExpiredError",
-	"CredentialAbsentError",
-	"AuthRefreshFailedError",
-	"SignInRequiredError",
-	"ModelRegistryUnauthenticatedError",
-	"AccessDeniedError",
-	"MISSING_TOKEN",
-	"MALFORMED_TOKEN",
-	"INVALID_AUTH",
-	"INVALID_SSO_AUTH",
-	"INVALID_IDC_AUTH",
 }
 
 func classifyPromptFailure(err error) promptFailureClass {
@@ -850,15 +844,10 @@ func classifyMapped(m rpcerr.Mapped) promptFailureClass {
 	if m.RetryErrorType == rpcerr.RetryThrottling {
 		return classThrottled
 	}
-	if authClass(m.ErrorType) {
+	if rpcerr.AuthClass(m.ErrorType) {
 		return classAuth
 	}
 	return classFatal
-}
-
-// authClass reports whether name is a KAS class for a refused credential.
-func authClass(name string) bool {
-	return slices.Contains(authErrorNames, name)
 }
 
 // isAuthShaped reports whether an internal error is really an authentication failure, matched on
@@ -866,10 +855,8 @@ func authClass(name string) bool {
 // AWS SDK message promising a refresh.
 func isAuthShaped(re *marotte.RPCError) bool {
 	hay := re.Message + string(re.ErrorData())
-	for _, name := range authErrorNames {
-		if strings.Contains(hay, name) {
-			return true
-		}
+	if rpcerr.NamesAuthClass(hay) {
+		return true
 	}
 	markers := []string{
 		"Authentication failed",
@@ -924,6 +911,10 @@ func promptFailureAccount(ctx context.Context, err error, inlinedImage bool) (st
 			return marotte.StopReasonCancelled, "", ""
 		}
 		return marotte.StopReasonInterrupted, "The turn was cancelled before the agent answered.", ""
+	}
+	// The agent's closer words a sign-in failure from the asks the turn depended on; this reason is the fallback.
+	if classifyPromptFailure(err) == classAuth {
+		return marotte.StopReasonInterrupted, marotte.SignInFailedReason, marotte.FailureKindSignIn
 	}
 	if re, ok := errors.AsType[*marotte.RPCError](err); ok {
 		if m, mapped := rpcerr.MappedOf(re); mapped {
@@ -984,6 +975,8 @@ func (c promptFailureClass) String() string {
 		return "rejected"
 	case classAuth:
 		return "auth"
+	case classSignInOutage:
+		return "signin_outage"
 	case classFatal:
 		return "fatal"
 	}

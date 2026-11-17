@@ -567,11 +567,16 @@ type promptSendGate interface {
 	AwaitPromptSend(ctx context.Context, chatID marotte.ChatID, turnID string) (commit func() error, err error)
 }
 
-// signInReach reads whether the identity provider, not the account, is why the engine's credential ask fails.
+// signInReach is the prompt's view of the Kiro sign-in: whether a known outage blocks a turn, and the engine's verdicts
+// it reports.
 type signInReach interface {
-	// ProviderUnreachable returns the vault's reason while the identity provider gives no usable renewal, an outage
-	// no sign-in fixes; false otherwise.
-	ProviderUnreachable() (reason string, ok bool)
+	// TurnBlocked reports whether a turn can only fail on the sign-in: the identity provider is known down and one
+	// reprobe, shared with concurrent callers and bounded by a short deadline under ctx, did not bring it back.
+	TurnBlocked(ctx context.Context) bool
+	// NoteEngineRefusal reports a turn the engine failed on its credential, with the failure kind its turn_close
+	// carries, which names whose refusal it was; NoteEngineAccepted a turn it accepted. They feed the sign-in's health.
+	NoteEngineRefusal(kind marotte.FailureKind)
+	NoteEngineAccepted()
 }
 
 // compactRequester takes the reader's compaction requests.
@@ -862,8 +867,6 @@ type Roles struct {
 	// Status ends a chat's retained waiting_on_user claim after a command that IS
 	// the user answering.
 	Status chatStatus
-	// AuthReadiness carries prompt authentication outcomes to readiness.
-	AuthReadiness *AuthReadiness
 	// Compactor takes the reader's compaction requests, which the run order places.
 	Compactor compactRequester
 	// SignIn tells an unreachable identity provider apart from a refused credential. Nil reads every
@@ -912,7 +915,6 @@ type promptRoles struct {
 	jobs        SteerJobs
 	runq        runQueue
 	sendGate    promptSendGate
-	auth        *AuthReadiness
 	signIn      signInReach
 	door        messageDoor
 	workspace   Workspace // last for fieldalignment, as in Roles

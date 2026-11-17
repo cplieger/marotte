@@ -4,31 +4,27 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// NotifyDelivery is how Notify delivered a message.
-type NotifyDelivery string
-
-// The deliveries, spelled as the notify route answers them.
-const (
-	NotifyPrompt NotifyDelivery = "prompt"
-	NotifySteer  NotifyDelivery = "steer"
-	NotifyQueued NotifyDelivery = "queued"
-)
+// notifyAdmitWait is how long a notify waits out a held close of its chat: one that commits at once is absorbed, and
+// a longer one answers ErrSubmitStarting, which the caller retries, rather than holding the answer.
+const notifyAdmitWait = 50 * time.Millisecond
 
 // errNotifyMention refuses a context-mention token: the prompt path would read the named resource into the chat on
 // an outside caller's word.
 var errNotifyMention = errors.New(`a "#[[kind:query]]" context-mention token is not accepted from an outside caller`)
 
 // Notify places text from an outside caller on chatID's run order as the notify door's entry (RunFromNotify) and
-// answers where it went: steered into the running turn, started, or queued, which includes a caller's earlier entry
-// still waiting taking the text. from must be non-nil: a caller's message neither ends the chat's waiting_on_user
-// claim nor touches its composer. A refusal is a 400 StatusError for text that reads as a system notice or holds a
+// returns once it is placed, with the id of the run entry holding the text; the run order delivers it after, as a
+// steer, a turn of its own or in turn. A caller's earlier entry still waiting takes the text instead, and one kiro-cli
+// holds unread covers it. from must be non-nil: a caller's message neither ends the chat's waiting_on_user claim nor
+// touches its composer. A refusal is a 400 StatusError for text that reads as a system notice or holds a
 // context-mention token, else Submit's refusal as HTTP.
-func (d *Dispatcher) Notify(ctx context.Context, chatID marotte.ChatID, text string, from *marotte.Caller) (NotifyDelivery, error) {
+func (d *Dispatcher) Notify(ctx context.Context, chatID marotte.ChatID, text string, from *marotte.Caller) (string, error) {
 	switch {
 	case notificationPrefix.MatchString(text):
 		return "", StatusError(http.StatusBadRequest, errSteerLooksLikeNotification)
@@ -47,20 +43,13 @@ func (d *Dispatcher) Notify(ctx context.Context, chatID marotte.ChatID, text str
 	s := Submission{
 		Row:    marotte.QueuedPrompt{ID: ids.NewMessageID(), Text: text, Caller: from},
 		Origin: marotte.RunFromNotify, Kind: marotte.SendPlain,
-		Wait: true, Retry: !kasClaimsPromptText(text),
+		AdmitWait: notifyAdmitWait, Retry: !kasClaimsPromptText(text),
 	}
-	ans, err := roles.runq.Submit(ctx, chatID, stamp, &s)
+	a, err := roles.runq.Submit(ctx, chatID, stamp, &s)
 	if err != nil {
 		return "", submitRefusal(err)
 	}
-	switch ans.As {
-	case SubmitStarted:
-		return NotifyPrompt, nil
-	case SubmitSteered:
-		return NotifySteer, nil
-	case SubmitQueued:
-	}
-	return NotifyQueued, nil
+	return a.MessageID, nil
 }
 
 // NotifyRefusal is what a Notify error means to its outside caller.

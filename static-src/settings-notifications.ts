@@ -26,6 +26,7 @@ export const KIND_INPUT_IDS: Readonly<Record<string, string>> = {
   agent_finished: "notify-finished-toggle",
   pr_status: "notify-pr-status-toggle",
   run_outcome: "notify-run-outcome-toggle",
+  sign_in: "notify-sign-in-toggle",
 };
 
 /** One rendered sub-toggle: the kind it governs, its settings key, its input. */

@@ -659,6 +659,28 @@ func stopPaused(e RunEntry) RunEntry {
 	return e
 }
 
+// A wake whose launch failed keeps the mark into a later life of the chat, so the caller's resend there still sends
+// it; a row that is no longer paused loses the mark, and a process start drops the wake.
+func TestSanitizeRun_KeepsTheFailedLaunchOnAPausedWake(t *testing.T) {
+	failed := func(e RunEntry) RunEntry {
+		e.FailedLaunch = true
+		return e
+	}
+	in := list(caller(failed(d("n-1", RunPaused)), "ci"), failed(d("n-2", RunPending)))
+	marks := func(es []RunEntry) (out []string) {
+		for _, e := range es {
+			out = append(out, e.ID+":"+string(e.State)+":"+strconv.FormatBool(e.FailedLaunch))
+		}
+		return out
+	}
+	if got, want := marks(SanitizeRun(in, false)), []string{"n-1:paused:true", "n-2:pending:false"}; !slices.Equal(got, want) {
+		t.Errorf("a later life: got %v, want %v", got, want)
+	}
+	if got := marks(SanitizeRun(in, true)); len(got) != 0 {
+		t.Errorf("a process's first life: got %v, want no wake", got)
+	}
+}
+
 // KAS re-prompts what a session/cancel cleared whoever sent the cancel, so marotte's failsafe stop reads as the
 // reader's does; a teardown's cancel is followed by the session's close.
 func TestTurnStopCause_KASRewakes(t *testing.T) {

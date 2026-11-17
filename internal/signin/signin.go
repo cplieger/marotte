@@ -146,6 +146,16 @@ const (
 	ProviderUnreachable
 )
 
+// Standing is one read of the record the running engine is answered from.
+type Standing struct {
+	// FailingSince is the first transient or short renewal since the record's last usable one, zero when the last
+	// renewal was usable or the record was replaced since.
+	FailingSince  time.Time
+	Answerability Answerability
+	// Lapsed: the identity provider rejected the record's renewal.
+	Lapsed bool
+}
+
 // Credential is a backend's record, stored and handed back by the vault without being read.
 type Credential struct {
 	Data json.RawMessage
@@ -153,6 +163,14 @@ type Credential struct {
 
 // Refusal is why a host callback is refused.
 type Refusal int
+
+// Reply is the vault's answer to one host callback: Result when it served the ask, else Err, the backend's wording
+// of Refusal.
+type Reply struct {
+	Err     *marotte.RPCError
+	Result  json.RawMessage
+	Refusal Refusal
+}
 
 // The refusals a backend words for its host callback.
 const (

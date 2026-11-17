@@ -223,7 +223,7 @@ func TestAwaitPosition_DoesNotStopAtTheAwaitedTurnsOwnClose(t *testing.T) {
 	if !won {
 		t.Fatal("claimTurn lost the claim on a freshly opened turn")
 	}
-	r.finish(claimed, marotte.TurnResult{Stop: marotte.StopReasonEndTurn})
+	r.finish(claimed, &marotte.TurnResult{Stop: marotte.StopReasonEndTurn})
 
 	reached := make(chan bool, 1)
 	go func() { reached <- r.awaitClosePosition(ctx, chatID, turn.ID, 5) }()

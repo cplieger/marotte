@@ -691,7 +691,12 @@ func (p *EntryProjection) closeTurn() {
 	}
 	p.closed = true
 	reason, kind := c.Reason, c.FailureKind
-	if e := p.facts.engine; e != nil && reason == "" && marotte.SeverityOf(c.Outcome) == marotte.TurnSeverityBroken {
+	e := p.facts.engine
+	switch {
+	case e == nil || reason != "" || marotte.SeverityOf(c.Outcome) != marotte.TurnSeverityBroken:
+	case rpcerr.AuthClass(e.ErrorType):
+		reason, kind = marotte.SignInFailedReason, marotte.FailureKindSignIn
+	default:
 		text, overflow := rpcerr.Account(rpcerr.Mapped{ErrorType: e.ErrorType, RetryErrorType: e.RetryErrorType}, e.Message)
 		reason, _ = textsafe.SanitizeSingleLineCapped(text, maxDisplayErrorBytes, "...")
 		if overflow {
@@ -709,7 +714,7 @@ func (p *EntryProjection) closeTurn() {
 		Refusal:       p.facts.refusal,
 	}
 	p.facts.footer.Stamp(&footer)
-	if e := p.facts.engine; e != nil {
+	if e != nil {
 		footer.EngineErrorClass = turnlog.EngineClass(e.ErrorType, c.Outcome)
 	}
 	p.appendEntry(marotte.EntryKindTurnClose, p.newID(), "", p.facts.endTs, footer)

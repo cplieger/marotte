@@ -258,6 +258,9 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.EngineExit](),
 	wiregen.TypeRef[marotte.EngineStatusVersion](),
 	wiregen.TypeRef[marotte.EngineStatus](),
+	// GET /api/whoami's health and the signin_health event.
+	wiregen.TypeRef[marotte.SignInHealthVersion](),
+	wiregen.TypeRef[marotte.SignInHealth](),
 	// GET /api/config/standing.
 	wiregen.TypeRef[marotte.ConfigStanding](),
 	wiregen.TypeRef[marotte.AgentLoadError](),
@@ -362,6 +365,9 @@ var wireEnums = []wiregen.EnumRef{
 	wiregen.StringEnum[marotte.TurnOutcome](),
 	// turn_close.failure_kind; the turn notice's remedy button branches on it.
 	wiregen.StringEnum[marotte.FailureKind](),
+	// The sign-in banner, the account button and the status card branch on both.
+	wiregen.StringEnum[marotte.SignInState](),
+	wiregen.StringEnum[marotte.SignInCause](),
 	// Five client surfaces branch on it.
 	wiregen.StringEnum[marotte.TurnSeverity](),
 	// The entry dispatcher's switch; the decoder rejects a kind with no arm.
@@ -534,6 +540,7 @@ var wireEvents = []wiregen.Event{
 	{Name: "spec_approved", Data: wiregen.TypeRef[marotte.SpecApprovedPayload]()},
 	{Name: "forge_inventory", Data: wiregen.TypeRef[forges.InventoryChangedPayload]()},
 	{Name: "engine_status", Data: wiregen.TypeRef[marotte.EngineStatus]()},
+	{Name: "signin_health", Data: wiregen.TypeRef[marotte.SignInHealth]()},
 }
 
 // Registry returns marotte's wire contract. It holds no output layout: cmd/wire-codegen
