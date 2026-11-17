@@ -219,7 +219,8 @@ sw.addEventListener("push", ((event: PushEvent) => {
           body,
           // PNG: Chromium draws no SVG notification icon (https://issues.chromium.org/issues/41169211).
           icon: "/icon-192.png",
-          // Android paints the badge from its alpha channel alone, so it is the bare white mark.
+          // Android masks the badge to a monochrome silhouette from its alpha channel, so it is
+          // the bare white mark (https://developer.mozilla.org/en-US/docs/Web/API/Notification/badge).
           badge: "/badge-96.png",
           tag: pushTargetTag(parsePushTarget({ chatId: chatID, subject })),
           // A same-tag replacement is silent by default, and here a replacement always means the

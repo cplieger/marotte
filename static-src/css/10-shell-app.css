@@ -129,10 +129,12 @@ body.sidebar-resizing {
   margin-left: 0.15em;
 }
 
-.logo:hover {
-  /* Lighter purple in dark mode, darker purple in light mode — never
-   white/black, so it stays branded. */
-  color: color-mix(in srgb, var(--c-accent) 70%, var(--c-text-primary));
+@media (any-hover: hover) {
+  .logo:hover {
+    /* Lighter purple in dark mode, darker purple in light mode — never
+     white/black, so it stays branded. */
+    color: color-mix(in srgb, var(--c-accent) 70%, var(--c-text-primary));
+  }
 }
 
 /* 3:5 is the #vk-logo symbol's viewBox. */

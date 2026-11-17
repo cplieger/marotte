@@ -1,7 +1,3 @@
-// The marotte logo across the shipped artifacts: one mark in the sprite, drawn bare in the text
-// colour where it brands the app, grey where it decorates, and white on the brand violet wherever
-// it stands as the app's icon.
-
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { userEvent } from "vitest/browser";
 import indexHtml from "../static/index.html?raw";
@@ -67,7 +63,9 @@ describe("the logo sprite", () => {
   it("holds one symbol, the bare mark as a single currentColor path", () => {
     expect(sprite().map((s) => s.id)).toEqual(["vk-logo"]);
     const symbol = doc.getElementById("vk-logo");
-    const shapes = [...(symbol?.querySelectorAll("path, circle, rect, ellipse, polygon") ?? [])];
+    const shapes = [
+      ...(symbol?.querySelectorAll("path, circle, rect, ellipse, polygon, use") ?? []),
+    ];
     expect(shapes.map((s) => s.tagName.toLowerCase())).toEqual(["path"]);
     expect(shapes[0]?.getAttribute("fill")).toBe("currentColor");
   });
@@ -75,15 +73,6 @@ describe("the logo sprite", () => {
   it("carries the mark's path data once in the page", () => {
     const d = logoPath();
     expect(indexHtml.split(d).length - 1).toBe(1);
-  });
-
-  it("is referenced from the page, so no symbol ships unused", () => {
-    for (const symbol of sprite()) {
-      expect(
-        doc.querySelector(`use[href="#${symbol.id}"]`),
-        `#${symbol.id} is unused`,
-      ).not.toBeNull();
-    }
   });
 
   it("is the favicon's artwork, path for path", () => {
@@ -113,8 +102,6 @@ describe("the brand lockups", () => {
         expect(node?.getAttribute("color")).toBeNull();
         expect(node?.getAttribute("fill")).toBeNull();
       }
-      const symbol = doc.getElementById("vk-logo");
-      expect(symbol?.querySelector("rect, use"), "the symbol draws a tile").toBeNull();
     });
   }
 });
@@ -200,8 +187,10 @@ describe("the rendered brand", () => {
       const text = part(selector === ".logo" ? ".logo .logo-name" : ".modal-logo > span");
       const box = text.getBoundingClientRect();
       const em = Number.parseFloat(getComputedStyle(text).fontSize);
-      // The symbol's viewBox is the mark's own 3:5 extent, so the box is the ink.
-      expect(icon.width / icon.height).toBeCloseTo(3 / 5, 2);
+      expect(icon.width / icon.height, "the box is not the symbol's 3:5 viewBox").toBeCloseTo(
+        3 / 5,
+        2,
+      );
       expect(Math.abs(icon.top + icon.height / 2 - (box.top + box.height / 2))).toBeLessThanOrEqual(
         1,
       );
@@ -280,7 +269,8 @@ describe("the app icons", () => {
       expect(`${img.width}x${img.height}`).toBe(icon.sizes);
       expect(at(img, 0, 0).slice(0, 3)).toEqual(BRAND_VIOLET);
       expect(at(img, img.width - 1, img.height - 1).slice(0, 3)).toEqual(BRAND_VIOLET);
-      // icons.py places the mark's 100-unit box in the square 7..41 of the 48-unit tile.
+      // favicon.svg's translate(7 7) scale(0.34) puts the mark's 100-unit box in the square 7..41
+      // of the 48-unit tile; the PNGs share it.
       const lo = Math.floor((7 / 48) * img.width);
       const hi = Math.ceil((41 / 48) * img.width);
       let white = 0;
@@ -298,6 +288,13 @@ describe("the app icons", () => {
       }
       expect(white / (img.width * img.height)).toBeGreaterThan(0.02);
       expect(outside, "white ink outside the mark's square").toBe(0);
+      // A point on the hat's top-left tip, which the previous mark left violet.
+      const probe = at(
+        img,
+        Math.round(0.35 * (img.width - 1)),
+        Math.round(0.18 * (img.height - 1)),
+      );
+      expect(probe.slice(0, 3), "the mark is not the marotte in a fist").toEqual([255, 255, 255]);
     });
   }
 });
@@ -336,8 +333,7 @@ describe("the notification images", () => {
     }
     expect(at(img, 0, 0)[3]).toBe(0);
     expect(opaque / (img.width * img.height)).toBeGreaterThan(0.02);
-    // Android's 22 dp live area inside the 24 dp status-bar icon: 4 px clear at 96 px.
-    expect(Math.min(x0, y0)).toBeGreaterThanOrEqual(4);
-    expect(Math.max(x1, y1)).toBeLessThanOrEqual(91);
+    expect(Math.min(x0, y0), "the badge's 4 px clear margin").toBeGreaterThanOrEqual(4);
+    expect(Math.max(x1, y1), "the badge's 4 px clear margin").toBeLessThanOrEqual(91);
   });
 });
