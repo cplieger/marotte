@@ -68,13 +68,14 @@ function userRule(capability: string): PolicyRule {
   };
 }
 
-function view(profile: string, rules: PolicyRule[] = []): PolicyView {
+function view(profile: string, rules: PolicyRule[] = [], saved = true): PolicyView {
   return {
     available: true,
     writable_scopes: ["user", "workspace"],
     capabilities: ["fs_read", "fs_write", "shell"],
     profiles: LADDER,
     profile,
+    profile_saved: saved,
     rules,
     load_errors: [],
   };
@@ -193,6 +194,31 @@ describe("the profile ladder", () => {
     await pick("trusted");
     expect(mocks.profileDispatch).not.toHaveBeenCalled();
     expect(mocks.confirm).not.toHaveBeenCalled();
+  });
+
+  // A checked radio fires no change event, and parentless runs stay on Trusted until a profile is
+  // saved, so the default the picker shows on a fresh config has to save on a click.
+  it("saves the default it shows checked when no profile is saved yet", async () => {
+    await mount(view("delegated", [], false));
+    mocks.profileDispatch.mockResolvedValue({ ok: true });
+    radioFor("delegated").click();
+    await flush();
+    expect(profileCalls()).toEqual([{ profile: "delegated", seed: false }]);
+  });
+
+  it("writes nothing for a click on the checked profile once it is saved", async () => {
+    await mount(view("delegated"));
+    radioFor("delegated").click();
+    await flush();
+    expect(mocks.profileDispatch).not.toHaveBeenCalled();
+  });
+
+  it("writes once when another profile is clicked on an unsaved config", async () => {
+    await mount(view("delegated", [], false));
+    mocks.profileDispatch.mockResolvedValue({ ok: true });
+    radioFor("trusted").click();
+    await flush();
+    expect(profileCalls()).toEqual([{ profile: "trusted", seed: false }]);
   });
 });
 
@@ -510,7 +536,9 @@ describe("the Security profile section hint", () => {
   });
 
   it("says a workflow run not started from a chat stays on Trusted until a profile is picked", () => {
-    expect(securityProfileHint()).toContain("A workflow run not started from a chat uses Trusted until you pick a profile here");
+    expect(securityProfileHint()).toContain(
+      "A workflow run not started from a chat uses Trusted until you pick a profile here",
+    );
   });
 
   it("claims no reach into open chats, which keep their own profile", () => {

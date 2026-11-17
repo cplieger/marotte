@@ -301,6 +301,9 @@ class NativePolicyController {
   /** Never local constants: the ladder decides what one click grants, and policyfile owns it. */
   private profiles: SecurityProfile[] = [];
   private activeProfile = "";
+  /** False while config.json names no profile: activeProfile is then the default, which a
+   *  parentless run does not open on until it is saved. */
+  private profileSaved = false;
   /** A transient line under the picker: the outcome of a selection, or a note that Custom is
    *  empty. Carried across the refetch a selection ends in, because that refetch repaints this
    *  same line. */
@@ -417,6 +420,7 @@ class NativePolicyController {
     this.writable = new Set(data.writable_scopes);
     this.profiles = data.profiles;
     this.activeProfile = data.profile;
+    this.profileSaved = data.profile_saved;
     this.lastRules = data.rules;
     this.populateCapabilities(data.capabilities);
     if (data.available) {
@@ -469,6 +473,12 @@ class NativePolicyController {
         input.value = p.id;
         input.addEventListener("change", () => {
           if (input.checked) {
+            void this.selectProfile(p.id);
+          }
+        });
+        // A click on the checked radio fires no change, and the unsaved default needs it to save.
+        input.addEventListener("click", () => {
+          if (!this.profileSaved && p.id === this.activeProfile) {
             void this.selectProfile(p.id);
           }
         });
@@ -531,7 +541,7 @@ class NativePolicyController {
   /** The leaving-Custom confirm says the user's own rules SURVIVE, because a grant outliving a
    *  narrowing is the surprise this screen can produce. */
   private async selectProfile(id: string): Promise<void> {
-    if (id === this.activeProfile) {
+    if (id === this.activeProfile && this.profileSaved) {
       return;
     }
     this.profileNote = "";

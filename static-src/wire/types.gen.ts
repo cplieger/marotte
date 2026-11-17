@@ -2898,9 +2898,9 @@ export interface PolicyRuleCore {
  */
 export interface PolicyView {
   /**
-   * Profile is the posture in force; Profiles below is the ladder it comes from.
-   * Split apart here only because the two have different alignments — read them
-   * together.
+   * Profile is the Settings profile new chats start on; Profiles below is the ladder
+   * it comes from and ProfileSaved whether it is stored. Split apart here only
+   * because their alignments differ — read them together.
    */
   profile: string;
   rules: PolicyRule[];
@@ -2908,7 +2908,7 @@ export interface PolicyView {
   capabilities: string[];
   /**
    * Profiles is the security-posture ladder in picker order, loosest last, and
-   * Profile above is the one in force. Both travel here rather than being derived
+   * Profile above is the one new chats start on. Both travel here rather than being derived
    * client-side: the ladder decides what one click grants, so policyfile owns it
    * and the client renders it.
    *
@@ -2924,6 +2924,11 @@ export interface PolicyView {
    */
   load_errors: PolicyErrorItem[];
   available: boolean;
+  /**
+   * ProfileSaved is false while config.json names no profile: Profile is then the
+   * default, and a parentless run opens on another one until a profile is saved.
+   */
+  profile_saved: boolean;
 }
 
 /**

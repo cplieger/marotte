@@ -62,6 +62,7 @@ function view(rules: PolicyRule[], caps = ["fs_read", "fs_write", "shell"]): Pol
       { id: "custom", presets: [] },
     ],
     profile: "custom",
+    profile_saved: true,
     rules,
     load_errors: [],
   };

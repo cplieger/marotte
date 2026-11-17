@@ -40,15 +40,15 @@ type PolicyRuleCore struct {
 // unioned with every capability the live rules already use, so it can learn a
 // name marotte shipped without.
 type PolicyView struct {
-	// Profile is the posture in force; Profiles below is the ladder it comes from.
-	// Split apart here only because the two have different alignments — read them
-	// together.
+	// Profile is the Settings profile new chats start on; Profiles below is the ladder
+	// it comes from and ProfileSaved whether it is stored. Split apart here only
+	// because their alignments differ — read them together.
 	Profile        string       `json:"profile"`
 	Rules          []PolicyRule `json:"rules"`
 	WritableScopes []string     `json:"writable_scopes"`
 	Capabilities   []string     `json:"capabilities"`
 	// Profiles is the security-posture ladder in picker order, loosest last, and
-	// Profile above is the one in force. Both travel here rather than being derived
+	// Profile above is the one new chats start on. Both travel here rather than being derived
 	// client-side: the ladder decides what one click grants, so policyfile owns it
 	// and the client renders it.
 	//
@@ -61,6 +61,9 @@ type PolicyView struct {
 	// fell back to the files.
 	LoadErrors []PolicyErrorItem `json:"load_errors"`
 	Available  bool              `json:"available"`
+	// ProfileSaved is false while config.json names no profile: Profile is then the
+	// default, and a parentless run opens on another one until a profile is saved.
+	ProfileSaved bool `json:"profile_saved"`
 }
 
 // SecurityProfile is one entry in the picker: the persisted id and the KAS policy

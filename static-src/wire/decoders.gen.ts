@@ -3298,6 +3298,7 @@ export const decodePolicyView: Decoder<PolicyView> = (v) => {
     profiles: own(o, "profiles") === null ? [] : decodeArray(own(o, "profiles"), decodeSecurityProfile, "$.policy_view.profiles"),
     load_errors: own(o, "load_errors") === null ? [] : decodeArray(own(o, "load_errors"), decodePolicyErrorItem, "$.policy_view.load_errors"),
     available: reqBool(o, "available", "$.policy_view"),
+    profile_saved: reqBool(o, "profile_saved", "$.policy_view"),
   };
   return out;
 };

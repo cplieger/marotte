@@ -50,14 +50,21 @@ type Store struct {
 // Active is the Settings profile a new chat starts on, with the session door's fallback, so a
 // reader shows what that chat's door sends.
 func (s *Store) Active(ctx context.Context) string {
-	var id string
+	id, _ := s.Choice(ctx)
+	return id
+}
+
+// Choice is Active plus whether config.json names that profile. An unsaved default and a saved
+// pick of it differ for a parentless run, which opens on policyfile.DefaultRunProfile while
+// nothing is saved.
+func (s *Store) Choice(ctx context.Context) (id string, saved bool) {
 	if !settings.FieldInto(ctx, s.ConfigDir, settings.KeySecurityProfile, &id) || id == "" {
-		return policyfile.DefaultProfile
+		return policyfile.DefaultProfile, false
 	}
 	if _, ok := policyfile.ProfileFor(id); !ok {
-		return policyfile.DefaultProfile
+		return policyfile.DefaultProfile, false
 	}
-	return id
+	return id, true
 }
 
 // Select persists id into config.json; an unreadable document refuses. It writes no policy file.

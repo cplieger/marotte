@@ -2119,8 +2119,9 @@ const arbModel = fc.letrec<{
       profiles: fc.array(tie("SecurityProfile"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       load_errors: fc.array(tie("PolicyErrorItem"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       available: fc.boolean(),
+      profile_saved: fc.boolean(),
     },
-    { requiredKeys: ["profile", "rules", "writable_scopes", "capabilities", "profiles", "load_errors", "available"] },
+    { requiredKeys: ["profile", "rules", "writable_scopes", "capabilities", "profiles", "load_errors", "available", "profile_saved"] },
   ),
   PollResult: fc.record(
     {

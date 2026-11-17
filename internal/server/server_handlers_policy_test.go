@@ -168,6 +168,20 @@ func TestPolicyViewLive(t *testing.T) {
 	}
 }
 
+// The Settings picker shows the default checked on a fresh config; profile_saved is what lets a click on it save it.
+func TestPolicyView_ReportsWhetherTheProfileIsSaved(t *testing.T) {
+	s, _, _, _ := profileFixture(t, nil)
+	if view, _ := getPolicyView(t, s); view.Profile != policyfile.ProfileDelegated || view.ProfileSaved {
+		t.Errorf("fresh config: profile %q saved %v, want delegated unsaved", view.Profile, view.ProfileSaved)
+	}
+	if rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileDelegated}); rec.Code != http.StatusOK {
+		t.Fatalf("select: status = %d, body %s", rec.Code, rec.Body)
+	}
+	if view, _ := getPolicyView(t, s); view.Profile != policyfile.ProfileDelegated || !view.ProfileSaved {
+		t.Errorf("after saving delegated: profile %q saved %v, want delegated saved", view.Profile, view.ProfileSaved)
+	}
+}
+
 func TestPolicyViewFileFallback(t *testing.T) {
 	home := t.TempDir()
 	work := t.TempDir()

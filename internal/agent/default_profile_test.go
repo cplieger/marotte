@@ -8,6 +8,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/policyfile"
+	"github.com/cplieger/marotte/internal/securityprofile"
 	"github.com/cplieger/marotte/internal/trigger"
 )
 
@@ -72,6 +73,18 @@ func TestParentlessRun_OpensOnTrustedUnlessAProfileIsSaved(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Saving the default profile it already shows moves parentless runs onto it, since an unset value runs on Trusted.
+func TestParentlessRun_FollowsASavedApproveForMe(t *testing.T) {
+	h, _ := parentlessFixture(t, "")
+	store := &securityprofile.Store{ConfigDir: h.lifecycle.configDir}
+	if err := store.Select(t.Context(), policyfile.ProfileDelegated); err != nil {
+		t.Fatalf("Select: %v", err)
+	}
+	if got, want := h.readSessionSettings(t.Context()).RunPresets, profilePresets(t, policyfile.ProfileDelegated); !slices.Equal(got, want) {
+		t.Errorf("run presets after saving delegated = %v, want %v", got, want)
 	}
 }
 

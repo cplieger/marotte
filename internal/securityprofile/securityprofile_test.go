@@ -327,3 +327,29 @@ func TestActive_IsApproveForMeUntilAProfileIsSaved(t *testing.T) {
 		t.Errorf("Active after saving trusted = %q, want %q", got, policyfile.ProfileTrusted)
 	}
 }
+
+// Choice is saved only while config.json names a profile, so a picker can tell the default it shows from a saved
+// pick of the same profile.
+func TestChoice_IsSavedOnlyWhileConfigNamesAProfile(t *testing.T) {
+	s := &Store{ConfigDir: t.TempDir()}
+	for _, tc := range []struct {
+		name, stored, want string
+		saved              bool
+	}{
+		{"a_fresh_config", "", policyfile.ProfileDelegated, false},
+		{"an_unknown_value", "no-such-profile", policyfile.ProfileDelegated, false},
+		{"a_saved_approve_for_me", policyfile.ProfileDelegated, policyfile.ProfileDelegated, true},
+		{"a_saved_trusted", policyfile.ProfileTrusted, policyfile.ProfileTrusted, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.stored != "" {
+				if err := s.Select(t.Context(), tc.stored); err != nil {
+					t.Fatalf("Select: %v", err)
+				}
+			}
+			if id, saved := s.Choice(t.Context()); id != tc.want || saved != tc.saved {
+				t.Errorf("Choice = (%q, %v), want (%q, %v)", id, saved, tc.want, tc.saved)
+			}
+		})
+	}
+}
