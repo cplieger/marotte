@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -171,4 +173,75 @@ func TestDelete_DropsAParentlessRunsHostRecord(t *testing.T) {
 func dirExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// A retry records no host: a chat-launched run retried once over a complete scan after its launcher was deleted is
+// still refused 503 when a later retry cannot read a chat, since a chat may have resumed its session since.
+func TestRetry_ARetriedChatLaunchedRunIsStillRefusedWhileAChatFileIsUnreadable(t *testing.T) {
+	h, cs, br := newTestHub(WithConfigDir(t.TempDir()))
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowRetry: json.RawMessage(`{}`),
+		methodKiroWorkflowList:  failedRunList("wf_1", "sess_c9"),
+	}
+	if _, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "failed"})); err != nil {
+		t.Fatalf("Setup: Retry with the launcher deleted = %v", err)
+	}
+	h.runs.observeComplete(t.Context(), runChatID("wf_1"), runCompleteFrame(t, "wf_1", "failed"))
+	if _, held := h.runs.lease("wf_1"); held {
+		t.Fatal("Setup: the failed retry still holds its lease")
+	}
+	unreadableChat(t, cs, "c9")
+
+	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "failed"}))
+	if code, _, _ := command.StatusOf(err); code != http.StatusServiceUnavailable || !errors.Is(err, errRetryChatUnread) {
+		t.Fatalf("Second retry with a chat unreadable = %v (status %d), want 503 errRetryChatUnread", err, code)
+	}
+	if n := countCalls(br, methodKiroWorkflowRetry); n != 1 {
+		t.Errorf("the retry verb was sent %d times, want once: the refused retry reached KAS", n)
+	}
+}
+
+// Reattributing an unattributed parentless run over an incomplete scan keeps no unread chat and clears its mark.
+func TestReattributeRuns_AParentlessRunKeepsNoUnreadChat(t *testing.T) {
+	h, cs, br := newTestHub(WithConfigDir(t.TempDir()))
+	t.Cleanup(func() { shutdownHub(t, h) })
+	launchableRecipe(br, "wf_1")
+	if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
+		t.Fatalf("Setup: Launch = %v", err)
+	}
+	if err := h.runs.leaseStore().SetUnattributed(t.Context(), "wf_1", true); err != nil {
+		t.Fatalf("Setup: SetUnattributed = %v", err)
+	}
+	unreadableChat(t, cs, "c9")
+
+	h.runs.reattributeRuns(t.Context())
+
+	l, _ := h.runs.lease("wf_1")
+	if slices.Contains(l.KeepChats, "c9") {
+		t.Errorf("KeepChats = %v: the unreadable chat is kept for a run it cannot have launched", l.KeepChats)
+	}
+	if l.Unattributed {
+		t.Error("the reattributed run still carries its unattributed mark")
+	}
+}
+
+// A parentless run's run_start over an unlistable chats directory is attributed: no chat can own its host session.
+func TestObserveStart_AParentlessRunIsAttributedWhenTheChatsDirectoryIsUnlistable(t *testing.T) {
+	h, cs, br := newTestHub(WithConfigDir(t.TempDir()))
+	t.Cleanup(func() { shutdownHub(t, h) })
+	launchableRecipe(br, "wf_1")
+	if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
+		t.Fatalf("Setup: Launch = %v", err)
+	}
+	l, _ := h.runs.lease("wf_1")
+	cs.ownerScan = func(context.Context, chat.OwnerScan) chat.OwnerScan { return chat.OwnerScan{} }
+
+	h.runs.observeStart(t.Context(), runChatID("wf_1"), runNotif(methodWFRunStart, map[string]any{
+		"workflowId": "wf_1", "workflowName": "publish", "parentSessionId": l.ParentSessionID,
+	}))
+
+	if l, _ = h.runs.lease("wf_1"); l.Unattributed {
+		t.Error("a parentless run carries an unattributed mark for a chats directory that could not be listed")
+	}
 }

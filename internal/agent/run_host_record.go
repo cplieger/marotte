@@ -60,8 +60,8 @@ func (rs *Runs) recordHost(ctx context.Context, workflowID, session string) {
 
 // parentlessHost reports whether session is the host session marotte opened for workflowID's parentless launch, which
 // no chat launched: an owner scan that could not read every chat hides no launcher of it. This record, not the lease,
-// is the signal: a parentless run always names a parent session (its host), and its terminal frame releases its lease
-// before anyone can retry it.
+// is the signal: a parentless run always names a parent session (its host), and observeComplete releases its lease on
+// the terminal frame, so a failed run usually has no lease left to consult.
 func (rs *Runs) parentlessHost(ctx context.Context, workflowID, session string) bool {
 	return rs.log != nil && ids.ValidSessionID(session) && rs.log.hostSession(ctx, workflowID) == session
 }
