@@ -23,6 +23,7 @@ import (
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/keyedrate"
 	"github.com/cplieger/marotte/internal/kirosession"
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/liveness"
@@ -309,6 +310,10 @@ type Runtime struct {
 	// tabs is the open-tab set and the membership coordinator; nil without a store (unavailable). Held only for retention.
 	tabs       *tabs.Store
 	membership *command.Membership
+	// rules is the rule engine (SetRuleEngine); nil before composition wires it.
+	rules ruleEngine `wiring:"optional"`
+	// ruleTests is Test this rule's per-Bot rate limit.
+	ruleTests *keyedrate.Limiter
 
 	// specApprovals is the spec-phase approval record; nil means unavailable.
 	specApprovals *specapproval.Store
@@ -494,6 +499,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		digestSlots:    newDigestSemaphore(digestConcurrency),
 		chatHandlers:   make(map[string]chatHandler),
 		noopMethods:    make(map[string]struct{}),
+		ruleTests:      keyedrate.New(keyedrate.Config{Burst: ruleTestsPerMinute, Every: time.Minute / ruleTestsPerMinute}),
 	}
 	// Options may write the run surface's two stores, so they run after it exists.
 	for _, o := range opts {

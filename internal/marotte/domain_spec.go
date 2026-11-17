@@ -15,9 +15,9 @@ const (
 	SpecDocRoleOther        SpecDocRole = "other"
 )
 
-// Spec is the answer to GET /api/specs/{dir}: one spec directory and its
+// SpecDir is the answer to GET /api/specs/{dir}: one spec directory and its
 // markdown documents in display order.
-type Spec struct {
+type SpecDir struct {
 	// UpdatedAt is the newest mtime across the documents.
 	UpdatedAt time.Time `json:"updated_at"`
 	// Approvals is the human sign-off per phase, keyed by SpecDocRole. Absent

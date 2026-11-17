@@ -512,7 +512,7 @@ func TestHeaderWriters_PreserveKeepState(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := readChat(t, s, "c1")
-	if err := s.header("c1").Counters(t.Context(), 7, marotte.TurnOutcome("completed")); err != nil {
+	if err := s.header("c1").Counters(t.Context(), TurnCounters{N: 7, Last: marotte.TurnOutcome("completed"), EndedAt: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "x"; return true }); err != nil {

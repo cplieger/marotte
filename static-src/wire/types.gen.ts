@@ -2,11 +2,17 @@
 
 export type AlwaysAllowBlock = "unparseable";
 
+export type AtDays = "daily" | "weekdays" | "monthly";
+
+export type BotEngineState = "write_failing";
+
 export type BotState = "draft" | "active" | "paused" | "closed";
 
 export type CatalogReason = "rpc" | "decode";
 
 export type CatalogState = "ready" | "empty" | "unavailable";
+
+export type CondOp = "not" | "all" | "any";
 
 export type ContentKind = "text" | "binary" | "not_utf8" | "too_large";
 
@@ -24,11 +30,15 @@ export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_fail
 
 export type FailureKind = "context_limit" | "model_call_limit" | "empty_answer" | "sign_in" | "sign_in_unreachable" | "api_key_refused";
 
+export type FieldOp = "is" | "one_of" | "contains" | "starts_with" | "matches" | "above" | "below" | "is_set";
+
 export type FileMatchKind = "content" | "name" | "dir";
 
 export type ForgeKind = "github" | "gitlab" | "gitea" | "codeberg";
 
 export type ForgeStatus = "connected" | "retrying" | "refused" | "reconnect" | "unusable";
+
+export type HoldPolicy = "fifo" | "newest";
 
 export type InterruptMode = "steer" | "queue";
 
@@ -37,6 +47,8 @@ export type ItemKind = "header" | "message" | "reasoning" | "tool" | "steer" | "
 export type KnowledgeIndexingPhase = "started" | "completed";
 
 export type KnowledgeIndexingStatus = "success" | "failed";
+
+export type LeafKind = "event_field" | "triggered_by" | "time_window" | "bot_busy" | "bot_waiting" | "rule_last_ran";
 
 export type LoadedType = "mcp" | "tool" | "skill" | "steering" | "overview" | "unknown";
 
@@ -67,6 +79,14 @@ export type RefusalCode = "changed" | "too_large" | "binary" | "invalid_file_id"
 export type RegistryFailureReason = "rate_limited" | "rejected" | "unavailable";
 
 export type RejectionNote = "reason" | "plan_edits";
+
+export type RuleAnchor = "last" | "idle";
+
+export type RuleTestOutcome = "fire" | "skip";
+
+export type RuleTestValue = "true" | "false" | "unknown";
+
+export type RuleWaitReason = "bot_busy" | "gap" | "hour" | "day" | "bot" | "not_ready";
 
 export type RunAskBlocker = "stopping" | "pending" | "branch_running" | "unsettled" | "settling";
 
@@ -139,6 +159,8 @@ export type ToolKind = "execute" | "shell" | "read" | "search" | "fetch" | "edit
 export type ToolStatus = "pending" | "in_progress" | "completed" | "failed" | "aborted";
 
 export type Transport = "stdio" | "http" | "sse" | "registry";
+
+export type TriggerKind = "every" | "at";
 
 export type TurnOpenSourceName = "prompt" | "wire_turn_start" | "empty_retry" | "event" | "revert" | "workflow_step";
 
@@ -275,6 +297,17 @@ export interface AptPackage {
   version?: string;
 }
 
+/** AtTrigger is due at Time, local to the server, on the days Days names. */
+export interface AtTrigger {
+  days: AtDays;
+  /** Time is HH:MM. */
+  time: string;
+  /** Weekdays are time.Weekday values (0 is Sunday), read only for DaysWeekdays. */
+  weekdays?: number[];
+  /** MonthDay is 1 to 31 or MonthDayLast, read only for DaysMonthly; a day past a month's end is its last day. */
+  month_day?: number;
+}
+
 /**
  * Attachment is a file staged beside a prompt; its extension decides whether it
  * travels as a document content block or as a text path reference.
@@ -293,6 +326,8 @@ export interface Bot {
   goal: string;
   /** Steering is the user's custom steering for the Bot, markdown. */
   steering?: string;
+  /** Rules are the Bot's rules in the user's order, each its spec beside the engine's status. */
+  rules?: Rule[];
   /** StartedAt is the unix ms of the first start; 0 is a draft. */
   started_at?: number;
   /** ClosedAt is the unix ms the Bot's tab was closed; 0 while it is open. */
@@ -302,8 +337,19 @@ export interface Bot {
    * write reuses a version an earlier one published; a save sends it back as its base_version.
    */
   spec_version: number;
+  /** RulesVersion moves with every write of a rule's spec or status, so a reader of the header sees either change. */
+  rules_version?: number;
   memory: boolean;
   paused?: boolean;
+}
+
+/** BotEngine is the rule engine's in-memory facts on one Bot, times in unix ms. */
+export interface BotEngine {
+  state?: BotEngineState;
+  /** Since is when the write fault began; set with State. */
+  since?: number;
+  /** CeilingUntil is when the Bot falls back under its hourly ceiling, while a prompt waits on it. */
+  ceiling_until?: number;
 }
 
 /** BotMemoryStat is the memory file's size and last write, both 0 before the file exists. */
@@ -329,20 +375,54 @@ export interface BotSetup {
   /** Model and Effort are Chat.NextModel and Chat.NextEffort, the pick a bot_save sending them back leaves as it is. */
   model: string;
   effort: string;
+  /** Engine is what the rule engine holds on the Bot only in memory; {} when it holds nothing. */
+  engine: BotEngine;
   supervised: boolean;
 }
 
-/** BotSummary is the Bot's part of ChatHeader: its facts a reader needs without loading the record. */
+/**
+ * BotSummary is the Bot's part of ChatHeader: its facts a reader needs without loading the record. The times are
+ * unix ms due times as the record places them, already past for an overdue trigger; they are set only for an active
+ * Bot's armed triggers.
+ */
 export interface BotSummary {
   state: BotState;
+  /** NextRule names the rule of NextAt, NextTimedRule of NextTimedAt, IdleRule of IdleMinutes. */
+  next_rule?: string;
+  next_timed_rule?: string;
+  idle_rule?: string;
+  attention?: string;
+  /** NextAt is the earliest due time over every armed time trigger. */
+  next_at?: number;
+  /** NextTimedAt is the same over the triggers a live turn does not postpone: every from the last evaluation, at. */
+  next_timed_at?: number;
+  /**
+   * IdleMinutes is the shortest interval over the armed triggers counted from a turn's end (the first in rule order
+   * on a tie); 0 when there is none.
+   */
+  idle_minutes: number;
+  /** Rules counts the enabled rules. */
+  rules: number;
+  rules_version: number;
+}
+
+/** ByLeaf is true when the evaluated event came from one of Triggers. It only leads a branch of the flow. */
+export interface ByLeaf {
+  triggers: string[];
 }
 
 /**
- * Caller marks a message a program sent through marotte's API rather than one the user typed in its page; a message
- * with no Caller is the user's own. Label is the name the program gave itself, "" when it gave none.
+ * Caller marks a message a program sent through marotte's API, or a Bot's rule sent, rather than one the user typed
+ * in its page; a message with no Caller is the user's own. Label is the name the sender gave itself, "" when it gave
+ * none.
  */
 export interface Caller {
+  kind?: string;
   label?: string;
+  rule?: string;
+  event?: string;
+  /** Depth is the rule event's chain depth, 1 when no automatic turn caused it. */
+  depth?: number;
 }
 
 /**
@@ -1680,6 +1760,23 @@ export interface ErrorPayload {
   turn_scoped?: boolean;
 }
 
+/** EventLeaf compares one field of the event being evaluated. */
+export interface EventLeaf {
+  field: string;
+  op: FieldOp;
+  /** Value is the operand of every operator but one_of, which reads Values, and is_set, which reads neither. */
+  value?: string;
+  /** Trigger scopes the leaf to one trigger's events: for any other trigger it is true unevaluated, whatever Not says. */
+  trigger?: string;
+  values?: string[];
+}
+
+/** EveryTrigger is due Minutes after its anchor. */
+export interface EveryTrigger {
+  anchor?: RuleAnchor;
+  minutes: number;
+}
+
 /**
  * FieldFill is why an inventory row holds the value it does for one field its
  * family's list does not carry.
@@ -2256,6 +2353,11 @@ export interface LabelList {
   successor?: RepoSuccessor;
   next?: string;
   labels: Label[];
+}
+
+/** LastRanLeaf is true when the rule last fired more than Minutes ago, or never fired. */
+export interface LastRanLeaf {
+  minutes: number;
 }
 
 /**
@@ -3307,6 +3409,236 @@ export interface ResumableSession {
   bot?: boolean;
 }
 
+/** Rule is one rule of a Bot, in the user's order in Bot.Rules. */
+export interface Rule {
+  id: string;
+  spec: RuleSpec;
+  status: RuleStatus;
+}
+
+/** Bounds are a rule's and a condition's bounds. */
+export interface RuleBounds {
+  max_rules: number;
+  max_triggers: number;
+  max_name_runes: number;
+  max_prompt_bytes: number;
+  max_leaves: number;
+  max_group_depth: number;
+  max_group_children: number;
+  max_one_of_values: number;
+  max_value_bytes: number;
+}
+
+/**
+ * Catalog is what the editor may offer and the words it says them in, generated from the tables Validate reads, so
+ * the client mirrors no bound or phrase by hand. A phrase is a template whose {name} placeholders the client fills
+ * from the item's fields: {minutes} as a duration ("1 h 30 min"), {time}, {from} and {to} as HH:MM, {weekdays} as
+ * an at trigger's recurrence ("weekdays", "Mondays", "on Tue to Thu", "every day"), {days} as a time window's set
+ * ("on Mon to Fri", "on Sun", "every day"), {month_day} as "the 15th" or "the last day", {values} joined with ", ",
+ * and {op} as the operator's phrase.
+ */
+export interface RuleCatalog {
+  words: RuleWords;
+  kinds: RuleKindEntry[];
+  leaves: RuleLeafEntry[];
+  ops: RuleOpEntry[];
+  /** Common names the fields every event carries. */
+  common_fields: string[];
+  limits: RuleLimitBounds;
+  rule: RuleBounds;
+}
+
+/** Cond is a group or a leaf: exactly one of Op and Leaf is set. */
+export interface RuleCond {
+  leaf?: RuleLeaf;
+  op?: CondOp;
+  children?: RuleCond[];
+}
+
+/** DayCount is a trigger's deliveries on one local calendar day. */
+export interface RuleDayCount {
+  date: string;
+  n: number;
+}
+
+/** KindEntry is one trigger kind the editor offers. */
+export interface RuleKindEntry {
+  /** Phrases are the kind's summary templates by variant: an every trigger's anchor, an at trigger's days. */
+  phrases: { [key: string]: string };
+  kind: TriggerKind;
+  group: string;
+  label: string;
+  /** Sample is an event of the kind, for Test this rule: a JSON object of its fields by name. */
+  sample: unknown;
+  /** Fields are the kind's own event fields beside Common; Lists are those holding a list of strings. */
+  fields: string[];
+  lists?: string[];
+  params: RuleParam[];
+  /** Time marks a kind that paces itself and carries no limits. */
+  time: boolean;
+}
+
+/** Leaf is one item of a condition. Its payload field matches Kind; bot_busy and bot_waiting carry none. */
+export interface RuleLeaf {
+  event?: EventLeaf;
+  time?: TimeLeaf;
+  rule?: LastRanLeaf;
+  by?: ByLeaf;
+  kind: LeafKind;
+  /** Not is the leaf's negative operator: it negates the evaluated result, and unknown stays unknown. */
+  not?: boolean;
+}
+
+/**
+ * LeafEntry is one state item the editor offers. Its phrases are keyed "is" (the leaf as written), "not" (its
+ * negative), and where the leaf has one, "never" (a rule_last_ran on a rule that never fired) or "unknown".
+ */
+export interface RuleLeafEntry {
+  phrases: { [key: string]: string };
+  kind: LeafKind;
+  group: string;
+  params: RuleParam[];
+}
+
+/** LimitBounds are an event trigger's limits and the constant paces beside them. */
+export interface RuleLimitBounds {
+  holds: HoldPolicy[];
+  min_per_hour: number;
+  max_per_hour: number;
+  default_per_hour: number;
+  max_per_day: number;
+  min_hold_cap: number;
+  max_hold_cap: number;
+  default_hold_cap: number;
+  gap_minutes: number;
+  bot_max_per_hour: number;
+}
+
+/** Mark is one evaluation or delivery the rule's card shows. */
+export interface RuleMark {
+  trigger: string;
+  event_id: string;
+  summary: string;
+  reason?: string;
+  at: number;
+}
+
+/** OpEntry is one event field operator with its positive and negative phrases. */
+export interface RuleOpEntry {
+  op: FieldOp;
+  phrase: string;
+  negative: string;
+  /** Value says the operator reads a value; one_of reads values and is_set reads none. */
+  value: boolean;
+  /** List says the operator applies to a list field. */
+  list: boolean;
+}
+
+/**
+ * Param is one field of a kind or a leaf with its bounds: a number in Min to Max, one of Choices, or one of the
+ * named numbers in Named (an at trigger's month_day "last").
+ */
+export interface RuleParam {
+  named?: { [key: string]: number };
+  name: string;
+  choices?: string[];
+  min?: number;
+  max?: number;
+}
+
+/** QueuedEvent is an event received and not yet evaluated, or fired and not yet delivered. */
+export interface RuleQueuedEvent {
+  stage: string;
+  trigger: string;
+  event_id: string;
+  /** MessageID is the prompt Notify queued behind a turn, set with Queued. */
+  message_id?: string;
+  /**
+   * Data is the event as NewEvent bounds it, read back by DecodeEvent: at most 12 KiB with a webhook's
+   * condition copy.
+   */
+  data: unknown;
+  seen_at: number;
+  fired_at?: number;
+  depth: number;
+  tries: number;
+  /** Queued marks a fired event whose prompt waits on the chat's run order; it stays until its turn opens. */
+  queued?: boolean;
+}
+
+/** Spec is the user's part of a rule, what the editor sends. */
+export interface RuleSpec {
+  /** Condition is nil when the rule has none: every evaluation fires. */
+  condition?: RuleCond;
+  name: string;
+  prompt: string;
+  triggers: RuleTrigger[];
+  enabled: boolean;
+}
+
+/** Status is the engine's part of a rule, written only by the engine and never accepted from a client. */
+export interface RuleStatus {
+  last_fire?: RuleMark;
+  last_skip?: RuleMark;
+  last_failure?: RuleMark;
+  triggers?: { [key: string]: TriggerState };
+  /** Sent is the rule's delivery times (unix ms) in the last hour, for its 1-minute gap and the Bot ceiling. */
+  sent?: number[];
+  /** Recent is the last event ids the rule evaluated, newest last. */
+  recent?: string[];
+  queue?: RuleQueuedEvent[];
+  /** Dropped counts events a cap, a replacement, a pause or a close dropped since the last delivery. */
+  dropped?: number;
+}
+
+/** RuleTestAnswer is POST /api/bots/{id}/rules/test: what the rule would do with one event, sending nothing. */
+export interface RuleTestAnswer {
+  outcome: RuleTestOutcome;
+  /** Reason is the skip reason; empty on fire. */
+  reason?: string;
+  /** Text is the exact prompt the Bot would receive. */
+  text: string;
+  /** Leaves are the condition's items in tree order, each named by its JSON path in the spec. */
+  leaves: RuleTestLeaf[];
+  /** Wait is what would hold a fired prompt back; zero when it would send now, or on skip. */
+  wait: RuleTestWait;
+}
+
+/** RuleTestLeaf is one condition item's value, its path the spec's ("condition.children[1]"). */
+export interface RuleTestLeaf {
+  path: string;
+  value: RuleTestValue;
+}
+
+/** RuleTestWait is a hold and, for a pace, when it ends in unix ms. */
+export interface RuleTestWait {
+  reason?: RuleWaitReason;
+  until?: number;
+}
+
+/** Trigger is one event source of a rule. Exactly the payload field its Kind names is set. */
+export interface RuleTrigger {
+  /** Limits is required on every kind but the time kinds, which pace themselves and refuse it. */
+  limits?: TriggerLimits;
+  every?: EveryTrigger;
+  at?: AtTrigger;
+  id: string;
+  kind: TriggerKind;
+}
+
+/** Words are the words the placeholders are formatted with. */
+export interface RuleWords {
+  minute: string;
+  hour: string;
+  day: string;
+  weekdays: string;
+  every_day: string;
+  last_day: string;
+  /** Days and DaysPlural are indexed by time.Weekday: "Sun" and "Sundays" first. */
+  days: string[];
+  days_plural: string[];
+}
+
 /** RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step. Empty Text is a 400. */
 export interface RunAnswerRequest {
   ask_id: string;
@@ -4118,31 +4450,6 @@ export interface SlashCommandsResponse {
 }
 
 /**
- * Spec is the answer to GET /api/specs/{dir}: one spec directory and its
- * markdown documents in display order.
- */
-export interface Spec {
-  /** UpdatedAt is the newest mtime across the documents. */
-  updated_at: string;
-  /**
-   * Approvals is the human sign-off per phase, keyed by SpecDocRole. Absent
-   * for a phase nobody approved; a MAP rather than a slice because a phase is
-   * a key and every reader looks one up by it — the ETag digests the entries
-   * in a fixed order and the client indexes by the segment's role.
-   */
-  approvals?: { [key: string]: SpecApproval };
-  /**
-   * Dir is the workspace-relative directory, ".kiro/specs/<name>" or
-   * "<repo>/.kiro/specs/<name>", and is the spec tab's Ref.
-   */
-  dir: string;
-  /** Name is the directory's last segment. */
-  name: string;
-  /** Docs is an ordered list, never a fixed trio. */
-  docs: SpecDoc[];
-}
-
-/**
  * SpecApproval records that a human approved one phase of a spec, against the
  * exact text they approved.
  *
@@ -4190,6 +4497,31 @@ export interface SpecApprovedPayload {
  */
 export interface SpecChangedPayload {
   dir: string;
+}
+
+/**
+ * SpecDir is the answer to GET /api/specs/{dir}: one spec directory and its
+ * markdown documents in display order.
+ */
+export interface SpecDir {
+  /** UpdatedAt is the newest mtime across the documents. */
+  updated_at: string;
+  /**
+   * Approvals is the human sign-off per phase, keyed by SpecDocRole. Absent
+   * for a phase nobody approved; a MAP rather than a slice because a phase is
+   * a key and every reader looks one up by it — the ETag digests the entries
+   * in a fixed order and the client indexes by the segment's role.
+   */
+  approvals?: { [key: string]: SpecApproval };
+  /**
+   * Dir is the workspace-relative directory, ".kiro/specs/<name>" or
+   * "<repo>/.kiro/specs/<name>", and is the spec tab's Ref.
+   */
+  dir: string;
+  /** Name is the directory's last segment. */
+  name: string;
+  /** Docs is an ordered list, never a fixed trio. */
+  docs: SpecDoc[];
 }
 
 /**
@@ -4572,6 +4904,13 @@ export interface TextSpan {
   attrs: number;
 }
 
+/** TimeLeaf is true between From and To, local to the server, on Weekdays; a To before From wraps past midnight. */
+export interface TimeLeaf {
+  from: string;
+  to: string;
+  weekdays: number[];
+}
+
 /**
  * ToolCall is a tool invocation inside an assistant message. Each can be updated
  * in place as status changes (pending → in_progress → completed/failed/aborted).
@@ -4952,6 +5291,32 @@ export interface ToolTruncation {
    */
   diff_bytes?: number;
   diff_count?: number;
+}
+
+/** TriggerLimits paces one trigger's deliveries; an event over a limit waits, it is never skipped. */
+export interface TriggerLimits {
+  hold: HoldPolicy;
+  /** MaxPerHour counts this trigger's deliveries over a rolling hour. */
+  max_per_hour: number;
+  /** MaxPerDay counts them over the server's local calendar day; 0 is no daily cap. */
+  max_per_day?: number;
+  /** HoldCap counts this trigger's waiting events, stages new and fired together. */
+  hold_cap: number;
+}
+
+/** TriggerState is one trigger's memory across restarts. */
+export interface TriggerState {
+  day?: RuleDayCount;
+  /** Cursor is the source's own state, at most 16 KiB. */
+  cursor?: unknown;
+  /** LastEvent is the last real event's stored data, as QueuedEvent.Data. */
+  last_event?: unknown;
+  /** Sent is this trigger's delivery times (unix ms) in the last hour, at most MaxPerHour. */
+  sent?: number[];
+  /** ArmedAt is the instant this trigger was last armed, strictly increasing: the trigger's generation. */
+  armed_at: number;
+  /** LastAt is this trigger's last event; for a time trigger the instant of its last evaluation, never a due time. */
+  last_at?: number;
 }
 
 /**

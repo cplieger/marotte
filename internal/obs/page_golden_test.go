@@ -83,6 +83,11 @@ func TestMetricsPage_GoldenChild(t *testing.T) {
 	Schedule("rule-a", 2, due)
 	ScheduleBlocked("rule-b", due.Add(-time.Hour))
 	TriggerRule("rule-c", &TriggerRuleState{UnnamedRun: true, QueueFull: true, PollFailures: 4, CatchUpGaps: 1})
+	RuleEvaluated("every", RuleFired)
+	RuleEvaluated("manual", RuleSkipped)
+	RuleDelivery(RuleDeliveryRetry)
+	RuleQueueEvents(3)
+	RuleEngineWriteFailing(true)
 	stage("recorded")
 
 	EngineMemory(4<<20, 0)
@@ -94,6 +99,8 @@ func TestMetricsPage_GoldenChild(t *testing.T) {
 	TriggerRuleGone("rule-c")
 	EngineMemoryGone()
 	EngineUp(false)
+	RuleQueueEvents(0)
+	RuleEngineWriteFailing(false)
 	stage("gone")
 
 	if err := os.WriteFile(out, []byte(page.String()), 0o600); err != nil {

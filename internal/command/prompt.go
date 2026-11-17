@@ -343,7 +343,7 @@ func cmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComma
 	p.Caller = cmd.From
 	// Before the submit: a prompt into an idle chat starts a turn, whose tab must exist first. The prompt's intent
 	// begins at the stamp: a close that commits after it ends the prompt wherever it waits.
-	stamp, err := roles.door.BeginMessage(ctx, cmd.ChatID, cmd.From != nil, roles.admission.LifeStamp)
+	stamp, err := roles.door.BeginMessage(ctx, cmd.ChatID, cmd.From, roles.admission.LifeStamp)
 	if err != nil {
 		return nil, err
 	}

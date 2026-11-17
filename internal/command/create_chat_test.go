@@ -199,7 +199,7 @@ func TestCmdCreateChat_Refusals(t *testing.T) {
 // reserve and mint happen under ONE lock, so an overlapping repeat cannot mint a
 // second id.
 func TestCreateLedger_ResolvesOncePerOp(t *testing.T) {
-	l := newCreateLedger()
+	l := newOpLedger[marotte.ChatID]()
 	mints := 0
 	mint := func() marotte.ChatID {
 		mints++
@@ -228,12 +228,12 @@ func TestCreateLedger_ResolvesOncePerOp(t *testing.T) {
 // sleep: the real value is ten minutes.
 func TestCreateLedger_ExpiresAndBounds(t *testing.T) {
 	t.Run("an op past its TTL mints again", func(t *testing.T) {
-		l := newCreateLedger()
+		l := newOpLedger[marotte.ChatID]()
 		now := time.Now()
 		l.now = func() time.Time { return now }
 
 		first, _ := l.resolve("op-a", marotte.NewChatID)
-		now = now.Add(createOpTTL + time.Second)
+		now = now.Add(opTTL + time.Second)
 		second, replay := l.resolve("op-a", marotte.NewChatID)
 
 		if replay {
@@ -245,7 +245,7 @@ func TestCreateLedger_ExpiresAndBounds(t *testing.T) {
 	})
 
 	t.Run("the map stays under its cap", func(t *testing.T) {
-		l := newCreateLedger()
+		l := newOpLedger[marotte.ChatID]()
 		l.maxN = 8
 		for i := range 200 {
 			l.resolve("op-"+string(rune('a'+i%26))+string(rune('a'+i/26)), marotte.NewChatID)
@@ -260,7 +260,7 @@ func TestCreateLedger_ExpiresAndBounds(t *testing.T) {
 	})
 
 	t.Run("an empty op is never recorded", func(t *testing.T) {
-		l := newCreateLedger()
+		l := newOpLedger[marotte.ChatID]()
 		first, replay := l.resolve("", marotte.NewChatID)
 		second, _ := l.resolve("", marotte.NewChatID)
 

@@ -201,13 +201,15 @@ type Membership struct {
 	runs runOwner
 	// retentionWake asks the purge scheduler for a pass now; nil leaves its timer.
 	retentionWake func()
+	// rules is the rule engine's index (SetRuleIndex); nil tells nobody.
+	rules RuleIndex
 	// supervisedDefault reads the workspace-wide Supervised default a fresh
 	// record is seeded from. Nil reads as false — see supervisedDefaultValue.
 	supervisedDefault func(context.Context) bool
 	// ops is the create ledger, op_id -> chat id, so a retry resolves to the chat
 	// its first attempt made. Here rather than in the handlers because resolving
 	// an op and reserving a tab slot must happen in the same critical section.
-	ops *createLedger
+	ops *opLedger[marotte.ChatID]
 	// sessions is the fresh session-chain read AdmitRunPurge decides on. Nil spares
 	// every run that names a parent session.
 	sessions sessionClaims
@@ -272,7 +274,7 @@ func newMembership(deps *membershipDeps) *Membership {
 		runs:              deps.Runs,
 		sessions:          deps.Sessions,
 		supervisedDefault: deps.SupervisedDefault,
-		ops:               newCreateLedger(),
+		ops:               newOpLedger[marotte.ChatID](),
 		purgingRuns:       map[string]struct{}{},
 		purgingSessions:   map[string]int{},
 		recentWake:        make(chan struct{}, 1),
@@ -535,12 +537,12 @@ func (m *Membership) openChatTabUnderMu(ctx context.Context, spec marotte.OpenTa
 	return opened, err
 }
 
-// ReopenForMessage opens chatID's tab, owning and top level, when a message from an outside caller reaches a chat
-// with none; a chat with a tab costs one lookup and writes nothing. It never refuses the message: at MaxOpenTabs the
-// open is skipped at Info, a gone or tearing-down chat is left to the prompt's own refusal, and any other failure is
-// logged at Warn.
-func (m *Membership) ReopenForMessage(ctx context.Context, chatID marotte.ChatID) {
-	if m.tabs == nil {
+// ReopenForMessage opens chatID's tab, owning and top level, when a message from an outside caller, from, reaches a
+// chat with none; a chat with a tab costs one lookup and writes nothing. A rule's message reopens nothing: a Bot the
+// user closed stays closed. It never refuses the message: at MaxOpenTabs the open is skipped at Info, a gone or
+// tearing-down chat is left to the prompt's own refusal, and any other failure is logged at Warn.
+func (m *Membership) ReopenForMessage(ctx context.Context, chatID marotte.ChatID, from *marotte.Caller) {
+	if m.tabs == nil || !reopensFor(from) {
 		return
 	}
 	m.mu.Lock()
@@ -548,14 +550,16 @@ func (m *Membership) ReopenForMessage(ctx context.Context, chatID marotte.ChatID
 	m.reopenUnderMu(ctx, chatID)
 }
 
-// BeginMessage answers stamp(), the life stamp a message into chatID presents to its submit, where its intent
-// begins: a close that commits after it ends the message. reopen first opens the chat's tab (ReopenForMessage), for
-// an outside caller's message, in the same hold of mu. A Bot is checked and stamped in one hold, so a Bot left with
-// no tab, by a close that committed first or a reopen that opened none, refuses with 409 chat_closed: no turn runs
-// in a closed Bot.
-func (m *Membership) BeginMessage(ctx context.Context, chatID marotte.ChatID, reopen bool, stamp func() uint64) (uint64, error) {
+// BeginMessage answers stamp(), the life stamp a message from from (nil for a page's) into chatID presents to its
+// submit, where its intent begins: a close that commits after it ends the message. An outside caller's message first
+// opens the chat's tab (ReopenForMessage) in the same hold of mu. A Bot is checked and stamped in one hold, so a Bot
+// left with no tab, by a close that committed first or a reopen that opened none, refuses with 409 chat_closed: no
+// turn runs in a closed Bot. A rule's message into a Bot with no tab or with closed_at set refuses with 409
+// bot_closed, which tells the rule engine to drop the event, and opens or writes nothing.
+func (m *Membership) BeginMessage(ctx context.Context, chatID marotte.ChatID, from *marotte.Caller, stamp func() uint64) (uint64, error) {
 	c, ok := m.chats.Get(ctx, chatID)
 	bot := ok && c.Bot != nil
+	reopen := from != nil && reopensFor(from)
 	if m.tabs == nil || (!reopen && !bot) {
 		return stamp(), nil
 	}
@@ -564,10 +568,29 @@ func (m *Membership) BeginMessage(ctx context.Context, chatID marotte.ChatID, re
 	if reopen {
 		m.reopenUnderMu(ctx, chatID)
 	}
-	if bot && m.tabForChat(chatID) == "" {
+	shown := m.tabForChat(chatID) != ""
+	if bot && !reopensFor(from) {
+		if c, ok = m.chats.Get(ctx, chatID); !shown || !ok || c.Bot == nil || c.Bot.ClosedAt != 0 {
+			return 0, StatusErrorReason(http.StatusConflict, reasonBotClosed, errBotClosed)
+		}
+	}
+	if bot && !shown {
 		return 0, StatusErrorReason(http.StatusConflict, reasonChatClosed, errChatClosed)
 	}
 	return stamp(), nil
+}
+
+// reopensFor reports whether a message from from may reopen its chat: every caller's but a rule's.
+func reopensFor(from *marotte.Caller) bool {
+	return from == nil || from.Kind != marotte.CallerKindRule
+}
+
+// SetRuleIndex wires the rule engine, which every Bot close and reopen tells to read the Bot again; a setter because
+// the engine is built after the coordinator.
+func (m *Membership) SetRuleIndex(rules RuleIndex) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.rules = rules
 }
 
 // reopenUnderMu is ReopenForMessage's body. Caller holds mu.
@@ -794,9 +817,9 @@ func (m *Membership) closeTab(ctx context.Context, id, opID string, byPerson boo
 	return closed, version, nil
 }
 
-// markBotsClosed writes closed_at, the close's own time, on each Bot the close left with no tab and kept. Under mu,
-// so the message hook never sees a closed Bot's tab gone with its record still open. A failed write is left to the
-// boot heal, which reopens the tab.
+// markBotsClosed writes closed_at, the close's own time, on each Bot the close left with no tab and kept, and drops
+// what its rules hold waiting. Under mu, so the message hook never sees a closed Bot's tab gone with its record still
+// open. A failed write is left to the boot heal, which reopens the tab.
 func (m *Membership) markBotsClosed(
 	ctx context.Context, closed []marotte.TabSubject, owed []tabs.OwedRelease, deleted map[marotte.ChatID][]string,
 ) {
@@ -812,11 +835,14 @@ func (m *Membership) markBotsClosed(
 			}
 			b := *c.Bot
 			b.ClosedAt = e.ClosedAt
+			disarmBot(&b, false)
 			c.Bot = &b
 			return true
 		}); err != nil {
 			slog.Warn("bots: a closed Bot's record could not be marked closed", "chat_id", chatID, keyError, err)
+			continue
 		}
+		reindex(m.rules, chatID)
 	}
 }
 
@@ -1723,20 +1749,30 @@ func (m *Membership) openTab(ctx context.Context, spec marotte.OpenTab, opID str
 	return TabOpened{Subject: subject, Version: version, Created: created}, nil
 }
 
-// clearBotClosed writes a reopened Bot's closed_at back to 0 and reports whether the record now says open. A failed
-// write is left to the boot heal, which clears closed_at for a Bot whose tab is open.
+// clearBotClosed writes a reopened Bot's closed_at back to 0, arming its rules afresh when it runs them, and reports
+// whether the record now says open. A failed write is left to the boot heal, which clears closed_at for a Bot whose
+// tab is open. Caller holds mu.
 func (m *Membership) clearBotClosed(ctx context.Context, id marotte.ChatID) bool {
+	wrote := false
 	_, err := m.chats.Mutate(ctx, id, func(c *marotte.Chat, exists bool) bool {
 		if !exists || c.Bot == nil || c.Bot.ClosedAt == 0 {
 			return false
 		}
-		c.Bot.ClosedAt = 0
+		b := *c.Bot
+		b.ClosedAt = 0
+		armBot(&b, time.Now())
+		c.Bot = &b
+		wrote = true
 		return true
 	})
 	if err != nil {
 		slog.Warn("bots: a reopened Bot's record could not be marked open", "chat_id", id, keyError, err)
+		return false
 	}
-	return err == nil
+	if wrote {
+		reindex(m.rules, id)
+	}
+	return true
 }
 
 // closeTabsFor closes every tab showing chatID. A close that fails after the record is gone is retried once, and if

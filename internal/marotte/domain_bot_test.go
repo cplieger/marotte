@@ -37,7 +37,7 @@ func TestChat_ABotBlockRoundTripsThroughChatJSON(t *testing.T) {
 			if got.Bot == nil {
 				t.Fatalf("reloaded chat lost its bot block: %s", raw)
 			}
-			if *got.Bot != tc.bot {
+			if !reflect.DeepEqual(*got.Bot, tc.bot) {
 				t.Errorf("reloaded bot = %+v, want %+v", *got.Bot, tc.bot)
 			}
 		})
@@ -97,7 +97,7 @@ func TestChatHeader_StatesTheBotsState(t *testing.T) {
 			if err != nil {
 				t.Fatalf("marshal header: %v", err)
 			}
-			if want := `"bot":{"state":"` + string(tc.want) + `"}`; !bytes.Contains(raw, []byte(want)) {
+			if want := `"bot":{"state":"` + string(tc.want) + `",`; !bytes.Contains(raw, []byte(want)) {
 				t.Errorf("header JSON = %s, want it to carry %s", raw, want)
 			}
 		})

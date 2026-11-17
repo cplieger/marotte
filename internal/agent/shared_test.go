@@ -328,9 +328,15 @@ func (rt *Runtime) stagePromptTurn(tb testing.TB, chatID marotte.ChatID) (string
 // stagePromptTurnCalling is stagePromptTurn for a turn whose prompt call cancel trips.
 func (rt *Runtime) stagePromptTurnCalling(tb testing.TB, chatID marotte.ChatID, cancel context.CancelCauseFunc) (string, *turnlog.Turn) {
 	tb.Helper()
+	return rt.stagePromptTurnFrom(tb, chatID, nil, cancel)
+}
+
+// stagePromptTurnFrom is stagePromptTurnCalling for a prompt from's caller sent.
+func (rt *Runtime) stagePromptTurnFrom(tb testing.TB, chatID marotte.ChatID, from *marotte.Caller, cancel context.CancelCauseFunc) (string, *turnlog.Turn) {
+	tb.Helper()
 	id, err := rt.coord.openTurnNow(tb.Context(), chatID, command.TurnOpen{
 		Source: marotte.TurnSourcePrompt,
-		Prompt: &marotte.EntryPrompt{ID: "m-" + string(chatID), Text: "prompt"},
+		Prompt: &marotte.EntryPrompt{ID: "m-" + string(chatID), Text: "prompt", Caller: from},
 		Init:   func(c *marotte.Chat) { c.Name = "test chat" },
 	})
 	if err != nil {

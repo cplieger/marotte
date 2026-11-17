@@ -2,7 +2,7 @@
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { signal } from "@cplieger/reactive";
-import type { Spec, SpecDoc, SpecTaskNode } from "./wire/types.gen.js";
+import type { SpecDir, SpecDoc, SpecTaskNode } from "./wire/types.gen.js";
 import type * as StoreModule from "./store.js";
 import type * as ApiModule from "./api-client.js";
 import type * as ChatCommandsModule from "./chat-commands.js";
@@ -156,11 +156,11 @@ function prose(file: string, role: SpecDoc["role"], content = `# ${file}`): Spec
   return { file, role, hash: `hash-${file}`, content };
 }
 
-function spec(docs: SpecDoc[], dir = DIR): Spec {
+function spec(docs: SpecDoc[], dir = DIR): SpecDir {
   return { dir, name: dir.split("/").pop() ?? dir, updated_at: "2026-09-17T10:00:00Z", docs };
 }
 
-function reply(s: Spec, etag = '"e1"'): { status: number; data: unknown; etag: string } {
+function reply(s: SpecDir, etag = '"e1"'): { status: number; data: unknown; etag: string } {
   return { status: 200, data: s, etag };
 }
 

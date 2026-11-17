@@ -155,6 +155,8 @@ type Dispatcher struct {
 	botWrites *keylock.Set[marotte.ChatID]
 	// records answers whether a chat is a Bot, bound at registration like prompts.
 	records botRecords
+	// bots is the Bot commands' roles, bound at registration like prompts, for SetRuleEngine.
+	bots *botRoles
 	// changes is bound at registration, like prompts.
 	changes detachedChange
 	mu      sync.RWMutex
@@ -164,6 +166,12 @@ type Dispatcher struct {
 // registration (see RegisterDefaults).
 func New() *Dispatcher {
 	return &Dispatcher{handlers: make(map[marotte.CommandType]Handler), botWrites: keylock.New(cmp.Compare[marotte.ChatID])}
+}
+
+// SetRuleEngine wires the rule engine into the Bot commands; a setter because the engine delivers through this
+// dispatcher. Call it before the dispatcher serves, like the registration it completes.
+func (d *Dispatcher) SetRuleEngine(rules RuleEngine) {
+	d.bots.rules = rules
 }
 
 // register adds a handler for the given command type.

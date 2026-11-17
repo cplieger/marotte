@@ -120,6 +120,7 @@ func newBotRoles(t *testing.T, store chatStore) (*botRoles, *botFakes) {
 		paths:           bot.Paths{KiroHome: t.TempDir()},
 		supervisedLocks: keylock.New(cmp.Compare[marotte.ChatID]),
 		writes:          keylock.New(cmp.Compare[marotte.ChatID]),
+		replays:         newOpLedger[rulesReplay](),
 	}, f
 }
 

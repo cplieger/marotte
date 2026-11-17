@@ -111,6 +111,13 @@ func (c *chatStatusCache) clearAtTurnEnd(chatID marotte.ChatID) {
 	delete(c.byChat, chatID)
 }
 
+// waiting reports chatID's status the retained waiting_on_user claim.
+func (c *chatStatusCache) waiting(chatID marotte.ChatID) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.byChat[chatID].Status == marotte.ChatStatusWaitingOnUser
+}
+
 // clearWaiting drops a chat's status only when it is the retained waiting_on_user claim, and
 // reports whether one went. It mints under c.mu; the discharge's own frame then bumps again,
 // a spurious changed but never a false unchanged.

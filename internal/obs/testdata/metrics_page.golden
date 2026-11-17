@@ -44,6 +44,20 @@ marotte_unattended_approvals_total{origin="triggered"} 0
 marotte_schedule_slots_not_started_total{event="engine_busy"} 0
 marotte_schedule_slots_not_started_total{event="launch_failed"} 0
 marotte_schedule_slots_not_started_total{event="signin_held"} 0
+# HELP marotte_rule_evaluations_total Evaluations of a Bot's rules, by trigger kind and outcome.
+# TYPE marotte_rule_evaluations_total counter
+marotte_rule_evaluations_total{outcome="fired",trigger="at"} 0
+marotte_rule_evaluations_total{outcome="skipped",trigger="at"} 0
+marotte_rule_evaluations_total{outcome="fired",trigger="every"} 0
+marotte_rule_evaluations_total{outcome="skipped",trigger="every"} 0
+marotte_rule_evaluations_total{outcome="fired",trigger="manual"} 0
+marotte_rule_evaluations_total{outcome="skipped",trigger="manual"} 0
+# HELP marotte_rule_deliveries_total Delivery tries of a Bot's rule prompts, by outcome.
+# TYPE marotte_rule_deliveries_total counter
+marotte_rule_deliveries_total{outcome="delivered"} 0
+marotte_rule_deliveries_total{outcome="dropped"} 0
+marotte_rule_deliveries_total{outcome="failed"} 0
+marotte_rule_deliveries_total{outcome="retry"} 0
 # HELP marotte_build_info Build information, always 1.
 # TYPE marotte_build_info gauge
 marotte_build_info{version="dev"} 1
@@ -56,6 +70,12 @@ marotte_signin_state{state="signed_out"} 0
 # HELP marotte_engine_up 1 while the agent engine is ready to take prompts, else 0.
 # TYPE marotte_engine_up gauge
 marotte_engine_up 0
+# HELP marotte_rule_queue_events Events waiting in the queues of every Bot's rules.
+# TYPE marotte_rule_queue_events gauge
+marotte_rule_queue_events 0
+# HELP marotte_rule_engine_write_failing 1 while the rule engine cannot write a Bot's record and has stopped, else 0.
+# TYPE marotte_rule_engine_write_failing gauge
+marotte_rule_engine_write_failing 0
 == recorded ==
 Content-Type: text/plain; version=0.0.4; charset=utf-8
 # HELP marotte_engine_exits_total Agent engine exits, by the cause the exit line names.
@@ -106,6 +126,20 @@ marotte_unattended_approvals_total{origin="triggered"} 1
 marotte_schedule_slots_not_started_total{event="engine_busy"} 1
 marotte_schedule_slots_not_started_total{event="launch_failed"} 0
 marotte_schedule_slots_not_started_total{event="signin_held"} 0
+# HELP marotte_rule_evaluations_total Evaluations of a Bot's rules, by trigger kind and outcome.
+# TYPE marotte_rule_evaluations_total counter
+marotte_rule_evaluations_total{outcome="fired",trigger="at"} 0
+marotte_rule_evaluations_total{outcome="skipped",trigger="at"} 0
+marotte_rule_evaluations_total{outcome="fired",trigger="every"} 1
+marotte_rule_evaluations_total{outcome="skipped",trigger="every"} 0
+marotte_rule_evaluations_total{outcome="fired",trigger="manual"} 0
+marotte_rule_evaluations_total{outcome="skipped",trigger="manual"} 1
+# HELP marotte_rule_deliveries_total Delivery tries of a Bot's rule prompts, by outcome.
+# TYPE marotte_rule_deliveries_total counter
+marotte_rule_deliveries_total{outcome="delivered"} 0
+marotte_rule_deliveries_total{outcome="dropped"} 0
+marotte_rule_deliveries_total{outcome="failed"} 0
+marotte_rule_deliveries_total{outcome="retry"} 1
 # HELP marotte_build_info Build information, always 1.
 # TYPE marotte_build_info gauge
 marotte_build_info{version="dev"} 1
@@ -147,6 +181,12 @@ marotte_trigger_catch_up_gaps{rule_id="rule-c"} 1
 # HELP marotte_engine_up 1 while the agent engine is ready to take prompts, else 0.
 # TYPE marotte_engine_up gauge
 marotte_engine_up 1
+# HELP marotte_rule_queue_events Events waiting in the queues of every Bot's rules.
+# TYPE marotte_rule_queue_events gauge
+marotte_rule_queue_events 3
+# HELP marotte_rule_engine_write_failing 1 while the rule engine cannot write a Bot's record and has stopped, else 0.
+# TYPE marotte_rule_engine_write_failing gauge
+marotte_rule_engine_write_failing 1
 == limit and next slot unknown ==
 Content-Type: text/plain; version=0.0.4; charset=utf-8
 # HELP marotte_engine_exits_total Agent engine exits, by the cause the exit line names.
@@ -197,6 +237,20 @@ marotte_unattended_approvals_total{origin="triggered"} 1
 marotte_schedule_slots_not_started_total{event="engine_busy"} 1
 marotte_schedule_slots_not_started_total{event="launch_failed"} 0
 marotte_schedule_slots_not_started_total{event="signin_held"} 0
+# HELP marotte_rule_evaluations_total Evaluations of a Bot's rules, by trigger kind and outcome.
+# TYPE marotte_rule_evaluations_total counter
+marotte_rule_evaluations_total{outcome="fired",trigger="at"} 0
+marotte_rule_evaluations_total{outcome="skipped",trigger="at"} 0
+marotte_rule_evaluations_total{outcome="fired",trigger="every"} 1
+marotte_rule_evaluations_total{outcome="skipped",trigger="every"} 0
+marotte_rule_evaluations_total{outcome="fired",trigger="manual"} 0
+marotte_rule_evaluations_total{outcome="skipped",trigger="manual"} 1
+# HELP marotte_rule_deliveries_total Delivery tries of a Bot's rule prompts, by outcome.
+# TYPE marotte_rule_deliveries_total counter
+marotte_rule_deliveries_total{outcome="delivered"} 0
+marotte_rule_deliveries_total{outcome="dropped"} 0
+marotte_rule_deliveries_total{outcome="failed"} 0
+marotte_rule_deliveries_total{outcome="retry"} 1
 # HELP marotte_build_info Build information, always 1.
 # TYPE marotte_build_info gauge
 marotte_build_info{version="dev"} 1
@@ -234,6 +288,12 @@ marotte_trigger_catch_up_gaps{rule_id="rule-c"} 1
 # HELP marotte_engine_up 1 while the agent engine is ready to take prompts, else 0.
 # TYPE marotte_engine_up gauge
 marotte_engine_up 1
+# HELP marotte_rule_queue_events Events waiting in the queues of every Bot's rules.
+# TYPE marotte_rule_queue_events gauge
+marotte_rule_queue_events 3
+# HELP marotte_rule_engine_write_failing 1 while the rule engine cannot write a Bot's record and has stopped, else 0.
+# TYPE marotte_rule_engine_write_failing gauge
+marotte_rule_engine_write_failing 1
 == gone ==
 Content-Type: text/plain; version=0.0.4; charset=utf-8
 # HELP marotte_engine_exits_total Agent engine exits, by the cause the exit line names.
@@ -284,6 +344,20 @@ marotte_unattended_approvals_total{origin="triggered"} 1
 marotte_schedule_slots_not_started_total{event="engine_busy"} 1
 marotte_schedule_slots_not_started_total{event="launch_failed"} 0
 marotte_schedule_slots_not_started_total{event="signin_held"} 0
+# HELP marotte_rule_evaluations_total Evaluations of a Bot's rules, by trigger kind and outcome.
+# TYPE marotte_rule_evaluations_total counter
+marotte_rule_evaluations_total{outcome="fired",trigger="at"} 0
+marotte_rule_evaluations_total{outcome="skipped",trigger="at"} 0
+marotte_rule_evaluations_total{outcome="fired",trigger="every"} 1
+marotte_rule_evaluations_total{outcome="skipped",trigger="every"} 0
+marotte_rule_evaluations_total{outcome="fired",trigger="manual"} 0
+marotte_rule_evaluations_total{outcome="skipped",trigger="manual"} 1
+# HELP marotte_rule_deliveries_total Delivery tries of a Bot's rule prompts, by outcome.
+# TYPE marotte_rule_deliveries_total counter
+marotte_rule_deliveries_total{outcome="delivered"} 0
+marotte_rule_deliveries_total{outcome="dropped"} 0
+marotte_rule_deliveries_total{outcome="failed"} 0
+marotte_rule_deliveries_total{outcome="retry"} 1
 # HELP marotte_build_info Build information, always 1.
 # TYPE marotte_build_info gauge
 marotte_build_info{version="dev"} 1
@@ -296,3 +370,9 @@ marotte_signin_state{state="signed_out"} 0
 # HELP marotte_engine_up 1 while the agent engine is ready to take prompts, else 0.
 # TYPE marotte_engine_up gauge
 marotte_engine_up 0
+# HELP marotte_rule_queue_events Events waiting in the queues of every Bot's rules.
+# TYPE marotte_rule_queue_events gauge
+marotte_rule_queue_events 0
+# HELP marotte_rule_engine_write_failing 1 while the rule engine cannot write a Bot's record and has stopped, else 0.
+# TYPE marotte_rule_engine_write_failing gauge
+marotte_rule_engine_write_failing 0

@@ -21,7 +21,7 @@ When `ALLOWED_HOSTS` is set, the scraper must call marotte by a name in that lis
 
 The page has no login, and marotte has none of its own. If you put marotte behind a reverse proxy that asks for a login, exempt `/metrics` at the proxy. Otherwise, scrape the container directly, but only from a network you already trust with the whole agent, because anyone who reaches port 9847 (or the port `LISTEN_ADDR` names) can use it.
 
-Labels carry fixed values only, with one exception. `rule_id` is the random id marotte gives a schedule or an event rule, and it names no workflow, path, repository or command.
+Labels carry fixed values only, with one exception. `rule_id` is the random id marotte gives a schedule or an event rule, and it names no workflow, path, repository or command. The Bot rule series carry no chat or rule label at all.
 
 | Series | Type | Labels | Meaning |
 | --- | --- | --- | --- |
@@ -42,6 +42,10 @@ Labels carry fixed values only, with one exception. `rule_id` is the random id m
 | `marotte_trigger_queue_full` | gauge | `rule_id` | 1 while an enabled event rule's last poll left an event at the forge because its queue was full, else 0 |
 | `marotte_trigger_poll_failures` | gauge | `rule_id` | Consecutive polls in which an enabled event rule's read of its repository failed. A good read resets it to 0, and a rate limit leaves it as it is |
 | `marotte_trigger_catch_up_gaps` | gauge | `rule_id` | Time ranges an enabled event rule could not read back and nobody has dismissed on its row. It counts the gaps saved in the rule's state, so a restart keeps them |
+| `marotte_rule_evaluations_total` | counter | `trigger`, `outcome` | Evaluations of a Bot's rules. `trigger` is the trigger kind, `every` or `at`, or `manual` for a **Run now** press. `outcome` is `fired` or `skipped` |
+| `marotte_rule_deliveries_total` | counter | `outcome` | Tries at sending a Bot rule's prompt, by `delivered` (the prompt's turn opened), `retry` (the chat refused the prompt or its turn failed to start, so it goes again later), `failed` (given up after 10 tries, or refused in a way no retry fixes) or `dropped` (the Bot was closed or deleted first, or the queued prompt was removed before its turn) |
+| `marotte_rule_queue_events` | gauge | none | Events waiting in the queues of every Bot's rules |
+| `marotte_rule_engine_write_failing` | gauge | none | 1 while marotte cannot write a Bot's record, so every Bot's rules are stopped, else 0 |
 
 An engine exit's `cause` is one of these. marotte asked for `restart_confirmed`, `restart_auto`, `shutdown` and `stopped`. Another process sent `external_stop`. The engine ended by itself in `crash`, `stdin_stalled`, `parse_breaker` and `lane_overflow`.
 
@@ -85,6 +89,8 @@ Load [`alerts/promql.yaml`](../alerts/promql.yaml) into Prometheus, Mimir or vma
 | `MarotteTriggerQueueFull` | An event rule's last poll left events at the forge because its queue was full | warning |
 | `MarotteTriggerPollFailing` | An event rule's read of its repository failed 3 or more polls in a row | warning |
 | `MarotteTriggerCatchUpGap` | An event rule could not read back over a time range, so events in it may never launch. It fires until you dismiss the gap on the rule's row | warning |
+| `MarotteRuleEngineWriteFailing` | marotte could not write a Bot's record for 5 minutes, so every Bot's rules are stopped until a write works | critical |
+| `MarotteRuleDeliveryFailing` | A Bot rule fired in the last 30 minutes but marotte gave up sending its prompt after 10 tries | warning |
 
 Thresholds and the `severity` labels are starting points. Keep the scrape job name `marotte`, which `MarotteDown` reads, or change the rule to your job name.
 

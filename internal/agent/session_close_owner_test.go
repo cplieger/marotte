@@ -1405,7 +1405,7 @@ var ownerHolds = map[holdKind]struct {
 	}},
 	holdTurn: {name: "turn", take: func(t *testing.T, o *ownerLife) func() {
 		o.lc.mu.Lock()
-		tr := o.lc.openLocked("c1", &marotte.Entry{ID: "w-owner"}, marotte.TurnSourceWireTurnStart, "", turnlog.Open("w-owner", nil))
+		tr := o.lc.openLocked("c1", &marotte.Entry{ID: "w-owner"}, marotte.TurnSourceWireTurnStart, "", turnlog.Open("w-owner", nil), nil)
 		o.lc.mu.Unlock()
 		return func() { o.r.finish(tr, &marotte.TurnResult{}) }
 	}},
@@ -1443,7 +1443,7 @@ var ownerHolds = map[holdKind]struct {
 		o.r.holdWake("c1", "wf-owner")
 		return func() {
 			o.lc.mu.Lock()
-			tr := o.lc.openLocked("c1", &marotte.Entry{ID: "w-wake"}, marotte.TurnSourceWireTurnStart, "", turnlog.Open("w-wake", nil))
+			tr := o.lc.openLocked("c1", &marotte.Entry{ID: "w-wake"}, marotte.TurnSourceWireTurnStart, "", turnlog.Open("w-wake", nil), nil)
 			o.lc.mu.Unlock()
 			o.r.finish(tr, &marotte.TurnResult{})
 		}
@@ -1482,7 +1482,7 @@ func TestCloseOwner_TheOpenersOwnAdmissionAndUnsentTurnDoNotRefuse(t *testing.T)
 	o := newOwnerLife(t)
 	res := o.reserve(t)
 	o.lc.mu.Lock()
-	o.lc.openLocked("c1", &marotte.Entry{ID: "p-owner"}, marotte.TurnSourcePrompt, "", turnlog.Open("p-owner", nil))
+	o.lc.openLocked("c1", &marotte.Entry{ID: "p-owner"}, marotte.TurnSourcePrompt, "", turnlog.Open("p-owner", nil), nil)
 	o.lc.mu.Unlock()
 	if got := o.blocker(res.Token); got != holdKinds {
 		t.Errorf("the opener's own door = %d, want no hold refusing it", got)
@@ -1781,7 +1781,7 @@ func TestCloseOwner_OnlyAWireTurnTakesAWake(t *testing.T) {
 				o.r.holdWake("c1", "wf-owner")
 				o.lc.askClose(o.sb, closeRelease, 0, false)
 				o.lc.mu.Lock()
-				own := o.lc.openLocked("c1", &marotte.Entry{ID: "p-wake"}, row.source, "", turnlog.Open("p-wake", nil))
+				own := o.lc.openLocked("c1", &marotte.Entry{ID: "p-wake"}, row.source, "", turnlog.Open("p-wake", nil), nil)
 				o.lc.mu.Unlock()
 				o.r.finish(own, &marotte.TurnResult{})
 				if got := o.blocker(0); got != holdWake {
@@ -1791,7 +1791,7 @@ func TestCloseOwner_OnlyAWireTurnTakesAWake(t *testing.T) {
 					t.Fatal("the release was granted before KAS's wake turn opened")
 				}
 				o.lc.mu.Lock()
-				wake := o.lc.openLocked("c1", &marotte.Entry{ID: "w-wake"}, marotte.TurnSourceWireTurnStart, "", turnlog.Open("w-wake", nil))
+				wake := o.lc.openLocked("c1", &marotte.Entry{ID: "w-wake"}, marotte.TurnSourceWireTurnStart, "", turnlog.Open("w-wake", nil), nil)
 				wakes := len(o.lc.wakes)
 				o.lc.mu.Unlock()
 				if wakes != 0 {
@@ -1852,7 +1852,7 @@ func TestCloseOwner_AWakeHoldEndsAtItsBoundOrATurn(t *testing.T) {
 			o.r.holdWake("c1", "wf-owner")
 			o.r.holdWake("c1", "wf-second")
 			o.lc.mu.Lock()
-			o.lc.openLocked("c1", &marotte.Entry{ID: "w-wake"}, marotte.TurnSourceWireTurnStart, "", turnlog.Open("w-wake", nil))
+			o.lc.openLocked("c1", &marotte.Entry{ID: "w-wake"}, marotte.TurnSourceWireTurnStart, "", turnlog.Open("w-wake", nil), nil)
 			wakes := len(o.lc.wakes)
 			o.lc.mu.Unlock()
 			if wakes != 1 {

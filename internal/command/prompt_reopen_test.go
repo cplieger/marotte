@@ -32,25 +32,25 @@ type reopenRecorder struct {
 	mu    sync.Mutex
 }
 
-func (r *reopenRecorder) ReopenForMessage(ctx context.Context, chatID marotte.ChatID) {
+func (r *reopenRecorder) ReopenForMessage(ctx context.Context, chatID marotte.ChatID, from *marotte.Caller) {
 	call := reopenCall{chat: chatID, promptsOpened: len(r.opens.prompts()), rowsQueued: len(r.queue.queued())}
 	r.mu.Lock()
 	r.calls = append(r.calls, call)
 	r.mu.Unlock()
 	if r.inner != nil {
-		r.inner.ReopenForMessage(ctx, chatID)
+		r.inner.ReopenForMessage(ctx, chatID, from)
 	}
 }
 
-func (r *reopenRecorder) BeginMessage(ctx context.Context, chatID marotte.ChatID, reopen bool, stamp func() uint64) (uint64, error) {
-	if !reopen {
+func (r *reopenRecorder) BeginMessage(ctx context.Context, chatID marotte.ChatID, from *marotte.Caller, stamp func() uint64) (uint64, error) {
+	if from == nil {
 		return stamp(), nil
 	}
 	r.mu.Lock()
 	r.calls = append(r.calls, reopenCall{chat: chatID, promptsOpened: len(r.opens.prompts()), rowsQueued: len(r.queue.queued())})
 	r.mu.Unlock()
 	if r.inner != nil {
-		return r.inner.BeginMessage(ctx, chatID, reopen, stamp)
+		return r.inner.BeginMessage(ctx, chatID, from, stamp)
 	}
 	return stamp(), nil
 }
@@ -158,7 +158,7 @@ func TestNotify_RefusedTextReopensNothing(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newCallerFixture(t)
-			_, err := f.d.Notify(t.Context(), "c1", text, grelotCaller)
+			_, err := f.d.Notify(t.Context(), "c1", text, grelotCaller, NotifyOptions{})
 			if got := ClassifyNotifyError(err); got != NotifyBadText {
 				t.Errorf("class = %v, want NotifyBadText", got)
 			}
@@ -303,7 +303,7 @@ func TestNotify_IntoAGoneChatIsUnknownAndOpensNothing(t *testing.T) {
 	m.opens.admitFirst = AdmissionChatGone
 	mark := len(m.bus.frames(t))
 
-	_, err := m.d.Notify(t.Context(), "c-gone", notifyText, grelotCaller)
+	_, err := m.d.Notify(t.Context(), "c-gone", notifyText, grelotCaller, NotifyOptions{})
 
 	if got := ClassifyNotifyError(err); got != NotifyUnknownChat {
 		t.Errorf("class = %v (%v), want NotifyUnknownChat", got, err)

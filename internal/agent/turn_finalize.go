@@ -469,6 +469,10 @@ func (bc *bridgeCoordinator) closeTurn(ctx context.Context, t *activeTurn, stop 
 	if err := bc.chatStore.WriteCounters(ctx, chatID); err != nil {
 		slog.Warn("turn closed but the header's counters did not follow", "chat_id", chatID, "turn", t.ID, "error", err)
 	}
+	// After WriteCounters: the engine reads LastTurnEndedAt for an idle trigger's anchor.
+	if bc.turns.rules != nil {
+		bc.turns.rules.TurnClosed(chatID, t.ID, t.caller)
+	}
 	// The push reads the turn_close's outcome, so a silent end_turn graded `empty` is not a clean finish.
 	concluded := c.WithContent(t.Log.Emitted())
 	bc.pushTurnOutcome(ctx, chatID, concluded, statusDesc)

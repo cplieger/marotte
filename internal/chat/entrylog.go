@@ -107,6 +107,7 @@ type turnState struct {
 	elapsedMs float64
 	openTs    int64
 	lastTs    int64
+	closeTs   int64
 	n         uint64
 	nextSeq   uint64
 	plans     int
@@ -153,9 +154,8 @@ func (st *turnState) unsettled() []entryCall {
 // LogHeader is the header policy a log's root supplies: chat.json for a chat, noHeader for a run, so the log needs no
 // nil checks.
 type LogHeader interface {
-	// Counters caches the log's turn_count and last_turn_outcome; the log's values correct a header left behind by a
-	// crash.
-	Counters(ctx context.Context, turnCount uint64, last marotte.TurnOutcome) error
+	// Counters caches the log's turn counters; the log's values correct a header left behind by a crash.
+	Counters(ctx context.Context, c TurnCounters) error
 	// CloserModel is the model a synthesized closer stamps: turn_open carries none, so the header is the only honest
 	// source for a later process.
 	CloserModel() string
@@ -173,10 +173,10 @@ type noHeader struct{}
 // NoHeader is the header policy a run root supplies.
 func NoHeader() LogHeader { return noHeader{} }
 
-func (noHeader) Counters(context.Context, uint64, marotte.TurnOutcome) error { return nil }
-func (noHeader) CloserModel() string                                         { return "" }
-func (noHeader) Reconcilable() bool                                          { return false }
-func (noHeader) SessionID() string                                           { return "" }
+func (noHeader) Counters(context.Context, TurnCounters) error { return nil }
+func (noHeader) CloserModel() string                          { return "" }
+func (noHeader) Reconcilable() bool                           { return false }
+func (noHeader) SessionID() string                            { return "" }
 
 // EntryLog is one log root's append log and its in-memory offset index. Every exported operation takes the log's
 // mutex, so seq is contiguous per turn. A caller sequencing a lifecycle decision takes its own mutex first and never
@@ -707,6 +707,7 @@ func foldTurnClose(st *turnState, e *marotte.Entry) error {
 		return err
 	}
 	st.closed = true
+	st.closeTs = e.Ts
 	st.outcome = payload.Outcome
 	st.elapsedMs = payload.ElapsedMs
 	st.carrier = payload.Carrier
@@ -1277,14 +1278,13 @@ func cmpUint(a, b uint64) int {
 
 // writeCountersLocked hands the header the log's counters, which win on a disagreement.
 func (l *EntryLog) writeCountersLocked(ctx context.Context) error {
-	count, last := l.countersLocked()
-	if err := l.header.Counters(ctx, count, last); err != nil {
+	if err := l.header.Counters(ctx, l.countersLocked()); err != nil {
 		return fmt.Errorf("entry log: cache counters for %s: %w", l.root, err)
 	}
 	return nil
 }
 
-// writeCounters caches turn_count and last_turn_outcome on the header. Separate because a turn open holds the
+// writeCounters caches the turn counters on the header. Separate because a turn open holds the
 // lifecycle mutex and this must not: the caller releases it first, and this takes only the log's lock.
 func (l *EntryLog) writeCounters(ctx context.Context) error {
 	l.mu.Lock()
@@ -1292,17 +1292,27 @@ func (l *EntryLog) writeCounters(ctx context.Context) error {
 	return l.writeCountersLocked(ctx)
 }
 
-// countersLocked are the header's two caches as the log states them: the newest turn's n and how the newest
-// finished non-carrier turn ended.
-func (l *EntryLog) countersLocked() (uint64, marotte.TurnOutcome) {
-	var last marotte.TurnOutcome
+// TurnCounters are the header's turn caches as the log states them, written in one header write.
+type TurnCounters struct {
+	// Last is how the newest finished non-carrier turn ended.
+	Last marotte.TurnOutcome
+	// N is the newest turn's n.
+	N uint64
+	// EndedAt is the latest turn_close ts of a finished non-carrier turn, 0 before one.
+	EndedAt int64
+}
+
+// countersLocked are the header's turn caches as the log states them.
+func (l *EntryLog) countersLocked() TurnCounters {
+	c := TurnCounters{N: l.turnCountLocked()}
 	for _, id := range l.survivingOrderLocked() {
 		// A carrier's outcome would paint a chat that has run nothing as done.
 		if st := l.turns[id]; st.closed && !st.carrier {
-			last = st.outcome
+			c.Last = st.outcome
+			c.EndedAt = max(c.EndedAt, st.closeTs)
 		}
 	}
-	return l.turnCountLocked(), last
+	return c
 }
 
 // turnCountLocked is the newest surviving turn's n, so the count covers undrawn turns and a rewind shrinks it.

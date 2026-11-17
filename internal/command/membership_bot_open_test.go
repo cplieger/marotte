@@ -74,7 +74,7 @@ func TestOpenTab_EveryChatTabOpenerTakesTheBotFactFromTheRecord(t *testing.T) {
 			}
 		}},
 		{name: "a message from an outside caller", open: func(t *testing.T, h *openerHost) {
-			h.mem.ReopenForMessage(t.Context(), "c-target")
+			h.mem.ReopenForMessage(t.Context(), "c-target", grelotCaller)
 		}},
 	}
 	for _, o := range openers {

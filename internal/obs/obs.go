@@ -82,6 +82,29 @@ const (
 
 var slotNotStartedEvents = []string{SlotLaunchFailed, SlotSignInHeld, SlotEngineBusy}
 
+// ruleTriggers are internal/rule's built trigger kinds plus "manual", a Run now press, which belongs to no trigger.
+var ruleTriggers = []string{"every", "at", "manual"}
+
+// The outcomes of a rule's evaluation.
+const (
+	RuleFired   = "fired"
+	RuleSkipped = "skipped"
+)
+
+var ruleEvaluationOutcomes = []string{RuleFired, RuleSkipped}
+
+// The outcomes of one delivery try of a rule's prompt.
+const (
+	RuleDeliveryDelivered = "delivered"
+	RuleDeliveryRetry     = "retry"
+	// RuleDeliveryFailed is a prompt dropped after its last try, or one the door refused as no retry can pass.
+	RuleDeliveryFailed = "failed"
+	// RuleDeliveryDropped is a prompt dropped for a Bot closed or deleted under it.
+	RuleDeliveryDropped = "dropped"
+)
+
+var ruleDeliveryOutcomes = []string{RuleDeliveryDelivered, RuleDeliveryRetry, RuleDeliveryFailed, RuleDeliveryDropped}
+
 // The label names more than one family carries.
 const (
 	labelReason = "reason"
@@ -140,12 +163,23 @@ var (
 	triggerGaps = measure.NewLabeledGauge("trigger_catch_up_gaps",
 		"Undismissed time ranges an enabled event rule could not read back, so events in them may never launch.",
 		measure.UnitCount, []string{labelRuleID})
+	ruleEvaluations = measure.NewLabeledCounter("rule_evaluations_total",
+		"Evaluations of a Bot's rules, by trigger kind and outcome.", measure.UnitCount,
+		[]string{"trigger", "outcome"}, measure.WithSeed(product(ruleTriggers, ruleEvaluationOutcomes)...))
+	ruleDeliveries = measure.NewLabeledCounter("rule_deliveries_total",
+		"Delivery tries of a Bot's rule prompts, by outcome.", measure.UnitCount, []string{"outcome"},
+		measure.WithSeed(each(ruleDeliveryOutcomes)...))
+	ruleQueueEvents = measure.NewGauge("rule_queue_events",
+		"Events waiting in the queues of every Bot's rules.", measure.UnitCount)
+	ruleWriteFailing = measure.NewGauge("rule_engine_write_failing",
+		"1 while the rule engine cannot write a Bot's record and has stopped, else 0.", measure.UnitNone)
 )
 
 func init() {
 	registry.MustRegister(buildInfo, engineExits, promptFailures, signInSaveFailures, signInState, engineUp, engineResident,
 		engineHeapLimit, unattendedRunFailures, unattendedApprovals, slotsNotStarted, scheduleFailedSlots,
-		scheduleNextDue, triggerBlocked, triggerQueueFull, triggerPollFailures, triggerGaps)
+		scheduleNextDue, triggerBlocked, triggerQueueFull, triggerPollFailures, triggerGaps, ruleEvaluations,
+		ruleDeliveries, ruleQueueEvents, ruleWriteFailing)
 	buildInfo.Set(version.Build)
 }
 
@@ -322,6 +356,19 @@ func TriggerRuleGone(ruleID string) {
 	triggerPollFailures.Delete(ruleID)
 	triggerGaps.Delete(ruleID)
 }
+
+// RuleEvaluated counts one evaluation of a rule from trigger, a trigger kind or "manual", under outcome, RuleFired
+// or RuleSkipped.
+func RuleEvaluated(trigger, outcome string) { ruleEvaluations.Inc(trigger, outcome) }
+
+// RuleDelivery counts one delivery try under outcome, one of the RuleDelivery outcomes above.
+func RuleDelivery(outcome string) { ruleDeliveries.Inc(outcome) }
+
+// RuleQueueEvents sets the events waiting over every Bot's rules.
+func RuleQueueEvents(n int) { ruleQueueEvents.Set(float64(n)) }
+
+// RuleEngineWriteFailing sets marotte_rule_engine_write_failing: 1 while the engine's writes fail, else 0.
+func RuleEngineWriteFailing(failing bool) { ruleWriteFailing.Set(flag(failing)) }
 
 func flag(on bool) float64 {
 	if on {

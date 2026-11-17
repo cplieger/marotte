@@ -1,7 +1,7 @@
 package chat
 
-// The header beside an entry log is <root>/chat.json, the whole marotte.Chat; a run root has none. Its turn_count and
-// last_turn_outcome are caches: after a crash the log wins, applied through Counters.
+// The header beside an entry log is <root>/chat.json, the whole marotte.Chat; a run root has none. Its turn_count,
+// last_turn_outcome and last_turn_ended_at are caches: after a crash the log wins, applied through Counters.
 
 import (
 	"context"
@@ -87,15 +87,14 @@ func (h EntryHeader) Update(ctx context.Context, apply func(c *marotte.Chat) boo
 
 var _ LogHeader = EntryHeader{}
 
-// Counters caches the log's turn_count and last_turn_outcome, writing only on disagreement, so the header catches up
-// after a crash.
-func (h EntryHeader) Counters(ctx context.Context, turnCount uint64, last marotte.TurnOutcome) error {
+// Counters caches the log's turn counters, writing only on disagreement, so the header catches up after a crash.
+func (h EntryHeader) Counters(ctx context.Context, tc TurnCounters) error {
 	_, err := h.Update(ctx, func(c *marotte.Chat) bool {
-		if c.TurnCount == ordinalAsInt(turnCount) && c.LastTurnOutcome == last {
+		n := ordinalAsInt(tc.N)
+		if c.TurnCount == n && c.LastTurnOutcome == tc.Last && c.LastTurnEndedAt == tc.EndedAt {
 			return false
 		}
-		c.TurnCount = ordinalAsInt(turnCount)
-		c.LastTurnOutcome = last
+		c.TurnCount, c.LastTurnOutcome, c.LastTurnEndedAt = n, tc.Last, tc.EndedAt
 		return true
 	})
 	return err

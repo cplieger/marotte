@@ -8,8 +8,9 @@ import (
 
 // JSON protocol keys shared by command responses and pending-permission payloads.
 const (
-	keyError = "error"
-	keyType  = marotte.ContentKeyType
+	keyError   = "error"
+	keyType    = marotte.ContentKeyType
+	keyOutcome = "outcome"
 )
 
 const keySessionID = marotte.KeySessionID

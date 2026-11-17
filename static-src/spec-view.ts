@@ -19,8 +19,8 @@ import { get, isBusy, watchBusy } from "./store.js";
 import { openChatRefs, openSpecRefs, parentChatRef, setTabParent, tabIdFor } from "./tabs.js";
 import { SharedScroll } from "./view-scroll.js";
 import { swapViews } from "./view-swap.js";
-import { decodeSpec } from "./wire/decoders.gen.js";
-import type { Spec, SpecDoc, SpecDocRole, SpecTaskNode } from "./wire/types.gen.js";
+import { decodeSpecDir } from "./wire/decoders.gen.js";
+import type { SpecDir, SpecDoc, SpecDocRole, SpecTaskNode } from "./wire/types.gen.js";
 import { absPath } from "./workspace.js";
 import { formatFullStamp } from "./locale-time.js";
 import { maybeEl, queryEl } from "./dom.js";
@@ -95,7 +95,7 @@ interface SpecPageState {
   armedRunAll: RunScope | undefined;
   lastThinking: boolean;
   failure: string;
-  spec: Spec | null;
+  spec: SpecDir | null;
   /** The directory answered 404. */
   gone: boolean;
   page: PageEls | null;
@@ -402,7 +402,7 @@ async function doFetch(ref: string, st: SpecPageState): Promise<void> {
   const ctl = new AbortController();
   st.controller = ctl;
   const gen = ++st.generation;
-  const r = await apiGetConditional(specPath(ref), st.etag, decodeSpec, ctl.signal);
+  const r = await apiGetConditional(specPath(ref), st.etag, decodeSpecDir, ctl.signal);
   if (st.generation !== gen || !states.has(ref)) {
     return;
   }
@@ -420,7 +420,7 @@ async function doFetch(ref: string, st: SpecPageState): Promise<void> {
   armPoll(ref);
 }
 
-function adopt(st: SpecPageState, spec: Spec, etag: string): void {
+function adopt(st: SpecPageState, spec: SpecDir, etag: string): void {
   st.gone = false;
   st.spec = spec;
   st.etag = etag;
@@ -449,7 +449,7 @@ function adopt(st: SpecPageState, spec: Spec, etag: string): void {
 }
 
 /** Which document opens first: the phase's own, else the first listed. */
-function defaultDoc(spec: Spec): string | null {
+function defaultDoc(spec: SpecDir): string | null {
   const phase = phaseOf(spec);
   const doc = phase === null ? undefined : spec.docs.find((d) => d.role === phase.role);
   return doc?.file ?? segmentsFor(spec)[0]?.file ?? null;
@@ -490,7 +490,7 @@ function pageVisible(ref: string): boolean {
   return view !== null && view.offsetParent !== null;
 }
 
-function tasksDoc(spec: Spec): SpecDoc | undefined {
+function tasksDoc(spec: SpecDir): SpecDoc | undefined {
   return spec.docs.find((d) => d.role === "tasks");
 }
 
@@ -509,7 +509,7 @@ function findNode(nodes: readonly SpecTaskNode[], id: string): SpecTaskNode | un
 
 /** The phase pill's word, from the known roles only. Null when no expected document exists (an
  *  `other` document never names a phase). */
-function phaseOf(spec: Spec): { role: Exclude<SpecDocRole, "other">; label: string } | null {
+function phaseOf(spec: SpecDir): { role: Exclude<SpecDocRole, "other">; label: string } | null {
   for (const e of [...EXPECTED].reverse()) {
     if (spec.docs.some((d) => d.role === e.role)) {
       return { role: e.role, label: e.label };
@@ -528,7 +528,7 @@ interface Segment {
 
 /** One segment per expected role (present or missing) then every `other` document, in the
  *  reply's order. */
-function segmentsFor(spec: Spec): Segment[] {
+function segmentsFor(spec: SpecDir): Segment[] {
   const out: Segment[] = [];
   for (const e of EXPECTED) {
     const doc = spec.docs.find((d) => d.role === e.role);
@@ -653,7 +653,7 @@ export function eligibility(
 
 /** Why a row's Run is withheld at render time, or "" when it is offered. */
 function runBlocker(
-  spec: Spec,
+  spec: SpecDir,
   node: SpecTaskNode,
   chat: string,
   thinking: boolean,
@@ -785,7 +785,7 @@ const NO_APPROVAL: ApprovalView = { badge: "", detail: "", offer: false, label: 
 /** Resolve one segment's approval state. */
 function approvalView(
   seg: { readonly role: SpecDocRole; readonly doc: SpecDoc | undefined },
-  spec: Spec,
+  spec: SpecDir,
   approving: ReadonlySet<string>,
 ): ApprovalView {
   if (seg.role === "other" || seg.doc === undefined) {
@@ -817,7 +817,7 @@ function approvalView(
  *  field added to `ApprovalView` and forgotten here would leave the badge frozen at whatever it
  *  last painted, which is the failure mode `paint-sig.ts`'s totality rule exists to make
  *  unrepresentable. */
-function approvalParts(seg: Segment, spec: Spec, approving: ReadonlySet<string>): string[] {
+function approvalParts(seg: Segment, spec: SpecDir, approving: ReadonlySet<string>): string[] {
   const v = approvalView(seg, spec, approving);
   const parts: Record<keyof ApprovalView, string> = {
     badge: v.badge,
@@ -1184,7 +1184,7 @@ function paintDots(
 function buildPane(
   ref: string,
   st: SpecPageState,
-  spec: Spec,
+  spec: SpecDir,
   seg: Segment,
   chat: string,
   thinking: boolean,
@@ -1223,7 +1223,7 @@ function buildPane(
 function docActions(
   ref: string,
   st: SpecPageState,
-  spec: Spec,
+  spec: SpecDir,
   seg: Segment,
   doc: SpecDoc,
 ): HTMLElement[] {
@@ -1283,7 +1283,7 @@ function editButton(ref: string, file: string): HTMLElement {
 function buildTasks(
   ref: string,
   st: SpecPageState,
-  spec: Spec,
+  spec: SpecDir,
   doc: SpecDoc,
   chat: string,
   thinking: boolean,
@@ -1315,7 +1315,7 @@ function buildTasks(
 interface NodeCtx {
   readonly ref: string;
   readonly st: SpecPageState;
-  readonly spec: Spec;
+  readonly spec: SpecDir;
   readonly chat: string;
   readonly thinking: boolean;
   readonly truncated: boolean;

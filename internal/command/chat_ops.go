@@ -55,7 +55,7 @@ func cmdCreateChat(ctx context.Context, mem *Membership, cmd *marotte.ClientComm
 			c.Name = name
 			c.Model = p.Model
 			if p.Bot {
-				c.Bot = &marotte.Bot{}
+				c.Bot = newBotBlock()
 				c.Name, c.NameSetByUser = marotte.DefaultBotName, true
 				c.CurrentModeID = marotte.BotRoleID
 			}
