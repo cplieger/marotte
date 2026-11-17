@@ -465,7 +465,7 @@ describe("a recipe KAS cannot launch", () => {
     expect(btn?.disabled).toBe(true);
     expect(btn?.getAttribute("data-tooltip")).toBe(reason);
     const line = panel.querySelector<HTMLElement>(
-      '[data-recipe="bundled://fix-and-review"] .entry-lines > .entry-sub:nth-child(1)',
+      '[data-recipe="bundled://fix-and-review"] [data-line="about"]',
     );
     expect(line?.textContent).toBe(reason);
     expect(line?.classList.contains("entry-sub-error")).toBe(true);
@@ -488,10 +488,28 @@ describe("a recipe KAS cannot launch", () => {
     expect(btn?.disabled).toBe(false);
     expect(btn?.hasAttribute("data-tooltip")).toBe(false);
     const line = panel.querySelector<HTMLElement>(
-      '[data-recipe="bundled://fix-and-review"] .entry-lines > .entry-sub:nth-child(1)',
+      '[data-recipe="bundled://fix-and-review"] [data-line="about"]',
     );
     expect(line?.textContent).toBe("fix-and-review desc");
     expect(line?.classList.contains("entry-sub-error")).toBe(false);
+  });
+
+  it("a validation error adds its line above the rules line, and a fixed recipe removes it", async () => {
+    const { description: _d, ...bare } = recipe("fix-and-review");
+    recipesReply = { recipes: [{ ...bare, validation_error: reason }] };
+    const panel = await render();
+    const row = panel.querySelector<HTMLElement>('[data-recipe="bundled://fix-and-review"]');
+    const lines = (): string[] =>
+      [...(row?.querySelectorAll(".entry-sub") ?? [])].map((l) => l.textContent);
+    expect(lines()).toEqual([reason, "Not scheduled"]);
+
+    recipesReply = { recipes: [bare] };
+    dispatch({ type: "recipes_changed", chat_id: "" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(panel.querySelector('[data-recipe="bundled://fix-and-review"]')).toBe(row);
+    expect(lines()).toEqual(["Not scheduled"]);
+    expect(row?.querySelector('[data-line="about"]')).toBeNull();
   });
 
   describe("under an input form opened while it was valid", () => {
@@ -658,6 +676,17 @@ describe("the recipe row on the shared builder", () => {
     ).toEqual(["shape desc", "Not scheduled · Inputs: prompt"]);
   });
 
+  it("a workflow with no description shows its rules line alone", async () => {
+    const { description: _d, ...bare } = recipe("no-desc");
+    recipesReply = { recipes: [bare] };
+    const panel = await render();
+    const row = rowFor(panel, "bundled://no-desc");
+    expect([...row.querySelectorAll(".entry-sub")].map((l) => l.textContent)).toEqual([
+      "Not scheduled",
+    ]);
+    expect(row.querySelector('[data-line="rules"]')?.textContent).toBe("Not scheduled");
+  });
+
   it("puts Run when… then Run in the actions slot as text buttons", async () => {
     recipesReply = { recipes: [recipe("actions")] };
     const panel = await render();
@@ -681,8 +710,7 @@ describe("the recipe row on the shared builder", () => {
   });
 
   it("mounts the input form as a detail region UNDER the row, never inside it", async () => {
-    // The row's height is the list's tier and never grows; the only thing that may grow is a
-    // sibling region below it.
+    // The row is its own lines; what grows is a sibling region below it, so the row never moves.
     recipesReply = {
       recipes: [recipe("form-host", { prompt: "prompt", max_iterations: "string" })],
     };
@@ -1017,7 +1045,7 @@ describe("the Run when… popup", () => {
     };
     await openPopup();
     const line = document.querySelector<HTMLElement>(
-      '[data-recipe="bundled://nightly"] .entry-lines > .entry-sub:nth-child(2)',
+      '[data-recipe="bundled://nightly"] [data-line="rules"]',
     );
     expect(line?.textContent).toBe("blocked: this rule's workflow file is gone. Edit the rule");
     expect(line?.classList.contains("entry-sub-error")).toBe(true);
@@ -1028,7 +1056,7 @@ describe("the Run when… popup", () => {
     rulesReply = { rules: [clockRule("c1", { enabled: false }), clockRule("c2"), clockRule("c3")] };
     await openPopup();
     const line = document.querySelector<HTMLElement>(
-      '[data-recipe="bundled://nightly"] .entry-lines > .entry-sub:nth-child(2)',
+      '[data-recipe="bundled://nightly"] [data-line="rules"]',
     );
     expect(line?.textContent).toMatch(/^Every day at .+ · \+1 more rule$/);
     expect(line?.classList.contains("is-scheduled")).toBe(true);
@@ -1617,7 +1645,7 @@ describe("the Run when… popup's placement", () => {
       const row = await renderWatched(390, 844);
       const body = row.querySelector<HTMLElement>(".entry-body")!;
       expect(body.getBoundingClientRect().width, "the text column").toBeGreaterThanOrEqual(210);
-      const line = row.querySelector<HTMLElement>(".entry-lines > .entry-sub:nth-child(2)")!;
+      const line = row.querySelector<HTMLElement>('[data-line="rules"]')!;
       const state = /^watching, checked \S+/.exec(line.textContent)?.[0];
       expect(state, "the line leads with the state").toBeDefined();
       const range = document.createRange();
@@ -1687,7 +1715,7 @@ describe("the Run when… popup's placement", () => {
     const panel = await render();
     const row = '[data-recipe="bundled://nightly"]';
     const line = await vi.waitFor(() => {
-      const l = panel.querySelector<HTMLElement>(`${row} .entry-lines > .entry-sub:nth-child(2)`);
+      const l = panel.querySelector<HTMLElement>(`${row} [data-line="rules"]`);
       expect(l?.textContent).toMatch(/^watching, checked /);
       return l!;
     });

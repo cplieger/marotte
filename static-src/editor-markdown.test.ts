@@ -110,6 +110,7 @@ function loaded(path: string, content: string): ReturnType<typeof freshState> {
     utf8: true,
     conflict: false,
     readOnly: false,
+    renamable: true,
     size: content.length,
   };
   const mode: FileMode = rendersMarkdown(path)

@@ -27,6 +27,8 @@ export const server = {
 };
 export const tabs = {
   active: "",
+  /** The kind of the tab on screen, which the editor's keyboard chords are gated on. */
+  kind: "editor",
   minted: new Map<string, string>(),
   show: (_path: string): void => {
     /* pointed at the real activateFile by the driver */
@@ -89,11 +91,11 @@ export const mocks = {
       return Promise.resolve();
     },
     getActiveTabId: (): string => tabs.active,
-    getActiveTabKind: (): string => "editor",
+    getActiveTabKind: (): string => tabs.kind,
     tabIdFor: (_kind: string, ref = ""): string => tabs.minted.get(ref) ?? "",
     setTabDirty: (): void => undefined,
   }),
-  router: () => ({ pushRoute: (): void => undefined }),
+  router: () => ({ pushRoute: (): void => undefined, replaceRoute: (): void => undefined }),
 };
 
 export const A = "/workspace/a.txt";
@@ -123,10 +125,11 @@ export const readURL = (path: string): string => `/api/file?path=${encodeURIComp
 export const showURL = (rel: string): string =>
   `/api/git/show?path=${encodeURIComponent(rel)}&ref=HEAD`;
 
-/** The file on disk: its stat and its whole read answer `content`. */
-export function stage(path: string, content: string): void {
+/** The file on disk: its stat and its whole read answer `content`. `renamable` is the server's
+ *  verdict on whether the file browser's rename can move it. */
+export function stage(path: string, content: string, renamable = true): void {
   const size = new TextEncoder().encode(content).length;
-  const meta = { path, modified: "2026-10-01T00:00:00Z", size, read_only: false };
+  const meta = { path, modified: "2026-10-01T00:00:00Z", size, read_only: false, renamable };
   server.routes.set(statURL(path), {
     status: 200,
     body: { ...meta, file_id: idOf(content), large: false, binary: false, utf8: true },
@@ -148,6 +151,7 @@ export function stageLarge(path: string): void {
       binary: false,
       utf8: false,
       read_only: false,
+      renamable: true,
     },
   });
 }
@@ -191,5 +195,6 @@ export function resetHarness(): void {
   saves.length = 0;
   confirms.length = 0;
   tabs.active = "";
+  tabs.kind = "editor";
   tabs.minted.clear();
 }

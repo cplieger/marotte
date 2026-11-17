@@ -11,7 +11,7 @@ import { computed, effect } from "@cplieger/reactive";
 import { mountLiveRegions } from "./legacy-ui/announce.js";
 
 // Mock dependencies that tabs.ts imports at module level.
-vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
+vi.mock("./router.js", () => ({ pushRoute: vi.fn(), replaceRoute: vi.fn() }));
 vi.mock("./icons.js", () => ({
   ICON_MODEL_UI: "",
   ICON_CLOSE: "",
@@ -154,6 +154,12 @@ vi.mock("./composer-state.js", () => ({
   _resetComposerStateForTest: vi.fn(),
 }));
 vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
+// A web tab's spec reaches its preview through a lazy import; spied so a retarget's release and show are seen.
+const web = vi.hoisted(() => ({
+  show: vi.fn<(path: string) => void>(),
+  release: vi.fn<(path: string) => void>(),
+}));
+vi.mock("./web-view.js", () => ({ showWebTab: web.show, releaseWebTab: web.release }));
 vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 // The fake collection: `send` answers the four tab commands off it, `newOpID`
@@ -211,7 +217,7 @@ import {
 // The namespace, for the activation seam: a named import of an export a build lacks fails the
 // whole file's linking in Browser Mode rather than only the case that calls it.
 import * as tabsModule from "./tabs.js";
-import { pushRoute } from "./router.js";
+import { pushRoute, replaceRoute } from "./router.js";
 // The REAL freshness leaf: `viewStale` is what the dispatcher spends, so a case
 // that wants a FRESH view records a load the way `loadMessages` does rather than
 // faking the verdict. `chat` is the one kind whose ledger can answer "fresh" at all.
@@ -270,6 +276,7 @@ interface Openers {
   editorShow: Mock<TabOpeners["editor"]["show"]>;
   editorRefresh: Mock<TabOpeners["editor"]["refresh"]>;
   editorClose: Mock<TabOpeners["editor"]["close"]>;
+  editorMove: Mock<TabOpeners["editor"]["move"]>;
   runShow: Mock<TabOpeners["run"]["show"]>;
   runRefresh: Mock<TabOpeners["run"]["refresh"]>;
   subagentShow: Mock<TabOpeners["subagent"]["show"]>;
@@ -288,6 +295,7 @@ function registerOpeners(): void {
     editorShow: vi.fn<TabOpeners["editor"]["show"]>(),
     editorRefresh: vi.fn<TabOpeners["editor"]["refresh"]>(),
     editorClose: vi.fn<TabOpeners["editor"]["close"]>(),
+    editorMove: vi.fn<TabOpeners["editor"]["move"]>(),
     runShow: vi.fn<TabOpeners["run"]["show"]>(),
     runRefresh: vi.fn<TabOpeners["run"]["refresh"]>(),
     subagentShow: vi.fn<TabOpeners["subagent"]["show"]>(),
@@ -309,6 +317,7 @@ function registerOpeners(): void {
       show: openers.editorShow,
       refresh: openers.editorRefresh,
       close: openers.editorClose,
+      move: openers.editorMove,
     },
     run: { show: openers.runShow, refresh: openers.runRefresh },
     subagent: { show: openers.subagentShow, refresh: openers.subagentRefresh },
@@ -4750,5 +4759,81 @@ describe("recentClosed", () => {
     stop();
     expect(seen.at(-1)).toEqual(["c-remote", "c-listed"]);
     expect(seen).toContainEqual(["c-remote"]);
+  });
+});
+
+// The server moves a tab when its file is renamed (Membership.FollowRename): the same id, a new ref.
+describe("a retargeted tab", () => {
+  const from = "/workspace/.kiro/prompts/Remember.md";
+  const to = "/workspace/.kiro/prompts/Recall.md";
+  const nameOf = async (id: string): Promise<string | null | undefined> => {
+    await paint();
+    return rows()
+      .find((r) => r.dataset["tabId"] === id)
+      ?.querySelector(".tab-name")?.textContent;
+  };
+
+  it("rebuilds the row's name and route and hands the old spec the new ref", async () => {
+    await openChat("a");
+    await openEditorView(from, { activate: false });
+    const id = tabIdFor("editor", from);
+    tabServer.retargetRemotely(id, to);
+    await settleTabs();
+    expect(openers.editorMove).toHaveBeenCalledWith(from, to);
+    expect(openers.editorClose).not.toHaveBeenCalled();
+    expect(tabIdFor("editor", to)).toBe(id);
+    expect(tabIdFor("editor", from)).toBe("");
+    expect(await nameOf(id)).toBe("Recall.md");
+    expect(getActiveTabId(), "a background tab stays in the background").toBe(chatID("a"));
+    expect(openers.editorShow).not.toHaveBeenCalledWith(to);
+  });
+
+  it("an active retargeted tab replaces the address and shows the new path", async () => {
+    await openEditorView(from);
+    await visited();
+    const id = tabIdFor("editor", from);
+    vi.mocked(pushRoute).mockClear();
+    vi.mocked(replaceRoute).mockClear();
+    openers.editorShow.mockClear();
+    tabServer.retargetRemotely(id, to);
+    await settleTabs();
+    // The address is replaced before the view's own push, which router.ts then skips as the current address, so
+    // Back does not return to the old path.
+    const replaced = vi.mocked(replaceRoute).mock.invocationCallOrder[0] ?? Infinity;
+    expect(vi.mocked(replaceRoute)).toHaveBeenCalledWith({ kind: "file", path: to });
+    for (const [i, [route]] of vi.mocked(pushRoute).mock.calls.entries()) {
+      if (route.kind === "file" && route.path === to) {
+        expect(vi.mocked(pushRoute).mock.invocationCallOrder[i]).toBeGreaterThan(replaced);
+      }
+    }
+    expect(openers.editorShow).toHaveBeenCalledWith(to);
+    expect(getActiveTabRoute()).toEqual({ kind: "file", path: to });
+  });
+
+  it("a re-list carrying a new ref does the same", async () => {
+    await openEditorView(from, { activate: false });
+    const id = tabIdFor("editor", from);
+    tabServer.retargetElsewhere(id, to);
+    await listTabs();
+    await settleTabs();
+    expect(openers.editorMove).toHaveBeenCalledWith(from, to);
+    expect(tabIdFor("editor", to)).toBe(id);
+    expect(await nameOf(id)).toBe("Recall.md");
+  });
+
+  it("a web tab's retarget releases the old preview and shows the new one", async () => {
+    const page = "/workspace/site/index.html";
+    const moved = "/workspace/site/home.html";
+    await openTab({ kind: "web", ref: page });
+    await visited();
+    const id = tabIdFor("web", page);
+    web.show.mockClear();
+    tabServer.retargetRemotely(id, moved);
+    await settleTabs();
+    await vi.waitFor(() => {
+      expect(web.release).toHaveBeenCalledWith(page);
+      expect(web.show).toHaveBeenCalledWith(moved);
+    });
+    expect(tabIdFor("web", moved)).toBe(id);
   });
 });

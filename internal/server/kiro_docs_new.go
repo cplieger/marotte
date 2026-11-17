@@ -20,6 +20,8 @@ import (
 	"unicode/utf16"
 
 	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/marotte/internal/durable"
+	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -140,9 +142,9 @@ func (s *Server) handleKiroDocNew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("kiro docs: created", "category", req.Category, "path", logsafe.Field(rel))
-	httpserver.WriteJSONStatus(w, http.StatusCreated, kiroDocNewResponse{
-		Path: strings.TrimPrefix(s.workDir, "/") + "/.kiro/" + rel,
-	})
+	created := strings.TrimPrefix(s.workDir, "/") + "/.kiro/" + rel
+	s.reportFileChange(durable.Context(r.Context()), filebrowse.Change{Paths: []string{"/" + created}})
+	httpserver.WriteJSONStatus(w, http.StatusCreated, kiroDocNewResponse{Path: created})
 }
 
 // createKiroDoc writes doc exclusively under the workspace's `.kiro` and returns the rel it took.

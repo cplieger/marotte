@@ -152,6 +152,7 @@ const read = (content: string): Staged => ({
     size: content.length,
     utf8: true,
     read_only: false,
+    renamable: true,
   },
 });
 const show = (body: unknown, status = 200): Staged => ({ status, body });
@@ -382,6 +383,7 @@ describe("editor.stat_file", () => {
       binary: false,
       utf8: true,
       read_only: false,
+      renamable: true,
     };
     stage({ "/api/file/stat": { status: 200, body: facts } });
     expect(await statFile.dispatch({ path: "/w/a", shown: () => true })).toEqual({
@@ -404,6 +406,7 @@ describe("editor.stat_file", () => {
       binary: false,
       utf8: false,
       read_only: false,
+      renamable: true,
       ...over,
     };
     stage({ "/api/file/stat": { status: 200, body } });
@@ -421,6 +424,7 @@ describe("editor.stat_file", () => {
       binary: false,
       utf8: false,
       read_only: false,
+      renamable: true,
     };
     stage({ "/api/file/stat": { status: 200, body } });
     expect(await statFile.dispatch({ path: "/w/big.log", shown: () => true })).toEqual({

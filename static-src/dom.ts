@@ -510,6 +510,12 @@ class Elements {
   get editorDownloadBtn(): HTMLButtonElement {
     return byId("editor-download-btn");
   }
+  get editorRenameBtn(): HTMLButtonElement {
+    return byId("editor-rename-btn");
+  }
+  get editorRevealBtn(): HTMLButtonElement {
+    return byId("editor-reveal-btn");
+  }
   get editorGotoBtn(): HTMLButtonElement {
     return byId("editor-goto-btn");
   }

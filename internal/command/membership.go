@@ -89,6 +89,7 @@ type TabSet interface {
 	SetPinned(ctx context.Context, id string, pinned bool) (uint64, error)
 	SetSeen(ctx context.Context, id string, seen uint64) (uint64, error)
 	Reparent(ctx context.Context, id, parent string) (uint64, error)
+	Retarget(ctx context.Context, id, ref string) (uint64, error)
 	List() ([]marotte.TabSubject, uint64)
 	Subtree(id string) []marotte.TabSubject
 	Owed() []tabs.OwedRelease

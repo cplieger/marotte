@@ -2,8 +2,10 @@
 
 import { $ } from "./dom.js";
 import { swapViews } from "./view-swap.js";
-import { onBus, BUS_KEYS_ESCAPE } from "./bus.js";
+import { onBus, onSSE, BUS_FILES_REVEAL, BUS_KEYS_ESCAPE } from "./bus.js";
 import {
+  activateTab,
+  filesTabForRoute,
   filesTabIdFor,
   getActiveTabKind,
   openTab,
@@ -18,10 +20,11 @@ import { fileDownloadURL } from "./utils-url.js";
 import { onGitStatusChange, statusForPath, statusUnder } from "./git-status-store.js";
 import { describeStatus } from "./git-types.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { fileIcon, FILE_ICONS } from "./icons.js";
+import { fileIcon, FILE_ICONS, ICON_RENAME_UI } from "./icons.js";
 import { isPreviewablePage } from "./preview-page.js";
 import { openWebPreview } from "./web-open.js";
 import { iconEl } from "./icon-el.js";
+import { startInlineRename } from "./inline-rename.js";
 import { attachPathsToActiveChat } from "./chat.js";
 import { initBrowserDragDrop } from "./files-browser-drop.js";
 import { closeFilesSearch, initFilesSearch, resetFilesSearch } from "./files-search.js";
@@ -30,6 +33,7 @@ import { openFileDialog } from "./file-dialog.js";
 import * as toast from "./toast.js";
 import {
   type FileEntry,
+  baseName,
   formatSize,
   formatDate,
   joinPath,
@@ -104,6 +108,10 @@ function stateFor(ref: string): FileBrowserState {
 /** Bind the shared DOM to one files tab without loading; the same browser skips the repaint. */
 export function bindFilesTab(ref: string): void {
   if (boundRef !== ref) {
+    const left = browserStates.get(boundRef);
+    if (left !== undefined) {
+      left.afterListing = null;
+    }
     const st = stateFor(ref);
     boundRef = ref;
     // The label follows the published route, which a typed path has not reached yet.
@@ -185,6 +193,7 @@ export function initFileBrowser(): void {
     newFolder();
     $.fbNewFolder.closest<HTMLDetailsElement>(".fb-new-menu")?.removeAttribute("open");
   });
+  $.fbRename.replaceChildren(iconEl(ICON_RENAME_UI));
   $.fbRename.addEventListener("click", renameSelected);
   $.fbDelete.addEventListener("click", deleteSelected);
   $.fbDownload.addEventListener("click", downloadSelected);
@@ -239,9 +248,10 @@ export function initFileBrowser(): void {
     }
   });
 
-  // F2 renames a single selected item; keyed on the tab, as find-dispatch.ts does.
+  // F2 renames a single selected item; keyed on the tab, as find-dispatch.ts does. A focused chat
+  // tab row takes F2 for its own rename and prevents the default.
   document.addEventListener("keydown", (e: KeyboardEvent) => {
-    if (e.key !== "F2") {
+    if (e.key !== "F2" || e.defaultPrevented) {
       return;
     }
     if (getActiveTabKind() !== "files") {
@@ -254,12 +264,49 @@ export function initFileBrowser(): void {
     renameSelected();
   });
 
+  onBus(BUS_FILES_REVEAL, ({ path }) => {
+    revealFile(path);
+  });
+
+  // A hidden browser re-lists when shown (showFilesTab), so only the shown one answers a change.
+  onSSE("files_changed", (_chat, { dirs }) => {
+    if (boundRef === "" || getActiveTabKind() !== "files") {
+      return;
+    }
+    const shown = normalizeDirPath(cur().currentPath);
+    if (dirs.some((d) => normalizeDirPath(d) === shown)) {
+      loadDir();
+    }
+  });
+
   // Bound, not active, so a backgrounded browser picks up an upload; unbound would paint the detached state.
   setOnUploadComplete(() => {
     if (boundRef !== "") {
       loadDir();
     }
   });
+}
+
+/** The files route's door (route-apply.ts): re-point the browser a route would, else open one; its listing selects the file. */
+function revealFile(path: string): void {
+  const dir = normalizeDirPath(parentPath(path));
+  const name = baseName(path);
+  const { id, ref } = filesTabForRoute(dir);
+  if (id === "") {
+    // The tab's first activation lists `dir` into this state.
+    const st = stateFor(dir);
+    st.pendingSelect = name;
+    void openTab({ kind: "files", ref: dir }).then((outcome) => {
+      if (outcome !== "opened") {
+        st.pendingSelect = "";
+      }
+    });
+    return;
+  }
+  pointFilesTab(ref, dir);
+  // After the move, which clears it.
+  stateFor(ref).pendingSelect = name;
+  void activateTab(id);
 }
 
 function initPathInput(): void {
@@ -309,14 +356,6 @@ function loadDir(): void {
   });
 }
 
-/** Renders synchronously on success, so callers can chain inline rename on the new row. */
-function loadDirAsync(): Promise<void> {
-  const path = cur().currentPath;
-  return fetchDir(path, browserFetchHolder).then((d) => {
-    settle(path, d, false);
-  });
-}
-
 /** `path`'s answer, painted into the bound browser: any move or rebind loads again, which aborts this request. */
 function settle(path: string, d: DirResult, transition: boolean): void {
   const st = cur();
@@ -324,6 +363,7 @@ function settle(path: string, d: DirResult, transition: boolean): void {
     case "stale":
       return;
     case "not-dir":
+      st.pendingSelect = "";
       settleOnParent(path, st.pendingOpen);
       return;
     case "error":
@@ -337,6 +377,8 @@ function settle(path: string, d: DirResult, transition: boolean): void {
         return;
       }
       publishPending(path);
+      st.pendingSelect = "";
+      st.afterListing = null;
       st.entries = [];
       st.answered = false;
       st.entryMap.clear();
@@ -345,13 +387,32 @@ function settle(path: string, d: DirResult, transition: boolean): void {
       updateWriteButtons();
       renderList({ transition });
       return;
-    case "ok":
+    case "ok": {
       publishPending(path);
       st.pendingRestore = false;
       applyListing(d.files, d.writable);
+      const reveal = st.entryMap.has(st.pendingSelect) ? st.pendingSelect : "";
+      st.pendingSelect = "";
+      if (reveal !== "") {
+        st.deselectAll();
+        st.selectEntry(reveal);
+      }
       renderList({ transition });
+      if (reveal !== "") {
+        focusRow(reveal);
+      }
+      const after = st.afterListing;
+      st.afterListing = null;
+      after?.();
       return;
+    }
   }
+}
+
+function focusRow(name: string): void {
+  const row = [...$.fbList.children].find((r) => (r as HTMLElement).dataset["name"] === name);
+  row?.scrollIntoView({ block: "nearest" });
+  row?.querySelector<HTMLElement>(`.${FB_CHECK}`)?.focus({ preventScroll: true });
 }
 
 function publishPending(path: string): void {
@@ -561,7 +622,7 @@ function renderList(opts: { transition?: boolean } = {}): void {
     return $.fbList;
   };
 
-  // transition: false for createEntry's inline rename and for in-place re-renders.
+  // transition: false for in-place re-renders.
   if (opts.transition === false) {
     swap();
   } else {
@@ -823,20 +884,21 @@ function createEntry(action: "touch" | "mkdir", base: string): void {
       { dir, name },
       {
         onSuccess: (outcome) => {
-          void loadDirAsync().then(() => {
-            // A browser now showing another folder, or another browser, holds no row and no free name of dir's.
-            if (cur() !== st || st.currentPath !== dir) {
-              return;
-            }
+          // A browser now showing another folder, or another browser, holds no row and no free name of dir's.
+          if (cur() !== st || st.currentPath !== dir) {
+            return;
+          }
+          st.afterListing = () => {
             if (outcome === "created") {
-              startInlineRename(name);
+              startRowRename(name);
             } else if (triesLeft > 1) {
               attempt(triesLeft - 1);
             } else {
               const label = action === "mkdir" ? CREATE_FOLDER_ERROR : CREATE_FILE_ERROR;
               toast.error(`${label}: ${name} already exists`);
             }
-          });
+          };
+          loadDir();
         },
         // A failure can still have created the entry (a retry finding its first attempt running).
         onError: () => {
@@ -864,10 +926,10 @@ function renameSelected(): void {
   if (cur().selected.size !== 1) {
     return;
   }
-  startInlineRename([...cur().selected][0]!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  startRowRename([...cur().selected][0]!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
 }
 
-function startInlineRename(targetName: string): void {
+function startRowRename(targetName: string): void {
   const row = [...$.fbList.children].find(
     (child) => (child as HTMLDivElement).dataset["name"] === targetName,
   ) as HTMLDivElement | undefined;
@@ -879,77 +941,36 @@ function startInlineRename(targetName: string): void {
   const nameEl = row.querySelector(`.${FB_NAME}`)!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
   const original = nameEl.textContent ?? ""; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
 
-  const input = el("input", {
-    type: "text",
+  startInlineRename({
+    target: nameEl,
+    original,
     className: "fb-name-edit",
-    value: original,
-  }) as HTMLInputElement;
-  nameEl.replaceWith(input);
-  input.focus();
-  const dotIdx = original.lastIndexOf(".");
-  if (dotIdx > 0) {
-    input.setSelectionRange(0, dotIdx);
-  } else {
-    input.select();
-  }
+    // The row's own name element goes back only under its own name: its click handler opens that name.
+    restore: (field) => {
+      field.replaceWith(nameEl);
+    },
+    commit: (newName, field) => {
+      const pending = el("span", { className: FB_NAME }, newName);
+      field.replaceWith(pending);
+      // Until the reload rebuilds it, every handler on the row still names the original.
+      row.inert = true;
 
-  let committed = false;
-  // The row's own name element goes back only under its own name: its click handler opens that name.
-  const restore = (): void => {
-    input.replaceWith(nameEl);
-  };
-
-  const commit = (): void => {
-    if (committed) {
-      return;
-    }
-    committed = true;
-    const newName = input.value.trim();
-    if (newName === "" || newName === original) {
-      restore();
-      return;
-    }
-    const pending = el("span", { className: FB_NAME }, newName);
-    input.replaceWith(pending);
-    // Until the reload rebuilds it, every handler on the row still names the original.
-    row.inert = true;
-
-    void renameFile.dispatch(
-      { dir: cur().currentPath, original, newName },
-      {
-        onSuccess: () => {
-          // Reload to rebuild rows with handlers and the post-rename sort.
-          cur().deselectAll();
-          updateActionButtons();
-          loadDir();
+      void renameFile.dispatch(
+        { dir: cur().currentPath, original, newName },
+        {
+          onSuccess: () => {
+            // Reload to rebuild rows with handlers and the post-rename sort.
+            cur().deselectAll();
+            updateActionButtons();
+            loadDir();
+          },
+          onError: () => {
+            row.inert = false;
+            pending.replaceWith(nameEl);
+          },
         },
-        onError: () => {
-          row.inert = false;
-          pending.replaceWith(nameEl);
-        },
-      },
-    );
-  };
-
-  const cancel = (): void => {
-    if (committed) {
-      return;
-    }
-    committed = true;
-    restore();
-  };
-
-  input.addEventListener("keydown", (e: KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      commit();
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      cancel();
-    }
-  });
-  input.addEventListener("blur", () => {
-    commit();
+      );
+    },
   });
 }
 

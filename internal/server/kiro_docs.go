@@ -15,8 +15,11 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/go/pathinside"
@@ -185,10 +188,10 @@ var sigDepth = map[string]int{
 }
 
 // dirSignature builds a cache key from each root's category directories: the mtime, the entry
-// names down to sigDepth, and one stat of each link's target. Names are load-bearing: Linux stamps
-// mtimes from a coarse clock, so two changes inside one tick (a write then the settings_updated
-// refetch) give identical mtimes. An in-place body edit of a regular file is still undetected, so
-// the fields a row reads from the body stay stale until the directory changes.
+// names down to sigDepth with each regular file's mtime and size, and one stat of each link's
+// target. Names are load-bearing: Linux stamps mtimes from a coarse clock, so two changes inside
+// one tick (a write then the settings_updated refetch) give identical mtimes. A same-size rewrite
+// of a file inside one tick stays undetected.
 func dirSignature(roots []kiroRoot) string {
 	var b strings.Builder
 	for _, root := range roots {
@@ -213,8 +216,9 @@ func dirSignature(roots []kiroRoot) string {
 
 const sigTimeLayout = "20060102150405.000000000"
 
-// writeEntryNames appends dir's entry names, each link's target stat, and subdirectories' entries
-// while depth allows, descending through a link only with followLinks.
+// writeEntryNames appends dir's entry names, each regular file's mtime and size, each link's
+// target stat, and subdirectories' entries while depth allows, descending through a link only with
+// followLinks.
 func writeEntryNames(b *strings.Builder, dir string, depth int, followLinks bool) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -222,6 +226,9 @@ func writeEntryNames(b *strings.Builder, dir string, depth int, followLinks bool
 	}
 	for _, e := range entries {
 		b.WriteString("#" + e.Name())
+		if e.Type().IsRegular() {
+			writeFileStat(b, e)
+		}
 		if e.Type()&fs.ModeSymlink != 0 {
 			writeLinkTarget(b, filepath.Join(dir, e.Name()))
 		}
@@ -244,8 +251,18 @@ func writeLinkTarget(b *strings.Builder, link string) {
 	}
 	b.WriteString("@" + fi.Mode().Type().String())
 	if !fi.IsDir() {
-		b.WriteString(fi.ModTime().UTC().Format(sigTimeLayout))
+		b.WriteString(fi.ModTime().UTC().Format(sigTimeLayout) + ":" + strconv.FormatInt(fi.Size(), 10))
 	}
+}
+
+// writeFileStat appends a regular file's mtime and size, so an in-place edit moves the key.
+func writeFileStat(b *strings.Builder, e fs.DirEntry) {
+	fi, err := e.Info()
+	if err != nil {
+		b.WriteString("@?")
+		return
+	}
+	b.WriteString("@" + fi.ModTime().UTC().Format(sigTimeLayout) + ":" + strconv.FormatInt(fi.Size(), 10))
 }
 
 // scanKiroRoots scans every root in category order, applying the total cap. A
@@ -501,6 +518,43 @@ func scanDocsHooks(ctx context.Context, root fs.FS, prefix string, guard pathGua
 	return sc
 }
 
+// promptPreviewRunes is more than two lines of the widest docs panel hold, so the client's
+// two-line clamp, not this cut, decides what shows.
+const promptPreviewRunes = 400
+
+// promptPreview is a prompt's body as one line of plain text: heading marks dropped, whitespace
+// runs collapsed, control characters removed, cut at promptPreviewRunes with an ellipsis.
+func promptPreview(data []byte) string {
+	lines := strings.Split(steering.Body(data), "\n")
+	for i, line := range lines {
+		lines[i] = stripHeadingMark(line)
+	}
+	text := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) && !unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, strings.Join(lines, "\n"))
+	text = strings.Join(strings.Fields(text), " ")
+	if utf8.RuneCountInString(text) <= promptPreviewRunes {
+		return text
+	}
+	return strings.TrimRightFunc(string([]rune(text)[:promptPreviewRunes]), unicode.IsSpace) + "…"
+}
+
+// stripHeadingMark drops an ATX heading's opening `#`..`######` and its space.
+func stripHeadingMark(line string) string {
+	trimmed := strings.TrimLeft(line, " ")
+	marks := len(trimmed) - len(strings.TrimLeft(trimmed, "#"))
+	if marks < 1 || marks > 6 {
+		return line
+	}
+	if rest, ok := strings.CutPrefix(trimmed[marks:], " "); ok {
+		return rest
+	}
+	return line
+}
+
 // scanDocsPrompts reads `prompts/*.md` at the top level only, which is all KAS
 // reads; the row name is the basename, the slash command a user types.
 func scanDocsPrompts(ctx context.Context, root fs.FS, prefix string, guard pathGuard) docScan {
@@ -527,7 +581,7 @@ func scanDocsPrompts(ctx context.Context, root fs.FS, prefix string, guard pathG
 			Category:        catPrompt,
 			Name:            strings.TrimSuffix(e.Name(), ".md"),
 			Path:            prefix + "/prompts/" + e.Name(),
-			Description:     cmp.Or(fm.Description, steering.FirstHeading(data)),
+			Description:     cmp.Or(fm.Description, promptPreview(data)),
 			DeleteProtected: verdict.deleteProtected,
 		}
 		if !sc.add(&doc) {

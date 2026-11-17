@@ -49,7 +49,12 @@ import { focusComposerOnTyping } from "./composer-type-ahead.js";
 import { initSidebarResize } from "./sidebar-resize.js";
 import { hideLoginModal, initLoginModal } from "./modals.js";
 import { initEditor } from "./editor-core.js";
-import { activateFile, closeEditorFile, refreshEditorFile } from "./editor-openers.js";
+import {
+  activateFile,
+  closeEditorFile,
+  moveEditorFile,
+  refreshEditorFile,
+} from "./editor-openers.js";
 import { registerTabOpeners } from "./tab-materialize.js";
 import { showRun, refreshRun } from "./run-view.js";
 import { showSubagent, refreshSubagent } from "./subagent-view.js";
@@ -181,7 +186,12 @@ function init(): void {
       close: closeChatTab,
       dot: chatTabDot,
     },
-    editor: { show: activateFile, refresh: refreshEditorFile, close: closeEditorFile },
+    editor: {
+      show: activateFile,
+      refresh: refreshEditorFile,
+      close: closeEditorFile,
+      move: moveEditorFile,
+    },
     run: {
       // `parentless` comes from the run store's record of the launching chat. No `cancel`: a
       // run tab is a VIEW, so its × stops nothing.

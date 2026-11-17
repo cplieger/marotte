@@ -158,20 +158,6 @@ func parseSteeringFrontmatter(data []byte) docEntry {
 	}
 }
 
-// frontmatterBody returns the YAML front-matter between the `---` fences and whether one was
-// present, after stripping a UTF-8 BOM and normalizing CRLF.
-func frontmatterBody(data []byte) (string, bool) {
-	content := normalizeText(data)
-	if !strings.HasPrefix(content, "---\n") {
-		return "", false
-	}
-	end := strings.Index(content[4:], "\n---")
-	if end <= 0 {
-		return "", false
-	}
-	return content[4 : 4+end], true
-}
-
 // normalizeInclusion validates an inclusion value, folding unknown or empty to "always". FOUR
 // values: KAS's schema declares "auto" too, an ON-DEMAND mode; folding it to "always" would
 // claim the opposite about token cost.

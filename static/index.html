@@ -1629,6 +1629,8 @@
                 <button type="button" id="editor-preview-btn" class="icon-btn hidden" aria-label="Open preview" data-tooltip="Open preview"></button>
                 <button type="button" id="editor-git-diff-btn" class="icon-btn hidden" aria-pressed="false" aria-label="View diff vs HEAD" data-tooltip="View diff vs HEAD"></button>
                 <button type="button" id="editor-goto-btn" class="icon-btn hidden" aria-label="Go to line" data-tooltip="Go to line (Ctrl+G)"></button>
+                <button type="button" id="editor-reveal-btn" class="icon-btn" aria-label="Show in file browser" data-tooltip="Show in file browser"></button>
+                <button type="button" id="editor-rename-btn" class="icon-btn hidden" aria-label="Rename (F2)" data-tooltip="Rename (F2)"></button>
                 <button type="button" id="editor-download-btn" class="icon-btn hidden" aria-label="Download" data-tooltip="Download"></button>
                 <button type="button" id="editor-diff-btn" class="icon-btn" data-tooltip="View diff vs saved" aria-label="View diff vs saved">
                   <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 00-2 2v14a2 2 0 002 2h4M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M12 4v16"/></svg>
@@ -1692,9 +1694,8 @@
                     </button>
                   </span>
                 </details>
-                <button type="button" id="fb-rename" class="icon-btn" data-tooltip="Rename (F2)" aria-label="Rename (F2)" disabled>
-                  <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4z"/></svg>
-                </button>
+                <!-- Deliberately EMPTY: initFileBrowser injects ICON_RENAME_UI. -->
+                <button type="button" id="fb-rename" class="icon-btn" data-tooltip="Rename (F2)" aria-label="Rename (F2)" disabled></button>
                 <button type="button" id="fb-delete" class="icon-btn danger" data-tooltip="Delete" aria-label="Delete" disabled>
                   <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
                 </button>

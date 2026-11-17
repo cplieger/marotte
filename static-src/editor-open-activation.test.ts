@@ -60,7 +60,7 @@ vi.mock("./api-client.js", () => ({
   apiGetTyped: vi.fn(),
   apiGetOrError: vi.fn(),
 }));
-vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
+vi.mock("./router.js", () => ({ pushRoute: vi.fn(), replaceRoute: vi.fn() }));
 vi.mock("./editor-modes.js", () => ({ restoreUI: vi.fn() }));
 vi.mock("./editor-ui.js", () => ({
   applyPendingLine: vi.fn(),
@@ -136,6 +136,7 @@ function stat(over: Record<string, unknown> = {}): Answer {
       binary: false,
       utf8: true,
       read_only: false,
+      renamable: true,
       ...over,
     },
     error: "",
@@ -154,6 +155,7 @@ function read(content: string, over: Record<string, unknown> = {}): Answer {
       size: new TextEncoder().encode(content).length,
       utf8: true,
       read_only: false,
+      renamable: true,
       ...over,
     },
     error: "",
@@ -362,7 +364,12 @@ describe("a failed load", () => {
     await settle();
     const state = fileStates.get("/workspace/grew.log");
     expect(state?.mode.value).toEqual({ kind: "large" });
-    expect(state?.facts.value).toEqual({ kind: "large", size: 3 << 20 });
+    expect(state?.facts.value).toEqual({
+      kind: "large",
+      readOnly: false,
+      renamable: true,
+      size: 3 << 20,
+    });
     expect(state?.error.value).toBe("");
     expect(state?.fileId).toBe("");
   });

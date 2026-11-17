@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"log/slog"
@@ -15,7 +16,6 @@ import (
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // docDeleter removes one browsable path behind the file browser's delete guards, and answers
@@ -56,7 +56,8 @@ func (s *Server) handleKiroDocDelete(w http.ResponseWriter, r *http.Request) {
 		httpreply.Forbidden(w, "this document cannot be deleted here")
 		return
 	}
-	err := deleteDocRow(s.docDeleter, &row)
+	removed, err := deleteDocRow(s.docDeleter, &row)
+	s.reportFileChange(durable.Context(r.Context()), filebrowse.Change{Paths: removed})
 	if refusal, isRefusal := errors.AsType[filebrowse.DeleteRefusedError](err); isRefusal {
 		httpreply.Forbidden(w, refusal.Reason)
 		return
@@ -66,8 +67,6 @@ func (s *Server) handleKiroDocDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("kiro docs: deleted", "category", row.Category, "path", logsafe.Field(row.Path))
-	s.agent.Broadcast(durable.Context(r.Context()),
-		marotte.NewEvent(marotte.EventKiroDocsChanged, "", marotte.KiroDocsChangedPayload{}))
 	httpserver.OK(w)
 }
 
@@ -81,22 +80,32 @@ func (s *Server) findKiroDoc(r *http.Request, p string) (KiroDoc, bool) {
 	return docs[i], true
 }
 
-// deleteDocRow removes every target of row, or none when any one of them is refused.
-func deleteDocRow(d docDeleter, row *KiroDoc) error {
+// reportFileChange hands ch to the file-change function, when one is wired and ch names a path.
+func (s *Server) reportFileChange(ctx context.Context, ch filebrowse.Change) {
+	if s.fileChanges != nil && len(ch.Paths) > 0 {
+		s.fileChanges(ctx, ch)
+	}
+}
+
+// deleteDocRow removes every target of row, or none when any one of them is refused, and answers the absolute paths
+// it removed, those removed before a failure included.
+func deleteDocRow(d docDeleter, row *KiroDoc) ([]string, error) {
 	targets, err := presentDocTargets(d, docDeleteTargets(row))
 	if err != nil {
-		return err
+		return nil, err
 	}
+	removed := make([]string, 0, len(targets))
 	for _, target := range targets {
 		remove := d.Delete
 		if target.twin {
 			remove = d.DeleteFile
 		}
 		if err := remove(target.path); err != nil {
-			return err
+			return removed, err
 		}
+		removed = append(removed, "/"+target.path)
 	}
-	return nil
+	return removed, nil
 }
 
 // docTarget is one path a row's delete removes. A twin is removed only as a regular file.

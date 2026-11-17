@@ -22,16 +22,29 @@ var (
 type slashCatalog struct {
 	// seeded closes on the first list KAS sent, which may be empty.
 	seeded chan struct{}
-	cmds   []marotte.SlashCommand
-	mu     sync.Mutex
+	// updated closes on every list KAS sends, changed or not, and is then replaced.
+	updated chan struct{}
+	cmds    []marotte.SlashCommand
+	mu      sync.Mutex
 }
 
-func newSlashCatalog() *slashCatalog { return &slashCatalog{seeded: make(chan struct{})} }
+func newSlashCatalog() *slashCatalog {
+	return &slashCatalog{seeded: make(chan struct{}), updated: make(chan struct{})}
+}
 
-// Set replaces the list with a session frame's and marks it seeded.
+// nextUpdate closes on the next list Set takes after this call.
+func (c *slashCatalog) nextUpdate() <-chan struct{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.updated
+}
+
+// Set replaces the list with a session frame's and marks it seeded, reporting whether the list changed.
 func (c *slashCatalog) Set(cmds []marotte.SlashCommand) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	close(c.updated)
+	c.updated = make(chan struct{})
 	if isClosed(c.seeded) && slashCommandsEqual(c.cmds, cmds) {
 		return false
 	}

@@ -31,6 +31,8 @@ interface EditorTabOpener {
   show: (path: string) => void;
   refresh: (path: string) => void;
   close: (path: string) => void;
+  /** The file at `from` was renamed to `to`: its record moves with it. */
+  move: (from: string, to: string) => void;
 }
 
 /** No `owns` and no `cancel`: a run tab is always a VIEW, and nothing that closes a tab cancels a
@@ -265,6 +267,9 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         },
         onClose: () => {
           reg.editor.close(path);
+        },
+        onRetarget: (to) => {
+          reg.editor.move(path, to);
         },
       };
     }

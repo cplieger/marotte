@@ -394,7 +394,7 @@ function initDocsView(): void {
     byId("docs-new-slot"),
     (path) => {
       loadDocs();
-      openFile(path);
+      openFile(`/${path}`);
     },
     (prompt, shown) => {
       // Lazy: the chat module's graph is the app's, which this page has no other use for.
@@ -854,7 +854,7 @@ function rowSpec(doc: KiroDoc): EntryRowSpec {
       ? {
           name: doc.name,
           onOpen: () => {
-            openFile(doc.path);
+            openFile(docFilePath(doc));
           },
         }
       : undefined,
@@ -972,13 +972,8 @@ function standingText(doc: KiroDoc): string[] {
 /** A description, or a pair of facts; a spec's second line is its group, a hook's first its matcher (mono). */
 function subFor(doc: KiroDoc, hook: HookState | undefined): EntrySub {
   switch (doc.category) {
-    case "spec": {
-      const group = doc.group ?? "";
-      return {
-        kind: "lines",
-        lines: [{ text: doc.path, mono: true }, { text: group === "." ? "" : group }],
-      };
-    }
+    case "spec":
+      return { kind: "lines", lines: [{ text: doc.path, mono: true }, { text: doc.group ?? "" }] };
     case "hook":
       return {
         kind: "lines",
@@ -1091,7 +1086,7 @@ function rowActions(doc: KiroDoc, hook: HookState | undefined, gates: RowGates):
           "aria-label": `Edit ${doc.name}`,
           "data-tooltip": "Edit",
           onclick: () => {
-            openFile(doc.path);
+            openFile(docFilePath(doc));
           },
         },
         iconEl(ICON_EDIT),
@@ -1187,13 +1182,19 @@ function toolCountLabel(n: number): string {
   return `${String(n)} tool${n === 1 ? "" : "s"}`;
 }
 
-/** Row paths are absolute with the leading `/` dropped. Skipped for an unreachable row: a global hook's
- *  `~/` path would read as a literal `/~` key, which a repository at `/` can hold. */
+/** A row's file in the absolute spelling the file browser and the git store use: row paths are absolute with the
+ *  leading `/` dropped, and a second spelling would open a second editor tab on one file. */
+function docFilePath(doc: KiroDoc): string {
+  return `/${doc.path}`;
+}
+
+/** Skipped for an unreachable row: a global hook's `~/` path would read as a literal `/~` key, which a repository at
+ *  `/` can hold. */
 function gitLetter(doc: KiroDoc, gates: RowGates): string {
   if (!gates.openable) {
     return "";
   }
-  return statusForPath("/" + doc.path);
+  return statusForPath(docFilePath(doc));
 }
 
 /** On the list's own tier, so the swap to real rows moves nothing. */

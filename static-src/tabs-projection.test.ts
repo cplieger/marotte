@@ -8,7 +8,7 @@
 import type * as Dom from "./dom.js";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
+vi.mock("./router.js", () => ({ pushRoute: vi.fn(), replaceRoute: vi.fn() }));
 vi.mock("./icons.js", () => ({
   ICON_MODEL_UI: "",
   ICON_CLOSE: "",
@@ -216,6 +216,7 @@ function registerOpeners(): void {
       },
       refresh: vi.fn(),
       close: vi.fn(),
+      move: vi.fn(),
     },
     run: {
       show: (ref) => {
