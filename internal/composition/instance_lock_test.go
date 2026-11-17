@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/marotte/internal/testsupport/testchild"
 )
 
 const holdRootEnv = "MAROTTE_TEST_HOLD_ROOT"
@@ -142,7 +143,7 @@ func TestClaimRoots_ReleasedWhenTheHolderDies(t *testing.T) {
 	captureClaimLogs(t)
 	dir := t.TempDir()
 	cmd := exec.Command(os.Args[0], "-test.run=^$")
-	cmd.Env = append(os.Environ(), holdRootEnv+"="+dir)
+	cmd.Env = testchild.Env(holdRootEnv + "=" + dir)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)

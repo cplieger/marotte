@@ -19,6 +19,7 @@ import (
 	"github.com/cplieger/go/keyenc"
 	"github.com/cplieger/marotte/internal/composition"
 	"github.com/cplieger/marotte/internal/forges"
+	"github.com/cplieger/marotte/internal/testsupport/testchild"
 	"github.com/cplieger/web-terminal-engine/v6/osc52copy"
 )
 
@@ -43,7 +44,7 @@ func runHelperGet(t *testing.T, cfgDir string) (stdout, stderr string, err error
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, self, forges.HelperCommand, "--config-dir", cfgDir, "get")
-	cmd.Env = append(os.Environ(), "MAROTTE_BUNDLED_TOOLS="+filepath.Join(cfgDir, "absent.json"))
+	cmd.Env = testchild.Env("MAROTTE_BUNDLED_TOOLS=" + filepath.Join(cfgDir, "absent.json"))
 	cmd.Stdin = strings.NewReader("protocol=https\nhost=forge.test\n\n")
 	var out, diag bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &diag
@@ -120,13 +121,14 @@ func TestRunMain_HealthBranchProbesWhileTheServerHoldsItsFolders(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, self, composition.HealthCommand)
-	cmd.Env = append(os.Environ(),
+	cmd.Env = testchild.Env(
 		"LISTEN_ADDR="+srv.Listener.Addr().String(),
 		"KIRO_CONFIG_DIR="+cfgDir,
 		"MAROTTE_TOOLS_DIR="+filepath.Join(home, "tools"),
 		"HOME="+home,
 		"KIRO_HOME="+filepath.Join(home, ".kiro"),
-		"MAROTTE_BUNDLED_TOOLS="+filepath.Join(home, "absent.json"))
+		"MAROTTE_BUNDLED_TOOLS="+filepath.Join(home, "absent.json"),
+	)
 	var diag bytes.Buffer
 	cmd.Stderr = &diag
 	if err := cmd.Run(); err != nil {

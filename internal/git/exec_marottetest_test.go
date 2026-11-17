@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/systembin"
+	"github.com/cplieger/marotte/internal/testsupport/testchild"
 )
 
 // tests/perf/build.sh runs the TestMarotteTestGit_ tests by name: CI's go test builds no tags.
@@ -31,7 +32,7 @@ func TestMarotteTestGit_CountsEachFetchThroughTheShim(t *testing.T) {
 	// A fresh process, so the shim is reached only through init(), as the perf build's marotte
 	// reaches it.
 	child := exec.Command(os.Args[0], "-test.run=^TestMarotteTestGit_ChildFetchesThroughInit$")
-	child.Env = append(os.Environ(),
+	child.Env = testchild.Env(
 		"MAROTTE_TEST_GIT="+shim,
 		"PERF_GIT_REAL="+realGit,
 		"PERF_GIT_LOG="+log,
