@@ -350,7 +350,7 @@ func (rt *Runtime) stagePromptTurnCalling(tb testing.TB, chatID marotte.ChatID, 
 		if err := commit(); err != nil {
 			tb.Fatalf("the staged prompt's write commit refused: %v", err)
 		}
-		rt.awaitPrompted(tb, chatID, id)
+		rt.awaitPrompted(chatID, id)
 	}
 	log, ok := rt.coord.OwnTurn(chatID)
 	if !ok {
@@ -361,24 +361,20 @@ func (rt *Runtime) stagePromptTurnCalling(tb testing.TB, chatID marotte.ChatID, 
 
 // awaitPrompted waits for the commit's mark of turnID prompted (chatLifecycle.markPrompted runs it on a spawned
 // goroutine): a test entering a synctest bubble next would otherwise have that goroutine, started outside the bubble,
-// close a channel the bubble made.
-func (rt *Runtime) awaitPrompted(tb testing.TB, chatID marotte.ChatID, turnID string) {
-	tb.Helper()
+// close a channel the bubble made. No deadline, as in awaitBoot: a mark that never lands is left to go test -timeout.
+func (rt *Runtime) awaitPrompted(chatID marotte.ChatID, turnID string) {
 	lc := rt.coord.turns.testLifecycle(chatID)
 	if lc.reg == nil || lc.reg.runHost == nil {
 		return
 	}
-	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+	prompted := func() bool {
 		lc.mu.Lock()
+		defer lc.mu.Unlock()
 		_, e := lc.run.byTurn(turnID)
-		done := lc.ended || (e != nil && e.prompted)
-		lc.mu.Unlock()
-		if done {
-			return
-		}
-		if time.Now().After(deadline) {
-			tb.Fatalf("turn %s of %s was not marked prompted after its write commit", turnID, chatID)
-		}
+		return lc.ended || (e != nil && e.prompted)
+	}
+	for !prompted() {
+		time.Sleep(time.Millisecond)
 	}
 }
 

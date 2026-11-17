@@ -31,7 +31,6 @@ func awaitingSignIn(name string, src marotte.MCPSource) translate.MCPServerRepor
 func signInHub(t *testing.T, names ...string) (*Runtime, *fakeBridge) {
 	t.Helper()
 	h := newHubWithMCPConfig(t, enabledConfig(names...))
-	awaitEngine(h)
 	for _, n := range names {
 		reportMCP(t, h, sessionOf(n), awaitingSignIn(n, marotte.MCPSource{}))
 	}
@@ -149,7 +148,6 @@ func TestSignIn_RefusesAConnectedServer(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			h := newHubWithMCPConfig(t, enabledConfig("linear"))
-			awaitEngine(h)
 			tc.record(t, h)
 
 			code, body := postSignIn(h, "linear")
@@ -199,7 +197,6 @@ func TestSignIn_RefusesAnUnknownServer(t *testing.T) {
 // its own server's row.
 func TestSignIn_TwoServersSignInAtOnce(t *testing.T) {
 	h := newHubWithMCPConfig(t, enabledConfig("linear", "github"))
-	awaitEngine(h)
 	lane := fakeSourceOf(t, h).lane
 	reportMCP(t, h, "sess-both", awaitingSignIn("linear", marotte.MCPSource{}), awaitingSignIn("github", marotte.MCPSource{}))
 
@@ -333,7 +330,6 @@ func TestSignIn_EngineErrorEndsTheStandingSignIn(t *testing.T) {
 // connected: the row keeps the reason and a retry goes back to the waiting session.
 func TestSignIn_ARefusedSignInLeavesTheWaitingSessionRetryable(t *testing.T) {
 	h := newHubWithMCPConfig(t, enabledConfig("linear"))
-	awaitEngine(h)
 	lane := fakeSourceOf(t, h).lane
 	reportMCP(t, h, "sess-a", connectedMCP("linear", marotte.MCPSource{}))
 	reportMCP(t, h, "sess-b", awaitingSignIn("linear", marotte.MCPSource{}))
@@ -554,7 +550,6 @@ func TestSignIn_GoesToTheSessionWaitingWhileAnotherIsConnected(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			h := newHubWithMCPConfig(t, enabledConfig("linear"))
-			awaitEngine(h)
 			lane := fakeSourceOf(t, h).lane
 			reportMCP(t, h, "sess-older", tc.older)
 			reportMCP(t, h, "sess-newer", tc.newer)
