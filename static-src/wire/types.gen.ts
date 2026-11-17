@@ -885,12 +885,16 @@ export interface EffectiveSettings {
   rejected_keys: string[];
   /** ModelFallbacks is kiro-cli's fallback for each model it serves, empty until the engine reported a view. */
   model_fallbacks: ModelFallback[];
+  /** HistoryWindowChoices are the hours HistoryWindowHours accepts, ascending; never stored. */
+  history_window_choices: number[];
   /**
    * ChatRetentionDays is -1 (keep forever), 0 (delete on close) or a day count.
    * Zero is the most destructive value in the document, so absent must never
    * resolve to it.
    */
   chat_retention_days: number;
+  /** HistoryWindowHours is the stored choice, served uncapped; Days kept caps it where it is used. */
+  history_window_hours: number;
   /**
    * AutoCompactPct is inside AutoCompactPctRange; a stored value outside it reads as
    * settings.DefaultAutoCompactPct and is listed in RejectedKeys.
@@ -1730,6 +1734,7 @@ export interface FileRead {
   size: number;
   utf8: boolean;
   read_only: boolean;
+  renamable: boolean;
 }
 
 /** FileRefusal is the error body of the viewer routes that a client branches on. */
@@ -1791,6 +1796,8 @@ export interface FileStat {
   /** UTF8 is false for a large file, which is not read. */
   utf8: boolean;
   read_only: boolean;
+  /** Renamable is false for a file the file browser's rename always refuses. */
+  renamable: boolean;
 }
 
 /**
@@ -1803,6 +1810,11 @@ export interface FileWriteResult {
   file_id: string;
   size: number;
   ok: boolean;
+}
+
+/** FilesChangedPayload is the payload for type="files_changed": the absolute folders whose entries changed. */
+export interface FilesChangedPayload {
+  dirs: string[];
 }
 
 /**
@@ -2999,8 +3011,8 @@ export interface QueuedPrompt {
 }
 
 /**
- * RecentClose is one chat whose last tab closed in the last tabs.RecentWindow, a row of the
- * sidebar's History section. Field order is fieldalignment's.
+ * RecentClose is one closed chat the tab store holds until tabs.RecentHold; the sidebar's History
+ * section shows the ones inside the History window. Field order is fieldalignment's.
  */
 export interface RecentClose {
   ref: string;

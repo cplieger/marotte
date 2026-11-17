@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
@@ -25,7 +26,7 @@ type openerHost struct {
 func newOpenerHost(t *testing.T, bot bool) *openerHost {
 	t.Helper()
 	store := testsupport.NewInMemoryChatStore()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("Setup: open tab store: %v", err)
 	}
@@ -141,7 +142,7 @@ func (u *unloadableRecord) Get(ctx context.Context, id marotte.ChatID) (*marotte
 
 func TestOpenTab_ARecordTheOpenCannotLoadFailsTheOpenAndReleasesItsHold(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("Setup: open tab store: %v", err)
 	}
@@ -169,7 +170,7 @@ func TestOpenTab_ARecordTheOpenCannotLoadFailsTheOpenAndReleasesItsHold(t *testi
 func overCapHost(t *testing.T) (*Membership, *tabs.Store) {
 	t.Helper()
 	store := testsupport.NewInMemoryChatStore()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("Setup: open tab store: %v", err)
 	}

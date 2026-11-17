@@ -13,6 +13,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 )
 
@@ -56,7 +57,7 @@ type tabbedRig struct {
 func newTabbedRig(t *testing.T) tabbedRig {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := tabs.NewStore(dir)
+	st, err := tabs.NewStore(dir, settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("tabs.NewStore: %v", err)
 	}

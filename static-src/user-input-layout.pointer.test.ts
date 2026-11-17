@@ -80,7 +80,7 @@ const SIDEWAYS_MAX_H = 480;
  *  a composer while the card holds the typing. */
 const SHORT_MAX_VV = 639;
 
-/** A visual viewport under 20rem, where the steer stack steps aside too, and a composer unless it holds the typing. */
+/** A visual viewport under 20rem, where the holding area steps aside too, and a composer unless it holds the typing. */
 const TIGHT_MAX_VV = 319;
 
 type Host = "chat" | "run";
@@ -234,8 +234,9 @@ function inside(el: Element, box: DOMRect, what: string): void {
   expect(r.right, `${what} right`).toBeLessThanOrEqual(box.right + 0.5);
 }
 
-/** `count` queued steers in the host's stack, built by the stack's own rows. */
-function queueSteers(host: Host, count: number): HTMLUListElement {
+/** `count` queued steers in the host's stack, built by the stack's own rows. Answers the holding area around the
+ *  stack: the bar member that gives, down to one row. */
+function queueSteers(host: Host, count: number): HTMLElement {
   const stack = frame!.querySelector<HTMLUListElement>(
     host === "chat" ? "#steer-stack" : "#run-steer-stack",
   )!;
@@ -252,7 +253,20 @@ function queueSteers(host: Host, count: number): HTMLUListElement {
     discard: () => Promise.resolve(),
     waitingFor: "the agent",
   });
-  return stack;
+  return stack.closest<HTMLElement>(".holding-area")!;
+}
+
+function firstSteer(area: HTMLElement): HTMLElement {
+  return area.querySelector<HTMLElement>(".steer-stack > li")!;
+}
+
+/** The area's content down to the end of its first queued steer, the run bar above it whole: its floor. */
+function toFirstSteer(area: HTMLElement): number {
+  return (
+    firstSteer(area).getBoundingClientRect().bottom -
+    area.getBoundingClientRect().top +
+    area.scrollTop
+  );
 }
 
 /** The text box holding the typing, if one holds it. */
@@ -424,14 +438,14 @@ function atItsFloor(el: HTMLElement): boolean {
   );
 }
 
-/** Whether every member the question's second line outranks has given all it can: the steer stack all
+/** Whether every member the question's second line outranks has given all it can: the holding area all
  *  of its height, a composer, the card's options and its answer box down to their floors. */
 function lowerFloorsSpent(card: HTMLElement): boolean {
   const bar = card.closest(".bottom-bar")!;
   const shown = (sel: string): HTMLElement[] =>
     [...bar.querySelectorAll<HTMLElement>(sel)].filter((el) => el.checkVisibility());
   return (
-    shown(":scope > .steer-stack").every((el) => el.clientHeight <= 1) &&
+    shown(":scope > .holding-area").every((el) => el.clientHeight <= 1) &&
     shown(':scope > :is([id="prompt-box"], [id="run-composer"])').every(atItsFloor) &&
     shown(".user-input-options, .dock-ask-text").every(atItsFloor)
   );
@@ -691,11 +705,11 @@ describe("a waiting question and the composer", () => {
 
   it("chat: on a phone on its side, keeps the gap above a queued steer", async () => {
     await mountDocked("chat", 568, 320);
-    const stack = queueSteers("chat", 1);
+    const area = queueSteers("chat", 1);
     await pushQuestion("chat");
     const tray = frame!.querySelector<HTMLElement>("#decision-dock")!;
     expect(
-      stack.getBoundingClientRect().top - tray.getBoundingClientRect().bottom,
+      area.getBoundingClientRect().top - tray.getBoundingClientRect().bottom,
       "the gap between the card and the steer below it",
     ).toBeGreaterThan(1);
   });
@@ -798,7 +812,7 @@ describe("a waiting question and the composer", () => {
                 ? DRAFT
                 : Array.from({ length: lines }, (_, i) => `line ${String(i + 1)}`).join("\n");
             const draft = await mountDocked(host, width, height, theme, text);
-            const stack = queueSteers(host, steers);
+            const area = queueSteers(host, steers);
             draft.focus();
             paintViewportHeight(vv, 1);
             await settle();
@@ -851,28 +865,31 @@ describe("a waiting question and the composer", () => {
                 expect(atFloor(body), "the question at its floor before the draft gives").toBe(
                   true,
                 );
-                if (stack.checkVisibility()) {
-                  expect(atFloor(stack), "one steer row before the draft gives").toBe(true);
+                if (area.checkVisibility()) {
+                  expect(
+                    atFloor(area),
+                    "the holding area at its floor before the draft gives",
+                  ).toBe(true);
                 }
               }
             }
             if (steers > 0) {
               if (vv <= TIGHT_MAX_VV) {
-                expect(stack.checkVisibility(), "the steer stack aside").toBe(false);
+                expect(area.checkVisibility(), "the holding area aside").toBe(false);
               } else {
                 const band = visibleBand(vv);
-                const s = stack.getBoundingClientRect();
-                within(stack, band.top, band.bottom, "the steer stack inside the visible band");
-                expect(getComputedStyle(stack).overflowY, "the rest a scroll away").toMatch(
+                const s = area.getBoundingClientRect();
+                within(area, band.top, band.bottom, "the holding area inside the visible band");
+                expect(getComputedStyle(area).overflowY, "the rest a scroll away").toMatch(
                   /^(auto|scroll)$/,
                 );
-                const floor = Number.parseFloat(getComputedStyle(stack).minBlockSize);
-                const row = stack.firstElementChild!.getBoundingClientRect().height;
+                const floor = Number.parseFloat(getComputedStyle(area).minBlockSize);
+                const row = toFirstSteer(area);
                 if (floor + 1 < row) {
-                  // The floors outgrew the band, and the steer row gave before the question's did.
+                  // The floors outgrew the band, and the area gave before the question did.
                   expect(
-                    stack.clientHeight,
-                    "the steer stack at its lowered floor",
+                    area.clientHeight,
+                    "the holding area at its lowered floor",
                   ).toBeLessThanOrEqual(floor + 1);
                   expect(body.clientHeight, "the question's two lines kept").toBeGreaterThanOrEqual(
                     twoQuestionLines(card) - 1,
@@ -880,12 +897,12 @@ describe("a waiting question and the composer", () => {
                 } else {
                   expect(
                     Math.abs(row - floor),
-                    "the stack's floor one steer row",
+                    "the area's floor its first steer row",
                   ).toBeLessThanOrEqual(1);
-                  within(stack.firstElementChild!, s.top, s.bottom, "one queued steer whole");
+                  within(firstSteer(area), s.top, s.bottom, "the first queued steer whole");
                 }
-                if (stack.clientHeight > floor + 1) {
-                  unscrolled(body, "the question, while more than one steer row shows");
+                if (area.clientHeight > floor + 1) {
+                  unscrolled(body, "the question, while more than one holding-area row shows");
                 }
               }
             }
@@ -1088,7 +1105,7 @@ describe("a waiting question and the composer", () => {
 
   it("chat: hands the steer row its floor back when the card's answer box takes the typing", async () => {
     const draft = await mountDocked("chat", 375, 667);
-    const stack = queueSteers("chat", 2);
+    const area = queueSteers("chat", 2);
     draft.focus();
     // Short enough that the card, its 36px Send and Skip included, leaves the steer row to give.
     paintViewportHeight(335, 1);
@@ -1100,8 +1117,8 @@ describe("a waiting question and the composer", () => {
     await traySettled(card.parentElement!);
     paintViewportHeight(335, 1);
     await settle();
-    const row = (): number => stack.firstElementChild!.getBoundingClientRect().height;
-    const floor = (): number => Number.parseFloat(getComputedStyle(stack).minBlockSize);
+    const row = (): number => toFirstSteer(area);
+    const floor = (): number => Number.parseFloat(getComputedStyle(area).minBlockSize);
     expect(floor(), "beside the composer the steer row gives").toBeLessThan(row() - 1);
 
     // Moving the typing raises no viewport event: the bar's own change repaints it.
@@ -1109,8 +1126,28 @@ describe("a waiting question and the composer", () => {
     await settle();
     expect(draft.checkVisibility(), "the composer aside").toBe(false);
     expect(Math.abs(floor() - row()), "the steer row's floor back").toBeLessThanOrEqual(1);
-    const s = stack.getBoundingClientRect();
-    within(stack.firstElementChild!, s.top, s.bottom, "one queued steer whole");
+    const s = area.getBoundingClientRect();
+    within(firstSteer(area), s.top, s.bottom, "the first queued steer whole");
+  });
+
+  it("chat: moves the holding area's floor with the run bar opening and folding under a question", async () => {
+    await mountDocked("chat", 390, 844);
+    const area = queueSteers("chat", 2);
+    const card = await pushQuestion("chat");
+    await traySettled(card.parentElement!);
+    const floor = (): number => Number.parseFloat(getComputedStyle(area).minBlockSize);
+    const runBar = frame!.querySelector<HTMLElement>("#run-bar")!;
+    for (const folded of [false, true]) {
+      runBar.toggleAttribute("data-folded", folded);
+      await settle();
+      const what = folded ? "folded again" : "opened";
+      expect(
+        Math.abs(floor() - toFirstSteer(area)),
+        `${what}: the floor at the first steer`,
+      ).toBeLessThanOrEqual(1);
+      const s = area.getBoundingClientRect();
+      within(firstSteer(area), s.top, s.bottom, `${what}: the first queued steer whole`);
+    }
   });
 
   it("the band check fails a card whose buttons sit below the band", async () => {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/translate"
 )
@@ -19,7 +20,7 @@ import (
 // releaseFixture is a runtime with a tab set whose chat c1 has an open, idle session and no tab.
 func releaseFixture(t *testing.T) (*Runtime, *tabs.Store, *sharedBridge) {
 	t.Helper()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("Setup: tab store: %v", err)
 	}

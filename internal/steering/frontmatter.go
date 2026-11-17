@@ -48,11 +48,11 @@ type FrontMatter struct {
 // document does not silently lose its classification. Pure: no I/O.
 func Parse(data []byte) FrontMatter {
 	fm := FrontMatter{Inclusion: inclusionAlways}
-	body, ok := frontmatterBody(data)
+	block, _, ok := splitFrontMatter(normalizeText(data))
 	if !ok {
 		return fm
 	}
-	for _, f := range parseFields(body) {
+	for _, f := range parseFields(block) {
 		applyField(&fm, f)
 	}
 	return fm
@@ -245,14 +245,32 @@ func normalizeText(data []byte) string {
 	return strings.ReplaceAll(s, "\r", "\n")
 }
 
+// Body returns a document's text after its front-matter block (from the line after the closing
+// fence), normalized as Parse reads it. A document whose fence never closes is all body.
+func Body(data []byte) string {
+	_, rest, _ := splitFrontMatter(normalizeText(data))
+	return rest
+}
+
+// splitFrontMatter cuts normalized text at its front-matter fences into the block between them
+// and the text after the closing fence's line; ok is false, and rest the whole text, when the
+// text opens on no fence or the fence never closes. An empty block is still a fence pair.
+func splitFrontMatter(content string) (block, rest string, ok bool) {
+	if !strings.HasPrefix(content, "---\n") {
+		return "", content, false
+	}
+	block, after, ok := strings.Cut(content[3:], "\n---")
+	if !ok {
+		return "", content, false
+	}
+	_, rest, _ = strings.Cut(after, "\n")
+	return strings.TrimPrefix(block, "\n"), rest, true
+}
+
 // FirstHeading returns the text of a document's first markdown H1, or "": the fallback
 // label for a document with no front-matter. A front-matter block is skipped.
 func FirstHeading(data []byte) string {
-	content := normalizeText(data)
-	if _, after, ok := strings.Cut(content, "\n---"); ok && strings.HasPrefix(content, "---\n") {
-		content = after
-	}
-	for line := range strings.SplitSeq(content, "\n") {
+	for line := range strings.SplitSeq(Body(data), "\n") {
 		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "# "); ok {
 			return strings.TrimSpace(rest)
 		}

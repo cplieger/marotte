@@ -2,8 +2,7 @@
 // testable: the reader and the sinks arrive as parameters.
 
 import { pollUntil } from "./actions/index.js";
-// Type-only, so picker.ts stays the one owner of the phase state and its copy.
-import type { CatalogPhase } from "./picker.js";
+import type { CatalogPhase } from "./model-list.js";
 import type { CatalogState } from "./wire/types.gen.js";
 
 /** Must exceed the server's 45s budget (configTemplateTimeout,

@@ -80,6 +80,7 @@ vi.mock("./decision-dock.js", () => ({
 
 vi.mock("./router.js", () => ({
   pushRoute: vi.fn(),
+  replaceRoute: vi.fn(),
   buildPath: vi.fn(() => "/"),
   parseRoute: vi.fn(),
 }));
@@ -178,7 +179,7 @@ async function resetProjection(): Promise<void> {
       close: vi.fn(),
       dot: () => "",
     },
-    editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn() },
+    editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn(), move: vi.fn() },
     run: { show: vi.fn(), refresh: vi.fn() },
     subagent: { show: vi.fn(), refresh: vi.fn() },
     // `TabOpeners` requires `spec`; inert here.

@@ -25,6 +25,8 @@ const { surfaces, apiGetTypedOrError, tabs, live, diff } = vi.hoisted(() => {
     editorCancelBtn: document.createElement("button"),
     editorDiffBtn: document.createElement("button"),
     editorDownloadBtn: document.createElement("button"),
+    editorRenameBtn: document.createElement("button"),
+    editorRevealBtn: document.createElement("button"),
     editorGotoBtn: document.createElement("button"),
     editorGoto: document.createElement("form"),
     editorReadonlyLabel: document.createElement("span"),
@@ -105,7 +107,7 @@ vi.mock("./tabs.js", () => ({
   tabIdFor: (_kind: string, ref = "") => tabs.minted.get(ref) ?? "",
   setTabDirty: () => undefined,
 }));
-vi.mock("./router.js", () => ({ pushRoute: () => undefined }));
+vi.mock("./router.js", () => ({ pushRoute: () => undefined, replaceRoute: vi.fn() }));
 vi.mock("./actions/index.js", () => ({ registerCleanup: () => undefined }));
 
 import { activateFile, openFile, openFileGitDiff } from "./editor-openers.js";
@@ -127,6 +129,7 @@ function statOf(path: string, id = IMG_ID): Record<string, unknown> {
     binary: true,
     utf8: false,
     read_only: false,
+    renamable: true,
   };
 }
 

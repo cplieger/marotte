@@ -189,6 +189,24 @@ describe("the list", () => {
     expect(g?.querySelector(".powers-install")).toBeNull();
   });
 
+  it("a power with no description draws no subtitle, and with MCP servers draws its MCP line alone", async () => {
+    listReply = ok({
+      catalog: "ready",
+      installed: "ready",
+      powers: [
+        row("bare", { description: "" }),
+        row("served", { description: "", mcp_servers: ["postman"] }),
+      ],
+    });
+    await mount();
+    const bare = panel.querySelector('[data-power="bare"]');
+    expect(bare?.querySelector(".entry-sub")).toBeNull();
+    const served = panel.querySelector('[data-power="served"]');
+    expect([...(served?.querySelectorAll(".entry-sub") ?? [])].map((l) => l.textContent)).toEqual([
+      "MCP: postman",
+    ]);
+  });
+
   it("reports counts and filters without refetching", async () => {
     const seen: { total: number; shown: number }[] = [];
     setPowerCountsListener((c) => seen.push(c));

@@ -145,10 +145,10 @@ const FLOOR_PROP = "--dock-floor";
 /** A question card's options region's floor (`paintOptionsFloor`). */
 const OPTIONS_FLOOR_PROP = "--options-floor";
 
-/** A question card's question region's floor and the bar's steer stack's, each written by `paintFloor` only while
+/** A question card's question region's floor and the bar's holding area's, each written by `paintFloor` only while
  *  it is lowered under its own. */
 const ASK_FLOOR_PROP = "--ask-floor";
-const STEER_FLOOR_PROP = "--steer-floor";
+const HOLD_FLOOR_PROP = "--hold-floor";
 
 /** Wire the composer's dock into the chat bottom bar. Idempotent per host. */
 export function mountDecisionDock(hostEl: HTMLElement): void {
@@ -231,6 +231,14 @@ function addHost(hostEl: HTMLElement, match: (d: Decision) => boolean): void {
     subtree: true,
     attributeFilter: ["class", TYPING_ATTR],
   });
+  // Its holding area's floor follows its rows' boxes, which a slide (the run bar folding) moves with no mutation.
+  const rows = new ResizeObserver(() => {
+    paintFloor(h);
+  });
+  const area = hostEl.parentElement?.querySelector(":scope > .holding-area");
+  for (const child of area?.children ?? []) {
+    rows.observe(child);
+  }
   const stopTyping = followTyping(hostEl);
   const stopRender = effect(() => {
     touch(activeSession, queueVersion);
@@ -239,6 +247,7 @@ function addHost(hostEl: HTMLElement, match: (d: Decision) => boolean): void {
   h.stop = () => {
     stopRender();
     content.disconnect();
+    rows.disconnect();
     stopTyping();
   };
 }
@@ -761,7 +770,7 @@ function followViewport(): void {
  * `min-block-size` and every other region whole, plus the tray's other rows. Measured because the bar's flex column
  * sees only the tray's content size: a scroller's floor nested in it is invisible to the bar. Where the bar's ceiling
  * cannot hold every member's floor, they are lowered in the reverse of their order (`css/26-dock.css` "ONE
- * ALLOCATION"): the steer stack's, then the question's second line. The card's controls never give: past that, the
+ * ALLOCATION"): the holding area's, then the question's second line. The card's controls never give: past that, the
  * floor is the room and the card scrolls, opened at its controls.
  */
 function paintFloor(h: DockHost): void {
@@ -777,17 +786,17 @@ function paintFloor(h: DockHost): void {
   }
   const atEnd = card.scrollTop + card.clientHeight >= card.scrollHeight - 1;
   const ask = card.querySelector<HTMLElement>(":scope > .dock-ask-body");
-  const stack = h.el.parentElement?.querySelector<HTMLElement>(":scope > .steer-stack") ?? null;
+  const area = h.el.parentElement?.querySelector<HTMLElement>(":scope > .holding-area") ?? null;
   ask?.style.removeProperty(ASK_FLOOR_PROP);
-  stack?.style.removeProperty(STEER_FLOOR_PROP);
+  area?.style.setProperty(HOLD_FLOOR_PROP, `${String(holdFloor(area))}px`);
   const rows = flexItems(h.el).filter((row) => row !== h.outgoing);
   const px = rows.reduce(
     (sum, row) => sum + (row === card ? floorOf(card) : row.getBoundingClientRect().height),
     gapsAndChrome(h.el, rows.length),
   );
-  const over = lower(stack, STEER_FLOOR_PROP, px - roomFor(h), 1);
+  const over = lower(area, HOLD_FLOOR_PROP, px - roomFor(h), 1);
   const left = lower(ask, ASK_FLOOR_PROP, over, 1 / 2);
-  // Where the floors outgrow the room, `px - over` is that room plus the steer stack's give; the card scrolls `left`.
+  // Where the floors outgrow the room, `px - over` is that room plus the holding area's give; the card scrolls `left`.
   const floor = px - Math.max(0, over);
   h.el.style.setProperty(
     FLOOR_PROP,
@@ -809,6 +818,25 @@ function lower(box: HTMLElement | null, prop: string, over: number, share: numbe
   const give = Math.min(over, floor * share);
   box.style.setProperty(prop, `${String(floor - give)}px`);
   return over - give;
+}
+
+/** The holding area's floor under a question: its content down to the end of the steer stack's first shown row, the
+ *  run bar above it whole, or all of it when the stack shows no row; never past its cap. */
+function holdFloor(area: HTMLElement): number {
+  // Measured from the boxes, never `scrollHeight`, which is at least the area's own height: a floor read from it
+  // would hold whatever height the area already had.
+  const shown = [...area.children].filter((c) => c.checkVisibility());
+  const row = [...area.querySelectorAll(":scope > .steer-stack > li")].find((li) =>
+    li.checkVisibility(),
+  );
+  const last = row ?? shown.at(-1);
+  if (last === undefined) {
+    return 0;
+  }
+  const end =
+    last.getBoundingClientRect().bottom - area.getBoundingClientRect().top + area.scrollTop;
+  const cap = Number.parseFloat(getComputedStyle(area).maxBlockSize);
+  return Math.ceil(Number.isNaN(cap) ? end : Math.min(end, cap));
 }
 
 /**

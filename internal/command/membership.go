@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cplieger/marotte/internal/chat"
@@ -81,11 +82,14 @@ type TabSet interface {
 	Forget(ctx context.Context, ref string) (uint64, error)
 	Relist(ctx context.Context, entries []marotte.RecentClose) (uint64, error)
 	ExpireRecent(ctx context.Context) (uint64, error)
+	SetRecentWindow(ctx context.Context, window time.Duration) (uint64, error)
+	RecentExpiry() (time.Time, bool)
 	Recent() []marotte.RecentClose
 	Reorder(ctx context.Context, ids []string) (uint64, error)
 	SetPinned(ctx context.Context, id string, pinned bool) (uint64, error)
 	SetSeen(ctx context.Context, id string, seen uint64) (uint64, error)
 	Reparent(ctx context.Context, id, parent string) (uint64, error)
+	Retarget(ctx context.Context, id, ref string) (uint64, error)
 	List() ([]marotte.TabSubject, uint64)
 	Subtree(id string) []marotte.TabSubject
 	Owed() []tabs.OwedRelease
@@ -207,8 +211,12 @@ type Membership struct {
 	// those no chat claimed; CreateChatAndOpen refuses to bind one. Both guarded by mu.
 	purgingRuns     map[string]struct{}
 	purgingSessions map[string]int
-	// recentWake tells RunRecentExpiry the list changed, so it re-reads the oldest expiry. Coalescing, buffer 1.
+	// recentWake tells RunRecentExpiry the list or the window changed, so it re-reads the oldest expiry. Coalescing, buffer 1.
 	recentWake chan struct{}
+	// historyWindow reads the History window setting; nil keeps the window the tab store was opened with.
+	historyWindow func(context.Context) time.Duration
+	// windowStale tells RunRecentExpiry to apply historyWindow before it next sleeps.
+	windowStale atomic.Bool
 	// mu is THE operation lock, held across the reservation, the mint, both
 	// durable writes and the event. Order: mu -> chat record lock -> tabs writeMu.
 	mu sync.Mutex
@@ -242,6 +250,8 @@ type membershipDeps struct {
 	Impact closeImpactReader
 	// Notices nil tells no ledger about acks and closes.
 	Notices noticeLedger
+	// HistoryWindow reads the History window RunRecentExpiry applies; nil keeps the tab store's own.
+	HistoryWindow func(context.Context) time.Duration
 }
 
 // newMembership builds the coordinator.
@@ -264,7 +274,9 @@ func newMembership(deps *membershipDeps) *Membership {
 		teardowns:         deps.Teardowns,
 		impact:            deps.Impact,
 		notices:           deps.Notices,
+		historyWindow:     deps.HistoryWindow,
 	}
+	m.windowStale.Store(m.historyWindow != nil)
 	if m.teardowns == nil {
 		m.teardowns = newTeardownRunner(deps.Lifecycle, m.runJob)
 	}

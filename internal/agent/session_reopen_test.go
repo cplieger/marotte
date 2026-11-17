@@ -318,6 +318,8 @@ var configWrites = []struct {
 	{key: settings.KeyNotifySignIn, value: false, reach: reachNoChat},
 	{key: settings.KeyDebugLogs, value: true, reach: reachEngine},
 	{key: settings.KeyChatRetentionDays, value: 30, reach: reachNoChat},
+	// The Recently closed expiry runner reads it, through Runtime.SettingsWritten.
+	{key: settings.KeyHistoryWindowHours, value: 6, reach: reachNoChat},
 	{key: settings.KeyTheme, value: "light", reach: reachNoChat},
 	{key: settings.KeyLastMergeMethod, value: "squash", reach: reachNoChat},
 	// Update writes both on every write, so a session door reading them would reopen every chat on any change.

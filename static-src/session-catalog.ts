@@ -10,12 +10,12 @@ import { decodeConfigTemplateResponse } from "./wire/decoders.gen.js";
 import type { ConfigTemplateResponse } from "./wire/types.gen.js";
 import { CATALOG_REQUEST_TIMEOUT_MS, catalogRefused, refreshCatalog } from "./model-catalog.js";
 import { setCatalogModes } from "./roles.js";
-import { refreshPickerIfVisible, setCatalogPhase, setPickerModels } from "./picker.js";
+import { setCatalogModels, setCatalogPhase } from "./model-list.js";
 import { refreshContextUI } from "./context-ui.js";
 import { setCatalogOutputStyles } from "./output-style.js";
 import { MODEL_CONTEXT_SIZES, contextSizeFor, getActive, parseContextSize } from "./store.js";
 
-/** One catalog entry, mapped from the wire `SessionModel` to the picker's `ModelInfo`. */
+/** One catalog entry, mapped from the wire `SessionModel` to the client's `ModelInfo`. */
 function toModelInfo(m: SessionModel): ModelInfo {
   return {
     model_id: m.id,
@@ -60,14 +60,11 @@ export function fetchCatalog(
           setCatalogModes(d.modes);
         }
         if (d.models.length > 0) {
-          // The active chat's model moves the picker's highlight; "" leaves it where it is.
-          populatePickerModels(d.models.map(toModelInfo), getActive()?.model ?? "");
+          populateModels(d.models.map(toModelInfo));
         }
         if (d.output_styles.length > 0) {
           setCatalogOutputStyles(d.output_styles);
         }
-        // Re-read the session: the highlight above may have repainted the picker, and a stale
-        // reference is how the pill and the picker desynced before.
         const active = getActive();
         if (active !== undefined) {
           // The context-size table is filled from the model DESCRIPTIONS just landed, so this is
@@ -93,8 +90,7 @@ export function rereadRefusedCatalog(): void {
   }
 }
 
-/** `activeModel` moves the active highlight; pass "" when no session is active yet. */
-function populatePickerModels(models: ModelInfo[], activeModel: string): void {
+function populateModels(models: ModelInfo[]): void {
   for (const m of models) {
     if (m.description !== undefined && !MODEL_CONTEXT_SIZES.has(m.model_id)) {
       const size = parseContextSize(m.description);
@@ -103,7 +99,6 @@ function populatePickerModels(models: ModelInfo[], activeModel: string): void {
       }
     }
   }
-  setPickerModels(models);
-  refreshPickerIfVisible(activeModel === "" ? undefined : activeModel);
+  setCatalogModels(models);
   emitBus(BUS_CATALOG_MODELS);
 }

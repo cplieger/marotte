@@ -20,7 +20,7 @@ const DOCK_VIEWPORT_PROP = "--dock-viewport-h";
  *  `css/18-pages.css`): from here down, the dock, a card's floors and the composer outgrow the bar. */
 const SHORT_BAND_REM = 40;
 
-/** Under this one the steer stack and an idle composer step aside for a question card too (`[data-tight-band]`,
+/** Under this one the holding area and an idle composer step aside for a question card too (`[data-tight-band]`,
  *  `css/26-dock.css`): a four-line question at 320px wide needs about 306px of band beside the composer. */
 const TIGHT_BAND_REM = 20;
 

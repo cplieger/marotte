@@ -17,6 +17,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
@@ -56,7 +57,7 @@ func (f *flakyTabs) Close(ctx context.Context, id string, unlisted []string, fac
 
 func newFlakyMembership(t *testing.T, chats chatStore) (*Membership, *flakyTabs, *tabBus) {
 	t.Helper()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
@@ -455,7 +456,7 @@ func TestCloseTab_AnIdThatIsNotOpenIsNotAnError(t *testing.T) {
 // without a tab and reopening it loads everything back.
 func TestCloseTab_AChatTabRunsTheTeardownAndKeepsTheRecord(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
@@ -490,7 +491,7 @@ func TestCmdCloseTab_OnlyThePagesCloseIsAPersons(t *testing.T) {
 		{name: "api_caller", from: &marotte.Caller{Label: "script"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			st, err := tabs.NewStore(t.TempDir())
+			st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 			if err != nil {
 				t.Fatalf("open tab store: %v", err)
 			}
@@ -522,7 +523,7 @@ func TestCmdCloseTab_OnlyThePagesCloseIsAPersons(t *testing.T) {
 // off to an hour and a month-old chat can outlive its window by that much.
 func TestCloseTab_AChatTabCloseWakesRetention(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
@@ -551,7 +552,7 @@ func TestCloseTab_AChatTabCloseWakesRetention(t *testing.T) {
 // A run tab is the run purge's exemption the way a chat tab is the chat purge's, so
 // closing one wakes retention too, and while it is open the run reads as shown.
 func TestCloseTab_ARunTabCloseWakesRetention(t *testing.T) {
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
@@ -582,7 +583,7 @@ func TestCloseTab_ARunTabCloseWakesRetention(t *testing.T) {
 // An admitted purge holds the run until its delete returns: a run-tab open in that
 // window is refused, and the same open succeeds once the purge reports done.
 func TestOpenTab_ARunBeingPurgedIsRefusedUntilThePurgeIsDone(t *testing.T) {
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
@@ -620,7 +621,7 @@ func (incompleteClaims) SessionOwners(context.Context) chat.OwnerScan {
 
 func newClaimsMembership(t *testing.T, claims sessionClaims) *Membership {
 	t.Helper()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
@@ -1190,6 +1191,145 @@ func TestReparent_EmitsOneFrameWithOrderAndIsSilentOnARepeat(t *testing.T) {
 	}
 }
 
+// A rename moves every editor and web tab at or under the renamed path, one frame per tab, and
+// leaves every other tab alone; a ref keeps its own spelling (with or without the leading slash).
+func TestFollowRename_RetargetsEditorAndWebTabsAtOrUnderThePath(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	mem, st, bus := newTabbedMembership(t, store)
+	chatTab := createChat(t, mem, "op-chat")
+	open := func(kind marotte.TabKind, ref string) string {
+		t.Helper()
+		got, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: kind, Ref: ref}, "")
+		if err != nil {
+			t.Fatalf("Setup: OpenTab(%s %s) = %v", kind, ref, err)
+		}
+		return got.Subject.ID
+	}
+	x := open(marotte.TabKindEditor, "/workspace/a/x.md")
+	y := open(marotte.TabKindWeb, "workspace/a/y.html")
+	z := open(marotte.TabKindEditor, "/workspace/a/sub/z.md")
+	bx := open(marotte.TabKindEditor, "/workspace/b/x.md")
+	near := open(marotte.TabKindEditor, "/workspace/a/x.md.bak")
+	refOf := func(id string) string {
+		t.Helper()
+		tabsNow, _ := st.List()
+		i := indexOfTab(tabsNow, id)
+		if i < 0 {
+			t.Fatalf("tab %q is not open", id)
+		}
+		return tabsNow[i].Ref
+	}
+
+	framesBefore := len(bus.frames(t))
+	mem.FollowRename(t.Context(), "/workspace/a/x.md", "/workspace/a/w.md")
+	frames := bus.frames(t)[framesBefore:]
+	if len(frames) != 1 || frames[0].Changed == nil || frames[0].Changed.ID != x || frames[0].Changed.Ref != "/workspace/a/w.md" {
+		t.Fatalf("a file rename emitted %+v, want one frame moving %q to /workspace/a/w.md", frames, x)
+	}
+	if refOf(near) != "/workspace/a/x.md.bak" {
+		t.Errorf("a sibling sharing the name's prefix moved to %q", refOf(near))
+	}
+
+	_, before := st.List()
+	framesBefore = len(bus.frames(t))
+	mem.FollowRename(t.Context(), "workspace/a/", "/workspace/c")
+	frames = bus.frames(t)[framesBefore:]
+	want := map[string]string{
+		x: "/workspace/c/w.md", y: "workspace/c/y.html", z: "/workspace/c/sub/z.md", near: "/workspace/c/x.md.bak",
+	}
+	if len(frames) != len(want) {
+		t.Fatalf("a folder rename emitted %d frames, want %d: one per moved tab", len(frames), len(want))
+	}
+	for i, f := range frames {
+		if f.Changed == nil || f.Version != before+uint64(i)+1 || len(f.RemovedIDs) != 0 {
+			t.Errorf("frame %d = %+v, want Changed at v%d", i, f, before+uint64(i)+1)
+		}
+	}
+	for id, ref := range want {
+		if got := refOf(id); got != ref {
+			t.Errorf("tab %q ref = %q, want %q", id, got, ref)
+		}
+	}
+	if refOf(bx) != "/workspace/b/x.md" || refOf(chatTab.Subject.ID) != chatTab.Chat.ID {
+		t.Errorf("an unrelated tab moved: %q, %q", refOf(bx), refOf(chatTab.Subject.ID))
+	}
+}
+
+// A web tab already at the destination is closed first, in its own frame, so the moved tab takes its ref. An editor
+// tab there is never closed, since that would drop its unsaved text (the rename refuses it beforehand,
+// EditorTabAt): the moving editor tab is refused by Retarget and stays.
+func TestFollowRename_ClosesAWebTabAtTheDestinationAndNeverAnEditorTab(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	mem, st, bus := newTabbedMembership(t, store)
+	open := func(kind marotte.TabKind, ref string) string {
+		t.Helper()
+		got, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: kind, Ref: ref}, "")
+		if err != nil {
+			t.Fatalf("Setup: OpenTab(%s %s) = %v", kind, ref, err)
+		}
+		return got.Subject.ID
+	}
+	web := open(marotte.TabKindWeb, "/workspace/a.html")
+	webHolder := open(marotte.TabKindWeb, "/workspace/b.html")
+	editor := open(marotte.TabKindEditor, "/workspace/a.md")
+	editorHolder := open(marotte.TabKindEditor, "/workspace/b.md")
+	framesBefore := len(bus.frames(t))
+
+	mem.FollowRename(t.Context(), "/workspace/a.html", "/workspace/b.html")
+
+	frames := bus.frames(t)[framesBefore:]
+	if len(frames) != 2 {
+		t.Fatalf("emitted %d frames, want 2 (the close, then the retarget): %+v", len(frames), frames)
+	}
+	if !slices.Equal(frames[0].RemovedIDs, []string{webHolder}) {
+		t.Errorf("first frame RemovedIDs = %v, want [%s]", frames[0].RemovedIDs, webHolder)
+	}
+	if frames[1].Changed == nil || frames[1].Changed.ID != web || frames[1].Changed.Ref != "/workspace/b.html" {
+		t.Errorf("second frame Changed = %+v, want %q at /workspace/b.html", frames[1].Changed, web)
+	}
+
+	framesBefore = len(bus.frames(t))
+	mem.FollowRename(t.Context(), "/workspace/a.md", "/workspace/b.md")
+	if got := bus.frames(t)[framesBefore:]; len(got) != 0 {
+		t.Errorf("a rename onto an editor tab's path emitted %+v, want nothing", got)
+	}
+	tabsNow, _ := st.List()
+	refs := map[string]string{}
+	for _, tb := range tabsNow {
+		refs[tb.ID] = tb.Ref
+	}
+	if refs[editorHolder] != "/workspace/b.md" || refs[editor] != "/workspace/a.md" {
+		t.Errorf("editor refs = %q, %q, want both left where they were", refs[editor], refs[editorHolder])
+	}
+	if _, ok := refs[webHolder]; ok || refs[web] != "/workspace/b.html" {
+		t.Errorf("web tabs = %v, want the holder closed and the mover at /workspace/b.html", refs)
+	}
+}
+
+// EditorTabAt is true for an editor tab at or under the path in either spelling, never for a web tab or a sibling
+// sharing the name's prefix.
+func TestEditorTabAt_MatchesAnEditorTabAtOrUnderThePath(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	mem, _, _ := newTabbedMembership(t, store)
+	for _, spec := range []marotte.OpenTab{
+		{Kind: marotte.TabKindEditor, Ref: "workspace/a/x.md"},
+		{Kind: marotte.TabKindWeb, Ref: "/workspace/w.html"},
+		{Kind: marotte.TabKindEditor, Ref: "/workspace/b.md.bak"},
+	} {
+		if _, err := mem.OpenTab(t.Context(), spec, ""); err != nil {
+			t.Fatalf("Setup: OpenTab(%+v) = %v", spec, err)
+		}
+	}
+	for p, want := range map[string]bool{
+		"/workspace/a/x.md": true, "/workspace/a": true, "workspace/a/": true,
+		"/workspace/w.html": false, "/workspace/b.md": false, "/workspace/a/y.md": false,
+	} {
+		if got := mem.EditorTabAt(p); got != want {
+			t.Errorf("EditorTabAt(%q) = %v, want %v", p, got, want)
+		}
+	}
+}
+
 // The three refusals a reparent can answer, each with its own status: 404 for a
 // tab that is not open (a statement about a tab, like a pin), 409 for a parent
 // that is not an open chat tab, 409 for a parent inside the tab's own subtree.
@@ -1328,7 +1468,7 @@ func storedChatIDs(t *testing.T, store *testsupport.InMemoryChatStore) []marotte
 // teardown's engine calls can outlast the browser's request budget while kiro-cli stalls, and must still finish.
 func TestDeleteChatAndCloseTabs_AnswersBeforeTheTeardownEnds(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}

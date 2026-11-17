@@ -81,6 +81,7 @@ interface Spies {
   editorShow: Mock<TabOpeners["editor"]["show"]>;
   editorRefresh: Mock<TabOpeners["editor"]["refresh"]>;
   editorClose: Mock<TabOpeners["editor"]["close"]>;
+  editorMove: Mock<TabOpeners["editor"]["move"]>;
   runShow: Mock<TabOpeners["run"]["show"]>;
   runRefresh: Mock<TabOpeners["run"]["refresh"]>;
   subagentShow: Mock<TabOpeners["subagent"]["show"]>;
@@ -106,6 +107,7 @@ function register(dot: TabDotStatus | "" = ""): void {
     editorShow: vi.fn<TabOpeners["editor"]["show"]>(),
     editorRefresh: vi.fn<TabOpeners["editor"]["refresh"]>(),
     editorClose: vi.fn<TabOpeners["editor"]["close"]>(),
+    editorMove: vi.fn<TabOpeners["editor"]["move"]>(),
     runShow: vi.fn<TabOpeners["run"]["show"]>(),
     runRefresh: vi.fn<TabOpeners["run"]["refresh"]>(),
     subagentShow: vi.fn<TabOpeners["subagent"]["show"]>(),
@@ -125,7 +127,12 @@ function register(dot: TabDotStatus | "" = ""): void {
       close: spies.chatClose,
       dot: spies.chatDot,
     },
-    editor: { show: spies.editorShow, refresh: spies.editorRefresh, close: spies.editorClose },
+    editor: {
+      show: spies.editorShow,
+      refresh: spies.editorRefresh,
+      close: spies.editorClose,
+      move: spies.editorMove,
+    },
     run: { show: spies.runShow, refresh: spies.runRefresh },
     subagent: { show: spies.subagentShow, refresh: spies.subagentRefresh },
     spec: { show: spies.specShow, refresh: spies.specRefresh },
@@ -328,6 +335,15 @@ describe("the injected behaviours receive the subject's ref", () => {
     spec.onClose?.();
     expect(spies.editorShow).toHaveBeenCalledWith("/w/x.ts");
     expect(spies.editorClose).toHaveBeenCalledWith("/w/x.ts");
+  });
+
+  // A rename moves the open file: the editor's record follows its new path rather than closing.
+  it("an editor tab hands its retarget to the opener's move, and a web tab has none", () => {
+    register();
+    materializeTab(subject({ kind: "editor", ref: "/w/a.md" })).onRetarget?.("/w/b.md");
+    expect(spies.editorMove).toHaveBeenCalledWith("/w/a.md", "/w/b.md");
+    expect(spies.editorClose).not.toHaveBeenCalled();
+    expect(materializeTab(subject({ kind: "web", ref: "/w/a.html" })).onRetarget).toBeUndefined();
   });
 
   // The DATA half of each injected kind, and it must reach its own opener rather

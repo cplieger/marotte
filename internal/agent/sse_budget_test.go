@@ -14,6 +14,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/turnlog"
 )
@@ -39,7 +40,7 @@ const (
 func newBudgetRuntime(t *testing.T) *Runtime {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := tabs.NewStore(dir)
+	st, err := tabs.NewStore(dir, settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("tabs.NewStore(%q): %v", dir, err)
 	}

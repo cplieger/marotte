@@ -14,12 +14,12 @@ import (
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/marotte/internal/tabs"
+	"github.com/cplieger/marotte/internal/settings"
 )
 
 // TestBuild_StartsTheRecentlyClosedExpiry boots the real Build over a tabs.json whose one entry's
-// window ends a few seconds after the boot: only a running expiry drops it, since no mutation
-// happens and the load already drops an entry expired before it.
+// default window ends a few seconds after the boot: only a running expiry writes a new version,
+// since no mutation happens, and the entry stays held for a wider window.
 func TestBuild_StartsTheRecentlyClosedExpiry(t *testing.T) {
 	capture.SwapDefault(t, slog.Default())
 
@@ -45,7 +45,7 @@ func TestBuild_StartsTheRecentlyClosedExpiry(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Setup: seed c-old: %v", err)
 	}
-	closedAt := time.Now().Add(-tabs.RecentWindow + 3*time.Second).UnixMilli()
+	closedAt := time.Now().Add(-settings.DefaultHistoryWindow + 3*time.Second).UnixMilli()
 	doc, err := json.Marshal(map[string]any{
 		"tabs":    []any{},
 		"recent":  []map[string]any{{"ref": "c-old", "name": "Old", "closed_at": closedAt}},
@@ -65,17 +65,31 @@ func TestBuild_StartsTheRecentlyClosedExpiry(t *testing.T) {
 	}
 	defer app.Shutdown()
 
+	type tabsDoc struct {
+		Recent  []marotte.RecentClose `json:"recent"`
+		Version uint64                `json:"version"`
+	}
+	read := func() (doc tabsDoc) {
+		data, err := os.ReadFile(tabsFile)
+		if err == nil {
+			_ = json.Unmarshal(data, &doc)
+		}
+		return doc
+	}
+	if got := read(); got.Version != 3 {
+		t.Fatalf("tabs.json version right after the boot = %d, want 3: nothing but the expiry may write it", got.Version)
+	}
 	deadline := time.Now().Add(15 * time.Second)
 	for {
-		var got struct {
-			Recent []marotte.RecentClose `json:"recent"`
-		}
-		data, err := os.ReadFile(tabsFile)
-		if err == nil && json.Unmarshal(data, &got) == nil && len(got.Recent) == 0 {
+		got := read()
+		if got.Version == 4 {
+			if len(got.Recent) != 1 || got.Recent[0].Ref != "c-old" {
+				t.Errorf("tabs.json recent at the expiry's version = %+v, want c-old still held", got.Recent)
+			}
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("tabs.json recent = %+v 15s after c-old's window ended, want it dropped", got.Recent)
+			t.Fatalf("tabs.json = %+v 15s after c-old's window ended, want the expiry's version 4", got)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

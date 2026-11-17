@@ -1,6 +1,7 @@
 """The performance harness's own contract: the plan cplieger/ci's perf-ci.yaml
 reads, the instance's refusal of the live port, a seeded fixture, the git shim
-that counts fetches, the window failures that fail a rep, and the line that ends a shell drive.
+that counts fetches, the fake engine's steer answer, the window failures that
+fail a rep, and the line that ends a shell drive.
 
 run.sh runs this before it measures anything, so a broken plan fails the shard.
 """
@@ -425,6 +426,39 @@ class Shim(unittest.TestCase):
             lines, argv = self.run_shim(pathlib.Path(tmp), pathlib.Path(tmp), *args)
             self.assertEqual(lines, [])
             self.assertEqual(argv, list(args))
+
+
+class FakeEngine(unittest.TestCase):
+    """tests/perf/synth/fake-kiro-cli.py, the instance's kiro-cli, on one ACP request."""
+
+    def frames(self, request: dict, count: int) -> list[dict]:
+        proc = subprocess.run(
+            [sys.executable, str(PERF / 'synth' / 'fake-kiro-cli.py'), 'acp'],
+            input=json.dumps(request) + '\n',
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        lines = proc.stdout.splitlines()
+        self.assertEqual(len(lines), count, lines)
+        return [json.loads(line) for line in lines]
+
+    def test_a_steer_is_held_as_kas_holds_one_mid_turn(self):
+        params = {'sessionId': 'sess_1', 'messageId': 'm-1', 'message': 'also check the spacing'}
+        update, answer = self.frames(
+            {'jsonrpc': '2.0', 'id': 7, 'method': '_session/steer', 'params': params}, 2
+        )
+        self.assertEqual(update['method'], 'session/update')
+        self.assertEqual(update['params']['sessionId'], 'sess_1')
+        info = update['params']['update']
+        self.assertEqual(info['sessionUpdate'], 'session_info_update')
+        kiro = info['_meta']['kiro']
+        self.assertEqual(
+            (kiro['kind'], kiro['messageId'], kiro['content']),
+            ('steering_queued', 'steer-m-1', 'also check the spacing'),
+        )
+        self.assertEqual(answer, {'jsonrpc': '2.0', 'id': 7, 'result': {'queued': True}})
 
 
 UNSETTLED = {'settled': False, 'ms': 60000, 'inflight': 2, 'path': '/files', 'ready': True}

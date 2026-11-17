@@ -33,6 +33,7 @@ import { wantsReader } from "./exec-view/alert.js";
 import { chevronEl } from "./chevron.js";
 import { isSliding, selectableButton, slideBox, targetOpen } from "./disclosure-row.js";
 import { runBarOpen, setRunBarOpen } from "./device-view.js";
+import { FOLD_AT } from "./stack-fold.js";
 import { holdRunClock, releaseRunClock, type RunClockHolder } from "./messages-blocks.js";
 import { openRunView } from "./run-view.js";
 import { bindLoadingState } from "./actions/index.js";
@@ -50,10 +51,6 @@ const FALLBACK_NAME = "Workflow run";
 /** From this many live runs a header row heads the list with the recap, its fold toggle and the batch button. One run
  *  gets no header: the batch button, as Pause or Resume, ends that run's row. */
 const HEADER_AT = 2;
-
-/** From this many live runs the list starts folded behind the header until the reader chooses, so a fan-out cannot
- *  push the transcript and the composer off a phone. */
-const FOLD_AT = 3;
 
 /** One bar row's painted parts, kept so a repaint and the clock patch them in place. */
 interface RowView {

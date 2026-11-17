@@ -45,7 +45,7 @@ vi.mock("./api-client.js", () => ({
   apiGetOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
   apiGetTypedOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
 }));
-vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
+vi.mock("./router.js", () => ({ pushRoute: vi.fn(), replaceRoute: vi.fn() }));
 vi.mock("./editor-conflict.js", () => ({
   // Present-but-inert so real-ESM linking succeeds: the tab projection widened
   // this graph and these names are imported somewhere in it. No case here calls

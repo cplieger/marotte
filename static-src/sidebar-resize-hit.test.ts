@@ -466,6 +466,7 @@ function paintFile(mode: FileMode, text: string, original = text, error = ""): v
     utf8: true,
     conflict: mode.kind === "conflict",
     readOnly: false,
+    renamable: true,
     size: text.length,
   };
   state.original.value = original;

@@ -13,19 +13,22 @@ type FileStat struct {
 	// UTF8 is false for a large file, which is not read.
 	UTF8     bool `json:"utf8"`
 	ReadOnly bool `json:"read_only"`
+	// Renamable is false for a file the file browser's rename always refuses.
+	Renamable bool `json:"renamable"`
 }
 
 // FileRead is GET /api/file's reply: the whole file, at or below WholeFileMax. Content is
 // the bytes as a string; when UTF8 is false JSON has replaced the invalid sequences, so
 // the client must not offer to save it.
 type FileRead struct {
-	Path     string `json:"path"`
-	FileID   string `json:"file_id"`
-	Modified string `json:"modified"`
-	Content  string `json:"content"`
-	Size     int64  `json:"size"`
-	UTF8     bool   `json:"utf8"`
-	ReadOnly bool   `json:"read_only"`
+	Path      string `json:"path"`
+	FileID    string `json:"file_id"`
+	Modified  string `json:"modified"`
+	Content   string `json:"content"`
+	Size      int64  `json:"size"`
+	UTF8      bool   `json:"utf8"`
+	ReadOnly  bool   `json:"read_only"`
+	Renamable bool   `json:"renamable"`
 }
 
 // FileWriteResult is PUT /api/file's success reply; FileID is the identity of the bytes

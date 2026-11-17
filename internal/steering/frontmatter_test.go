@@ -187,8 +187,8 @@ func TestParse_NoFrontMatter(t *testing.T) {
 	// A spec doc: opens straight on an H1.
 	doc := []byte("# Requirements — HTTP security\n\nBody.\n")
 	fm := Parse(doc)
-	if _, has := frontmatterBody(doc); has {
-		t.Error("frontmatterBody found front-matter in a doc with none")
+	if _, _, has := splitFrontMatter(normalizeText(doc)); has {
+		t.Error("splitFrontMatter found front-matter in a doc with none")
 	}
 	if fm.Inclusion != inclusionAlways {
 		t.Errorf("Inclusion = %q, want the always default", fm.Inclusion)
@@ -198,21 +198,28 @@ func TestParse_NoFrontMatter(t *testing.T) {
 	}
 }
 
-// TestParse_EmptyFencePairCarriesNoFrontMatter pins that an empty fence pair reports no
-// front-matter, so the H1 fallback still applies.
-func TestParse_EmptyFencePairCarriesNoFrontMatter(t *testing.T) {
+// TestParse_EmptyFencePairIsFrontMatterWithNoFields pins that Parse and Body read an empty
+// fence pair the same way: a front-matter block holding nothing, so Parse keeps its defaults,
+// Body starts after the closing fence, and FirstHeading finds the H1 below it.
+func TestParse_EmptyFencePairIsFrontMatterWithNoFields(t *testing.T) {
 	for _, in := range []string{
-		"---\n\n---\n# Title\n",     // one blank line between the fences
-		"---\n---\n# Title\n",       // the closing fence on the next line
-		"---\r\n\r\n---\r\n# T\r\n", // the same, as an editor would save it
+		"---\n\n---\n# Title\n",         // one blank line between the fences
+		"---\n---\n# Title\n",           // the closing fence on the next line
+		"---\r\n\r\n---\r\n# Title\r\n", // the same, as an editor would save it
 	} {
 		t.Run(strings.ReplaceAll(strings.ReplaceAll(in, "\n", "\\n"), "\r", "\\r"), func(t *testing.T) {
-			fm := Parse([]byte(in))
-			if _, has := frontmatterBody([]byte(in)); has {
-				t.Errorf("frontmatterBody found front-matter in a fence pair enclosing nothing")
+			block, rest, has := splitFrontMatter(normalizeText([]byte(in)))
+			if !has || strings.TrimSpace(block) != "" || rest != "# Title\n" {
+				t.Errorf("splitFrontMatter = (%q, %q, %v), want an empty block, the H1 after it, true", block, rest, has)
 			}
-			if fm.Inclusion != inclusionAlways {
-				t.Errorf("Inclusion = %q, want the always default", fm.Inclusion)
+			if got := Body([]byte(in)); got != rest {
+				t.Errorf("Body() = %q, want the reader's rest %q", got, rest)
+			}
+			if fm := Parse([]byte(in)); fm.Inclusion != inclusionAlways || fm.HasInclusion || fm.Name != "" || fm.Description != "" {
+				t.Errorf("Parse() = %+v, want only the always default", fm)
+			}
+			if got := FirstHeading([]byte(in)); got != "Title" {
+				t.Errorf("FirstHeading() = %q, want Title", got)
 			}
 		})
 	}
@@ -307,6 +314,29 @@ func TestFirstHeading(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := FirstHeading([]byte(tc.in)); got != tc.want {
 				t.Errorf("FirstHeading() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBody_SkipsTheFrontMatter(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"no front matter", "Just the body.\n", "Just the body.\n"},
+		{"front matter then body", "---\ndescription: x\n---\nThe body\n", "The body\n"},
+		{"empty fence pair", "---\n---\nAfter\n", "After\n"},
+		{"front matter only", "---\nname: x\n---\n", ""},
+		{"closing fence at the end", "---\nname: x\n---", ""},
+		{"unclosed fence is body", "---\nname: x\n", "---\nname: x\n"},
+		{"BOM and CRLF", "\ufeff---\r\nname: x\r\n---\r\nBody\r\n", "Body\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Body([]byte(tc.in)); got != tc.want {
+				t.Errorf("Body() = %q, want %q", got, tc.want)
 			}
 		})
 	}

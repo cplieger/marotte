@@ -39,7 +39,7 @@ type escalationHost struct {
 // the record still existed when it ran, and a close grade that records the id.
 func newEscalationHost(t *testing.T, store chatStore, retention retentionRead) *escalationHost {
 	t.Helper()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
@@ -211,6 +211,10 @@ func (*fixedTabs) Relist(context.Context, []marotte.RecentClose) (uint64, error)
 
 func (*fixedTabs) ExpireRecent(context.Context) (uint64, error) { return 2, nil }
 
+func (*fixedTabs) SetRecentWindow(context.Context, time.Duration) (uint64, error) { return 2, nil }
+
+func (*fixedTabs) RecentExpiry() (time.Time, bool) { return time.Time{}, false }
+
 func (*fixedTabs) Recent() []marotte.RecentClose { return nil }
 
 func (*fixedTabs) Owed() []tabs.OwedRelease { return nil }
@@ -225,6 +229,8 @@ func (*fixedTabs) Reorder(context.Context, []string) (uint64, error) { return 0,
 
 func (*fixedTabs) SetPinned(context.Context, string, bool) (uint64, error) { return 0, nil }
 func (*fixedTabs) SetSeen(context.Context, string, uint64) (uint64, error) { return 0, nil }
+
+func (*fixedTabs) Retarget(context.Context, string, string) (uint64, error) { return 0, nil }
 
 func (*fixedTabs) Reparent(context.Context, string, string) (uint64, error) { return 0, nil }
 
@@ -430,7 +436,7 @@ func (c *cancelOnCommitTabs) Close(ctx context.Context, id string, unlisted []st
 // canceled after the commit point must not cancel the record delete or the
 // teardown — both run under a context detached from the request.
 func TestCloseTab_ClientAbandonedRequestStillRollsForward(t *testing.T) {
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
@@ -519,7 +525,7 @@ func TestCloseTab_RecordlessChatSkipped(t *testing.T) {
 // an explicit delete does: the delete grade's engine calls can outlast the browser's request budget.
 func TestCloseTab_TheDeleteGradeRunsPastTheAnswer(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}

@@ -47,7 +47,7 @@ func TestNewStore_MovesAnUnreadArrangementAside(t *testing.T) {
 			dir := t.TempDir()
 			writeRaw(t, dir, tc.data, tc.mode)
 
-			s, err := NewStore(dir)
+			s, err := NewStore(dir, testWindow)
 			if err == nil {
 				t.Error("NewStore over an unreadable arrangement = nil error, want a diagnostic")
 			}
@@ -74,7 +74,7 @@ func TestNewStore_MovesAnUnreadArrangementAside(t *testing.T) {
 func TestNewStore_AReadArrangementIsNotUnread(t *testing.T) {
 	dir := t.TempDir()
 	writeDoc(t, dir, file{Version: 1, Tabs: []marotte.TabSubject{{ID: "a", Kind: marotte.TabKindChat, Ref: "c-1"}}})
-	s, err := NewStore(dir)
+	s, err := NewStore(dir, testWindow)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -86,13 +86,13 @@ func TestNewStore_AReadArrangementIsNotUnread(t *testing.T) {
 func TestNewStore_AnAsideKeepsTheNextBootUnread(t *testing.T) {
 	dir := t.TempDir()
 	writeRaw(t, dir, []byte("nonsense"), fileMode)
-	first, _ := NewStore(dir)
+	first, _ := NewStore(dir, testWindow)
 	aside := first.Unread()
 	if _, _, _, err := first.Open(t.Context(), chatSpec("c-1")); err != nil {
 		t.Fatalf("Setup: Open: %v", err)
 	}
 
-	second, err := NewStore(dir)
+	second, err := NewStore(dir, testWindow)
 	if err != nil {
 		t.Fatalf("NewStore after a clean write: %v", err)
 	}
@@ -107,11 +107,11 @@ func TestNewStore_AnAsideKeepsTheNextBootUnread(t *testing.T) {
 func TestNewStore_ASecondUnreadArrangementKeepsTheFirstAside(t *testing.T) {
 	dir := t.TempDir()
 	writeRaw(t, dir, []byte("first"), fileMode)
-	if _, err := NewStore(dir); err == nil {
+	if _, err := NewStore(dir, testWindow); err == nil {
 		t.Fatal("Setup: the first garbage arrangement was read")
 	}
 	writeRaw(t, dir, []byte("second"), fileMode)
-	if _, err := NewStore(dir); err == nil {
+	if _, err := NewStore(dir, testWindow); err == nil {
 		t.Fatal("Setup: the second garbage arrangement was read")
 	}
 
@@ -132,7 +132,7 @@ func TestNewStore_RefusesToWriteOverBytesItCouldNotMoveAside(t *testing.T) {
 	dir := t.TempDir()
 	writeRaw(t, dir, []byte("nonsense"), fileMode)
 
-	s, err := NewStore(dir)
+	s, err := NewStore(dir, testWindow)
 	if err == nil {
 		t.Error("NewStore with the move aside failing = nil error, want a diagnostic")
 	}
@@ -154,7 +154,7 @@ func TestNewStore_AListingFailureRefusesWrites(t *testing.T) {
 	dir := t.TempDir()
 	writeDoc(t, dir, file{Version: 1, Tabs: []marotte.TabSubject{{ID: "a", Kind: marotte.TabKindChat, Ref: "c-1"}}})
 
-	s, err := NewStore(dir)
+	s, err := NewStore(dir, testWindow)
 	if err == nil || !strings.Contains(err.Error(), "input/output error") {
 		t.Errorf("NewStore with the listing failing = %v, want a diagnostic naming it", err)
 	}

@@ -28,6 +28,7 @@ func (e refusedError) Unwrap() error      { return e.error }
 func CheckPatch(dirs AgentDirs, stored, patch map[string]json.RawMessage) error {
 	for _, check := range []func(map[string]json.RawMessage) error{
 		validateAgentIgnorePatch, validateCompactionPatch, validateAgentPatch, validateTriggerCapsPatch,
+		validateHistoryWindowPatch,
 	} {
 		if err := check(patch); err != nil {
 			return err

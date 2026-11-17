@@ -70,7 +70,7 @@ func TestSetSeen_SurvivesReopen(t *testing.T) {
 		t.Fatalf("Setup: SetSeen(7): %v", err)
 	}
 
-	reopened, err := NewStore(dir)
+	reopened, err := NewStore(dir, testWindow)
 	if err != nil {
 		t.Fatalf("NewStore(%q) again: %v", dir, err)
 	}

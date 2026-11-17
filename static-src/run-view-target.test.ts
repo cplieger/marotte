@@ -129,6 +129,9 @@ send.id = "run-send-btn";
 form.append(input, send);
 const stack = document.createElement("ul");
 stack.id = "run-steer-stack";
+const area = document.createElement("div");
+area.id = "run-holding-area";
+area.append(stack);
 
 beforeEach(() => {
   m.opened.length = 0;
@@ -149,7 +152,7 @@ beforeEach(() => {
   const dock = document.createElement("div");
   dock.id = "run-dock";
   input.value = "";
-  document.body.append(body, execDock, dock, stack, form);
+  document.body.append(body, execDock, dock, area, form);
 });
 
 afterEach(() => {

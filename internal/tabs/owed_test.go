@@ -41,7 +41,7 @@ func TestClose_OwesTheTabReleaseOfEveryClosedChat(t *testing.T) {
 		t.Errorf("tabs.json owed %v at version %d, want both entries in the close's own write (version %d)", got, doc.Version, version)
 	}
 
-	reopened, err := NewStore(dir)
+	reopened, err := NewStore(dir, testWindow)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestNewStore_DropsInvalidOwedEntriesAndCapsTheList(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			writeDoc(t, dir, file{Owed: tc.in})
-			s, err := NewStore(dir)
+			s, err := NewStore(dir, testWindow)
 			if err != nil {
 				t.Fatalf("NewStore: %v", err)
 			}
@@ -110,7 +110,7 @@ func TestNewStore_DropsInvalidOwedEntriesAndCapsTheList(t *testing.T) {
 			in = append(in, OwedRelease{ID: fmt.Sprintf("e%d", i), Kind: marotte.TabKindChat, Ref: fmt.Sprintf("c-%d", i)})
 		}
 		writeDoc(t, dir, file{Owed: in})
-		s, err := NewStore(dir)
+		s, err := NewStore(dir, testWindow)
 		if err != nil {
 			t.Fatalf("NewStore: %v", err)
 		}
@@ -130,7 +130,7 @@ func TestClose_OwesARunTabsReleaseOnEachOfItsHolders(t *testing.T) {
 	})
 	mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_parentless", Parent: parent.ID, Launch: &marotte.RunLaunch{}})
 
-	reopened, err := NewStore(dir)
+	reopened, err := NewStore(dir, testWindow)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestSetLaunchChats_GrowsTheHoldersAndResolvesWithoutABump(t *testing.T) {
 		t.Fatalf("SetLaunchChats with fewer holders: %v", err)
 	}
 
-	reopened, err := NewStore(dir)
+	reopened, err := NewStore(dir, testWindow)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}

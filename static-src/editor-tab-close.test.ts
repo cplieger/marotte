@@ -22,7 +22,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
+vi.mock("./router.js", () => ({ pushRoute: vi.fn(), replaceRoute: vi.fn() }));
 vi.mock("./icons.js", () => ({
   ICON_MODEL_UI: "",
   ICON_CLOSE: "",
@@ -86,6 +86,7 @@ vi.mock("./api-client.js", () =>
           binary: false,
           utf8: true,
           read_only: false,
+          renamable: true,
         },
       }),
     ),
@@ -246,7 +247,7 @@ beforeEach(() => {
       close: vi.fn(),
       dot: () => "",
     },
-    editor: { show: activateFile, refresh: vi.fn(), close: closeEditorFile },
+    editor: { show: activateFile, refresh: vi.fn(), close: closeEditorFile, move: vi.fn() },
     run: { show: vi.fn(), refresh: vi.fn() },
     subagent: { show: vi.fn(), refresh: vi.fn() },
     // `TabOpeners` gained a required `spec` member, so a fixture without one does not

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import { catalogRefused, readVerdict, refreshCatalog } from "./model-catalog.js";
 import type { CatalogAnswer } from "./model-catalog.js";
-import type { CatalogPhase } from "./picker.js";
+import type { CatalogPhase } from "./model-list.js";
 import type { CatalogState } from "./wire/types.gen.js";
 
 function answer(catalog: CatalogState): CatalogAnswer {

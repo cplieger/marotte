@@ -14,6 +14,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
+// testWindow is the History window every store in this package's tests is opened with.
+const testWindow = 24 * time.Hour
+
 // testClock is the store's clock under the test's control; a store test runs on one goroutine.
 type testClock struct{ at time.Time }
 
@@ -192,8 +195,8 @@ func TestClose_TheEleventhEntryDropsTheOldest(t *testing.T) {
 }
 
 func TestRecent_TheBoundsAreTheProductsNumbers(t *testing.T) {
-	if RecentWindow != 6*time.Hour || maxRecent != 10 {
-		t.Errorf("RecentWindow, maxRecent = %v, %d, want 6h and 10", RecentWindow, maxRecent)
+	if RecentHold != 168*time.Hour || maxRecent != 10 {
+		t.Errorf("RecentHold, maxRecent = %v, %d, want 168h and 10", RecentHold, maxRecent)
 	}
 }
 
@@ -210,7 +213,7 @@ func TestRecent_ExpiresOnlyInsideARealChange(t *testing.T) {
 		open := mustOpen(t, s, chatSpec("c-open"))
 		other := mustOpen(t, s, chatSpec("c-other"))
 		closedChat(t, s, "c-a")
-		clock.advance(RecentWindow)
+		clock.advance(testWindow)
 		return fixture{s: s, clock: clock, open: open, other: other}
 	}
 	noops := []struct {
@@ -283,7 +286,7 @@ func TestRecent_ExpiresOnlyInsideARealChange(t *testing.T) {
 			t.Fatalf("SetPinned: %v", err)
 		}
 		if got := recentRefs(f.s.Recent()); !slices.Equal(got, []string{"c-a"}) {
-			t.Errorf("Recent() = %v, want c-a kept until closed_at + RecentWindow", got)
+			t.Errorf("Recent() = %v, want c-a kept until closed_at + the window", got)
 		}
 	})
 }
@@ -320,7 +323,7 @@ func TestExpireRecent_DropsWithAVersionOfItsOwn(t *testing.T) {
 	closedChat(t, s, "c-new")
 	_, before := s.List()
 
-	clock.advance(RecentWindow - time.Hour)
+	clock.advance(testWindow - time.Hour)
 	v, err := s.ExpireRecent(t.Context())
 	if err != nil || v != before+1 {
 		t.Fatalf("ExpireRecent at c-old's expiry = (v%d, %v), want version %d", v, err, before+1)
@@ -328,8 +331,8 @@ func TestExpireRecent_DropsWithAVersionOfItsOwn(t *testing.T) {
 	if got := recentRefs(s.Recent()); !slices.Equal(got, []string{"c-new"}) {
 		t.Errorf("Recent() = %v, want only c-new", got)
 	}
-	if doc := onDisk(t, dir); len(doc.Recent) != 1 || doc.Version != v {
-		t.Errorf("tabs.json recent %+v at version %d, want c-new alone at %d", doc.Recent, doc.Version, v)
+	if doc := onDisk(t, dir); !slices.Equal(recentRefs(doc.Recent), []string{"c-new", "c-old"}) || doc.Version != v {
+		t.Errorf("tabs.json recent %v at version %d, want both still held at %d", recentRefs(doc.Recent), doc.Version, v)
 	}
 
 	again, err := s.ExpireRecent(t.Context())
@@ -548,7 +551,7 @@ func TestNewStore_RoundTripsTheRecentList(t *testing.T) {
 	closedChat(t, s, "c-b")
 	want := s.Recent()
 
-	reopened, err := NewStore(dir)
+	reopened, err := NewStore(dir, testWindow)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -574,17 +577,18 @@ func TestNewStore_SanitizesTheRecentList(t *testing.T) {
 		{name: "valid entries kept in order", in: []marotte.RecentClose{entry("c-a", now-hour), entry("c-b", now-2*hour)}, wantRefs: []string{"c-a", "c-b"}},
 		{name: "invalid ref", in: []marotte.RecentClose{entry("../x", now), entry("", now), entry("c-ok", now)}, wantRefs: []string{"c-ok"}, wantWarns: 2},
 		{name: "closed_at zero or below", in: []marotte.RecentClose{entry("c-a", 0), entry("c-b", -5), entry("c-ok", now)}, wantRefs: []string{"c-ok"}, wantWarns: 2},
-		{name: "closed_at more than the window ahead", in: []marotte.RecentClose{entry("c-a", now+7*hour), entry("c-ok", now+hour)}, wantRefs: []string{"c-ok"}, wantWarns: 1},
+		{name: "closed_at more than the hold ahead", in: []marotte.RecentClose{entry("c-a", now+RecentHold.Milliseconds()+hour), entry("c-ok", now+hour)}, wantRefs: []string{"c-ok"}, wantWarns: 1},
 		{name: "duplicates keep the newest", in: []marotte.RecentClose{entry("c-a", now-2*hour), entry("c-b", now-hour), entry("c-a", now-time.Minute.Milliseconds())}, wantRefs: []string{"c-a", "c-b"}},
 		{name: "an entry with an open tab", tabs: []marotte.TabSubject{{ID: "t1", Kind: marotte.TabKindChat, Ref: "c-a"}}, in: []marotte.RecentClose{entry("c-a", now), entry("c-b", now)}, wantRefs: []string{"c-b"}},
-		{name: "expired entries", in: []marotte.RecentClose{entry("c-a", now-7*hour), entry("c-b", now-hour)}, wantRefs: []string{"c-b"}},
+		{name: "an entry past the window is not shown", in: []marotte.RecentClose{entry("c-a", now-testWindow.Milliseconds()-hour), entry("c-b", now-hour)}, wantRefs: []string{"c-b"}},
+		{name: "an entry past the hold", in: []marotte.RecentClose{entry("c-a", now-RecentHold.Milliseconds()-hour), entry("c-b", now-hour)}, wantRefs: []string{"c-b"}},
 	}
 	for _, tc := range cases {
 		t.Run(strings.ReplaceAll(tc.name, " ", "-"), func(t *testing.T) {
 			logs := captureLogs(t)
 			dir := t.TempDir()
 			writeDoc(t, dir, file{Tabs: tc.tabs, Recent: tc.in, Version: 3})
-			s, err := NewStore(dir)
+			s, err := NewStore(dir, testWindow)
 			if err != nil {
 				t.Fatalf("NewStore: %v", err)
 			}
@@ -604,7 +608,7 @@ func TestNewStore_SanitizesTheRecentList(t *testing.T) {
 		}
 		dir := t.TempDir()
 		writeDoc(t, dir, file{Recent: in})
-		s, err := NewStore(dir)
+		s, err := NewStore(dir, testWindow)
 		if err != nil {
 			t.Fatalf("NewStore: %v", err)
 		}
@@ -622,7 +626,7 @@ func TestNewStore_SanitizesTheRecentList(t *testing.T) {
 			{Ref: "c-long", Name: strings.Repeat("n", marotte.MaxChatNameBytes+1), ClosedAt: now},
 			{Ref: "c-cap", Name: strings.Repeat("n", marotte.MaxChatNameBytes), ClosedAt: now},
 		}})
-		s, err := NewStore(dir)
+		s, err := NewStore(dir, testWindow)
 		if err != nil {
 			t.Fatalf("NewStore: %v", err)
 		}
@@ -641,7 +645,7 @@ func TestNewStore_SanitizesTheRecentList(t *testing.T) {
 	t.Run("an unreadable file starts with an empty list", func(t *testing.T) {
 		dir := t.TempDir()
 		writeRaw(t, dir, []byte(`{"recent":[{"ref":"c-a","name":"A","closed_at":`), fileMode)
-		s, _ := NewStore(dir)
+		s, _ := NewStore(dir, testWindow)
 		if recent := s.Recent(); len(recent) != 0 {
 			t.Errorf("Recent() over an unreadable tabs.json = %+v, want empty", recent)
 		}
@@ -748,5 +752,214 @@ func TestRelist_NothingToListBumpsNothing(t *testing.T) {
 
 	if err != nil || v != before {
 		t.Errorf("Relist(nil) = (v%d, %v), want version %d unchanged", v, err, before)
+	}
+}
+
+func TestNewStore_ShowsTheHeldEntriesInsideItsWindow(t *testing.T) {
+	now := time.Now()
+	ago := func(ref string, d time.Duration) marotte.RecentClose {
+		return marotte.RecentClose{Ref: ref, ClosedAt: now.Add(-d).UnixMilli()}
+	}
+	dir := t.TempDir()
+	writeDoc(t, dir, file{Recent: []marotte.RecentClose{
+		ago("c-1h", time.Hour), ago("c-12h", 12*time.Hour), ago("c-30h", 30*time.Hour), ago("c-200h", 200*time.Hour),
+	}, Version: 4})
+
+	day, err := NewStore(dir, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("NewStore(24h): %v", err)
+	}
+	if got := recentRefs(day.Recent()); !slices.Equal(got, []string{"c-1h", "c-12h"}) {
+		t.Errorf("Recent() under 24h = %v, want [c-1h c-12h]", got)
+	}
+
+	threeDays, err := NewStore(dir, 72*time.Hour)
+	if err != nil {
+		t.Fatalf("NewStore(72h): %v", err)
+	}
+	if got := recentRefs(threeDays.Recent()); !slices.Equal(got, []string{"c-1h", "c-12h", "c-30h"}) {
+		t.Errorf("Recent() of the same file under 72h = %v, want [c-1h c-12h c-30h]", got)
+	}
+	mustOpen(t, threeDays, chatSpec("c-other"))
+	if got := recentRefs(onDisk(t, dir).Recent); !slices.Equal(got, []string{"c-1h", "c-12h", "c-30h"}) {
+		t.Errorf("tabs.json recent after the next write = %v, want the entry past the hold gone", got)
+	}
+}
+
+func TestSetRecentWindow_NarrowsAndWidensFromWhatTheStoreHolds(t *testing.T) {
+	s, dir := newTestStore(t)
+	clock := withClock(s)
+	closedChat(t, s, "c-30h")
+	clock.advance(20 * time.Hour)
+	closedChat(t, s, "c-10h")
+	clock.advance(9 * time.Hour)
+	closedChat(t, s, "c-1h")
+	clock.advance(time.Hour)
+	all := []string{"c-1h", "c-10h", "c-30h"}
+	if got := recentRefs(s.Recent()); !slices.Equal(got, []string{"c-1h", "c-10h"}) {
+		t.Fatalf("Setup: Recent() under 24h = %v, want [c-1h c-10h]", got)
+	}
+	_, before := s.List()
+
+	narrow, err := s.SetRecentWindow(t.Context(), 6*time.Hour)
+	if err != nil || narrow != before+1 {
+		t.Fatalf("SetRecentWindow(6h) = (v%d, %v), want version %d", narrow, err, before+1)
+	}
+	if got := recentRefs(s.Recent()); !slices.Equal(got, []string{"c-1h"}) {
+		t.Errorf("Recent() under 6h = %v, want [c-1h]", got)
+	}
+	if doc := onDisk(t, dir); !slices.Equal(recentRefs(doc.Recent), all) || doc.Version != narrow {
+		t.Errorf("tabs.json recent %v at version %d after narrowing, want %v at %d", recentRefs(doc.Recent), doc.Version, all, narrow)
+	}
+
+	wide, err := s.SetRecentWindow(t.Context(), 72*time.Hour)
+	if err != nil || wide != narrow+1 {
+		t.Fatalf("SetRecentWindow(72h) = (v%d, %v), want version %d", wide, err, narrow+1)
+	}
+	_, recent, version := s.Snapshot()
+	if got := recentRefs(recent); !slices.Equal(got, all) || version != wide {
+		t.Errorf("Snapshot() under 72h = (%v, v%d), want (%v, v%d)", got, version, all, wide)
+	}
+	if doc := onDisk(t, dir); !slices.Equal(recentRefs(doc.Recent), all) || doc.Version != wide {
+		t.Errorf("tabs.json recent %v at version %d after widening, want %v at %d", recentRefs(doc.Recent), doc.Version, all, wide)
+	}
+
+	if again, err := s.SetRecentWindow(t.Context(), 72*time.Hour); err != nil || again != wide {
+		t.Errorf("SetRecentWindow(72h) again = (v%d, %v), want version %d unchanged", again, err, wide)
+	}
+}
+
+func TestSetRecentWindow_NeverBringsBackAPrunedEntry(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewStore(dir, time.Hour)
+	if err != nil {
+		t.Fatalf("Setup: NewStore: %v", err)
+	}
+	clock := withClock(s)
+	closedChat(t, s, "c-past-hold")
+	clock.advance(RecentHold + time.Hour)
+	closedChat(t, s, "c-cut")
+	clock.advance(time.Second)
+	closedChat(t, s, "c-forgotten")
+	clock.advance(time.Second)
+	reopened := mustOpen(t, s, chatSpec("c-reopened"))
+	if _, err := s.SetPinned(t.Context(), reopened.ID, true); err != nil {
+		t.Fatalf("Setup: SetPinned: %v", err)
+	}
+	mustClose(t, s, reopened.ID, nil)
+	var kept []string
+	for i := range maxRecent - 2 {
+		clock.advance(time.Second)
+		ref := "c-kept-" + strconv.Itoa(i)
+		closedChat(t, s, ref)
+		kept = append([]string{ref}, kept...)
+	}
+	clock.advance(2 * time.Hour)
+	if _, err := s.ExpireRecent(t.Context()); err != nil {
+		t.Fatalf("Setup: ExpireRecent: %v", err)
+	}
+	if recent := s.Recent(); len(recent) != 0 {
+		t.Fatalf("Setup: Recent() 2h after the closes under 1h = %v, want nothing shown", recentRefs(recent))
+	}
+	if _, err := s.Forget(t.Context(), "c-forgotten"); err != nil {
+		t.Fatalf("Forget: %v", err)
+	}
+
+	sub := mustOpen(t, s, chatSpec("c-reopened"))
+	if !sub.Pinned {
+		t.Errorf("Open(c-reopened) of a held but hidden pinned close = %+v, want it pinned", sub)
+	}
+	if got := recentRefs(onDisk(t, dir).Recent); slices.Contains(got, "c-reopened") {
+		t.Errorf("tabs.json recent after reopening c-reopened = %v, want its entry taken out", got)
+	}
+
+	if _, err := s.SetRecentWindow(t.Context(), RecentHold); err != nil {
+		t.Fatalf("SetRecentWindow(%v): %v", RecentHold, err)
+	}
+	if got := recentRefs(s.Recent()); !slices.Equal(got, kept) {
+		t.Errorf("Recent() widened to %v = %v, want only %v: past the hold, cut, forgotten and reopened stay gone", RecentHold, got, kept)
+	}
+}
+
+func TestRecentExpiry_IsTheOldestShownCloseAndTheWindow(t *testing.T) {
+	s, _ := newTestStore(t)
+	clock := withClock(s)
+	if at, ok := s.RecentExpiry(); ok {
+		t.Errorf("RecentExpiry() on an empty list = (%v, true), want false", at)
+	}
+	closedChat(t, s, "c-old")
+	oldAt := clock.at
+	clock.advance(time.Hour)
+	closedChat(t, s, "c-new")
+	newAt := clock.at
+
+	if at, ok := s.RecentExpiry(); !ok || !at.Equal(oldAt.Add(testWindow)) {
+		t.Errorf("RecentExpiry() = (%v, %v), want (%v, true): c-old's close plus the window", at, ok, oldAt.Add(testWindow))
+	}
+	if _, err := s.SetRecentWindow(t.Context(), 6*time.Hour); err != nil {
+		t.Fatalf("SetRecentWindow(6h): %v", err)
+	}
+	if at, ok := s.RecentExpiry(); !ok || !at.Equal(oldAt.Add(6*time.Hour)) {
+		t.Errorf("RecentExpiry() under 6h = (%v, %v), want (%v, true)", at, ok, oldAt.Add(6*time.Hour))
+	}
+	clock.advance(5 * time.Hour)
+	if _, err := s.ExpireRecent(t.Context()); err != nil {
+		t.Fatalf("ExpireRecent: %v", err)
+	}
+	if at, ok := s.RecentExpiry(); !ok || !at.Equal(newAt.Add(6*time.Hour)) {
+		t.Errorf("RecentExpiry() once c-old is hidden = (%v, %v), want (%v, true): the oldest SHOWN close", at, ok, newAt.Add(6*time.Hour))
+	}
+}
+
+// ClosedAt is wall-clock time, so a clock stepped back between two closes leaves an older close at the head.
+func TestRecentExpiry_IsTheOldestCloseWhereverItIsListed(t *testing.T) {
+	s, _ := newTestStore(t)
+	clock := withClock(s)
+	closedChat(t, s, "c-new")
+	olderAt := clock.at.Add(-2 * time.Hour)
+	if _, err := s.Relist(t.Context(), []marotte.RecentClose{{Ref: "c-older", Name: "Older", ClosedAt: olderAt.UnixMilli()}}); err != nil {
+		t.Fatalf("Relist: %v", err)
+	}
+	if got := recentRefs(s.Recent()); !slices.Equal(got, []string{"c-older", "c-new"}) {
+		t.Fatalf("Recent() = %v, want c-older at the head", got)
+	}
+
+	if at, ok := s.RecentExpiry(); !ok || !at.Equal(olderAt.Add(testWindow)) {
+		t.Errorf("RecentExpiry() = (%v, %v), want (%v, true): c-older's close plus the window", at, ok, olderAt.Add(testWindow))
+	}
+}
+
+func TestExpireRecent_HidesAnEntryAndKeepsItInTheFile(t *testing.T) {
+	s, dir := newTestStore(t)
+	clock := withClock(s)
+	clock.advance(-30 * time.Hour)
+	closedChat(t, s, "c-a")
+	_, before := s.List()
+
+	clock.advance(testWindow)
+	v, err := s.ExpireRecent(t.Context())
+	if err != nil || v != before+1 {
+		t.Fatalf("ExpireRecent at the window's end = (v%d, %v), want version %d", v, err, before+1)
+	}
+	if recent := s.Recent(); len(recent) != 0 {
+		t.Errorf("Recent() = %v, want nothing shown", recentRefs(recent))
+	}
+	if doc := onDisk(t, dir); !slices.Equal(recentRefs(doc.Recent), []string{"c-a"}) || doc.Version != v {
+		t.Errorf("tabs.json recent %v at version %d, want c-a still held at %d", recentRefs(doc.Recent), doc.Version, v)
+	}
+
+	day, err := NewStore(dir, testWindow)
+	if err != nil {
+		t.Fatalf("NewStore(%v): %v", testWindow, err)
+	}
+	if recent := day.Recent(); len(recent) != 0 {
+		t.Errorf("Recent() after a restart under %v of a close 30h old = %v, want nothing", testWindow, recentRefs(recent))
+	}
+	threeDays, err := NewStore(dir, 72*time.Hour)
+	if err != nil {
+		t.Fatalf("NewStore(72h): %v", err)
+	}
+	if got := recentRefs(threeDays.Recent()); !slices.Equal(got, []string{"c-a"}) {
+		t.Errorf("Recent() after a restart under 72h = %v, want c-a shown again", got)
 	}
 }

@@ -48,8 +48,11 @@ const OTHER_ROWS: readonly SheetRow[] = [
   // bindings on one chord; a second press falls through to the browser's own find in both.
   { description: "Search this conversation", chords: [["Ctrl", "F"]] },
   { description: "Find in files, from a file browser or editor tab", chords: [["Ctrl", "F"]] },
-  // files.ts, on a selected row in the file browser.
-  { description: "Rename in the file browser", chords: [["F2"]] },
+  // files.ts on a selected row in the file browser, editor-rename.ts on an editor tab.
+  {
+    description: "Rename the selected file, or the file open in the editor",
+    chords: [["F2"]],
+  },
   // keys.ts, the binding that opens this sheet.
   { description: "Show this list", chords: [["?"]] },
 ];

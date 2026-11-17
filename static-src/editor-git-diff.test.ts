@@ -122,6 +122,7 @@ function stage(
     utf8: true,
     conflict: false,
     readOnly: false,
+    renamable: true,
     size: 1,
   };
   state.error.value = opts.error ?? "";

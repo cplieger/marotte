@@ -18,10 +18,18 @@ interface DeviceView {
   shell_h: number;
   sidebar_w: number;
   run_bar_open: boolean | null;
+  stack_open: boolean | null;
 }
 
 function empty(): DeviceView {
-  return { active_view: "", shell_open: false, shell_h: 0, sidebar_w: 0, run_bar_open: null };
+  return {
+    active_view: "",
+    shell_open: false,
+    shell_h: 0,
+    sidebar_w: 0,
+    run_bar_open: null,
+    stack_open: null,
+  };
 }
 
 function validLength(v: unknown): number | null {
@@ -61,6 +69,7 @@ export function loadDeviceView(): DeviceView {
     shell_h: validLength(o["shell_h"]) ?? e.shell_h,
     sidebar_w: validLength(o["sidebar_w"]) ?? e.sidebar_w,
     run_bar_open: typeof o["run_bar_open"] === "boolean" ? o["run_bar_open"] : e.run_bar_open,
+    stack_open: typeof o["stack_open"] === "boolean" ? o["stack_open"] : e.stack_open,
   };
 }
 
@@ -107,6 +116,15 @@ export function runBarOpen(): boolean | null {
 
 export function setRunBarOpen(open: boolean): void {
   writeBlob({ run_bar_open: open });
+}
+
+/** Whether the reader last opened (true) or folded (false) a folding steer stack; null when this screen never chose. */
+export function stackOpen(): boolean | null {
+  return loadDeviceView().stack_open;
+}
+
+export function setStackOpen(open: boolean): void {
+  writeBlob({ stack_open: open });
 }
 
 /** Whether this screen folded the sidebar section `key`; `fallback`, the section's default, when nothing valid is stored. */

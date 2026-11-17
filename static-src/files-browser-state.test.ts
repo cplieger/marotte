@@ -14,13 +14,15 @@ vi.mock("./dom.js", () => ({
 }));
 vi.mock("./bus.js", () => ({
   // Present for Browser Mode's real-ESM linking.
-  onSSE: undefined,
+  onSSE: vi.fn(),
   onBus: vi.fn(),
   BUS_KEYS_ESCAPE: "escape",
+  BUS_FILES_REVEAL: "files:reveal",
 }));
 vi.mock("./tabs.js", () => ({
   // Present for Browser Mode's real-ESM linking.
   activateTab: undefined,
+  filesTabForRoute: undefined,
   parentChatRef: undefined,
   setTabParent: undefined,
   tabIdFor: undefined,

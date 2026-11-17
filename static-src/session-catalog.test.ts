@@ -17,15 +17,13 @@ vi.mock("./api-client.js", () => ({
 // The sinks, recorded rather than driven: each owns its own behaviour, and what this file
 // decides is which of them the one reader still reaches.
 const mockSetCatalogModes = vi.fn();
-const mockSetPickerModels = vi.fn();
-const mockRefreshPickerIfVisible = vi.fn();
+const mockSetCatalogModels = vi.fn();
 const mockSetCatalogPhase = vi.fn();
 const mockRefreshContextUI = vi.fn();
 const mockSetCatalogOutputStyles = vi.fn();
 vi.mock("./roles.js", () => ({ setCatalogModes: mockSetCatalogModes }));
-vi.mock("./picker.js", () => ({
-  setPickerModels: mockSetPickerModels,
-  refreshPickerIfVisible: mockRefreshPickerIfVisible,
+vi.mock("./model-list.js", () => ({
+  setCatalogModels: mockSetCatalogModels,
   setCatalogPhase: mockSetCatalogPhase,
 }));
 vi.mock("./context-ui.js", () => ({ refreshContextUI: mockRefreshContextUI }));
@@ -92,7 +90,7 @@ describe("the one catalog reader", () => {
 
     expect(reads).toEqual(["/api/config-template"]);
     expect(mockSetCatalogModes).toHaveBeenCalledWith(reply.modes);
-    expect(mockSetPickerModels).toHaveBeenCalledTimes(1);
+    expect(mockSetCatalogModels).toHaveBeenCalledTimes(1);
   });
 
   it("seeds the active chat's context size from the descriptions it just landed", async () => {
@@ -142,23 +140,11 @@ describe("the one catalog reader", () => {
     expect(active.usage.context_size).toBe(111);
   });
 
-  it("moves the picker's highlight to the ACTIVE chat's model", async () => {
-    // The second seed carried over. Passing "" leaves the highlight wherever it was, which is right
-    // before a session exists and wrong once one does.
-    vi.mocked(store.getActive).mockReturnValue(session({ model: "m-big" }));
-    reply = catalog({ models: [model("m-big"), model("m-small")] });
-
-    await fetchCatalog();
-
-    expect(mockRefreshPickerIfVisible).toHaveBeenCalledWith("m-big");
-  });
-
-  it("leaves the highlight alone when no chat is active", async () => {
+  it("repaints no pill when no chat is active", async () => {
     reply = catalog({ models: [model("m-big")] });
 
     await fetchCatalog();
 
-    expect(mockRefreshPickerIfVisible).toHaveBeenCalledWith(undefined);
     expect(mockRefreshContextUI).not.toHaveBeenCalled();
   });
 
@@ -171,7 +157,7 @@ describe("the one catalog reader", () => {
     await fetchCatalog();
 
     expect(mockSetCatalogModes).not.toHaveBeenCalled();
-    expect(mockSetPickerModels).not.toHaveBeenCalled();
+    expect(mockSetCatalogModels).not.toHaveBeenCalled();
   });
 
   it("hands the served output styles to the Settings select, and never an empty list", async () => {
@@ -193,7 +179,7 @@ describe("the one catalog reader", () => {
 
     await fetchCatalog();
 
-    const models = mockSetPickerModels.mock.calls[0]?.[0] as ModelInfo[] | undefined;
+    const models = mockSetCatalogModels.mock.calls[0]?.[0] as ModelInfo[] | undefined;
     expect(models?.[0]?.default_effort_level).toBe("high");
   });
 
@@ -207,15 +193,15 @@ describe("the one catalog reader", () => {
 
     await fetchCatalog();
 
-    const models = mockSetPickerModels.mock.calls[0]?.[0] as ModelInfo[] | undefined;
+    const models = mockSetCatalogModels.mock.calls[0]?.[0] as ModelInfo[] | undefined;
     expect(models?.[0]?.effort_tiers).toEqual(["low", "high"]);
     expect(models?.[1]).not.toHaveProperty("effort_tiers");
   });
 
-  it("tells the bus once a model list lands, after the picker holds it", async () => {
+  it("tells the bus once a model list lands, after the model list holds it", async () => {
     const seen: number[] = [];
     const off = onBus(BUS_CATALOG_MODELS, () => {
-      seen.push(mockSetPickerModels.mock.calls.length);
+      seen.push(mockSetCatalogModels.mock.calls.length);
     });
     reply = catalog();
     await fetchCatalog();
@@ -237,7 +223,7 @@ describe("the one catalog reader", () => {
     await fetchCatalog();
 
     // The slider's Off stop keys on this field alone.
-    const models = mockSetPickerModels.mock.calls[0]?.[0] as ModelInfo[] | undefined;
+    const models = mockSetCatalogModels.mock.calls[0]?.[0] as ModelInfo[] | undefined;
     expect(models?.[0]?.thinking_toggleable).toBe(true);
     expect(models?.[1]?.thinking_toggleable).toBeUndefined();
   });
@@ -253,7 +239,7 @@ describe("the one catalog reader", () => {
     await fetchCatalog();
 
     // The slider reads this when the chat chose nothing and the session reported nothing.
-    const models = mockSetPickerModels.mock.calls[0]?.[0] as ModelInfo[] | undefined;
+    const models = mockSetCatalogModels.mock.calls[0]?.[0] as ModelInfo[] | undefined;
     expect(models?.[0]?.thinking_default_off).toBe(true);
     expect(models?.[1]?.thinking_default_off).toBeUndefined();
   });

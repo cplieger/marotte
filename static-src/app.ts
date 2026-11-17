@@ -1,6 +1,6 @@
 // App wiring: construction, injection, `applyRoute` (the switch over every route kind,
 // reaching most surfaces) and the pre-session catalog fetch, the one place that sees the
-// endpoint, the phase sink and the picker. Boot is `boot.ts`, whoami is `identity.ts`.
+// endpoint and the model list's Retry. Boot is `boot.ts`, whoami is `identity.ts`.
 // The server is the source of truth: a prompt posts a command and SSE drives rendering.
 
 import type { ServerEvent } from "./types.js";
@@ -42,14 +42,19 @@ import { ingestTabsChanged, listTabs, removePendingFor } from "./tabs-sync.js";
 import { setParkedViewExemption } from "./messages.js";
 import { onPopState } from "./router.js";
 import type { Route } from "./route-path.js";
-import { initModelPicker } from "./picker.js";
+import { initEmptyChatLogo } from "./empty-chat-logo.js";
 import { refreshRuntimeLine } from "./status.js";
 import { initShellPanel, revealShellKeys } from "./shell.js";
 import { focusComposerOnTyping } from "./composer-type-ahead.js";
 import { initSidebarResize } from "./sidebar-resize.js";
 import { hideLoginModal, initLoginModal } from "./modals.js";
 import { initEditor } from "./editor-core.js";
-import { activateFile, closeEditorFile, refreshEditorFile } from "./editor-openers.js";
+import {
+  activateFile,
+  closeEditorFile,
+  moveEditorFile,
+  refreshEditorFile,
+} from "./editor-openers.js";
 import { registerTabOpeners } from "./tab-materialize.js";
 import { showRun, refreshRun } from "./run-view.js";
 import { showSubagent, refreshSubagent } from "./subagent-view.js";
@@ -89,7 +94,7 @@ import {
   closeChatTab,
   chatTabDot,
 } from "./chat.js";
-import { initModelSwitcher, pickModel } from "./model-switcher.js";
+import { initModelSwitcher } from "./model-switcher.js";
 import { collapseAll, makeExpandable, placeOpenCard } from "./pill-expand.js";
 import { initContextCard } from "./context-card.js";
 import { loadAccountUsage } from "./account-usage.js";
@@ -101,6 +106,7 @@ import { initSlashMenu } from "./slash-menu.js";
 import { stagedAttachment } from "./attachments.js";
 import { initPendingSteers } from "./pending-steers.js";
 import { initRunBar } from "./run-bar.js";
+import { mountHoldingArea } from "./holding-area.js";
 import { initChatOptions } from "./chat-options.js";
 import { watchPillRow } from "./pill-row-fit.js";
 import { initSelectionQuote } from "./selection-quote.js";
@@ -180,7 +186,12 @@ function init(): void {
       close: closeChatTab,
       dot: chatTabDot,
     },
-    editor: { show: activateFile, refresh: refreshEditorFile, close: closeEditorFile },
+    editor: {
+      show: activateFile,
+      refresh: refreshEditorFile,
+      close: closeEditorFile,
+      move: moveEditorFile,
+    },
     run: {
       // `parentless` comes from the run store's record of the launching chat. No `cancel`: a
       // run tab is a VIEW, so its × stops nothing.
@@ -491,11 +502,8 @@ function setupInput(): void {
   });
 
   // The model switcher owns its button click, popover, queue and outside-click dismissal.
-  initModelSwitcher();
-  // The empty-chat model picker; only the selection callback is injected. pickModel, so a
-  // hero pick PERSISTS like a pill pick. The Retry's promise is returned for picker.ts to
-  // announce.
-  initModelPicker(pickModel, () => fetchCatalog());
+  initModelSwitcher(() => fetchCatalog());
+  initEmptyChatLogo();
   // The role picker owns the prompt-bar role pill (expand, list, selection).
   initRolePicker(() => {
     void fetchCatalog();
@@ -505,6 +513,7 @@ function setupInput(): void {
   initPendingSteers();
   // The composer band's live-run rows; a pure projection of the run store.
   initRunBar();
+  mountHoldingArea($.holdingArea);
   initChatOptions();
   const pillRow = queryEl<HTMLElement>(".prompt-pills");
   if (pillRow !== null) {

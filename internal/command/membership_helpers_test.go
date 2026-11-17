@@ -9,6 +9,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 )
 
@@ -23,7 +24,7 @@ func newTestMembership(t *testing.T, chats chatStore) *Membership {
 // recording bus, because the version, order and frames asserted are the real store's.
 func newTabbedMembership(t *testing.T, chats chatStore) (*Membership, *tabs.Store, *tabBus) {
 	t.Helper()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
@@ -35,7 +36,7 @@ func newTabbedMembership(t *testing.T, chats chatStore) (*Membership, *tabs.Stor
 // that want no teardown.
 func newTornDownMembership(t *testing.T, chats chatStore) (*Membership, *tabs.Store, *tabBus, *recordingTeardown) {
 	t.Helper()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}

@@ -161,7 +161,7 @@ beforeEach(async () => {
       close: vi.fn(),
       dot: () => "",
     },
-    editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn() },
+    editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn(), move: vi.fn() },
     // The composition root's run half (app.ts).
     run: {
       show: (workflowID) => {
@@ -175,7 +175,7 @@ beforeEach(async () => {
   resetActionFramework();
   _resetForTest();
   document.body.innerHTML =
-    '<div id="tab-list"></div><div id="run-view"><div class="page-content"><div id="run-body"></div></div></div><div id="run-exec-dock"></div><div id="run-dock"></div><ul id="run-steer-stack"></ul><form id="run-composer"><textarea id="run-composer-input"></textarea><button id="run-send-btn"></button></form>';
+    '<div id="tab-list"></div><div id="run-view"><div class="page-content"><div id="run-body"></div></div></div><div id="run-exec-dock"></div><div id="run-dock"></div><div id="run-holding-area"><ul id="run-steer-stack"></ul></div><form id="run-composer"><textarea id="run-composer-input"></textarea><button id="run-send-btn"></button></form>';
   m.chats = new Set([CHAT_A, CHAT_B]);
   seedRuns();
   await tabServer.seed({ kind: "chat", ref: CHAT_A }, { kind: "chat", ref: CHAT_B });

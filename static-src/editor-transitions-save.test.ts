@@ -357,6 +357,7 @@ describe("a save answered after live refresh adopted newer bytes", () => {
           binary: true,
           utf8: false,
           read_only: false,
+          renamable: true,
         },
       });
     });

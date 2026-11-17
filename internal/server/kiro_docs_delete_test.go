@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -9,13 +10,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/cplieger/marotte/internal/filebrowse"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // docsDeleteServer serves the docs routes and the real file browser over one temp workspace,
@@ -417,26 +418,33 @@ func TestKiroDocsDelete_AgentTwinThatIsNoFileLeavesNoRow(t *testing.T) {
 	}
 }
 
-// TestKiroDocsDelete_BroadcastsSoEveryDeviceRefetches pins the event other devices refetch on.
-func TestKiroDocsDelete_BroadcastsSoEveryDeviceRefetches(t *testing.T) {
+// TestKiroDocsDelete_ReportsTheRemovedFiles pins the one reaction every device refetches from: the delete hands the
+// paths it removed to the file-change function and broadcasts nothing itself.
+func TestKiroDocsDelete_ReportsTheRemovedFiles(t *testing.T) {
 	base := t.TempDir()
 	work := filepath.Join(base, "work")
-	writeFile(t, filepath.Join(work, ".kiro"), "prompts/gone.md", "# Gone\n")
+	writeFile(t, filepath.Join(work, ".kiro"), "skills/gone/SKILL.md", "---\nname: gone\n---\n")
 	sensitive := filebrowse.NewSensitive(filepath.Join(base, "config"))
 	files, err := filebrowse.New(sensitive, []string{work})
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := docServer(work, WithSensitive(sensitive), WithDocDeleter(files))
+	var got []filebrowse.Change
+	srv := docServer(work, WithSensitive(sensitive), WithDocDeleter(files),
+		WithFileChanges(func(_ context.Context, ch filebrowse.Change) { got = append(got, ch) }))
 	engine := &fakeEngine{}
 	srv.agent = engine
 	h := srv.routes()
-	row := mustRow(t, listDocs(t, h), catPrompt, "gone")
+	row := mustRow(t, listDocs(t, h), catSkill, "gone")
 	if rec := deleteRow(t, h, &row); rec.Code != http.StatusOK {
 		t.Fatalf("delete: status %d: %s", rec.Code, rec.Body.String())
 	}
-	if len(engine.events) != 1 || engine.events[0].Type != marotte.EventKiroDocsChanged {
-		t.Errorf("events = %+v, want one kiro_docs_changed", engine.events)
+	want := filepath.Join(work, ".kiro", "skills", "gone")
+	if len(got) != 1 || !slices.Equal(got[0].Paths, []string{want}) || got[0].From != "" {
+		t.Errorf("file changes = %+v, want one naming %s", got, want)
+	}
+	if len(engine.events) != 0 {
+		t.Errorf("events = %+v, want none: the file-change reaction broadcasts", engine.events)
 	}
 }
 

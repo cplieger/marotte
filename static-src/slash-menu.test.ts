@@ -254,6 +254,22 @@ describe("the listbox", () => {
     expect(input.value).toBe("/");
   });
 
+  // A renamed prompt reaches the picker by the server re-reading KAS's menu and announcing it.
+  it("slash_commands_changed re-reads the catalog and the picker lists the new name", async () => {
+    mockApiGetTyped.mockResolvedValue({
+      commands: [{ name: "recall", description: "(file prompt)", kind: "prompt" }],
+      ready: true,
+    });
+    dispatch({ type: "slash_commands_changed", chat_id: "", payload: undefined });
+    await vi.waitFor(() => {
+      type("/rec");
+      expect([...menu.querySelectorAll("[role=option]")].map((o) => o.textContent)).toEqual(
+        expect.arrayContaining([expect.stringContaining("/recall")]),
+      );
+    });
+    expect(mockApiGetTyped).toHaveBeenCalledWith("/api/slash-commands", expect.anything());
+  });
+
   it("says why a row is greyed while a send would steer, and how to queue it instead", () => {
     expect(BUSY_REASON).toBe(
       "A steer cannot run this. Press Queue instead, beside Steer, to queue it, or send it when the turn ends",

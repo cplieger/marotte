@@ -36,11 +36,16 @@ type fileAction struct {
 // cancellation; ctx wraps r.Context() at the caller.
 type actionFunc func(ctx context.Context, w http.ResponseWriter, body fileAction, l loc, h *Handler) error
 
+const (
+	actDelete = "delete"
+	actRename = "rename"
+)
+
 var fileActions = map[string]actionFunc{
-	"mkdir":  actionMkdir,
-	"touch":  actionTouch,
-	"delete": actionDelete,
-	"rename": actionRename,
+	"mkdir":   actionMkdir,
+	"touch":   actionTouch,
+	actDelete: actionDelete,
+	actRename: actionRename,
 }
 
 func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
@@ -62,14 +67,13 @@ func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "invalid json")
 		return
 	}
-	l, ok := h.resolveOrForbid(w, body.Path)
-	if !ok {
-		return
-	}
-
 	fn, exists := fileActions[body.Action]
 	if !exists {
 		httpreply.BadRequest(w, "unknown action")
+		return
+	}
+	l, ok := h.resolveActionTarget(w, body)
+	if !ok {
 		return
 	}
 	if owned := h.ownedActionTarget(body.Action, l); owned != "" {
@@ -87,7 +91,34 @@ func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
 			httpreply.ErrorJSON(body.Action+" failed"))
 		return
 	}
+	h.changed(r.Context(), changeOf(body))
 	httpserver.OK(w)
+}
+
+// resolveActionTarget resolves the path body names: a delete or rename acts on the entry itself,
+// a create on what the name resolves to.
+func (h *Handler) resolveActionTarget(w http.ResponseWriter, body fileAction) (loc, bool) {
+	if body.Action != actDelete && body.Action != actRename {
+		return h.resolveOrForbid(w, body.Path)
+	}
+	l, err := h.resolveEntry(body.Path)
+	if err != nil {
+		slog.Warn("filebrowse: path rejected",
+			"path", logsafe.Field(body.Path), "reason", logsafe.Field(err.Error()))
+		httpreply.Forbidden(w, err.Error())
+		return loc{}, false
+	}
+	return l, true
+}
+
+// changeOf is the Change a successful action made; a rename's name passed isSingleSegmentName.
+func changeOf(body fileAction) Change {
+	at := cleanReqPath(body.Path)
+	if body.Action != actRename {
+		return Change{Paths: []string{at}}
+	}
+	to := filepath.Join(filepath.Dir(at), body.Name)
+	return Change{Paths: []string{at, to}, From: at, To: to}
 }
 
 // ownedActionTarget answers the owned file the action at l would create, delete or rename, or "".
@@ -95,8 +126,8 @@ func (h *Handler) ownedActionTarget(action string, l loc) string {
 	switch action {
 	case "mkdir", "touch":
 		return h.ownedAtOrAbove(l.abs)
-	case "delete", "rename":
-		if h.ownerFor(l) != nil {
+	case actDelete, actRename:
+		if h.ownsEntry(l.abs) {
 			return l.abs
 		}
 	}
@@ -195,8 +226,9 @@ type DeleteRefusedError struct{ Reason string }
 
 func (e DeleteRefusedError) Error() string { return e.Reason }
 
-// Delete removes reqPath and everything under it behind the guards of POST /api/files/action's
-// delete, answering a DeleteRefusedError for a path those refuse. An absent path is success.
+// Delete removes the entry reqPath names (a symlink, not what it points at) and everything under
+// it behind the guards of POST /api/files/action's delete, answering a DeleteRefusedError for a
+// path those refuse. An absent path is success.
 func (h *Handler) Delete(reqPath string) error {
 	l, err := h.deletable(reqPath)
 	if err != nil {
@@ -212,9 +244,9 @@ func (h *Handler) CheckDelete(reqPath string) error {
 	return err
 }
 
-// DeleteFile removes the file reqPath resolves to, behind Delete's guards, only when it is a
-// regular file: anything else answers an error matching filesafe.ErrNotRegular and is left as
-// found. An absent path is success.
+// DeleteFile removes the entry reqPath names, behind Delete's guards, only when it is a regular
+// file: anything else, a symlink included, answers an error matching filesafe.ErrNotRegular and is
+// left as found. An absent path is success.
 func (h *Handler) DeleteFile(reqPath string) error {
 	l, err := h.deletable(reqPath)
 	if err != nil {
@@ -233,13 +265,13 @@ func (h *Handler) DeleteFile(reqPath string) error {
 }
 
 func (h *Handler) deletable(reqPath string) (loc, error) {
-	l, err := h.resolvePath(filepath.Clean("/" + reqPath))
+	l, err := h.resolveEntry(reqPath)
 	if err != nil {
 		slog.Warn("filebrowse: delete path rejected",
 			"path", logsafe.Field(reqPath), "reason", logsafe.Field(err.Error()))
 		return loc{}, DeleteRefusedError{Reason: err.Error()}
 	}
-	if h.ownerFor(l) != nil {
+	if h.ownsEntry(l.abs) {
 		return loc{}, DeleteRefusedError{Reason: filepath.Base(l.abs) + " is written through its editor; edit it instead"}
 	}
 	return l, h.refuseRemove(l)
@@ -313,19 +345,19 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 		return errHandled
 	}
 	if !isSingleSegmentName(body.Name) {
-		httpreply.BadRequest(w, "invalid name")
+		httpreply.BadRequest(w, `a name cannot be empty, "." or "..", or contain / or \`)
 		return errHandled
 	}
 	dest := filepath.Join(filepath.Dir(l.abs), body.Name)
-	destLoc, err := h.resolvePath(dest)
+	destLoc, err := h.resolveEntry(dest)
 	if err != nil {
 		slog.Warn("filebrowse: rename dest rejected",
 			"from", l.abs, "to", dest, "reason", err.Error())
 		httpreply.Forbidden(w, err.Error())
 		return errHandled
 	}
-	// Defense in depth: the resolved destination must still be a direct child of the original
-	// parent, which also implies the same mount.
+	// Defense in depth: the folder resolved again must be the source's, which also implies the
+	// same mount.
 	if filepath.Dir(destLoc.abs) != filepath.Dir(l.abs) {
 		httpreply.Forbidden(w, "rename escapes parent directory")
 		return errHandled
@@ -341,18 +373,55 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 	if owned := h.ownedAtOrAbove(destLoc.abs); owned != "" {
 		return refuseOwned(w, "rename", destLoc, owned)
 	}
-	// One pinned parent serves both ends, since they share one directory; see actionDelete for why
+	return h.renameEntry(w, body, l, destLoc)
+}
+
+// renameEntry renames l to destLoc, both already cleared by the guards, unless the name is taken
+// or an editor tab holds the destination.
+func (h *Handler) renameEntry(w http.ResponseWriter, body fileAction, l, destLoc loc) error {
+	// One pinned parent serves both ends, since they share one directory; see unlink for why
 	// os.Root alone is not enough.
 	parent, base, err := filesafe.OpenParentInRoot(l.m.root, l.rel())
 	if err != nil {
 		return err
 	}
 	defer func() { _ = parent.Close() }()
-	if err := parent.Rename(base, filepath.Base(destLoc.abs)); err != nil {
+	destBase := filepath.Base(destLoc.abs)
+	if taken, err := renameTaken(parent, base, destBase); err != nil {
+		return err
+	} else if taken {
+		return refuseTaken(w, "rename", destLoc)
+	}
+	if to := changeOf(body).To; h.inEditor != nil && h.inEditor(to) {
+		slog.Info("filebrowse: rename onto a path open in an editor tab", "to", logsafe.Field(to))
+		httpserver.WriteJSONStatus(w, http.StatusConflict,
+			httpreply.ErrorJSON(body.Name+" is open in an editor tab; close it first"))
+		return errHandled
+	}
+	if err := parent.Rename(base, destBase); err != nil {
 		return err
 	}
 	slog.Info("filebrowse: rename", "from", l.abs, "to", destLoc.abs)
 	return nil
+}
+
+// renameTaken reports whether renaming base to dest in parent would replace another entry, since
+// rename(2) replaces its target. RENAME_NOREPLACE would close the race with another writer between
+// this check and the rename, but NFS answers it with EINVAL. A case-insensitive mount finds the
+// source itself at a case-only new name, which is not taken.
+func renameTaken(parent *os.Root, base, dest string) (bool, error) {
+	src, err := parent.Lstat(base)
+	if err != nil {
+		return false, err
+	}
+	dst, err := parent.Lstat(dest)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return !strings.EqualFold(base, dest) || !os.SameFile(src, dst), nil
 }
 
 // errNoSpace is returned by the free-space precheck when the bytes about to be

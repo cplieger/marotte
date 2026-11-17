@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
@@ -18,7 +19,7 @@ import (
 // bootMembership is one boot's tab store and coordinator over dir and store, as newTabbedMembership builds them.
 func bootMembership(t *testing.T, dir string, store *testsupport.InMemoryChatStore) (*Membership, *tabs.Store, *tabBus) {
 	t.Helper()
-	st, err := tabs.NewStore(dir)
+	st, err := tabs.NewStore(dir, settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("Setup: open tab store: %v", err)
 	}
@@ -45,7 +46,7 @@ func TestRecent_TheWindowRunsOnAcrossARestart(t *testing.T) {
 			t.Fatalf("Setup: Recent() before the restart = %v, want [c-b c-a]", refsOf(before))
 		}
 
-		time.Sleep(4 * time.Hour)
+		time.Sleep(settings.DefaultHistoryWindow - 2*time.Hour)
 		mem, st, bus := bootMembership(t, dir, store)
 		if got := st.Recent(); !slices.Equal(got, before) {
 			t.Fatalf("Recent() after the restart = %+v, want the previous boot's %+v", got, before)
@@ -104,7 +105,7 @@ func TestRecent_ARestartPastTheWindowLoadsNothing(t *testing.T) {
 			t.Fatalf("Setup: Recent() before the restart = %v, want [c-a]", got)
 		}
 
-		time.Sleep(tabs.RecentWindow)
+		time.Sleep(settings.DefaultHistoryWindow)
 		_, st, _ := bootMembership(t, dir, store)
 		if got := st.Recent(); len(got) != 0 {
 			t.Errorf("Recent() after a restart past the window = %+v, want empty", got)

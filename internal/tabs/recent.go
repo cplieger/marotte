@@ -11,8 +11,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// RecentWindow is how long a closed chat stays in the Recently closed list.
-const RecentWindow = 6 * time.Hour
+// RecentHold is how long tabs.json holds a close whatever the window: a wider window brings back
+// only what is still held.
+const RecentHold = 7 * 24 * time.Hour
 
 // maxRecent caps the list: one close of a chat with tangents lists each of them, so a smaller cap
 // would let one close push every earlier entry out.
@@ -24,16 +25,24 @@ type RecentFacts struct {
 	Bot  bool
 }
 
-// expired reports whether e's window has ended at now (Unix ms).
-func expired(e *marotte.RecentClose, now int64) bool {
-	return e.ClosedAt+RecentWindow.Milliseconds() <= now
+// now and ClosedAt are Unix milliseconds.
+func pastWindow(e *marotte.RecentClose, now int64, d time.Duration) bool {
+	return e.ClosedAt+d.Milliseconds() <= now
 }
 
-// dropExpired removes every entry whose window has ended at now and reports whether it removed one.
-func dropExpired(recent []marotte.RecentClose, now int64) ([]marotte.RecentClose, bool) {
-	before := len(recent)
-	recent = slices.DeleteFunc(recent, func(e marotte.RecentClose) bool { return expired(&e, now) })
-	return recent, len(recent) != before
+func dropPastHold(recent []marotte.RecentClose, now int64) []marotte.RecentClose {
+	return slices.DeleteFunc(recent, func(e marotte.RecentClose) bool { return pastWindow(&e, now, RecentHold) })
+}
+
+// shownAt returns, in a new slice, the entries of recent inside window at now: what every reader gets.
+func shownAt(recent []marotte.RecentClose, window time.Duration, now int64) []marotte.RecentClose {
+	out := make([]marotte.RecentClose, 0, len(recent))
+	for _, e := range recent {
+		if !pastWindow(&e, now, window) {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // listClosed puts each chat of closed that owed gives a chat release (its last tab closed) at the
@@ -71,12 +80,12 @@ func takeRecent(recent []marotte.RecentClose, ref string) (rest []marotte.Recent
 	return slices.Delete(recent, i, i+1), taken, true
 }
 
-// sanitizeRecent drops each loaded entry this store could not have written or must not show, and
+// sanitizeRecent drops each loaded entry this store could not have written or must not hold, and
 // returns the list newest first, deduped and capped. Shape checks only; a gone chat is Prune's.
 func sanitizeRecent(in []marotte.RecentClose, open []marotte.TabSubject, now int64) []marotte.RecentClose {
 	out := make([]marotte.RecentClose, 0, len(in))
 	for _, e := range in {
-		if !ids.ValidChatID(e.Ref) || e.ClosedAt <= 0 || e.ClosedAt > now+RecentWindow.Milliseconds() {
+		if !ids.ValidChatID(e.Ref) || e.ClosedAt <= 0 || e.ClosedAt > now+RecentHold.Milliseconds() {
 			slog.Warn("tabs: invalid recently closed entry dropped on load", "ref", e.Ref, "closed_at", e.ClosedAt)
 			continue
 		}
@@ -94,7 +103,7 @@ func sanitizeRecent(in []marotte.RecentClose, open []marotte.TabSubject, now int
 			return true
 		}
 		seen[e.Ref] = struct{}{}
-		return expired(&e, now) || indexOfSubject(open, marotte.TabKindChat, e.Ref) >= 0
+		return pastWindow(&e, now, RecentHold) || indexOfSubject(open, marotte.TabKindChat, e.Ref) >= 0
 	})
 	if len(out) == 0 {
 		return nil
@@ -119,7 +128,8 @@ func pruneRecent(recent []marotte.RecentClose, exists func(marotte.TabSubject) b
 	return recent, len(recent) != before
 }
 
-// Forget drops ref's entry, for a chat being deleted or purged. A ref not listed bumps nothing.
+// Forget drops ref's entry, for a chat being deleted or purged, shown or not, so no wider window
+// brings it back. A ref not held bumps nothing.
 func (s *Store) Forget(ctx context.Context, ref string) (uint64, error) {
 	return s.mutate(ctx, func(st *state, _ int64) (bool, error) {
 		var found bool
@@ -142,27 +152,52 @@ func (s *Store) Relist(ctx context.Context, entries []marotte.RecentClose) (uint
 	})
 }
 
-// ExpireRecent drops every entry whose window has ended by the store's clock, with a version of
-// its own, and bumps nothing when none has. It is the only removal that is not part of another change.
+// ExpireRecent hides every shown entry whose window has ended by the store's clock, with a version
+// of its own, and bumps nothing when none has. tabs.json still holds a hidden entry until RecentHold.
 func (s *Store) ExpireRecent(ctx context.Context) (uint64, error) {
-	return s.mutate(ctx, func(st *state, now int64) (bool, error) {
-		var changed bool
-		st.recent, changed = dropExpired(st.recent, now)
-		return changed, nil
-	})
+	return s.mutate(ctx, s.reshow)
 }
 
-// Recent returns a copy of the Recently closed list, newest first.
+// SetRecentWindow makes window the store's History window and shows the held entries inside it with
+// a version of its own. A shown list it leaves unchanged bumps nothing, but the window still moves
+// RecentExpiry. On error the window is set and the shown list is not.
+func (s *Store) SetRecentWindow(ctx context.Context, window time.Duration) (uint64, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	s.stateMu.Lock()
+	s.window = window
+	s.stateMu.Unlock()
+	return s.mutateLocked(ctx, s.reshow)
+}
+
+// reshow is the apply of a change to the shown list alone: it reports whether the held entries
+// inside the window at now differ from the shown ones, and mutateLocked shows them. Callers hold writeMu.
+func (s *Store) reshow(st *state, now int64) (bool, error) {
+	return !slices.Equal(shownAt(st.recent, s.window, now), st.shown), nil
+}
+
+// RecentExpiry returns when the oldest shown entry's window ends, with false when none is shown.
+func (s *Store) RecentExpiry() (time.Time, bool) {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	if len(s.shown) == 0 {
+		return time.Time{}, false
+	}
+	oldest := slices.MinFunc(s.shown, func(a, b marotte.RecentClose) int { return cmp.Compare(a.ClosedAt, b.ClosedAt) })
+	return time.UnixMilli(oldest.ClosedAt + s.window.Milliseconds()), true
+}
+
+// Recent returns a copy of the Recently closed list the sidebar shows, newest first.
 func (s *Store) Recent() []marotte.RecentClose {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
-	return slices.Clone(s.recent)
+	return slices.Clone(s.shown)
 }
 
-// Snapshot returns the set, the Recently closed list and the version both reflect, from ONE
+// Snapshot returns the set, the shown Recently closed list and the version both reflect, from ONE
 // critical section, so a reader never pairs one mutation's list with another's version.
 func (s *Store) Snapshot() (tabs []marotte.TabSubject, recent []marotte.RecentClose, version uint64) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
-	return cloneTabs(s.tabs), slices.Clone(s.recent), s.version
+	return cloneTabs(s.tabs), slices.Clone(s.shown), s.version
 }

@@ -49,6 +49,11 @@ const PATH_EYE =
 // A tier pair is suffixed `_UI`, never a pixel count: 01-tokens.css owns `--icon-ui`'s size, so a number would go stale.
 export const ICON_EDIT = svg("inline", PATH_PENCIL);
 export const ICON_EDIT_UI = svg("ui", PATH_PENCIL);
+/** A pencil over a baseline: a name edited in place, the file browser's and the editor's Rename. */
+export const ICON_RENAME_UI = svg(
+  "ui",
+  '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4z"/>',
+);
 export const ICON_CLOSE = svg("inline", PATH_X);
 export const ICON_CLOSE_UI = svg("ui", PATH_X);
 export const ICON_EYE_UI = svg("ui", PATH_EYE);
@@ -151,7 +156,7 @@ export const ICON_RESUME = svg(
 );
 
 /*
- * One `d`, two sizes (picker heading, model pill at 12px). A redraw keeps: filled eyes (a ring cannot survive 1.5 CSS
+ * One `d`, two sizes (the model card's rows, the model pill at 12px). A redraw keeps: filled eyes (a ring cannot survive 1.5 CSS
  * px), inner eye edges at x=10 and x=14 (a 2 CSS px gap on pixel boundaries at 12px), and a 2-unit mouth dip.
  */
 const MODEL_ROBOT_D =
@@ -252,6 +257,11 @@ export const ICON_ARROW_UP = svg("ui", '<path d="M12 19V5M5 12l7-7 7 7"/>');
 // The dock's Queue instead, which moves a steer after the turn; the composer's Queue half draws the `_UI` size.
 export const ICON_QUEUE = svg("inline", PATH_LIST_END);
 export const ICON_QUEUE_UI = svg("ui", PATH_LIST_END);
+// Lucide `paperclip`: a waiting row's attached files.
+export const ICON_PAPERCLIP = svg(
+  "ui",
+  '<path d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"/>',
+);
 /** Lucide `ship-wheel`: a message that changes the running turn's course. One `<path>`, so it adds the one DOM node the send arrow did (perf budgets count DOM nodes). */
 export const ICON_STEER = svg(
   "ui",

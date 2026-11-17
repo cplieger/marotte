@@ -318,3 +318,51 @@ func TestReadRoutes_FIFOAnswersAtOnce(t *testing.T) {
 		}
 	}
 }
+
+// renamableFixture answers a handler and one path per kind of file the viewer reads: a plain
+// file, one over WholeFileMax, an owned file, a link to it and a KAS tool output. The browser
+// renames the link itself, so the link is renamable while the file it names is not.
+func renamableFixture(t *testing.T) (h *Handler, paths map[string]string) {
+	t.Helper()
+	_, sessions, output := toolOutputFixture(t)
+	dir := t.TempDir()
+	owned := filepath.Join(dir, "tools.json")
+	writeTestFile(t, filepath.Join(dir, "plain.txt"), "plain")
+	writeTestFile(t, filepath.Join(dir, "big.txt"), strings.Repeat("a", WholeFileMax+1))
+	writeTestFile(t, owned, "{}")
+	if err := os.Symlink("tools.json", filepath.Join(dir, "tools-link.json")); err != nil {
+		t.Fatal(err)
+	}
+	h = newOwned(t, dir, WithOwner(owned, &fakeOwner{path: owned}))
+	h.AllowToolOutputs(sessions)
+	return h, map[string]string{
+		"plain": filepath.Join(dir, "plain.txt"), "large": filepath.Join(dir, "big.txt"),
+		"owned": owned, "owned_link": filepath.Join(dir, "tools-link.json"), "tool_output": output,
+	}
+}
+
+func TestStat_SaysWhetherTheFileCanBeRenamed(t *testing.T) {
+	h, paths := renamableFixture(t)
+	for name, want := range map[string]bool{"plain": true, "large": true, "owned": false, "owned_link": true, "tool_output": false} {
+		t.Run(name, func(t *testing.T) {
+			rec := getReq(t, h, "/api/file/stat?path="+url.QueryEscape(paths[name]))
+			got := decodeJSON[FileStat](t, rec.Body.Bytes())
+			if rec.Code != http.StatusOK || got.Renamable != want {
+				t.Errorf("stat %s = %d renamable %v, want 200 renamable %v", name, rec.Code, got.Renamable, want)
+			}
+		})
+	}
+}
+
+func TestRead_SaysWhetherTheFileCanBeRenamed(t *testing.T) {
+	h, paths := renamableFixture(t)
+	for name, want := range map[string]bool{"plain": true, "owned": false, "owned_link": true, "tool_output": false} {
+		t.Run(name, func(t *testing.T) {
+			rec := getReq(t, h, "/api/file?path="+url.QueryEscape(paths[name]))
+			got := decodeJSON[FileRead](t, rec.Body.Bytes())
+			if rec.Code != http.StatusOK || got.Renamable != want {
+				t.Errorf("read %s = %d renamable %v, want 200 renamable %v", name, rec.Code, got.Renamable, want)
+			}
+		})
+	}
+}

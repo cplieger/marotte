@@ -40,17 +40,30 @@ vi.mock("./store.js", async () => {
   };
 });
 
-// A mock proves the card asks through picker's retryCatalog, not a handler of its own.
-const { retried } = vi.hoisted(() => ({ retried: { calls: 0 } }));
-vi.mock("./picker.js", () => ({
-  getCachedModels: () => cachedModels,
-  refreshPickerIfVisible: vi.fn(),
-  catalogNotice: () => notice,
-  retryCatalog: () => {
-    retried.calls += 1;
-  },
-  RETRY_LABEL: "Retry loading the model list",
+// The mock records each read the card hands model-list's retryCatalog, which proves the Retry goes
+// through it with the read initModelSwitcher was given. `bump` stands for a catalog read landing.
+const { retried, catalogTick } = vi.hoisted(() => ({
+  retried: { via: [] as unknown[] },
+  catalogTick: { bump: (): void => undefined },
 }));
+vi.mock("./model-list.js", async () => {
+  const { signal } = (await vi.importActual("@cplieger/reactive")) as { signal: SignalFactory };
+  const revision = signal(0);
+  catalogTick.bump = () => {
+    revision.value += 1;
+  };
+  return {
+    getCachedModels: () => cachedModels,
+    watchCatalog: () => {
+      void revision.value;
+    },
+    catalogNotice: () => notice,
+    retryCatalog: (reread: () => Promise<void>) => {
+      retried.via.push(reread);
+    },
+    RETRY_LABEL: "Retry loading the model list",
+  };
+});
 vi.mock("./actions/index.js", () => ({
   bindLoadingState: vi.fn(),
   transportAction: () => ({ dispatch: vi.fn() }),
@@ -77,10 +90,6 @@ vi.mock("./strings.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Strings>()),
   humanName: (s: string) => s,
 }));
-vi.mock("./legacy-ui/roving-focus.js", () => ({
-  rovingFocus: () => ({ refresh: vi.fn(), focusFirst: vi.fn(), dispose: vi.fn() }),
-}));
-
 import { activeSession } from "./store.js";
 import { initModelSwitcher } from "./model-switcher.js";
 import { ICON_MODEL_UI, modelIcon } from "./icons.js";
@@ -89,6 +98,8 @@ import { iconEl } from "./icon-el.js";
 function model(id: string): ModelInfo {
   return { model_id: id, model_name: id, rate_multiplier: 1 };
 }
+
+const reread = (): Promise<void> => Promise.resolve();
 
 function scroller(): HTMLElement {
   const el = document.querySelector<HTMLElement>(".pill-model-scroll");
@@ -106,13 +117,13 @@ describe("the model card with no models", () => {
     const card = document.createElement("div");
     card.id = "model-switch-list";
     document.body.append(pill, card);
-    initModelSwitcher();
+    initModelSwitcher(reread);
   });
 
   beforeEach(() => {
     cachedModels = [];
     notice = null;
-    retried.calls = 0;
+    retried.via = [];
     (activeSession as unknown as { value: TestSession }).value = {
       id: "c1",
       model: "model-a-4.7",
@@ -183,7 +194,7 @@ describe("the model card with no models", () => {
     const btn = retryBtn();
     expect(btn).not.toBe(null);
     btn?.click();
-    expect(retried.calls).toBe(1);
+    expect(retried.via).toEqual([reread]);
   });
 
   it("names what the Retry retries", () => {
@@ -212,6 +223,52 @@ describe("the model card with no models", () => {
     expect(retryBtn()).toBe(null);
     expect(scroller().querySelector(".list-empty")).toBe(null);
   });
+
+  it("moves focus from a Retry that loaded the list to the chat's model", () => {
+    notice = { text: "Could not load the model list.", busy: false, retry: true };
+    onExpand.fn?.();
+    retryBtn()?.focus();
+    expect(document.activeElement).toBe(retryBtn());
+    const scrolled = vi.spyOn(HTMLElement.prototype, "scrollIntoView");
+
+    cachedModels = [model("model-b-5"), model("model-a-4.7")];
+    notice = null;
+    catalogTick.bump();
+
+    const row = scroller().querySelector('[data-model="model-a-4.7"]');
+    expect(document.activeElement).toBe(row);
+    expect(scrolled.mock.contexts).toContain(row);
+    scrolled.mockRestore();
+  });
+
+  it("keeps focus on the Retry when the read fails again", () => {
+    notice = { text: "No models available yet.", busy: false, retry: true };
+    onExpand.fn?.();
+    const btn = retryBtn();
+    btn?.focus();
+
+    notice = { text: "Could not load the model list.", busy: false, retry: true };
+    catalogTick.bump();
+
+    expect(scroller().textContent).toContain("Could not load the model list.");
+    expect(retryBtn()).toBe(btn);
+    expect(document.activeElement).toBe(btn);
+  });
+
+  it("lists a model that lands while the card is open, keeping focus on the focused model", () => {
+    cachedModels = [model("model-a-4.7")];
+    onExpand.fn?.();
+    const row = scroller().querySelector<HTMLElement>('[data-model="model-a-4.7"]');
+    row?.focus();
+    expect(document.activeElement).toBe(row);
+
+    cachedModels = [model("model-a-4.7"), model("model-b-5")];
+    catalogTick.bump();
+
+    expect(scroller().querySelector('[data-model="model-b-5"]')).not.toBe(null);
+    expect(scroller().querySelector('[data-model="model-a-4.7"]')).toBe(row);
+    expect(document.activeElement).toBe(row);
+  });
 });
 
 describe("the model card's rows", () => {
@@ -222,7 +279,7 @@ describe("the model card's rows", () => {
       const card = document.createElement("div");
       card.id = "model-switch-list";
       document.body.append(pill, card);
-      initModelSwitcher();
+      initModelSwitcher(() => Promise.resolve());
     }
   });
 

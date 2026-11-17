@@ -80,6 +80,7 @@ function readOf(content: string): FileRead {
     size: bytes.length,
     utf8: true,
     read_only: false,
+    renamable: true,
   };
 }
 

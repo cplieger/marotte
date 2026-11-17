@@ -70,6 +70,7 @@ const stat = (id: string): Answer => ({
     binary: false,
     utf8: true,
     read_only: false,
+    renamable: true,
   },
 });
 
@@ -90,6 +91,7 @@ function openState(): ReturnType<typeof freshState> {
     utf8: true,
     conflict: false,
     readOnly: false,
+    renamable: true,
     size: 1,
   };
   fileStates.set(PATH, state);
@@ -288,7 +290,7 @@ describe("live refresh", () => {
 
   it("asks nothing about a file over the cap", async () => {
     const state = openState();
-    state.facts.value = { kind: "large", size: 3 << 20 };
+    state.facts.value = { kind: "large", readOnly: false, renamable: true, size: 3 << 20 };
     liveActivate(PATH);
     await advance(30_000);
     expect(requests).toBe(0);
@@ -297,7 +299,12 @@ describe("live refresh", () => {
   it("stops following once a live file grows past the cap", async () => {
     openState();
     reload.mockImplementation((s) => {
-      (s as { facts: { value: unknown } }).facts.value = { kind: "large", size: 3 << 20 };
+      (s as { facts: { value: unknown } }).facts.value = {
+        kind: "large",
+        readOnly: false,
+        renamable: true,
+        size: 3 << 20,
+      };
       return Promise.resolve();
     });
     liveActivate(PATH);
@@ -322,7 +329,12 @@ describe("live refresh", () => {
     btn.click();
     await advance(0);
     reload.mockImplementation((s) => {
-      (s as { facts: { value: unknown } }).facts.value = { kind: "large", size: 3 << 20 };
+      (s as { facts: { value: unknown } }).facts.value = {
+        kind: "large",
+        readOnly: false,
+        renamable: true,
+        size: 3 << 20,
+      };
       return Promise.resolve();
     });
     next = stat(`sha256:${"2".repeat(64)}`);

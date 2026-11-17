@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 
-import { entryRow, entryList, entrySkeleton, entryDetail } from "./entry-row.js";
+import { entryRow, entryList, entrySkeleton, entryDetail, replaceEntrySub } from "./entry-row.js";
 import { formatFullStamp } from "./locale-time.js";
 
 // What the builder enforces: door/inert branch, accessible name, badge cap, subtitle shapes, list roles, phrasing content.
@@ -144,13 +144,74 @@ describe("entryRow: the subtitle region", () => {
     expect(lines[1]?.classList.contains("entry-sub-mono")).toBe(false);
   });
 
-  it("reserves an empty subtitle line when the row has none", () => {
-    // A row with no subtitle line would sit its title lower than its neighbours'.
+  it("draws no subtitle when the row has none", () => {
     const row = entryRow({ key: "k", title: "t" });
-    const sub = row.querySelector(".entry-sub");
-    expect(sub?.textContent).toBe("");
-    expect(sub?.classList.contains("entry-sub-clamp")).toBe(false);
+    expect(row.querySelector(".entry-sub")).toBeNull();
     expect(row.querySelector(".entry-lines")).toBeNull();
+  });
+
+  it("draws no subtitle for an empty line or clamp", () => {
+    for (const sub of [
+      { kind: "line", text: "" },
+      { kind: "clamp", text: "" },
+    ] as const) {
+      const row = entryRow({ key: "k", title: "t", sub });
+      expect(row.querySelector(".entry-sub"), sub.kind).toBeNull();
+    }
+  });
+
+  it("drops a pair's empty line and keeps the other", () => {
+    const row = entryRow({
+      key: "k",
+      title: "t",
+      sub: {
+        kind: "lines",
+        lines: [
+          { text: "", mono: true },
+          { text: "echo hello", mono: true },
+        ],
+      },
+    });
+    const lines = [...row.querySelectorAll(".entry-sub")];
+    expect(lines.map((l) => l.textContent)).toEqual(["echo hello"]);
+  });
+
+  it("draws no subtitle when every line of a pair is empty", () => {
+    const row = entryRow({
+      key: "k",
+      title: "t",
+      sub: { kind: "lines", lines: [{ text: "" }, { text: "" }] },
+    });
+    expect(row.querySelector(".entry-lines")).toBeNull();
+    expect(row.querySelector(".entry-sub")).toBeNull();
+  });
+
+  it("marks a keyed line with data-line", () => {
+    const row = entryRow({
+      key: "k",
+      title: "t",
+      sub: { kind: "lines", lines: [{ text: "about", key: "about" }, { text: "rules" }] },
+    });
+    expect(row.querySelector('[data-line="about"]')?.textContent).toBe("about");
+    expect(row.querySelectorAll("[data-line]")).toHaveLength(1);
+  });
+
+  it("replaceEntrySub swaps, adds and removes the subtitle in place", () => {
+    const row = entryRow({ key: "k", title: "t", open: { name: "t", onOpen: () => undefined } });
+    const body = row.querySelector(".entry-open") as HTMLElement;
+    replaceEntrySub(row, { kind: "line", text: "one" });
+    expect([...body.children].map((c) => c.className)).toEqual(["entry-line", "entry-sub"]);
+    expect(body.querySelector(".entry-sub")?.textContent).toBe("one");
+
+    replaceEntrySub(row, { kind: "lines", lines: [{ text: "a" }, { text: "b", key: "rules" }] });
+    expect([...body.children].map((c) => c.className)).toEqual(["entry-line", "entry-lines"]);
+    expect(body.querySelector('[data-line="rules"]')?.textContent).toBe("b");
+
+    replaceEntrySub(row, { kind: "clamp", text: "" });
+    expect([...body.children].map((c) => c.className)).toEqual(["entry-line"]);
+
+    replaceEntrySub(row, undefined);
+    expect([...body.children].map((c) => c.className)).toEqual(["entry-line"]);
   });
 });
 
