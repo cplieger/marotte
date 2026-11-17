@@ -6,8 +6,9 @@
 
 import { closeModal, openModal, RollingOutput } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { findGlyph, ICON_PIN, ICON_PIN_FILLED, ICON_SPINNER, ICON_TRASH } from "./icons.js";
+import { findGlyph, ICON_PIN, ICON_PIN_FILLED, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { bindLoadingSpinner, spinnerEl } from "./spinner.js";
 import {
   loadTools,
   createTool,
@@ -204,7 +205,7 @@ class JobPill {
     }
     const label = this.requested ? "Cancelling…" : "Cancel";
     const full = this.requested ? label : this.spec.busyAria;
-    this.btn.replaceChildren(iconEl(ICON_SPINNER), el("span", null, label));
+    this.btn.replaceChildren(spinnerEl(), el("span", null, label));
     // One visible word so the pill does not resize its row; the full phrase is the accessible name and
     // tooltip.
     this.btn.setAttribute("aria-label", full);
@@ -383,12 +384,8 @@ class ToolsManager {
     });
     f.searchBtn.addEventListener("click", searchNow);
     // Both faces come from the registry rather than the markup, so each glyph keeps ONE drawing.
-    const magnifier = iconEl(findGlyph("search"));
-    magnifier.classList.add("tool-search-glyph");
-    const spinner = iconEl(ICON_SPINNER);
-    spinner.classList.add("tool-search-spinner");
-    f.searchBtn.replaceChildren(magnifier, spinner);
-    bindLoadingState("tools.search", f.searchBtn, { pendingClass: "is-busy" });
+    f.searchBtn.replaceChildren(iconEl(findGlyph("search")));
+    bindLoadingSpinner("tools.search", f.searchBtn, { pendingClass: "is-busy" });
     f.sort.addEventListener("change", () => {
       this.paintSearch();
     });

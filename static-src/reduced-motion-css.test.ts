@@ -13,8 +13,8 @@ let host: HTMLDivElement;
 
 function mount(): { spinner: HTMLElement; subagent: HTMLElement; button: HTMLElement } {
   host.innerHTML = `
-    <span class="tool-spinner"></span>
-    <span class="subagent-spinner"></span>
+    <span class="spinner tool-spinner"></span>
+    <span class="spinner subagent-spinner"></span>
     <button type="button" class="btn-small">Go</button>`;
   return {
     spinner: host.querySelector<HTMLElement>(".tool-spinner") as HTMLElement,

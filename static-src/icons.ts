@@ -125,10 +125,6 @@ export const ICON_MIC = svg(
   "ui",
   '<path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/>',
 );
-// Rotated by 15-input.css. Not a marching `stroke-dashoffset`: under `non-scaling-stroke` Chromium computes the dash
-// in a space `stroke-dasharray` disagrees with, collapsing the arc to a dot.
-export const ICON_SPINNER =
-  '<svg class="icon-spinner ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-9 9"/></svg>';
 // A stop square, filled: the outline reads as a checkbox at 16px, and stop-is-filled is the transport convention.
 // Cancel and dictation's Stop share it: the two sit side by side mid-turn, and one action keeps one glyph.
 export const ICON_CANCEL = svg(

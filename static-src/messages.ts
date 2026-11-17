@@ -95,7 +95,8 @@ import {
 } from "./turns.js";
 import { turnFace, turnFoldHides } from "./turn-face.js";
 import { severityOf } from "./turn-severity.js";
-import { ICON_REWIND, ICON_SPINNER } from "./icons.js";
+import { ICON_REWIND } from "./icons.js";
+import { spinnerEl } from "./spinner.js";
 import { buildAssistantBubble } from "./fundamentals/text-bubble.js";
 import { isTurnOpen, isTurnRevealed, setTurnOpen } from "./fold-state.js";
 import {
@@ -2927,7 +2928,7 @@ function paintRewind(btn: HTMLButtonElement, chatID: string, agentBusy: boolean)
   const pending = rewindInFlight.get(chatID);
   const mine = pending !== undefined && pending === rewindTargets.get(btn);
   if (mine !== (btn.getAttribute("aria-busy") === "true")) {
-    btn.replaceChildren(svgTemplate(mine ? ICON_SPINNER : ICON_REWIND)());
+    btn.replaceChildren(mine ? spinnerEl() : svgTemplate(ICON_REWIND)());
   }
   if (mine) {
     btn.setAttribute("aria-busy", "true");

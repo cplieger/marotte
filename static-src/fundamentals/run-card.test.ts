@@ -1161,7 +1161,7 @@ describe("the card shows the run's structure, and only steps and watches as work
   it("keeps a nested running row's animation running when a sibling ahead of it leaves", async () => {
     const c = card();
     document.body.append(c.root);
-    // A real CSS animation on the glyph, standing in for the stylesheet's `vk-spin` ring.
+    // A real CSS animation on the glyph, standing in for the stylesheet's `vk-spin-rotate` ring.
     const style = document.createElement("style");
     style.textContent =
       "@keyframes card-spin { to { rotate: 360deg } } .run-step-glyph { animation: card-spin 600ms linear infinite }";

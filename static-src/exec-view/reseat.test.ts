@@ -39,7 +39,7 @@ describe("the tree pane", () => {
     const nodes = [step("a"), step("b")];
     tree.render(nodes, "a");
 
-    // A real CSS animation on the row, standing in for the `vk-spin` ring the
+    // A real CSS animation on the row, standing in for the `vk-spin-rotate` ring the
     // stylesheet puts on `.ev-state::before` of a running row.
     const style = document.createElement("style");
     style.textContent =

@@ -14,7 +14,8 @@ import { onModalClose, openModal } from "./modals.js";
 import { refreshConfigStanding, standingBadge } from "./config-standing.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { showToast } from "./toast.js";
-import { ICON_EDIT_UI, ICON_TRASH_UI, ICON_PLUS_UI, ICON_REFRESH, ICON_SPINNER } from "./icons.js";
+import { ICON_EDIT_UI, ICON_TRASH_UI, ICON_PLUS_UI, ICON_REFRESH } from "./icons.js";
+import { spinnerEl } from "./spinner.js";
 import {
   type Server,
   type KeyPair,
@@ -1060,7 +1061,7 @@ function renderReconnectBtn(label: string, serverName: () => string): HTMLButton
       return;
     }
     setControlBusy(btn, true);
-    btn.innerHTML = ICON_SPINNER;
+    btn.replaceChildren(spinnerEl());
     void reconnectServer
       .dispatch(
         { server: serverName() },

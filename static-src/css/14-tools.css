@@ -537,23 +537,11 @@
   font-size: var(--fs-sm);
 }
 
-/* Still host, turning disc: 00-header.css "A RING THAT SPINS WHILE WORK RUNS". */
+/* `.spinner` (15-input.css) in the in-flight accent, at the tool header's glyph size. */
 .tool-spinner {
-  width: 0.75rem;
-  height: 0.75rem;
-  flex-shrink: 0;
-  clip-path: circle();
-  mask: radial-gradient(closest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
-}
-
-.tool-spinner::before {
-  content: "";
-  display: block;
-  inline-size: 100%;
-  block-size: 100%;
-  background: conic-gradient(from -45deg, var(--c-accent) 0deg 90deg, var(--c-border) 90deg 360deg);
-  scale: 1.5;
-  animation: vk-spin-rotate var(--spin-dur) linear infinite;
+  --spinner-size: 0.75rem;
+  --vk-ring-band: 2px;
+  --spinner-arc: var(--c-accent);
 }
 
 /* THE SILENCE MARKER STATES A FACT, so it is hint-ink text rather than a mark: hue
@@ -884,26 +872,10 @@ a.subagent-header {
   flex-shrink: 0;
 }
 
+/* `.spinner` (15-input.css) drawn as the run card's running mark: an accent ring with a gap. */
 .subagent-spinner {
-  width: 1rem;
-  height: 1rem;
-  flex-shrink: 0;
-  clip-path: circle();
-  mask: radial-gradient(
-    closest-side,
-    transparent calc(100% - 0.125rem),
-    #000 calc(100% - 0.125rem)
-  );
-}
-
-.subagent-spinner::before {
-  content: "";
-  display: block;
-  inline-size: 100%;
-  block-size: 100%;
-  background: conic-gradient(from -45deg, transparent 0deg 90deg, var(--c-accent) 90deg 360deg);
-  scale: 1.5;
-  animation: vk-spin-rotate var(--spin-dur) linear infinite;
+  --spinner-arc: transparent;
+  --spinner-track: var(--c-accent);
 }
 
 .subagent-name {
@@ -1191,13 +1163,13 @@ a.subagent-header {
 
 /* The icon-only case keeps the square padding: nothing to separate, and the
  * wider inline padding would make a square button oblong. */
-.action-pill:not(:has(> :not(svg))) {
+.action-pill:not(:has(> :not(svg, .spinner))) {
   padding-inline: var(--sp-2);
 }
 
 /* A job-owning pill's ACTIVITY face (tools.ts `JobPill`): while its work runs it is the
  * control that stops it, in the in-flight accent. It must stay CLICKABLE, unlike
- * `.btn-loading`: nothing here touches `pointer-events` or `opacity`. */
+ * a `bindLoadingSpinner` button: nothing here touches `pointer-events` or `opacity`. */
 .action-pill.is-busy {
   color: var(--c-accent);
   border-color: var(--c-accent);
@@ -1261,32 +1233,6 @@ a.subagent-header {
 .btn-small.icon-only {
   padding: var(--sp-1);
   min-width: var(--btn-h);
-}
-
-/* A loading button's SPINNER. `bindLoadingState` sets `disabled` wherever it adds
- * this class, and 40-a11y.css owns the busy face, so only the mark is here. */
-.btn-loading {
-  position: relative;
-}
-
-/* 1rem is the painted diameter; with no border there is nothing for `box-sizing` to
-   decide. */
-.btn-loading::before {
-  content: "";
-  display: inline-block;
-  width: 1rem;
-  height: 1rem;
-  margin-inline-end: var(--sp-1);
-  border-radius: 50%;
-  background: conic-gradient(
-      from var(--vk-spin-arc),
-      var(--c-accent) 0deg 90deg,
-      var(--c-border) 90deg 360deg
-    )
-    border-box;
-  mask: radial-gradient(closest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
-  animation: vk-spin var(--spin-dur) linear infinite;
-  vertical-align: middle;
 }
 
 .btn-save {

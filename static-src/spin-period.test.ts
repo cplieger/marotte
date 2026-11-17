@@ -27,7 +27,7 @@ afterAll(() => {
 });
 
 describe("the spinner period", () => {
-  it("is read from one token by every vk-spin consumer, in every stylesheet", () => {
+  it("is read from one token by every vk-spin-rotate consumer, in every stylesheet", () => {
     const offenders: string[] = [];
     let consumers = 0;
 
@@ -42,17 +42,15 @@ describe("the spinner period", () => {
           continue;
         }
         consumers++;
-        // `vk-spin[\w-]*` rather than `vk-spin`: `vk-spin` turns a painted arc and `vk-spin-rotate`
-        // turns a box. One period for both is the rule; which property carries it is not.
-        if (!/animation:\s*vk-spin[\w-]*\s+var\(--spin-dur\)/.test(body)) {
+        if (!/animation:\s*vk-spin-rotate\s+var\(--spin-dur\)/.test(body)) {
           offenders.push(`${path} { ${selector} }`);
         }
       }
     }
 
     expect(offenders, "every vk-spin rule takes its period from --spin-dur").toEqual([]);
-    // A sweep that matched nothing would pass vacuously.
-    expect(consumers, "the sweep found the spinner rules").toBeGreaterThanOrEqual(9);
+    // `.spinner::before` and the run card's and exec view's running marks; a sweep that matched nothing would pass.
+    expect(consumers, "the sweep found the spinner rules").toBeGreaterThanOrEqual(3);
   });
 
   it("declares that token, so the animation actually runs", () => {
@@ -77,12 +75,12 @@ describe("the spinner period", () => {
   });
 
   it("gives two rings of different sizes the same period", () => {
-    // `.spinner` (16px) and `.btn-loading`'s ring (12px) share one period, or a save button beside a
+    // `.spinner` (16px) and the tool card's ring (12px) share one period, or a save button beside a
     // loading list drifts against it.
     const big = document.createElement("span");
     big.className = "spinner";
     const small = document.createElement("span");
-    small.className = "spinner-sm";
+    small.className = "spinner tool-spinner";
     stage.append(big, small);
 
     const durOf = (e: Element): EffectTiming["duration"] =>

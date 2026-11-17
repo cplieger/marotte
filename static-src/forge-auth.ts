@@ -5,14 +5,7 @@ import { apiGetTyped, CancellableSlot } from "./api-client.js";
 import type { Decoder } from "./wire/validators.gen.js";
 import { asObject, decodeArray } from "./wire/validators.gen.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import {
-  FORGE_ICONS,
-  ICON_CLOSE_UI,
-  ICON_EXTERNAL,
-  ICON_GLOBE,
-  ICON_PLUS_UI,
-  ICON_SPINNER,
-} from "./icons.js";
+import { FORGE_ICONS, ICON_CLOSE_UI, ICON_EXTERNAL, ICON_GLOBE, ICON_PLUS_UI } from "./icons.js";
 import type { ConfiguredForge, ForgeKind, Repo } from "./wire/types.gen.js";
 import { FORGE_META, FORGE_URLS, kindTitle } from "./forge-types.js";
 import { probeForge, signOut } from "./actions/forge.js";
@@ -68,6 +61,7 @@ const decodeLocalReposResponse: Decoder<LocalReposResponse> = (v) => {
 };
 
 import { iconEl } from "./icon-el.js";
+import { spinnerEl } from "./spinner.js";
 import { maybeEl } from "./dom.js";
 
 /** Why an account's last list-wide press (Load more, Clone all, Delete all) fell
@@ -629,11 +623,7 @@ function buildReposPending(): HTMLElement {
     el(
       "div",
       { className: "forge-account-repos-pending", role: "status" },
-      el(
-        "span",
-        { className: "forge-account-repos-icon", "aria-hidden": "true" },
-        iconEl(ICON_SPINNER),
-      ),
+      el("span", { className: "forge-account-repos-icon", "aria-hidden": "true" }, spinnerEl()),
       el("span", { className: "forge-account-repos-label" }, "Loading repositories…"),
     ),
   );

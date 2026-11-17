@@ -42,6 +42,7 @@ import { compactionPolicy } from "./context-indicator.js";
 import { onGovernanceChange, paintSettingLocks, writeSwitch } from "./governance.js";
 import { paintOutputStyle, paintOutputStyleHint } from "./output-style.js";
 import { resetAccountUsage } from "./account-usage.js";
+import { bindLoadingSpinner } from "./spinner.js";
 
 // The kiro-cli settings endpoint does not go through persist.ts's settings state, so it keeps its own
 // per-key write generation: only a key's newest write reports its outcome.
@@ -598,7 +599,7 @@ export function initDiagnostics(): void {
     });
   });
 
-  bindLoadingState("tools.run_diagnostics", btn, { pendingClass: "btn-loading" });
+  bindLoadingSpinner("tools.run_diagnostics", btn);
 
   // eslint-disable-next-line @typescript-eslint/no-misused-promises
   btn.addEventListener("click", async () => {

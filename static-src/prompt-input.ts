@@ -25,6 +25,7 @@ import { sendFaces, type Faces } from "./send-faces.js";
 import { NO_DICTATION, type Dictation } from "./dictation.js";
 import { isSendAct, pressOwner, type Act, type SendAct } from "./send-press.js";
 import { iconEl } from "./icon-el.js";
+import { spinnerEl } from "./spinner.js";
 import { collapseAll } from "./pill-expand.js";
 import {
   composerText,
@@ -591,7 +592,7 @@ class PromptInputController {
     clearDictate($.sendBtn);
     $.sendBtn.replaceChildren(
       el("span", { className: "send-btn-label" }, STATE_LABEL[k]),
-      held ? el("span", { className: "spinner-sm", "aria-hidden": "true" }) : iconEl(STATE_ICON[k]),
+      held ? spinnerEl("spinner-sm") : iconEl(STATE_ICON[k]),
     );
     if (held) {
       $.sendBtn.setAttribute("aria-busy", "true");

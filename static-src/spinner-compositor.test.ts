@@ -70,14 +70,18 @@ const RINGS: readonly (readonly [string, string])[] = [
     "the run card's running step",
     `<div class="run-card"><div class="run-body"><div class="run-steps"><div class="run-step" data-status="running"><div class="run-step-head"><span class="run-step-glyph"></span></div></div></div></div></div>`,
   ],
-  ["a running tool card", `<span class="tool-spinner"></span>`],
-  ["a running subagent", `<span class="tool-icon subagent-icon subagent-spinner"></span>`],
+  ["a running tool card", `<span class="spinner tool-spinner"></span>`],
+  ["a running subagent", `<span class="tool-icon subagent-icon spinner subagent-spinner"></span>`],
   [
     "a compacting steer",
-    `<span class="steer-state-icon"><span class="steer-spinner"></span></span>`,
+    `<span class="steer-state-icon"><span class="spinner steer-spinner"></span></span>`,
   ],
   ["the page spinner", `<div class="spinner"></div>`],
-  ["the small spinner", `<div class="spinner-sm"></div>`],
+  ["the small spinner", `<div class="spinner spinner-sm"></div>`],
+  [
+    "a busy button",
+    `<button type="button" disabled aria-busy="true"><span class="spinner spinner-on-busy"></span>Save</button>`,
+  ],
 ];
 
 describe("a spinning ring", () => {

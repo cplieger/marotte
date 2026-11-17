@@ -21,6 +21,7 @@ import { emptyNote, type Nouns } from "./textsearch/copy.js";
 import { configuredServers } from "./mcp-state.js";
 import type { KeyPair, Server } from "./mcp-state.js";
 import { el } from "@cplieger/reactive";
+import { bindLoadingSpinner } from "./spinner.js";
 
 /**
  * The no-rows answers, from a 502 body, the reply's `filtered` count and the query length. `tooShort` renders through
@@ -125,9 +126,7 @@ export function initSearchPanel(): void {
 
   // Re-initialised on every open, so the previous binding goes. `pendingClass` covers the typed path and the click.
   searchBtnUnbind?.();
-  searchBtnUnbind = bindLoadingState("mcp.search_registry", btn, {
-    pendingClass: "is-searching",
-  });
+  searchBtnUnbind = bindLoadingSpinner("mcp.search_registry", btn);
 
   searchUnsub = subscribeToActions((inst) => {
     if (inst.name !== "mcp.search_registry" || inst.sensitive === true) {
