@@ -9,6 +9,7 @@ import type { Fx } from "./fx.js";
 import { keepRegions } from "./live-regions.js";
 import { trackOpens } from "./modal-host.js";
 import { type SUPERSEDED, createDriver } from "./owner.js";
+import { type FocusPlace, type Press, lastPress, placesOf, standInFor } from "./scripted-focus.js";
 import { watchSettle } from "./transition.js";
 
 /** A dialog's committed state. */
@@ -184,12 +185,46 @@ function createEngine(dialog: HTMLDialogElement): DialogEngine {
   // From creation, so the page's own opening has a pair before the adoption pass.
   keepRegions(dialog);
   trackOpens(dialog);
+  /** The element focused as the dialog opened, which its close focuses again, its places (a removed opener has
+   *  lost its parent, and the close then leaves focus on <body>) and the press that opened the dialog. */
+  let opener: {
+    readonly el: Element;
+    readonly places: readonly FocusPlace[];
+    readonly press: Press | null;
+  } | null = null;
+  const noteOpener = (): void => {
+    const el = document.activeElement;
+    opener = el === null ? null : { el, places: placesOf(el), press: lastPress() };
+  };
+  /** After a close: a removed opener's stand-in takes the focus, and the returned focus takes the ring of the
+   *  press that opened the dialog. */
+  const returnFocus = (fx: Fx): void => {
+    const from = opener;
+    opener = null;
+    if (from === null) {
+      return;
+    }
+    // When close() returns, Chromium can still hold focus inside the closed dialog.
+    const at = document.activeElement;
+    if (!from.el.isConnected && (at === document.body || dialog.contains(at))) {
+      const stand = standInFor(from.places);
+      if (stand !== null) {
+        fx.focus(stand);
+      }
+    }
+    if (from.press !== null && !dialog.contains(document.activeElement)) {
+      fx.matchFocus(from.press);
+    }
+  };
   /** The engine's own showModal() or close() under way, and its event once it starts. */
   let call: OwnCall | null = null;
   /** The callbacks a teardown inside the engine's own showModal found waiting: that
    *  open's outcome decides whether the teardown cut their fade. */
   let cut: Waiter[] | null = null;
   starts.set(dialog, (e) => {
+    if (e.newState === "open") {
+      noteOpener();
+    }
     if (call !== null && call.event === null && e.newState === call.state) {
       call.event = e;
     }
@@ -310,8 +345,12 @@ function createEngine(dialog: HTMLDialogElement): DialogEngine {
         // the app's render.
         trackOpens(dialog);
         keepRegions(dialog);
+        const opening = !dialog.open;
         const [shown] = own(true, () => fx.showModal(dialog));
         if (shown.open) {
+          if (opening && lastPress() === "pointer") {
+            fx.matchFocus("pointer");
+          }
           return true;
         }
         if (d.facet?.refused !== undefined) {
@@ -356,6 +395,7 @@ function createEngine(dialog: HTMLDialogElement): DialogEngine {
           fx.close(dialog);
         });
         if (!dialog.open) {
+          returnFocus(fx);
           return true;
         }
         if (!fired) {
