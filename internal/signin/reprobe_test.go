@@ -46,7 +46,6 @@ func unreachableHarness(t *testing.T) (*harness, *fakeBackend, *providerSwitch) 
 	return h, fb, p
 }
 
-// awaitFlight waits out the renewal in flight on s, if any.
 func awaitFlight(s *slot) {
 	s.mu.Lock()
 	f := s.flight

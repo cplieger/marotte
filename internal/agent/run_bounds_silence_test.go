@@ -68,7 +68,7 @@ func TestSilentStep_FiftyNineMinutesIsNotFlagged(t *testing.T) {
 			h, br, deadline := silentStep(t, launch, 59*time.Minute, WithPush(fp))
 
 			h.runs.cancelExpired(silentRunID, deadline)
-			joinInflight(t, h)
+			joinInflight(h)
 
 			wantRunning(t, h, br)
 			if got := h.runs.silentSince(silentRunID); !got.IsZero() {
@@ -91,7 +91,7 @@ func TestSilentStep_AnHourFlagsAChatLaunchedRunAndKeepsItRunning(t *testing.T) {
 	h, br, deadline := silentStep(t, agentLaunch(), time.Hour, WithPush(fp))
 
 	h.runs.cancelExpired(silentRunID, deadline)
-	joinInflight(t, h)
+	joinInflight(h)
 
 	wantRunning(t, h, br)
 	if l, _ := h.runs.lease(silentRunID); time.Until(l.Deadline) < runIdleWindow-time.Second {
@@ -113,7 +113,7 @@ func TestSilentStep_AnHourFlagsAChatLaunchedRunAndKeepsItRunning(t *testing.T) {
 	}
 
 	expireAgain(t, h.runs, silentRunID)
-	joinInflight(t, h)
+	joinInflight(h)
 	wantRunning(t, h, br)
 	if n := len(runOutcomePushes(fp)); n != 0 {
 		t.Errorf("a second expiry in the same silence pushed %d more notifications, want none", n)
@@ -124,7 +124,7 @@ func TestSilentStep_AFrameClearsTheFlagAndANewSilencePushesAgain(t *testing.T) {
 	fp := newRunOutcomePush()
 	h, br, deadline := silentStep(t, agentLaunch(), time.Hour, WithPush(fp))
 	h.runs.cancelExpired(silentRunID, deadline)
-	joinInflight(t, h)
+	joinInflight(h)
 	if n := len(runOutcomePushes(fp)); n != 1 {
 		t.Fatalf("Setup: the flag pushed %d notifications, want one", n)
 	}
@@ -140,7 +140,7 @@ func TestSilentStep_AFrameClearsTheFlagAndANewSilencePushesAgain(t *testing.T) {
 
 	stageSilence(h.runs, silentRunID, time.Hour)
 	expireAgain(t, h.runs, silentRunID)
-	joinInflight(t, h)
+	joinInflight(h)
 	if n := len(runOutcomePushes(fp)); n != 1 {
 		t.Errorf("a second silence pushed %d notifications, want one", n)
 	}
@@ -167,7 +167,7 @@ func TestSilentStep_AnHourStopsAParentlessRunAsStalled(t *testing.T) {
 	h, br, deadline := silentStep(t, manualLaunch(), time.Hour, WithPush(fp))
 
 	h.runs.cancelExpired(silentRunID, deadline)
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if got := h.runs.endReason(silentRunID); got != runEndStalled {
 		t.Errorf("endReason = %q, want %q", got, runEndStalled)
@@ -199,7 +199,7 @@ func TestSilentStep_AnOpenAskIsNotSilence(t *testing.T) {
 				fileStepAsk(t, h, kind)
 
 				h.runs.cancelExpired(silentRunID, deadline)
-				joinInflight(t, h)
+				joinInflight(h)
 
 				wantRunning(t, h, br)
 				if got := h.runs.silentSince(silentRunID); !got.IsZero() {
@@ -227,7 +227,7 @@ func TestSilentStep_AnAnswerRestartsTheCount(t *testing.T) {
 
 		time.Sleep(runIdleWindow + 5*time.Minute)
 		synctest.Wait()
-		joinInflight(t, h)
+		joinInflight(h)
 		wantRunning(t, h, br)
 		if got := h.runs.silentSince(silentRunID); !got.IsZero() {
 			t.Errorf("silentSince = %v 20 minutes after the answer, want the count restarted", got)
@@ -238,7 +238,7 @@ func TestSilentStep_AnAnswerRestartsTheCount(t *testing.T) {
 
 		time.Sleep(runSilenceBound - runIdleWindow)
 		synctest.Wait()
-		joinInflight(t, h)
+		joinInflight(h)
 		if h.runs.silentSince(silentRunID).IsZero() {
 			t.Error("an hour of silence after the answer left no flag")
 		}
@@ -261,7 +261,7 @@ func TestSilentStep_APausedStepIsNotSilence(t *testing.T) {
 			stageSilence(h.runs, silentRunID, 2*time.Hour)
 
 			h.runs.cancelExpired(silentRunID, deadline)
-			joinInflight(t, h)
+			joinInflight(h)
 
 			if got := h.runs.endReason(silentRunID); got != "" {
 				t.Errorf("endReason = %q, want a paused step kept", got)
@@ -306,7 +306,7 @@ func TestSilentStep_AnHourlyWatchIsNeitherFlaggedNorStopped(t *testing.T) {
 			for range 3 {
 				stageSilence(h.runs, silentRunID, time.Hour)
 				expireAgain(t, h.runs, silentRunID)
-				joinInflight(t, h)
+				joinInflight(h)
 				frame(methodWFWatchPoll, map[string]any{"nodeId": "mail", "nodePath": watch, "outcome": "idle"})
 			}
 
@@ -558,7 +558,7 @@ func TestSilence_OnePredicateOverTheRunTree(t *testing.T) {
 				}
 
 				h.runs.cancelExpired(silentRunID, deadline)
-				joinInflight(t, h)
+				joinInflight(h)
 
 				wantVerdict(t, h, br, fp, tc.verdict, launch.origin == runlease.OriginAgent)
 			})

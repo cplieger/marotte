@@ -550,7 +550,7 @@ func TestCmdPrompt_BesideAWireTurnIsSteeredAndOpensNoTurn(t *testing.T) {
 		Type: marotte.CmdPrompt, ChatID: "c1",
 		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
 	})
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
@@ -582,7 +582,7 @@ func TestCmdPrompt_ASteeredPromptsRowIsKeyedByTheIDKASStampsOnIt(t *testing.T) {
 		Type: marotte.CmdPrompt, ChatID: "c1",
 		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
 	})
-	joinInflight(t, s.h)
+	joinInflight(s.h)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
@@ -621,7 +621,7 @@ func TestCmdPrompt_ASteerPastTheSteerBudgetIsRefusedFull(t *testing.T) {
 			}
 
 			rec := send("m-over")
-			joinInflight(t, s.h)
+			joinInflight(s.h)
 
 			var body struct {
 				Reason string `json:"reason"`
@@ -648,7 +648,7 @@ func TestCmdPrompt_NotificationShapedTextBesideATurnIsQueuedNotSteered(t *testin
 		Type: marotte.CmdPrompt, ChatID: "c1",
 		Payload: json.RawMessage(`{"text":"[notification/info] hi","message_id":"m-1"}`),
 	})
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())

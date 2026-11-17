@@ -71,7 +71,7 @@ func TestMoveChatProfile_AMidTurnPickRecordsItsLineOnlyOnceTheTurnCloses(t *test
 		t.Fatalf("profile_switched entries during the turn = %+v, want none until it closes", got)
 	}
 	endTurn(t, h, "c1", id)
-	joinInflight(t, h)
+	joinInflight(h)
 
 	entries := logOf(t, cs, "c1")
 	got := profileSwitchesOf(t, entries)
@@ -100,7 +100,7 @@ func TestMoveChatProfile_AMidTurnPickUndoneBeforeTheCloseRecordsNoLine(t *testin
 	pickProfile(t, h, "c1", policyfile.ProfileGuarded)
 	pickProfile(t, h, "c1", policyfile.ProfileTrusted)
 	endTurn(t, h, "c1", id)
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if got := profileSwitchesOf(t, logOf(t, cs, "c1")); len(got) != 0 {
 		t.Errorf("profile_switched entries = %+v, want none: the chat ends the turn on the profile it started it on", got)
@@ -164,7 +164,7 @@ func TestMoveChatProfile_APickDuringTheCloseRecordsOneLineAfterIt(t *testing.T) 
 				}
 				endTurn(t, h, "c1", id)
 			}
-			joinInflight(t, h)
+			joinInflight(h)
 
 			entries := logOf(t, cs, "c1")
 			got := profileSwitchesOf(t, entries)
@@ -242,7 +242,7 @@ func TestMoveChatProfile_APickDuringTheLandFilesItsLineAfterTheLands(t *testing.
 			}
 			endTurn(t, h, "c1", id)
 			awaitPick(t, picked)
-			joinInflight(t, h)
+			joinInflight(h)
 
 			entries := logOf(t, cs, "c1")
 			got := profileSwitchesOf(t, entries)

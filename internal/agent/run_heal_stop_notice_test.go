@@ -62,7 +62,7 @@ func TestHealStop_PushesUnderWorkflowRuns(t *testing.T) {
 	fp := newRunOutcomePush()
 	g := newThrottleRig(t, nil, WithPush(fp))
 	g.spend(t)
-	joinInflight(t, g.h)
+	joinInflight(g.h)
 
 	pushes := runOutcomePushes(fp)
 	want := runPushSent{
@@ -88,7 +88,7 @@ func TestHealStop_AThrottleAfterAResumedStopIsToldAgain(t *testing.T) {
 	waitUntil(t, "the first notice", func() bool { return len(g.stopNotices()) == 1 })
 
 	g.throttled(t)
-	joinInflight(t, g.h)
+	joinInflight(g.h)
 	if n := len(g.stopNotices()); n != 1 {
 		t.Fatalf("a pause read while the stop stands wrote %d notices, want the first alone", n)
 	}
@@ -105,7 +105,7 @@ func TestHealStop_AThrottleAfterAResumedStopIsToldAgain(t *testing.T) {
 	}
 	g.throttled(t)
 	waitUntil(t, "the second notice", func() bool { return len(g.stopNotices()) == 2 })
-	joinInflight(t, g.h)
+	joinInflight(g.h)
 	if n := len(runOutcomePushes(fp)); n != 2 {
 		t.Errorf("two stops pushed %d run notifications, want two", n)
 	}

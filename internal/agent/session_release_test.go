@@ -25,7 +25,7 @@ func releaseFixture(t *testing.T) (*Runtime, *tabs.Store, *sharedBridge) {
 		t.Fatalf("Setup: tab store: %v", err)
 	}
 	h := reopenFixtureIn(t, t.TempDir(), nil, WithTabs(st))
-	settleBoot(t, h)
+	awaitBoot(h)
 	sb, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("Setup: OpenBridge(c1): %v", err)
@@ -241,7 +241,7 @@ func TestReleaseCheck_ACutCloseBecomesARelease(t *testing.T) {
 		t.Fatalf("delete_chat = %d, want 200", code)
 	}
 	awaitTeardown(t, h, "c1")
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if !closeReturned.Load() || !br.Released() {
 		t.Fatalf("close returned = %v, released = %v; want the cut close returned and the session released",

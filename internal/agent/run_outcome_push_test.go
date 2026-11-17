@@ -174,7 +174,7 @@ func TestObserveComplete_APauseNotifiesOnlyAParentlessRun(t *testing.T) {
 		h.runs.observeComplete(t.Context(), "c1", runNotif(methodWFRunComplete, map[string]any{
 			"workflowId": "wf_1", "status": "paused", "finalState": pause,
 		}))
-		joinInflight(t, h)
+		joinInflight(h)
 		select {
 		case got := <-fp.sent:
 			t.Errorf("a paused run with a parent agent pushed %q; the parent intervenes", got.body)
@@ -187,7 +187,7 @@ func TestObserveComplete_APauseNotifiesOnlyAParentlessRun(t *testing.T) {
 		h.runs.observeComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{
 			"workflowId": "wf_1", "status": "paused", "finalState": map[string]any{"pause": map[string]any{"kind": "stepInput"}},
 		}))
-		joinInflight(t, h)
+		joinInflight(h)
 		select {
 		case got := <-fp.sent:
 			t.Errorf("a parentless run paused for a step's input pushed %q; only the iteration limit notifies", got.body)

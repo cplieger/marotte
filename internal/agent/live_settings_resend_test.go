@@ -90,9 +90,7 @@ func TestEngineLive_ASettingTheEngineStartFailedToSendIsSentAtTheNextOpen(t *tes
 			h := newRuntimeOn(context.Background(), t.TempDir(), src, cs, WithConfigDir(configDir))
 			cs.wire(h)
 			t.Cleanup(func() { shutdownHub(t, h) })
-			if !awaitEngine(h) {
-				t.Fatal("the engine never became ready")
-			}
+			awaitEngine(h)
 			lane.setNotifyErr(tc.method, nil)
 
 			for i := range 2 {

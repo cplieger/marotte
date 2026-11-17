@@ -46,7 +46,7 @@ func newOwnerHub(t *testing.T, tabbed bool) *ownerHub {
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 		t.Fatalf("Setup: seed c1: %v", err)
 	}
-	settleBoot(t, h)
+	awaitBoot(h)
 	if tabbed {
 		if _, _, _, err := st.Open(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c1"}); err != nil {
 			t.Fatalf("Setup: open c1's tab: %v", err)

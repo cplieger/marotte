@@ -67,7 +67,7 @@ func TestSettingsWritten_ReappliesTheHistoryWindow(t *testing.T) {
 		WithTabs(st), WithConfigDir(dir))
 	cs.wire(rt)
 	t.Cleanup(func() { shutdownHub(t, rt) })
-	settleBoot(t, rt)
+	awaitBoot(rt)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() {

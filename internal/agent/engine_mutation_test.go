@@ -124,7 +124,7 @@ func TestAnswerEngineMutation_SettlesTheListOnlyForAChangeOrALateAnswer(t *testi
 			} else if rec.Code != http.StatusTeapot {
 				t.Errorf("answer = %d, want the call's own reply", rec.Code)
 			}
-			joinInflight(t, h)
+			joinInflight(h)
 			if got := len(changed) == 1; got != tc.wantChanged {
 				t.Errorf("changed signal sent = %v, want %v", got, tc.wantChanged)
 			}

@@ -55,7 +55,7 @@ func TestCloseBridge_RemovesAndClosesTheSession(t *testing.T) {
 
 	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeCancelled)
 	// The close runs off the caller's path; the session's forward ends with it.
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if h.coord.bridgeFor("c1") != nil {
 		t.Error("session still registered after closeBridge")

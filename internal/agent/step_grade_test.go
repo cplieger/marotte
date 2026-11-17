@@ -222,7 +222,7 @@ func runRecordedStep(t *testing.T, h *Runtime, workflowID, nodePath string, path
 		t.Fatalf("RunStopReason(%q) refused on the open turn", stop)
 	}
 	h.runs.RunNodeComplete(t.Context(), workflowID, path, "completed", "")
-	joinInflight(t, h)
+	joinInflight(h)
 }
 
 // TestStepEnd_AKiroCLI232HandoffStepReadsCompleted replays kiro-cli 2.32.0's create-workflow step: its turn ends on
@@ -471,7 +471,7 @@ func TestStepEnd_AStepKASCompletedWithNoSignalAfterAnEmptyAnswerReadsFailed(t *t
 				t.Fatal("Setup: RunStopReason refused on the open turn")
 			}
 			h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
-			joinInflight(t, h)
+			joinInflight(h)
 
 			// A close that said nothing is due a grade: the empty answer, or completed under a success signal.
 			var grade *marotte.EntryStepGraded
@@ -511,7 +511,7 @@ func TestStepEnd_AStepKASCompletedWithNoSignalAfterAnEmptyAnswerReadsFailed(t *t
 			})
 			t.Run("the launching agent's wake", func(t *testing.T) {
 				waitUntil(t, "the launching agent's wake", func() bool { return !tc.failed || len(g.wakes()) > 0 })
-				joinInflight(t, h)
+				joinInflight(h)
 				wakes := g.wakes()
 				if !tc.failed {
 					if len(wakes) != 0 {
@@ -771,7 +771,7 @@ func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *tes
 			nodePath := workflow.PathKey(path)
 			h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: id, NodePath: nodePath, SessionID: session}, "")
 			tc.drive(&stepEnding{t: t, h: h, id: id, path: path, nodePath: nodePath, session: session})
-			joinInflight(t, h)
+			joinInflight(h)
 
 			t.Run("the run read", func(t *testing.T) {
 				end := stepEndsOf(t, h, id)[nodePath]
@@ -806,7 +806,7 @@ func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *tes
 			})
 			t.Run("the launching agent's wake", func(t *testing.T) {
 				waitUntil(t, "the launching agent's wake", func() bool { return !tc.empty || len(g.wakes()) > 0 })
-				joinInflight(t, h)
+				joinInflight(h)
 				var wakes int
 				for _, w := range g.wakes() {
 					if strings.Contains(w, "ended with an empty model turn and no completion signal") {

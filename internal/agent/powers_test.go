@@ -287,9 +287,7 @@ func installReq(method, path, name string) *http.Request {
 func TestHandlePowerInstall_RunsTheVerbRefreshesTheEngineAndBroadcasts(t *testing.T) {
 	backend := &fakePowers{}
 	h, engine := newPowersHub(t, backend)
-	if !awaitEngine(h) {
-		t.Fatal("the engine never became ready")
-	}
+	awaitEngine(h)
 
 	rec := httptest.NewRecorder()
 	h.powers.handleInstall(rec, installReq(http.MethodPost, "/api/powers/postman/install", "postman"))
@@ -346,9 +344,7 @@ func TestHandlePowerInstall_OutlivesTheRequestButNotShutdown(t *testing.T) {
 // An install tells the running engine to rescan, once for every session.
 func TestHandlePowerInstall_RefreshesTheRunningEngine(t *testing.T) {
 	h, engine := newPowersHub(t, &fakePowers{})
-	if !awaitEngine(h) {
-		t.Fatal("the engine never became ready")
-	}
+	awaitEngine(h)
 	rec := httptest.NewRecorder()
 	h.powers.handleInstall(rec, installReq(http.MethodPost, "/api/powers/postman/install", "postman"))
 	if got := len(engine.notified(methodKiroPowersRefresh)); rec.Code != http.StatusOK || got != 1 {
@@ -401,9 +397,7 @@ func TestHandlePowerVerbs_ARenderFailureStillConvergesAndSaysTheChangeWasMade(t 
 		t.Run(tc.name, func(t *testing.T) {
 			backend := &fakePowers{verbErr: &powers.RenderError{Err: errors.New("disk /secret/path full")}}
 			h, engine := newPowersHub(t, backend)
-			if !awaitEngine(h) {
-				t.Fatal("the engine never became ready")
-			}
+			awaitEngine(h)
 
 			rec := httptest.NewRecorder()
 			tc.call(h.powers, rec, installReq(tc.method, tc.path, "postman"))

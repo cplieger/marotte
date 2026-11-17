@@ -981,7 +981,7 @@ func TestBridgeExit_DropsTheChatView(t *testing.T) {
 		h, _ := open(t)
 
 		h.CloseChatState(t.Context(), "c1", nil)
-		joinInflight(t, h)
+		joinInflight(h)
 
 		if got := snapshotNames(h); len(got) != 0 {
 			t.Errorf("records after the chat closed = %v, want none", got)
@@ -996,7 +996,7 @@ func TestBridgeExit_DropsTheChatView(t *testing.T) {
 		h.bridge.mgr.mu.Unlock()
 
 		br.endStream()
-		joinInflight(t, h)
+		joinInflight(h)
 
 		if got := snapshotNames(h); !slices.Equal(got, []string{"docs"}) {
 			t.Errorf("records after the old forward ended = %v, want the reloaded session's [docs]", got)

@@ -72,7 +72,7 @@ func TestCloseTab_AReservationAfterTheHoldsWaitsAndRunsInTheReopenedChat(t *test
 	if r.code != http.StatusConflict || r.reason != "chat_closed" {
 		t.Errorf("prompt = %d %q, want 409 chat_closed", r.code, r.reason)
 	}
-	joinInflight(t, h)
+	joinInflight(h)
 	if n := doors.Load(); n != 0 {
 		t.Errorf("doors = %d, want none for the closed chat", n)
 	}

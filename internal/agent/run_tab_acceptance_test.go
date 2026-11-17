@@ -67,7 +67,7 @@ func newTabbedRig(t *testing.T) tabbedRig {
 		WithTabs(st), WithConfigDir(dir))
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	settleBoot(t, h)
+	awaitBoot(h)
 	return tabbedRig{h: h, chats: cs, br: br, dir: dir}
 }
 

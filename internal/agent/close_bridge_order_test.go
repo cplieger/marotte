@@ -46,7 +46,7 @@ func TestCloseBridge_ReleasesThenWaitsForTheForwardThenClosesTheTurns(t *testing
 			t.Fatalf("close_tab = %d, want 200", code)
 		}
 		awaitTeardown(t, h, "c1")
-		joinInflight(t, h)
+		joinInflight(h)
 
 		if openAtRelease != 1 {
 			t.Errorf("open turns at the release = %d, want 1: the release precedes every turn close", openAtRelease)
@@ -73,7 +73,7 @@ func TestCloseBridge_ReleasesThenWaitsForTheForwardThenClosesTheTurns(t *testing
 			t.Fatalf("close_tab = %d, want 200", code)
 		}
 		awaitTeardown(t, h, "c1")
-		joinInflight(t, h)
+		joinInflight(h)
 
 		entries := logOf(t, cs, "c1")
 		if opens, closes := len(opensOf(t, entries)), len(closesOf(t, entries)); opens != closes {
@@ -126,7 +126,7 @@ func TestCloseTab_TheOldSessionsFramesNeverReachTheReopenedChat(t *testing.T) {
 	id := int64(77)
 	params, _ := json.Marshal(map[string]any{"sessionId": old, "toolCall": map[string]any{"toolCallId": "t-old"}})
 	h.engineFrame(src.current(), &marotte.RPCResponse{Method: marotte.MethodRequestPermission, ID: &id, Params: params})
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if _, ok := h.coord.turns.lookup("c1"); ok {
 		t.Error("the released session's frames minted a lifecycle for the closed chat")
@@ -251,7 +251,7 @@ func TestReleaseCheck_AWireTurnOpenedDuringItsCloseIsClosed(t *testing.T) {
 	if !released(t, h, sb) {
 		t.Fatal("the release check left the session open")
 	}
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if open := h.coord.turns.openTurnIDs("c1"); len(open) != 0 {
 		t.Errorf("open turns after the release check's close = %d, want 0", len(open))

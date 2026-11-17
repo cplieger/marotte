@@ -19,9 +19,7 @@ func resetHub(t *testing.T, names ...string) (*Runtime, *fakeBridge) {
 	t.Helper()
 	h, _, br := newTestHub(WithMCPConfig(enabledConfig(names...)))
 	t.Cleanup(func() { shutdownHub(t, h) })
-	if !awaitEngine(h) {
-		t.Fatal("the engine never became ready")
-	}
+	awaitEngine(h)
 	launchableRecipe(br, "wf_1")
 	return h, br
 }

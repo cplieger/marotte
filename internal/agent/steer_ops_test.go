@@ -377,7 +377,7 @@ func TestCmdCancel_ALeadWhoseStopStopsNothingIsNotKept(t *testing.T) {
 	waitFor(t, func() bool {
 		return stateOf(s.h, "c1", "a") == marotte.RunPaused && stateOf(s.h, "c1", "b") == marotte.RunPaused
 	})
-	joinInflight(t, s.h)
+	joinInflight(s.h)
 	if got := listedRows(s.h, "c1"); !slices.Equal(got, []string{"a:paused", "b:paused"}) {
 		t.Errorf("waiting rows = %v, want both steers paused in the order written", got)
 	}

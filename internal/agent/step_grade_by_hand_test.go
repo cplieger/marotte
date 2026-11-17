@@ -100,7 +100,7 @@ func TestStepEnd_AStepEndedByHandAfterAThrottledTurnReadsCompletedEndedByHand(t 
 			h, cs, s := byHandHub(t, id, "account-review-a", "completed", "")
 			tc.drive(s)
 			s.complete("completed")
-			joinInflight(t, h)
+			joinInflight(h)
 
 			t.Run("the run read", func(t *testing.T) {
 				end, named := stepEndsOf(t, h, id)[s.nodePath]
@@ -131,7 +131,7 @@ func TestStepEnd_AStepKASFailedAfterAThrottledTurnStaysFailed(t *testing.T) {
 	s.throttle()
 	s.signalledTurn()
 	h.runs.RunNodeComplete(t.Context(), id, s.path, "failed", "model service error")
-	joinInflight(t, h)
+	joinInflight(h)
 
 	end, named := stepEndsOf(t, h, id)[s.nodePath]
 	if !named || end.Outcome != marotte.TurnOutcomeFailed || wireBool(t, end, "ended_by_hand") {
@@ -149,7 +149,7 @@ func TestStepEnd_AStepThatSignalledSuccessAfterThrottlesReadsPlainCompleted(t *t
 	s.throttle()
 	s.signalledTurn()
 	s.complete("completed")
-	joinInflight(t, h)
+	joinInflight(h)
 
 	t.Run("the run read", func(t *testing.T) {
 		end, named := stepEndsOf(t, h, id)[s.nodePath]

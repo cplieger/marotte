@@ -102,13 +102,13 @@ func TestRunNodeComplete_ARefusedStepTellsTheLaunchingChat(t *testing.T) {
 	})
 
 	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
-	joinInflight(t, h)
+	joinInflight(h)
 	if steers := chatSteers(t, cs, chatID); len(steers) != 0 {
 		t.Fatalf("an unreadable record left %d notes, want none: %+v", len(steers), steers)
 	}
 	br.setCallResult(methodKiroWorkflowInspect, inspectWithLoopStep(t, id, "loop", 1, "build", "completed"))
 	stepEndsOf(t, h, id)
-	joinInflight(t, h)
+	joinInflight(h)
 
 	entries, err := cs.All(t.Context(), chatID)
 	if err != nil {
@@ -167,7 +167,7 @@ func TestRunNodeComplete_AStepStoppedAtTheModelCallLimitTellsTheLaunchingChat(t 
 	}
 
 	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
-	joinInflight(t, h)
+	joinInflight(h)
 
 	entries, err := cs.All(t.Context(), chatID)
 	if err != nil {
@@ -207,7 +207,7 @@ func TestRunNodeComplete_ARefusalWithNoMetadataStillLeavesANote(t *testing.T) {
 	refuseStep(t, h.runs, id, path, nil)
 
 	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
-	joinInflight(t, h)
+	joinInflight(h)
 
 	steers := chatSteers(t, cs, chatID)
 	if len(steers) != 1 {
@@ -247,7 +247,7 @@ func TestRunNodeComplete_AStepThatRanLeavesNoNote(t *testing.T) {
 			br.forgetCalls()
 
 			h.runs.RunNodeComplete(t.Context(), id, []string{"build"}, tc.status, "")
-			joinInflight(t, h)
+			joinInflight(h)
 
 			if steers := chatSteers(t, cs, chatID); len(steers) != 0 {
 				t.Errorf("%s left %d notes, want none: %+v", tc.desc, len(steers), steers)
@@ -272,7 +272,7 @@ func TestRunNodeComplete_AParentlessRunLeavesNoNote(t *testing.T) {
 	logs := captureLogs(t)
 
 	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
-	joinInflight(t, h)
+	joinInflight(h)
 
 	// The grade is recorded, so only the note was withheld.
 	if got := gradesOf(t, h, id); len(got) != 1 {
@@ -302,9 +302,9 @@ func TestRunNodeComplete_ARefusalIsNotedOnce(t *testing.T) {
 	refuseStep(t, h.runs, id, path, &marotte.RefusalInfo{Category: "policy"})
 
 	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
-	joinInflight(t, h)
+	joinInflight(h)
 	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if steers := chatSteers(t, cs, chatID); len(steers) != 1 {
 		t.Errorf("got %d notes for one refusal, want one", len(steers))
@@ -343,7 +343,7 @@ func TestRunOpenTurn_AnswersOnlyAnOpenTurnAndOpensNone(t *testing.T) {
 	}
 
 	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
-	joinInflight(t, h)
+	joinInflight(h)
 	if _, ok := h.runs.RunOpenTurn(id, nodePath); ok {
 		t.Error("RunOpenTurn answered the step's closed turn")
 	}
@@ -448,7 +448,7 @@ func (g *wakeRig) endStep(t *testing.T, before, after string, stop marotte.StopR
 		t.Fatal("Setup: RunStopReason refused on the open turn")
 	}
 	g.h.runs.RunNodeComplete(t.Context(), wakeRunID, wakeStepPath, status, "")
-	joinInflight(t, g.h)
+	joinInflight(g.h)
 }
 
 // TestRunNodeComplete_AnEmptyAnswerWakesTheLaunchingAgent replays the review seats that ended on an empty turn on
@@ -469,7 +469,7 @@ func TestRunNodeComplete_AnEmptyAnswerWakesTheLaunchingAgent(t *testing.T) {
 			g.endStep(t, tc.before, tc.after, marotte.StopReasonEndTurn, "completed")
 			end := stepEndsOf(t, g.h, wakeRunID)[nodePath]
 			waitUntil(t, "the launching agent's wake", func() bool { return !tc.failed || len(g.wakes()) > 0 })
-			joinInflight(t, g.h)
+			joinInflight(g.h)
 			if !tc.failed {
 				if end.FailureKind == marotte.FailureKindEmptyAnswer {
 					t.Errorf("step_ends[%s] = %+v, want no empty answer", nodePath, end)
@@ -526,7 +526,7 @@ func TestRunNodeComplete_AnEmptyAnswerGradedAtTheRunsEndOffersANewRun(t *testing
 	g.br.clearCallErr(methodKiroWorkflowInspect)
 	g.h.runs.gradeRun(t.Context(), wakeRunID, gradeAtRunEnd)
 	waitUntil(t, "the launching agent's wake", func() bool { return len(g.wakes()) > 0 })
-	joinInflight(t, g.h)
+	joinInflight(g.h)
 	wakes := g.wakes()
 	if len(wakes) != 1 {
 		t.Fatalf("the launching agent got %d wakes, want one: %q", len(wakes), wakes)
@@ -554,7 +554,7 @@ func TestRunNodeComplete_AStepThatSignalledIsNotAnEmptyAnswer(t *testing.T) {
 			g := newWakeRig(t, wakeRunID, inspectWithStep(t, wakeRunID, "seat-b", tc.status, tc.signal))
 			g.endStep(t, "Reading the diff.", "", tc.stop, tc.status)
 			end := stepEndsOf(t, g.h, wakeRunID)[nodePath]
-			joinInflight(t, g.h)
+			joinInflight(g.h)
 			if end.FailureKind == marotte.FailureKindEmptyAnswer {
 				t.Errorf("step_ends[%s] = %+v, want no empty answer", nodePath, end)
 			}
@@ -581,11 +581,11 @@ func TestRunNodeComplete_AStepThatSignalledIsNotAnEmptyAnswer(t *testing.T) {
 		s.call("send_message")
 		s.turnEnd()
 		s.complete("completed")
-		joinInflight(t, g.h)
+		joinInflight(g.h)
 		if end := stepEndsOf(t, g.h, wakeRunID)[nodePath]; end.FailureKind == marotte.FailureKindEmptyAnswer {
 			t.Errorf("step_ends[%s] = %+v, want no empty answer", nodePath, end)
 		}
-		joinInflight(t, g.h)
+		joinInflight(g.h)
 		if w := g.wakes(); len(w) != 0 {
 			t.Errorf("the launching agent got %d wakes, want none: %q", len(w), w)
 		}

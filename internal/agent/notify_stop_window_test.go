@@ -50,7 +50,7 @@ func TestRunList_StopWindows(t *testing.T) {
 			plainStop(t, s.h)
 			close(release)
 			awaitDelivery(t, wake)
-			joinInflight(t, s.h)
+			joinInflight(s.h)
 			synctest.Wait()
 
 			if n := opensIn(t, cs); n != 1 {

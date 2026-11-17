@@ -131,7 +131,7 @@ func TestHandleRun_AGradeAdvancesTheRevision(t *testing.T) {
 	rev := revOf(t, h)
 	h.runs.log.stopReason("wf_1", build, marotte.StopReasonToolUse)
 	h.runs.RunNodeComplete(t.Context(), "wf_1", path, "completed", "")
-	joinInflight(t, h)
+	joinInflight(h)
 
 	got, body := getRunAt(t, h, "since="+strconv.FormatUint(rev, 10))
 
@@ -307,7 +307,7 @@ func TestHandleRun_TheSilenceFlagMovesTheRevision(t *testing.T) {
 	rev := revOf(t, h)
 
 	h.runs.cancelExpired(silentRunID, deadline)
-	joinInflight(t, h)
+	joinInflight(h)
 	flagged, since := silentAt("since=" + strconv.FormatUint(rev, 10))
 	if flagged <= rev || since == "" {
 		t.Errorf("?since after the flag = rev %d with silent_since %q, want past %d and the flag", flagged, since, rev)
@@ -317,7 +317,7 @@ func TestHandleRun_TheSilenceFlagMovesTheRevision(t *testing.T) {
 	}
 
 	h.runs.RunMadeProgress(silentRunID)
-	joinInflight(t, h)
+	joinInflight(h)
 	if cleared, since := silentAt("since=" + strconv.FormatUint(flagged, 10)); cleared <= flagged || since != "" {
 		t.Errorf("?since after a frame = rev %d with silent_since %q, want past %d and no flag", cleared, since, flagged)
 	}

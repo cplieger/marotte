@@ -177,7 +177,7 @@ func TestCloseTab_APromptWaitingOnItsDoorEndsCancelledAndOpensNoSecondDoor(t *te
 	}
 	awaitTeardown(t, h, "c1")
 	close(gate)
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if got := doors.Load(); got != 1 {
 		t.Errorf("session doors = %d, want 1: a closed chat opens no second session", got)
@@ -228,7 +228,7 @@ func TestCloseTab_ARunningTurnIsCancelledBeforeItsSessionCloses(t *testing.T) {
 	}
 	close(release)
 	awaitTeardown(t, h, "c1")
-	joinInflight(t, h)
+	joinInflight(h)
 
 	switch openAtCancel.Load() {
 	case 0:
@@ -489,7 +489,7 @@ func TestCloseTab_ALatePromptReplyAfterTheCloseMintsNothing(t *testing.T) {
 	}
 	awaitTeardown(t, h, "c1")
 	release()
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if _, ok := h.coord.turns.lookup("c1"); ok {
 		t.Error("a lifecycle exists for the closed chat after its prompt's reply")
@@ -609,7 +609,7 @@ func TestCloseTab_TheTeardownsOwnTurnCloseStartsNoTail(t *testing.T) {
 	}
 	awaitTeardown(t, h, "c1")
 	release()
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if slices.Contains(br.callLog(), marotte.MethodSetConfigOption) {
 		t.Errorf("calls = %v, want no model apply for a closed chat", br.callLog())
@@ -671,7 +671,7 @@ func TestCloseTab_ADoorInFlightAtTheCloseEndsAtOnce(t *testing.T) {
 	if got := recordSessionID(t, cs); got != "sess-keep" {
 		t.Errorf("record session = %q, want sess-keep kept for the reopen", got)
 	}
-	joinInflight(t, h)
+	joinInflight(h)
 	if out := logs.String(); strings.Contains(out, "session/load failed, starting new") {
 		t.Errorf("logs = %s, want the cut load ended, not retried as a new session", out)
 	}
@@ -774,7 +774,7 @@ func TestCloseTab_TheJobWaitsForEveryLeaseBeforeItsCancel(t *testing.T) {
 		t.Fatalf("close_tab = %d, want 200", code)
 	}
 	awaitTeardown(t, h, "c1")
-	joinInflight(t, h)
+	joinInflight(h)
 
 	wire := br.wireLog()
 	cancelAt := slices.Index(wire, marotte.MethodCancel)
@@ -831,7 +831,7 @@ func TestEffortHeal_AfterTheCommitSendsNothing(t *testing.T) {
 		t.Fatalf("close_tab = %d, want 200", code)
 	}
 	awaitTeardown(t, h, "c1")
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if got := br.lastEffort(); got != "" {
 		t.Errorf("effort applied = %q after the close committed, want nothing sent", got)
@@ -923,7 +923,7 @@ func TestCloseTab_APromptBetweenStartTurnAndItsSendEndsCancelled(t *testing.T) {
 	}
 	awaitTeardown(t, h, "c1")
 	close(resume)
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if slices.Contains(br.wireLog(), marotte.MethodPrompt) {
 		t.Errorf("wire = %v, want no session/prompt for the closed chat", br.wireLog())

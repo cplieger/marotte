@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -25,14 +24,6 @@ import (
 // Call Shutdown to tear it down.
 func newTestHub(opts ...Option) (*Runtime, *testChatStore, *fakeBridge) {
 	return newTestHubIn("/tmp/work", opts...)
-}
-
-// settleBoot is awaitBoot for a runtime a test built itself.
-func settleBoot(t *testing.T, h *Runtime) {
-	t.Helper()
-	if err := awaitBoot(h); err != nil {
-		t.Fatal(err)
-	}
 }
 
 // Reassigning workDir afterwards misses the wiring's one read. Order-sensitive: cs.Bus can only be
@@ -57,9 +48,7 @@ func newTestHubOn(workDir string, coldGovernance bool, opts ...Option) (*Runtime
 	h := newRuntimeOn(context.Background(), workDir, src, cs, opts...)
 	cs.wire(h)
 	// The engine's boot work reads br's scripts; a test edits them unlocked, so only after this.
-	if err := awaitBoot(h); err != nil {
-		panic(err)
-	}
+	awaitBoot(h)
 	br.forgetCalls()
 	seededHubs.Store(cs, h)
 	return h, cs, br
@@ -67,51 +56,38 @@ func newTestHubOn(workDir string, coldGovernance bool, opts ...Option) (*Runtime
 
 // awaitBoot waits for h's first engine generation and the work its readiness started, so the replay ring
 // already holds every boot frame (engine_status among them) and no boot call is still reading a fake.
-func awaitBoot(h *Runtime) error {
-	if !awaitEngine(h) {
-		return errors.New("setup: the fake engine was not ready within 5s")
-	}
+// No wait here has a deadline: a loaded runner can stall the boot goroutines past any wall-clock bound, so a boot
+// that never finishes is left to go test -timeout's goroutine dump.
+func awaitBoot(h *Runtime) {
+	awaitEngine(h)
 	// The profile arrives while the boot pass holds inflight, so the drain below cannot Wait before the boot's work
 	// was added.
 	if src, ok := h.engine.source.(*fakeEngineSource); ok && !src.noGovernance {
-		select {
-		case <-h.config.governance.warm:
-		case <-time.After(5 * time.Second):
-			return errors.New("setup: the boot's governance profile did not arrive within 5s")
-		}
+		<-h.config.governance.warm
 	}
-	drained := make(chan struct{})
-	go func() {
-		h.lifecycle.inflight.Wait()
-		close(drained)
-	}()
-	select {
-	case <-drained:
-	case <-time.After(5 * time.Second):
-		return errors.New("setup: the engine's boot work did not drain within 5s")
-	}
-	return awaitBootPowersSync(h)
+	h.lifecycle.inflight.Wait()
+	awaitBootPowersSync(h)
 }
 
 // awaitBootPowersSync waits for the powers re-render the boot's administrator rules asked for: syncLoop runs off
 // inflight, so its powers_changed would otherwise land inside the test.
-func awaitBootPowersSync(h *Runtime) error {
+func awaitBootPowersSync(h *Runtime) {
 	if !h.config.adminPolicyKnown() {
-		return nil
+		return
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		for _, e := range h.bus.fanout.Snapshot() {
-			var msg marotte.ServerEvent
-			if json.Unmarshal(e.Event.Data, &msg) == nil && msg.Type == marotte.EventPowersChanged {
-				return nil
-			}
-		}
-		if time.Now().After(deadline) {
-			return errors.New("setup: the boot's powers re-render did not broadcast within 5s")
-		}
+	for !powersChangedSent(h) {
 		time.Sleep(time.Millisecond)
 	}
+}
+
+func powersChangedSent(h *Runtime) bool {
+	for _, e := range h.bus.fanout.Snapshot() {
+		var msg marotte.ServerEvent
+		if json.Unmarshal(e.Event.Data, &msg) == nil && msg.Type == marotte.EventPowersChanged {
+			return true
+		}
+	}
+	return false
 }
 
 // originOf is the bridge a frame for chatID arrives on in a test, which is what forwardAt passes:
@@ -157,22 +133,13 @@ func bootComing(h *Runtime) bool {
 	}
 }
 
-// Call only once nothing else will Add; a first engine still coming up is waited for first.
-func joinInflight(t testing.TB, h *Runtime) {
-	t.Helper()
-	if bootComing(h) && !awaitEngine(h) {
-		t.Fatal("the fake engine was not ready within 5s")
+// Call only once nothing else will Add; a first engine still coming up is waited for first. Like awaitBoot it
+// has no deadline of its own.
+func joinInflight(h *Runtime) {
+	if bootComing(h) {
+		awaitEngine(h)
 	}
-	drained := make(chan struct{})
-	go func() {
-		h.lifecycle.inflight.Wait()
-		close(drained)
-	}()
-	select {
-	case <-drained:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the runtime's inflight work did not drain within 5s")
-	}
+	h.lifecycle.inflight.Wait()
 }
 
 // beginDraining flips draining as Shutdown's first step does, without the teardown that follows it.
@@ -506,7 +473,7 @@ func waitForParkedSettle(tb testing.TB, reg *turnRegistry, chatID marotte.ChatID
 	parked := t != nil && t.NeedSeq == want
 	lc.mu.Unlock()
 	if !parked {
-		tb.Fatalf("the settle for turn %q is blocked but never recorded NeedSeq %d, so it is not parked", turnID, want)
+		tb.Fatalf("the settle for turn %q had not recorded NeedSeq %d when the bubble went idle, so it is not parked", turnID, want)
 	}
 }
 

@@ -123,7 +123,7 @@ func TestStepGrade_ARefusedStepKASCompletedOnASuccessSignalIsRecordedCompletedOn
 	refuseStep(t, h.runs, id, path, &marotte.RefusalInfo{Category: "policy"})
 
 	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
-	joinInflight(t, h)
+	joinInflight(h)
 
 	completed := recordedGrade{Turn: closeTurnOf(t, h, id), Outcome: string(marotte.TurnOutcomeCompleted)}
 	t.Run("the run log holds one completed grade of the step's turn", func(t *testing.T) {
@@ -142,7 +142,7 @@ func TestStepGrade_ARefusedStepKASCompletedOnASuccessSignalIsRecordedCompletedOn
 		if _, err := h.runs.stepTranscript(t.Context(), id, nodePath); err != nil {
 			t.Fatalf("step transcript: %v", err)
 		}
-		joinInflight(t, h)
+		joinInflight(h)
 		if got := gradesOf(t, h, id); len(got) != 1 {
 			t.Errorf("step_graded entries after more reads = %+v, want one", got)
 		}
@@ -247,7 +247,7 @@ func TestStepGrade_TheRunReadRecordsAGradeTheNodeCompleteMissed(t *testing.T) {
 		br.setCallErr(methodKiroWorkflowInspect, down)
 		refuseStep(t, h.runs, id, path, &marotte.RefusalInfo{Category: "policy"})
 		h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
-		joinInflight(t, h)
+		joinInflight(h)
 		if steers := chatSteers(t, cs, chatID); len(steers) != 0 {
 			t.Errorf("an unread record left %d notes, want none: %+v", len(steers), steers)
 		}
@@ -256,7 +256,7 @@ func TestStepGrade_TheRunReadRecordsAGradeTheNodeCompleteMissed(t *testing.T) {
 		br.setCallResult(methodKiroWorkflowInspect, fixtureFile(t, "creator_232_inspect.json"))
 		before := h.bus.fanout.Position().Head
 		stepEndsOf(t, h, id)
-		joinInflight(t, h)
+		joinInflight(h)
 
 		want := recordedGrade{Turn: closeTurnOf(t, h, id), Outcome: string(marotte.TurnOutcomeCompleted)}
 		if got := gradesOf(t, h, id); len(got) != 1 || got[0] != want {
@@ -286,7 +286,7 @@ func TestStepGrade_TheRunReadRecordsAGradeTheNodeCompleteMissed(t *testing.T) {
 		br.clearCallErr(methodKiroWorkflowInspect)
 		br.setCallResult(methodKiroWorkflowInspect, fixtureFile(t, "limit_231_inspect.json"))
 		read(h, id, nodePath)
-		joinInflight(t, h)
+		joinInflight(h)
 
 		want := recordedGrade{
 			Turn: closeTurnOf(t, h, id), Outcome: string(marotte.TurnOutcomeFailed),
@@ -339,7 +339,7 @@ func TestStepGrade_TheRunsNextFrameRecordsAGradeTheNodeCompleteMissed(t *testing
 		br.clearCallErr(methodKiroWorkflowInspect)
 		br.setCallResult(methodKiroWorkflowInspect, fixtureFile(t, "limit_231_inspect.json"))
 		frame(h)
-		joinInflight(t, h)
+		joinInflight(h)
 
 		want := recordedGrade{
 			Turn: turn, Outcome: string(marotte.TurnOutcomeFailed),
@@ -357,7 +357,7 @@ func TestStepGrade_TheRunsNextFrameRecordsAGradeTheNodeCompleteMissed(t *testing
 		}
 		check("after the frame")
 		stepEndsOf(t, h, id)
-		joinInflight(t, h)
+		joinInflight(h)
 		check("after a run read")
 	}
 	t.Run("another step's node_complete", func(t *testing.T) {
@@ -381,7 +381,7 @@ func TestHandleTurnRange_ServesTheStepsRecordedGrade(t *testing.T) {
 	br.setCallResult(methodKiroWorkflowInspect, fixtureFile(t, "creator_232_inspect.json"))
 	refuseStep(t, h.runs, id, path, &marotte.RefusalInfo{Category: "policy"})
 	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
-	joinInflight(t, h)
+	joinInflight(h)
 	stepEndsOf(t, h, id)
 	turn := closeTurnOf(t, h, id)
 
@@ -424,7 +424,7 @@ func TestStepGrade_AResumedStepKASCompletedIsGradedWithoutANewClose(t *testing.T
 	t.Run("a step KAS still runs is not graded", func(t *testing.T) {
 		br.setCallResult(methodKiroWorkflowInspect, inspectWithStep(t, id, "build", "running", ""))
 		stepEndsOf(t, h, id)
-		joinInflight(t, h)
+		joinInflight(h)
 		if got := gradesOf(t, h, id); len(got) != 0 {
 			t.Errorf("step_graded entries for a running step = %+v, want none", got)
 		}
@@ -432,7 +432,7 @@ func TestStepGrade_AResumedStepKASCompletedIsGradedWithoutANewClose(t *testing.T
 	t.Run("its completion grades the interrupted turn", func(t *testing.T) {
 		br.setCallResult(methodKiroWorkflowInspect, inspectWithStep(t, id, "build", "completed", "success"))
 		h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
-		joinInflight(t, h)
+		joinInflight(h)
 		want := recordedGrade{Turn: interrupted, Outcome: string(marotte.TurnOutcomeCompleted)}
 		if got := gradesOf(t, h, id); len(got) != 1 || got[0] != want {
 			t.Errorf("step_graded entries = %+v, want only %+v", got, want)
@@ -451,19 +451,19 @@ func TestStepGrade_AnEarlierAttemptIsNotGradedWhileTheNextIsOpen(t *testing.T) {
 		h, _, br := runLoggingHub(t)
 		h.runs.RunNodeStart(t.Context(), step, "")
 		h.runs.RunNodeComplete(t.Context(), id, path, "failed", "")
-		joinInflight(t, h)
+		joinInflight(h)
 		first := closeTurnOf(t, h, id)
 		h.runs.RunNodeStart(t.Context(), step, "")
 		br.setCallResult(methodKiroWorkflowInspect, inspectWithStep(t, id, "build", "completed", "success"))
 
 		stepEndsOf(t, h, id)
-		joinInflight(t, h)
+		joinInflight(h)
 		if got := gradesOf(t, h, id); len(got) != 0 {
 			t.Errorf("step_graded entries while the retry is open = %+v, want none", got)
 		}
 
 		h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
-		joinInflight(t, h)
+		joinInflight(h)
 		for _, g := range gradesOf(t, h, id) {
 			if g.Turn == first {
 				t.Errorf("the earlier attempt %s was graded %+v after the retry closed", first, g)
@@ -476,14 +476,14 @@ func TestStepGrade_AnEarlierAttemptIsNotGradedWhileTheNextIsOpen(t *testing.T) {
 		h.runs.log = newRunLog(dir)
 		h.runs.RunNodeStart(t.Context(), step, "")
 		h.runs.RunNodeComplete(t.Context(), id, path, "failed", "")
-		joinInflight(t, h)
+		joinInflight(h)
 		first := closeTurnOf(t, h, id)
 		h.runs.RunNodeStart(t.Context(), step, "")
 		h.runs.log = newRunLog(dir)
 		br.setCallResult(methodKiroWorkflowInspect, inspectWithStep(t, id, "build", "completed", "success"))
 
 		stepEndsOf(t, h, id)
-		joinInflight(t, h)
+		joinInflight(h)
 		// Opening the log closes the retry unterminated, so the retry is the newest close KAS's record describes.
 		retry := closeTurnOf(t, h, id)
 		if retry == first {
@@ -509,7 +509,7 @@ func TestRunNodeComplete_ARefusedStepKASDidNotCompleteIsNotedWithoutReadingItsRe
 	br.forgetCalls()
 
 	h.runs.RunNodeComplete(t.Context(), id, path, "failed", "")
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if ids, want := steerIDs(t, cs, chatID), stepNoteID(id, stepNoteRefused, workflow.PathKey(path)); len(ids) != 1 || ids[0] != want {
 		t.Errorf("launching chat notes = %v, want only %s", ids, want)
@@ -538,7 +538,7 @@ func TestRunNodeComplete_ALastStepIsNotedThoughTheRunEndsDuringItsGrade(t *testi
 		h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
 		h.runs.releaseLease(t.Context(), id)
 		close(gate)
-		joinInflight(t, h)
+		joinInflight(h)
 	}
 	t.Run("a refused step KAS completed with no signal", func(t *testing.T) {
 		h, cs, br := runLoggingHub(t)
@@ -594,7 +594,7 @@ func TestRunNodeComplete_ALastStepIsNotedThoughARunReadRecordsItsGradeAfterTheRu
 		t.Fatalf("stepEnds: %v", err)
 	}
 	close(gate)
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if got := gradesOf(t, h, id); len(got) != 1 || got[0].Outcome != string(marotte.TurnOutcomeRefused) {
 		t.Errorf("step_graded entries = %+v, want one refused", got)
@@ -663,7 +663,7 @@ func TestRunNodeComplete_ALastStepIsNotedThoughARunReadRecordsItsGradeBeforeTheS
 	for _, g := range graded {
 		h.runs.recordGrade(t.Context(), id, g, false)
 	}
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if got := gradesOf(t, h, id); len(got) != 1 || got[0].Outcome != string(marotte.TurnOutcomeRefused) {
 		t.Errorf("step_graded entries = %+v, want one refused", got)
@@ -693,7 +693,7 @@ func TestRunNodeComplete_AStepEndThatRecordsTheGradeNotesItOnce(t *testing.T) {
 	refuseStep(t, h.runs, id, path, &marotte.RefusalInfo{Category: "policy"})
 
 	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
-	joinInflight(t, h)
+	joinInflight(h)
 	kas := map[string]workflow.StepRecord{nodePath: st}
 	if _, err := h.runs.stepEnds(t.Context(), id, kas); err != nil {
 		t.Fatalf("stepEnds: %v", err)
@@ -702,7 +702,7 @@ func TestRunNodeComplete_AStepEndThatRecordsTheGradeNotesItOnce(t *testing.T) {
 	if _, err := h.runs.stepEnds(t.Context(), id, kas); err != nil {
 		t.Fatalf("stepEnds: %v", err)
 	}
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if got := gradesOf(t, h, id); len(got) != 1 || got[0].Outcome != string(marotte.TurnOutcomeRefused) {
 		t.Errorf("step_graded entries = %+v, want one refused", got)
@@ -726,7 +726,7 @@ func TestStepGrade_AGradeRecordedAfterARestartLeavesNoNote(t *testing.T) {
 	br.setCallErr(methodKiroWorkflowInspect, errors.New("the engine is gone"))
 	refuseStep(t, h.runs, id, path, &marotte.RefusalInfo{Category: "policy"})
 	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
-	joinInflight(t, h)
+	joinInflight(h)
 
 	h.runs.log = newRunLog(filepath.Dir(h.runs.log.root))
 	rec := inspectWithStep(t, id, "build", "completed", "")
@@ -737,7 +737,7 @@ func TestStepGrade_AGradeRecordedAfterARestartLeavesNoNote(t *testing.T) {
 	if _, err := h.runs.stepEnds(t.Context(), id, map[string]workflow.StepRecord{nodePath: st}); err != nil {
 		t.Fatalf("stepEnds: %v", err)
 	}
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if got := gradesOf(t, h, id); len(got) != 1 || got[0].Outcome != string(marotte.TurnOutcomeRefused) {
 		t.Errorf("step_graded entries = %+v, want one refused", got)
@@ -784,7 +784,7 @@ func completeStep(t *testing.T, h *Runtime, workflowID string, path []string) {
 		t.Fatal("Setup: RunStopReason refused on the open turn")
 	}
 	h.runs.RunNodeComplete(t.Context(), workflowID, path, "completed", "")
-	joinInflight(t, h)
+	joinInflight(h)
 }
 
 // A close KAS's record ended without completing can never be graded, so the read that finds it so is its last: no
@@ -797,7 +797,7 @@ func TestStepGrade_ACloseKASEndedWithoutCompletingIsReadOnce(t *testing.T) {
 		inspectWithSteps(t, id, [2]string{"build", "failed"}, [2]string{"review", "completed"}, [2]string{"ship", "completed"}))
 	h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: id, NodePath: workflow.PathKey(build), SessionID: "step-session-1"}, "")
 	h.runs.RunNodeComplete(t.Context(), id, build, "failed", "")
-	joinInflight(t, h)
+	joinInflight(h)
 	br.forgetCalls()
 
 	completeStep(t, h, id, review)
@@ -807,7 +807,7 @@ func TestStepGrade_ACloseKASEndedWithoutCompletingIsReadOnce(t *testing.T) {
 	br.forgetCalls()
 	completeStep(t, h, id, ship)
 	h.runs.observeComplete(t.Context(), "", runComplete(id, "failed"))
-	joinInflight(t, h)
+	joinInflight(h)
 	transcriptOf(t, h, id, workflow.PathKey(build))
 	transcriptOf(t, h, id, workflow.PathKey(review))
 
@@ -831,7 +831,7 @@ func TestStepGrade_ATurnTheRunsEndFailedIsReadOnce(t *testing.T) {
 	br.forgetCalls()
 
 	h.runs.observeComplete(t.Context(), "", runComplete(id, "failed"))
-	joinInflight(t, h)
+	joinInflight(h)
 	if n := countCalls(br, methodKiroWorkflowInspect); n != 1 {
 		t.Fatalf("the terminal run_complete read KAS's record %d times, want once", n)
 	}
@@ -853,7 +853,7 @@ func TestStepGrade_ACloseKASHoldsNoRecordOfIsReadOnce(t *testing.T) {
 	br.forgetCalls()
 
 	h.runs.RunNodeComplete(t.Context(), id, build, "completed", "")
-	joinInflight(t, h)
+	joinInflight(h)
 	transcriptOf(t, h, id, workflow.PathKey(build))
 	transcriptOf(t, h, id, workflow.PathKey(build))
 
@@ -873,12 +873,12 @@ func TestStepGrade_AnUnreadableRecordIsAskedAtMostTheBound(t *testing.T) {
 	br.forgetCalls()
 
 	h.runs.RunNodeComplete(t.Context(), id, build, "completed", "")
-	joinInflight(t, h)
+	joinInflight(h)
 	completeStep(t, h, id, review)
 	transcriptOf(t, h, id, workflow.PathKey(build))
 	transcriptOf(t, h, id, workflow.PathKey(review))
 	h.runs.observeComplete(t.Context(), "", runComplete(id, "paused"))
-	joinInflight(t, h)
+	joinInflight(h)
 	entries := transcriptOf(t, h, id, workflow.PathKey(build))
 
 	if n := countCalls(br, methodKiroWorkflowInspect); n != gradeReadAttempts {
@@ -901,11 +901,11 @@ func TestStepGrade_TheRunsEndSettlesACloseItCannotRead(t *testing.T) {
 	br.setCallErr(methodKiroWorkflowInspect, errors.New("the engine is gone"))
 	refuseStep(t, h.runs, id, build, &marotte.RefusalInfo{Category: "policy"})
 	h.runs.RunNodeComplete(t.Context(), id, build, "completed", "")
-	joinInflight(t, h)
+	joinInflight(h)
 	br.forgetCalls()
 
 	h.runs.observeComplete(t.Context(), "", runComplete(id, "completed"))
-	joinInflight(t, h)
+	joinInflight(h)
 	transcriptOf(t, h, id, workflow.PathKey(build))
 
 	if n := countCalls(br, methodKiroWorkflowInspect); n != 1 {
@@ -937,7 +937,7 @@ func TestStepGrade_ASettledCloseIsGradedWhenKASCompletesItsNode(t *testing.T) {
 
 	br.setCallResult(methodKiroWorkflowInspect, inspectWithStep(t, id, "build", "completed", "success"))
 	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
-	joinInflight(t, h)
+	joinInflight(h)
 	want := recordedGrade{Turn: interrupted, Outcome: string(marotte.TurnOutcomeCompleted)}
 	if got := gradesOf(t, h, id); len(got) != 1 || got[0] != want {
 		t.Errorf("step_graded entries = %+v, want only %+v", got, want)
@@ -954,7 +954,7 @@ func TestStepGrade_ARefusedGradeWriteIsRetriedAtMostTheBound(t *testing.T) {
 	refuseStep(t, h.runs, id, build, &marotte.RefusalInfo{Category: "policy"})
 	br.forgetCalls()
 	h.runs.RunNodeComplete(t.Context(), id, build, "completed", "")
-	joinInflight(t, h)
+	joinInflight(h)
 	l, err := h.runs.log.log(t.Context(), id)
 	if err != nil || l == nil {
 		t.Fatalf("the run log of %s = %v, %v", id, l, err)

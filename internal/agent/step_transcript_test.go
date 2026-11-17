@@ -406,9 +406,7 @@ func TestStepTranscript_TheLoadOpensNoSessionLane(t *testing.T) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
 	armStepReplay(br, "sess_pass0", "hello")
-	if !awaitEngine(h) {
-		t.Fatal("Setup: the engine never became ready")
-	}
+	awaitEngine(h)
 	doors := br.startCount()
 	lanes := len(h.bridge.mgr.all())
 	keep, _ := h.HeldSessions(t.Context())

@@ -51,9 +51,7 @@ func TestShutdown_StopsTheEngineBeforeWaitingOnInflight(t *testing.T) {
 	src, stopCalled := newHangingEngine()
 	h := newRuntimeOn(t.Context(), "/tmp/work", src, cs)
 	cs.wire(h)
-	if !awaitEngine(h) {
-		t.Fatal("the engine never became ready")
-	}
+	awaitEngine(h)
 
 	// An in-flight call awaiting the engine.
 	h.lifecycle.inflight.Add(1)
@@ -136,9 +134,7 @@ func TestShutdown_BoundsAStallingEngineStop(t *testing.T) {
 	cs := newTestChatStore()
 	h := newRuntimeOn(context.Background(), t.TempDir(), stallingStopEngine(release), cs)
 	cs.wire(h)
-	if !awaitEngine(h) {
-		t.Fatal("the engine never became ready")
-	}
+	awaitEngine(h)
 	t.Cleanup(func() { close(release) })
 
 	const budget = 150 * time.Millisecond
@@ -239,9 +235,7 @@ func TestShutdown_CancelsTheLifetimeAfterStoppingTheEngine(t *testing.T) {
 	h := newRuntimeOn(t.Context(), t.TempDir(), src, cs)
 	watcher.lifetime = h.lifecycle.shutdownCtx
 	cs.wire(h)
-	if !awaitEngine(h) {
-		t.Fatal("the engine never became ready")
-	}
+	awaitEngine(h)
 	h.insertBridgeNow("c1", testBridge(newFakeBridge(), bridgeReady))
 
 	shutdownHub(t, h)

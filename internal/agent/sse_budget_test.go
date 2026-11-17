@@ -50,7 +50,7 @@ func newBudgetRuntime(t *testing.T) *Runtime {
 		WithTabs(st), WithConfigDir(dir))
 	cs.wire(rt)
 	t.Cleanup(func() { shutdownHub(t, rt) })
-	settleBoot(t, rt)
+	awaitBoot(rt)
 	return rt
 }
 
@@ -148,7 +148,7 @@ func seedPendingDecisions(tb testing.TB, rt *Runtime, ids []marotte.ChatID) {
 		c.mu.Unlock()
 	}
 	// Each lease kicked a background inspect on the engine; it lands before the test reads a version.
-	joinInflight(tb, rt)
+	joinInflight(rt)
 }
 
 // The recorder's Body is the measured bytes.

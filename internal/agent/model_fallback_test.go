@@ -155,7 +155,7 @@ func TestModelFallbackPutRefusals(t *testing.T) {
 			if rec.Code != tc.wantCode || !strings.Contains(rec.Body.String(), tc.wantKey) {
 				t.Errorf("PUT = %d %s, want %d carrying %s", rec.Code, rec.Body.String(), tc.wantCode, tc.wantKey)
 			}
-			joinInflight(t, h)
+			joinInflight(h)
 			if n := settingsUpdatedCount(t, h); n != before {
 				t.Errorf("settings_updated broadcasts after a refusal = %d, want %d", n, before)
 			}

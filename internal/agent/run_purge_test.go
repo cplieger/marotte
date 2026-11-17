@@ -318,7 +318,7 @@ func newPurgedRunRig(
 		}
 		return s
 	}, st)
-	settleBoot(t, h)
+	awaitBoot(h)
 	m := h.runs.mutations
 	m.mu.Lock()
 	m.ceiling = 10 * time.Millisecond
