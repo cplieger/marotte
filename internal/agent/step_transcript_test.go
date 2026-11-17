@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -795,23 +796,27 @@ func TestStepReplays_IngestReportsWhetherItConsumed(t *testing.T) {
 // TestStepTranscript_SettlesOnTheBarrierRatherThanTheBudget pins that at 50ms only a closed barrier answers `ready`, so
 // position, attachment and the per-frame report must agree.
 func TestStepTranscript_SettlesOnTheBarrierRatherThanTheBudget(t *testing.T) {
-	h, _, br := newTestHub()
-	t.Cleanup(func() { shutdownHub(t, h) })
-	armStepInspect(br)
-	armStepReplay(br, "sess_pass0", "settled ", "in time")
-	shortStepBudget(t, 50*time.Millisecond)
+	// The bubble's clock moves only while every goroutine waits, so the budget runs out on an unclosed barrier
+	// and never on a stalled scheduler.
+	synctest.Test(t, func(t *testing.T) {
+		h, _, br := newTestHub()
+		t.Cleanup(func() { shutdownHub(t, h) })
+		armStepInspect(br)
+		armStepReplay(br, "sess_pass0", "settled ", "in time")
+		shortStepBudget(t, 50*time.Millisecond)
 
-	got, err := h.Runs().stepTranscript(t.Context(), "wf_1", "wf_1:loop:iter-0:build")
-	if err != nil {
-		t.Fatalf("StepTranscript: %v", err)
-	}
-	if got.State != marotte.RunStepTranscriptReady {
-		t.Fatalf("state = %q, want ready — the replay did not settle inside a 50ms "+
-			"budget, so the read is waiting out its clock rather than the drain", got.State)
-	}
-	if texts := textsOf(t, got.Entries); !slices.Equal(texts, []string{"settled in time"}) {
-		t.Errorf("texts = %q, want one %q", texts, "settled in time")
-	}
+		got, err := h.Runs().stepTranscript(t.Context(), "wf_1", "wf_1:loop:iter-0:build")
+		if err != nil {
+			t.Fatalf("StepTranscript: %v", err)
+		}
+		if got.State != marotte.RunStepTranscriptReady {
+			t.Fatalf("state = %q, want ready — the replay did not settle inside a 50ms "+
+				"budget, so the read is waiting out its clock rather than the drain", got.State)
+		}
+		if texts := textsOf(t, got.Entries); !slices.Equal(texts, []string{"settled in time"}) {
+			t.Errorf("texts = %q, want one %q", texts, "settled in time")
+		}
+	})
 }
 
 // closedNow reports whether a barrier is already closed, without waiting.
