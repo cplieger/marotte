@@ -321,6 +321,25 @@ function fakeRect(top: number, height: number): DOMRect {
 
 /** Two animation frames: one for the rail's own coalesced pick, one for whatever it
  *  renders from it. */
+/** Every card the rail rang, in order. The ring comes off after RAIL_TARGET_MS, which a settle under a loaded run can
+ *  outlast, so a case reads where the ring went rather than whether it is still on. */
+function ringRecorder(): { readonly ringed: HTMLElement[]; stop: () => void } {
+  const ringed: HTMLElement[] = [];
+  const observer = new MutationObserver((records) => {
+    for (const r of records) {
+      if (r.oldValue === null && r.target instanceof HTMLElement) {
+        ringed.push(r.target);
+      }
+    }
+  });
+  observer.observe(document.body, {
+    subtree: true,
+    attributeFilter: ["data-rail-target"],
+    attributeOldValue: true,
+  });
+  return { ringed, stop: () => observer.disconnect() };
+}
+
 function frames(): Promise<void> {
   return new Promise<void>((resolve) => {
     requestAnimationFrame(() => {
@@ -944,6 +963,7 @@ describe("which card a row jumps to", () => {
   /** The transcript the rail scopes its lookup to. */
   let view: HTMLElement;
   const mountedBodies: string[] = [];
+  let rings: ReturnType<typeof ringRecorder>;
 
   beforeAll(() => {
     rail = mountRail(host);
@@ -953,6 +973,7 @@ describe("which card a row jumps to", () => {
     scrollable.reset();
     resetTurnRail();
     mountedBodies.length = 0;
+    rings = ringRecorder();
     view = document.createElement("div");
     view.className = "transcript-view";
     document.body.appendChild(view);
@@ -966,6 +987,7 @@ describe("which card a row jumps to", () => {
   });
 
   afterEach(() => {
+    rings.stop();
     view.remove();
   });
 
@@ -1043,7 +1065,7 @@ describe("which card a row jumps to", () => {
     await settleJump();
 
     expect(mountedBodies).toEqual(["m6"]);
-    expect(wanted.dataset["railTarget"]).toBe("");
+    expect(rings.ringed.at(-1)).toBe(wanted);
     // And the id it does NOT use, spelled out so a reader sees the two spaces.
     expect(view.querySelector("#turn-6")?.getAttribute(KEY_ATTR)).toBe("m10");
   });
@@ -1082,8 +1104,8 @@ describe("which card a row jumps to", () => {
     marker(2).click();
     await settleJump();
 
-    expect(wanted.dataset["railTarget"]).toBe("");
-    expect(decoy.dataset["railTarget"]).toBeUndefined();
+    expect(rings.ringed.at(-1)).toBe(wanted);
+    expect(rings.ringed).not.toContain(decoy);
     parked.remove();
   });
 
@@ -1204,7 +1226,7 @@ describe("which card a row jumps to", () => {
     });
 
     await settleJump();
-    expect(target.dataset["railTarget"]).toBe("");
+    expect(rings.ringed.at(-1)).toBe(target);
     expect(currentOf(rail)).toBe("2");
   });
 
@@ -1273,9 +1295,9 @@ describe("which card a row jumps to", () => {
     expect(vi.mocked(loadOlderTurns)).toHaveBeenCalledTimes(1);
     expect(mountedBodies).toEqual(["m1"]);
     expect(scrollable.landings.length).toBeGreaterThan(0);
-    expect(
-      view.querySelector<HTMLElement>('[data-reconcile-key="m1"]')?.dataset["railTarget"],
-    ).toBe("");
+    expect(rings.ringed.at(-1)).toBe(
+      view.querySelector<HTMLElement>('[data-reconcile-key="m1"]') ?? undefined,
+    );
     expect(isPending(marker(1))).toBe(false);
   });
 
@@ -1336,6 +1358,7 @@ describe("a click always produces a reaction", () => {
   const host = document.createElement("div");
   let rail: HTMLElement;
   let view: HTMLElement;
+  let rings: ReturnType<typeof ringRecorder>;
 
   beforeAll(() => {
     rail = mountRail(host);
@@ -1344,6 +1367,7 @@ describe("a click always produces a reaction", () => {
   beforeEach(() => {
     scrollable.reset();
     resetTurnRail();
+    rings = ringRecorder();
     view = document.createElement("div");
     view.className = "transcript-view";
     document.body.appendChild(view);
@@ -1354,6 +1378,7 @@ describe("a click always produces a reaction", () => {
   });
 
   afterEach(() => {
+    rings.stop();
     view.remove();
   });
 
@@ -1450,7 +1475,7 @@ describe("a click always produces a reaction", () => {
 
     marker(3).click();
     await settleJump();
-    expect(three?.dataset["railTarget"]).toBe("");
+    expect(rings.ringed.at(-1)).toBe(three ?? undefined);
 
     await vi.waitFor(() => {
       expect(three?.dataset["railTarget"]).toBeUndefined();
