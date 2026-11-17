@@ -698,7 +698,7 @@ type PowersChangedPayload struct{}
 type MemoriesChangedPayload struct{}
 
 // MemorySyncChangedPayload is the payload for type="memory_sync_changed", workspace-global and empty: KAS's memory
-// sync state or the memorySync choice moved, so the Memories tab's Cloud sync section refetches.
+// sync state or the cloudMemory choice moved, so the Memories tab's Cloud sync section refetches.
 type MemorySyncChangedPayload struct{}
 
 // KnowledgeChangedPayload is the payload for type="knowledge_changed", workspace-global and empty: a knowledge

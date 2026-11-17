@@ -38,7 +38,7 @@ interface MemoryRecord {
   readonly cloudPending: boolean;
 }
 
-/** GET /api/memory/sync: KAS's sync state and the memorySync choice. */
+/** GET /api/memory/sync: KAS's sync state and the cloudMemory choice. */
 interface MemorySync {
   readonly state: string;
   readonly reason: string;

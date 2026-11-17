@@ -849,6 +849,8 @@ const DENIAL_REASONS: Record<DenialBasis, string> = {
   "cedar-unavailable": "Kiro's permission engine failed to load, so every call is refused.",
   "not-loaded": "No permission policy is loaded, so every call is refused.",
   "permissions-invalid": "A permissions file failed to parse, so every call is refused.",
+  "check-failed":
+    "Kiro could not check this call against your permissions and it was not approved, so it did not run.",
 };
 
 /** The rule that refused the call, and where it lives: the user owns the policy. */

@@ -247,6 +247,8 @@ const (
 	DenialNotLoaded DenialBasis = "not-loaded"
 	// DenialPermissionsInvalid is a permissions file that failed to parse.
 	DenialPermissionsInvalid DenialBasis = "permissions-invalid"
+	// DenialCheckFailed is a permission check that failed to evaluate, then went unapproved.
+	DenialCheckFailed DenialBasis = "check-failed"
 )
 
 // ToolDenialRule is the Cedar rule that produced a denial. Effect is "deny", "ask" (an

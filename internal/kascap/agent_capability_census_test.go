@@ -43,16 +43,20 @@ var (
 	matchesIncludeRe = regexp.MustCompile(`function ` + jsIdent + `\(` + jsIdent + `,(` + jsIdent + `)\)\{return!(` + jsIdent + `)\|\|(` +
 		jsIdent + `)\.some\(`)
 	memoryOptInReadRe = regexp.MustCompile(`resolveMemoryEnabled\(` + jsIdent + `,(` + jsIdent + `)\)\{let (` + jsIdent +
-		`)=this\.clientMeta\?\.settings\?\?\{\};return ` + jsIdent + `\(\{[^{}]*,userOptIn:(` + jsIdent + `)==="legacy"&&` +
-		`Object\.prototype\.hasOwnProperty\.call\((` + jsIdent + `),"userMemoryOptIn"\)\?` + jsIdent + `\((` + jsIdent +
-		`),"userMemoryOptIn"\):void 0\}\)`)
+		`)=this\.clientMeta\?\.settings\?\?\{\};return ` + jsIdent + `\(\{[^{}]*,userOptIn:(` + jsIdent + `)==="legacy"&&(` +
+		jsIdent + `)\((` + jsIdent + `)\)\?!1:void 0\}\)`)
+	memoryOptOutRe = regexp.MustCompile(`function (` + jsIdent + `)\((` + jsIdent + `)\)\{return typeof (` + jsIdent +
+		`)!="object"\|\|(` + jsIdent + `)===null\|\|!Object\.hasOwn\((` + jsIdent + `),"userMemoryOptIn"\)\?!1:!` + jsIdent +
+		`\((` + jsIdent + `),"userMemoryOptIn"\)\}`)
+	memoryChoiceOrderRe = regexp.MustCompile(`if\((` + jsIdent + `)\.source==="explicit"\)return\{[^;]*origin:"request"\};if\((` +
+		jsIdent + `)\.optsOut\)return\{choice:\{config:` + jsIdent + `\(\{\.\.\.` + jsIdent + `\.config,mode:"disabled"\}\),source:"explicit"\},origin:"optOut"`)
 	memoryOptInVetoRe = regexp.MustCompile(`userOptIn:(` + jsIdent + `)\}=` + jsIdent + `;return ` + jsIdent + `\(\{treatment:` +
-		jsIdent + `,isInsiderChannel:` + jsIdent + `\}\)\?(` + jsIdent + `)===!1\?\(` + jsIdent + `\("disabledByOptOut"\),!1\):\(` +
+		jsIdent + `,` + jsIdent + `:` + jsIdent + `\}\)\?(` + jsIdent + `)===!1\?\(` + jsIdent + `\("disabledByOptOut"\),!1\):\(` +
 		jsIdent + `\("enabled"\),!0\)`)
 	memorySourceRe = regexp.MustCompile(`captureMemoryConfig\((` + jsIdent + `)\)\{let (` + jsIdent + `)=typeof (` + jsIdent +
 		`)=="object"&&[^,]*\?(` + jsIdent + `)\.settings:void 0,.*?,(` + jsIdent + `)=` + jsIdent + `\((` + jsIdent +
 		`)=>\{[^{}]*let (` + jsIdent + `)=(` + jsIdent + `)\.memory;[^{}]*hasOwnProperty\.call\((` + jsIdent +
-		`),"mode"\)[^{}]*\},"hasPreference"\);return\{[^{}]*memoryConfigSource:(` + jsIdent + `)\((` + jsIdent +
+		`),"mode"\)[^{}]*\},"hasPreference"\);return\{[^{}]*\b(?:memoryConfigS|s)ource:(` + jsIdent + `)\((` + jsIdent +
 		`)\)\|\|` + jsIdent + `\(` + jsIdent + `\)\?"explicit":"legacy"`)
 	sessionlessMemoryGateRe = regexp.MustCompile(`\?` + jsIdent + `\.memoryEnabled:this\.resolveMemoryEnabled\(this\.buildFeatureConfigRegistry\(` +
 		jsIdent + `\),"legacy"\)\)\)throw new ` + jsIdent + `\("Memory is not enabled\."\)`)
@@ -324,13 +328,22 @@ func TestKnowledgeTuningMatchesTheBundle(t *testing.T) {
 func TestUserMemoryOptInIsALegacyVeto(t *testing.T) {
 	forEachBundle(t, func(t *testing.T, b bundle) {
 		read := false
-		for _, m := range findAround(memoryOptInReadRe, `,"userMemoryOptIn")?`, b.src) {
-			source, settings := b.src[m[2]:m[3]], b.src[m[4]:m[5]]
-			read = read || (b.src[m[6]:m[7]] == source && b.src[m[8]:m[9]] == settings && b.src[m[10]:m[11]] == settings)
+		for _, m := range findAround(memoryOptInReadRe, `==="legacy"&&`, b.src) {
+			source, settings, optsOut := b.src[m[2]:m[3]], b.src[m[4]:m[5]], b.src[m[8]:m[9]]
+			read = read || (b.src[m[6]:m[7]] == source && b.src[m[10]:m[11]] == settings && optsOutOfMemory(b.src, optsOut))
 		}
 		if !read {
-			t.Error(`resolveMemoryEnabled no longer reads userMemoryOptIn from clientMeta.settings only when the source is "legacy"; ` +
-				"re-read whether a marotte session (explicit) now reads it")
+			t.Error(`resolveMemoryEnabled no longer reads userMemoryOptIn from clientMeta.settings only when the source is "legacy", ` +
+				"and only as false when the key is present and off; re-read whether a marotte session (explicit) now reads it")
+		}
+
+		ordered := false
+		for _, m := range findAround(memoryChoiceOrderRe, `origin:"optOut"`, b.src) {
+			ordered = ordered || b.src[m[2]:m[3]] == b.src[m[4]:m[5]]
+		}
+		if !ordered {
+			t.Error("the session memory choice no longer takes an explicit request before the userMemoryOptIn opt-out; " +
+				"re-read whether the opt-out now overrides marotte's memory row")
 		}
 
 		veto := false
@@ -360,6 +373,18 @@ func TestUserMemoryOptInIsALegacyVeto(t *testing.T) {
 				"sending userMemoryOptIn false would still refuse the Memories tab")
 		}
 	})
+}
+
+// optsOutOfMemory reports whether fn is the function that is true only when userMemoryOptIn is present and off.
+func optsOutOfMemory(src, fn string) bool {
+	for _, m := range findAround(memoryOptOutRe, `"userMemoryOptIn")?!1:!`, src) {
+		param := src[m[4]:m[5]]
+		if src[m[2]:m[3]] == fn && src[m[6]:m[7]] == param && src[m[8]:m[9]] == param &&
+			src[m[10]:m[11]] == param && src[m[12]:m[13]] == param {
+			return true
+		}
+	}
+	return false
 }
 
 // TestTangentModeAndCheckpointHaveNoReader pins why the table has no row for tangentMode and checkpoint, the TUI's

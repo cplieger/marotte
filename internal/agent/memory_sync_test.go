@@ -10,12 +10,12 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// memorySyncView is a connection getState answer whose memorySync row has value and the contributions given.
+// memorySyncView is a connection getState answer whose cloudMemory row has value and the contributions given.
 func memorySyncView(value, compose, contributions, assertions string) json.RawMessage {
 	return json.RawMessage(`{"view":{"observer":"connection"},"layers":[{"id":"organization","name":"Your organization"},` +
 		`{"id":"user-synced","name":"Account"},{"id":"user-local","name":"This device"}],"settings":[` +
 		`{"krn":"krn:::setting/other","value":"on","compose":"replace","assertions":[],"contributions":[]},` +
-		`{"krn":"krn:::setting/memorySync","value":"` + value + `","compose":"` + compose + `","assertions":` + assertions +
+		`{"krn":"krn:::setting/cloudMemory","value":"` + value + `","compose":"` + compose + `","assertions":` + assertions +
 		`,"contributions":` + contributions + `}]}`)
 }
 
@@ -125,7 +125,7 @@ func putMemorySync(h *Runtime, body string) *httptest.ResponseRecorder {
 	return rec
 }
 
-// kiro-cli 3.2.1 grants a client memorySync at user-synced only, so every PUT writes there.
+// kiro-cli 3.4.0 grants a client cloudMemory at user-synced only, so every PUT writes there.
 func TestMemorySyncPutWritesTheAccountLayer(t *testing.T) {
 	for _, tc := range []struct{ body, value string }{
 		{`{"on":true}`, "on"},
@@ -135,7 +135,7 @@ func TestMemorySyncPutWritesTheAccountLayer(t *testing.T) {
 			h, _, br := newTestHub()
 			t.Cleanup(func() { shutdownHub(t, h) })
 			br.setCallResult(methodKiroConfigurationSet, json.RawMessage(
-				`{"setting":{"krn":"krn:::setting/memorySync","value":"`+tc.value+`","compose":"replace","assertions":[],"contributions":[]}}`,
+				`{"setting":{"krn":"krn:::setting/cloudMemory","value":"`+tc.value+`","compose":"replace","assertions":[],"contributions":[]}}`,
 			))
 			before := len(eventsOfType(h, marotte.EventMemorySyncChanged))
 
@@ -143,7 +143,7 @@ func TestMemorySyncPutWritesTheAccountLayer(t *testing.T) {
 				t.Fatalf("PUT = %d %s, want 200", rec.Code, rec.Body.String())
 			}
 			p := br.paramsFor(methodKiroConfigurationSet)
-			if p["krn"] != memorySyncKRN || p["value"] != tc.value || p["layer"] != "user-synced" {
+			if p["krn"] != "krn:::setting/cloudMemory" || p["value"] != tc.value || p["layer"] != "user-synced" {
 				t.Errorf("set params = %v, want %s at user-synced", p, tc.value)
 			}
 			awaitEventCount(t, h, marotte.EventMemorySyncChanged, before+1)
@@ -172,7 +172,7 @@ func TestMemorySyncPutNamesLock(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.setCallResult(methodKiroConfigurationSet, json.RawMessage(
-		`{"setting":{"krn":"krn:::setting/memorySync","value":"off","compose":"locked","assertions":[{"layer":"organization"}],"contributions":[]}}`,
+		`{"setting":{"krn":"krn:::setting/cloudMemory","value":"off","compose":"locked","assertions":[{"layer":"organization"}],"contributions":[]}}`,
 	))
 	br.setCallResult(methodKiroConfigurationGet, memorySyncView("off", "locked", `[]`, `[{"layer":"organization","compose":"locked"}]`))
 

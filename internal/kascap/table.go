@@ -179,6 +179,12 @@ var table = []decl{
 		send:     true,
 	},
 	{
+		key:      "mcpElicitation",
+		door:     doorConnection,
+		resolver: resolverCapability,
+		send:     false,
+	},
+	{
 		key:      "backgroundProcesses",
 		door:     doorConnection,
 		resolver: resolverCapability,
@@ -578,6 +584,12 @@ var table = []decl{
 		send:     false,
 	},
 	{
+		key:      "KIRO_FEATURE_KIRO_CREW_ORIGIN_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+	},
+	{
 		key:      "KIRO_FEATURE_KIRO_INFRA_SAFETY_MONITOR_ENABLED",
 		door:     doorEnvironment,
 		resolver: resolverEnv,
@@ -640,6 +652,18 @@ var table = []decl{
 		engineGate:   func(s *EngineSpawn) (any, bool) { return envBool(s.ModelFallback) },
 		send:         true,
 		settingOwned: true,
+	},
+	{
+		key:      "KIRO_FEATURE_SANDBOX_ORG_SETTINGS_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+	},
+	{
+		key:      "KIRO_FEATURE_SANDBOX_UNIFIED_RULES_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
 	},
 	{
 		key:      "KIRO_FEATURE_SESSION_TITLE_LLM_ENABLED",

@@ -14,7 +14,7 @@ export type ContextResetCause = "session_missing" | "load_failed" | "empty_retry
 
 export type DecisionKind = "permission" | "elicitation" | "user_input";
 
-export type DenialBasis = "unparseable" | "cedar-unavailable" | "not-loaded" | "permissions-invalid";
+export type DenialBasis = "unparseable" | "cedar-unavailable" | "not-loaded" | "permissions-invalid" | "check-failed";
 
 export type EngineState = "starting" | "ready" | "restarting" | "down";
 
