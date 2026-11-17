@@ -257,7 +257,7 @@ func TestSource_OneListMyPRsPerConnectionPerSweep(t *testing.T) {
 
 // GitHub's list computes mergeability per row, close to its 10 s GraphQL limit;
 // the fill reads merge state per row instead.
-func TestSource_ListsWithoutMergeState(t *testing.T) {
+func TestSource_ListsWithoutMergeStateOrReviews(t *testing.T) {
 	github := &myPRsCore{pages: map[forgeapi.Cursor]forgeapi.Page[forgeapi.PullRequest]{"": {}}}
 	m := sourceManager(t, map[string]forgeapi.Core{"github:github.com": github}, githubRecord())
 	src := NewManagerPRSource(m, fixedOrigins(RepoOrigin{Dir: "one", WebBase: "https://github.com", Slug: "bob/one"}))
@@ -272,6 +272,9 @@ func TestSource_ListsWithoutMergeState(t *testing.T) {
 		if !set.MergeStateSet || set.MergeState {
 			t.Errorf("ListMyPRs call %d: merge state set %v, read %v; want WithMergeState(false)",
 				i, set.MergeStateSet, set.MergeState)
+		}
+		if !set.ReviewsSet || set.Reviews {
+			t.Errorf("ListMyPRs call %d: reviews set %v, read %v; want WithReviews(false)", i, set.ReviewsSet, set.Reviews)
 		}
 	}
 }

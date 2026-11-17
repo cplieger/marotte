@@ -181,6 +181,9 @@ func TestSaveReadsOnePageOfTheKindsList(t *testing.T) {
 		if err != nil || set.PageBound != 1 {
 			t.Errorf("%s read with page bound %d (%v), want 1", core.lists[i], set.PageBound, err)
 		}
+		if core.lists[i] == "prs" && (!set.ReviewsSet || set.Reviews) {
+			t.Errorf("prs read with reviews set %v, read %v; want WithReviews(false)", set.ReviewsSet, set.Reviews)
+		}
 		if core.lists[i] == "runs" && (set.Since.Before(start.Add(-time.Hour-time.Minute)) || set.Since.After(time.Now().Add(-time.Hour))) {
 			t.Errorf("runs read since %v, want an hour before the save", set.Since)
 		}

@@ -159,7 +159,7 @@ func cycleScopes(h *readHandle, present bool) []Scope {
 // familyFills reads it per row instead.
 func listScope(ctx context.Context, core forgeapi.Core, sc Scope, after forgeapi.Cursor) scopePage {
 	page := scopePage{Scope: sc}
-	opts := []forgeapi.ListOption{forgeapi.WithAfter(after), forgeapi.WithMergeState(false)}
+	opts := prListOptions(forgeapi.WithAfter(after), forgeapi.WithMergeState(false))
 	if sc.Owner != "" {
 		opts = append(opts, forgeapi.WithOwner(sc.Owner))
 	}

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -454,9 +455,16 @@ func repoFill(h *readHandle, opts []forgeapi.ListOption) func(context.Context) (
 
 func firstRepoPage(h *readHandle) cacheKey { return listKey(h.id, h.account, "", "repos", "") }
 
+// prListOptions is opts plus WithReviews(false), which every pull request list
+// takes: no PR wire type carries a review count, and on Gitea and Forgejo each
+// row's reviews cost a request.
+func prListOptions(opts ...forgeapi.ListOption) []forgeapi.ListOption {
+	return append(slices.Clip(opts), forgeapi.WithReviews(false))
+}
+
 func (m *Manager) prPage(ctx context.Context, h *readHandle, ref forgeapi.RepoRef, req *listRequest, force bool) (PRList, error) {
 	fill := func(ctx context.Context) (PRList, error) {
-		page, err := h.core.ListPRs(ctx, ref, req.opts...)
+		page, err := h.core.ListPRs(ctx, ref, prListOptions(req.opts...)...)
 		if err != nil {
 			return PRList{}, err
 		}

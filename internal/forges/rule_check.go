@@ -38,7 +38,7 @@ func (m *Manager) CheckEventRule(ctx context.Context, ev *launchrule.EventSpec) 
 		}
 		_, err = h.core.ListIssues(ctx, ref, forgeapi.WithPageBound(1))
 	case launchrule.KindPRLabeled, launchrule.KindPROpened:
-		_, err = h.core.ListPRs(ctx, ref, forgeapi.WithPageBound(1))
+		_, err = h.core.ListPRs(ctx, ref, prListOptions(forgeapi.WithPageBound(1))...)
 	default:
 		_, err = h.core.ListRuns(ctx, ref, forgeapi.WithSince(time.Now().Add(-time.Hour)), forgeapi.WithPageBound(1))
 	}

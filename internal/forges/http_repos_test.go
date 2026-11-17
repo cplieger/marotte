@@ -34,6 +34,7 @@ type pagedCore struct {
 	states     []forgeapi.ListState
 	refs       []string
 	prReads    []forgeapi.PRRef
+	prSets     []forgeapi.ListSettings
 	mu         sync.Mutex
 }
 
@@ -57,6 +58,9 @@ func (c *pagedCore) ListPRs(_ context.Context, repo forgeapi.RepoRef, opts ...fo
 	if err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
+	c.mu.Lock()
+	c.prSets = append(c.prSets, set)
+	c.mu.Unlock()
 	return c.prPages[set.After], nil
 }
 
@@ -425,6 +429,26 @@ func TestIssueList_StateMapsAndAnUnknownStateIs400(t *testing.T) {
 			t.Errorf("GET issues?state=merged: the forge saw %d requests, want none", after-before)
 		}
 	})
+}
+
+func TestListRoute_ReadsNoReviews(t *testing.T) {
+	core := &pagedCore{prPages: onePRPage(1)}
+	mux := repoRoutes(recordManager(t, core))
+	for _, tail := range []string{"prs", "prs?after=c1"} {
+		if rec := getRoute(t, mux, githubRepoPath("v1.6f2f72", tail)); rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d %s, want 200", tail, rec.Code, rec.Body)
+		}
+	}
+	core.mu.Lock()
+	defer core.mu.Unlock()
+	if len(core.prSets) != 2 {
+		t.Fatalf("ListPRs calls = %d, want 2", len(core.prSets))
+	}
+	for i, set := range core.prSets {
+		if !set.ReviewsSet || set.Reviews {
+			t.Errorf("ListPRs call %d: reviews set %v, read %v; want WithReviews(false)", i, set.ReviewsSet, set.Reviews)
+		}
+	}
 }
 
 func TestReadRoutes_AStateOnAStatelessListIsTheLibrarysRefusal(t *testing.T) {

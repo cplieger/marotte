@@ -671,6 +671,8 @@ func TestProviderCheckVerdicts_MatchTheStatedScope(t *testing.T) {
 				"/api/v1/repos/alice/app/pulls/5":              pull(5),
 				"/api/v1/repos/alice/app/commits/head4/status": status(4, four),
 				"/api/v1/repos/alice/app/commits/head5/status": status(5, five),
+				"/api/v1/repos/alice/app/pulls/4/reviews":      "[]",
+				"/api/v1/repos/alice/app/pulls/5/reviews":      "[]",
 			}
 		}
 		wire := &pathWire{bodies: map[string]string{
