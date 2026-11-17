@@ -1,6 +1,4 @@
-// The hover wash on a run summary box's header row and on its icon buttons, in the run tab's dock and in the
-// chat's run bar, read off a real mouse's hover under the shipped stylesheet. The box is 12px with a 1px border
-// and a 4px inset, so a line of it rounds at 7px (`--stack-in-r`).
+// A stack line rounds at --stack-in-r (01-tokens.css).
 
 import { describe, it, expect, afterEach } from "vitest";
 import { page as browser, userEvent } from "vitest/browser";

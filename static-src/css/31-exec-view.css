@@ -1130,7 +1130,6 @@
   justify-content: start;
   padding: 0;
   border: 0;
-  /* It starts on the head's own start edge, with no verb's end inset to subtract. */
   border-radius: var(--stack-in-r);
   background: none;
   color: var(--c-text-control);
