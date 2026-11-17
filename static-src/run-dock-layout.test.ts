@@ -110,9 +110,22 @@ function mountPage(byId: (id: string) => HTMLElement, controls: HTMLElement): Ex
 }
 
 /** The panel opens through a height transition; measure the open state, not a frame of it. */
+/** Until `region` plays no animation: a slide cancelled for the one replacing it rejects its
+ *  `finished` (an AbortError), and the replacement is what the wait follows. */
+async function animationsDone(region: Element): Promise<void> {
+  for (let round = 0; round < 20; round++) {
+    const playing = region.getAnimations();
+    if (playing.length === 0) {
+      return;
+    }
+    await Promise.allSettled(playing.map((a) => a.finished));
+  }
+  throw new Error("the region's animations never settled");
+}
+
 async function settled(region: Element): Promise<void> {
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-  await Promise.all(region.getAnimations().map((a) => a.finished));
+  await animationsDone(region);
   expect(region.getAttribute("aria-hidden")).toBe("false");
 }
 
@@ -463,7 +476,7 @@ describe("the run summary on a phone", () => {
         expect(hit !== null && row.contains(hit), `${what} is no verb`).toBe(false);
         await userEvent.click(head, { position: { x: x - r.left, y: y - r.top } });
         expect(toggle.getAttribute("aria-expanded"), `a tap on ${what}`).toBe(want);
-        await Promise.all(region.getAnimations().map((a) => a.finished));
+        await animationsDone(region);
       }
     }
   });
