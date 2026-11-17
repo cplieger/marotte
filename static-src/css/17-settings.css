@@ -1202,6 +1202,9 @@
   display: flex;
   align-items: flex-start;
   gap: var(--sp-2);
+
+  /* The name's size, on the row: the radio's `--lead-lh` (61-mcp-tools.css) reads it. */
+  font-size: var(--fs-sm);
   padding: var(--sp-2) var(--sp-3);
   border: 1px solid var(--c-border);
   border-radius: var(--r);
@@ -1212,7 +1215,6 @@
 }
 
 .pr-merge-method input {
-  margin-block-start: 3px;
   accent-color: var(--c-accent);
 }
 
@@ -1224,7 +1226,6 @@
 }
 
 .pr-merge-method-name {
-  font-size: var(--fs-sm);
   font-weight: 600;
 }
 
@@ -1497,6 +1498,18 @@ dd.governance-off {
   border-radius: var(--r);
   background: var(--c-bg-secondary);
   font-size: var(--fs-form-label);
+}
+
+/* The rule's words, ONE baseline-aligned line centred in the row beside its
+ * controls: centred one by one, the 12px capability and the 11px globs and source
+ * sat 0.5px apart (more in a wider font), and a baseline group in the row itself
+ * would pack at the top of the line the 24px controls make. */
+.native-rule-text {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: var(--sp-2);
+  min-inline-size: 0;
 }
 
 /* The writable row renders this badge as a <select> and the read-only row as a

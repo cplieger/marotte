@@ -253,10 +253,12 @@
 
 /* The pill BODY: a sibling of the `×`, never its parent, because a button
    cannot contain a button. It carries no chrome of its own — the `<li>` already
-   draws the pill — so it only has to be a hit target and take a focus ring. */
+   draws the pill — so it only has to be a hit target and take a focus ring. The
+   0.85em clip glyph is text and sits on the name's baseline: centred beside it,
+   the two sizes' baselines part by up to 1px at a device scale of 2. */
 .attachment-open {
   display: inline-flex;
-  align-items: center;
+  align-items: baseline;
   gap: var(--sp-1);
   min-width: 0;
   padding: 0;
@@ -431,82 +433,14 @@
   }
 }
 
-/* THE VERTICAL CENTRING OF A LABEL IN A FLEX ROW.
- *
- * `align-items: center` centres a flex item's BOX, and a text item's box is not
- * symmetric about the letterforms inside it: with the baseline sitting `ascent`
- * from the box top, the box centre lands at `baseline + (ascent - descent) / 2`
- * while the glyph band's optical centre is at `baseline + band / 2`. The label
- * therefore renders off-centre by exactly
- *
- *     ((ascent - descent) / 2 - band / 2) / unitsPerEm  em
- *
- * MEASURED off the real font files: +0.120em at Noto Sans (1.32px at 11px),
- * +0.083em at Liberation Sans (0.91px), +0.073em at DejaVu Sans (0.80px),
- * +0.164em at Segoe UI (1.81px). Positive means low, and every font in both
- * stacks is positive for lowercase.
- *
- * A `line-height` DOES NOT FIX THIS, and adding one was the tempting wrong
- * answer. CSS2.1 10.8.1 distributes leading half above and half below, so the
- * box centre stays at `baseline + (ascent - descent) / 2` for every value
- * including `normal` — the formula above has no line-height term in it. Worked
- * at Noto Sans 11px: `normal` puts the band centre 1.32px below the box centre
- * and `line-height: 1` puts it 1.32px below, identically, while shrinking the
- * box from 14.98px to 11px so the descenders now overflow it. On the two labels
- * below that carry `overflow: hidden` for their ellipsis, that overflow is
- * CLIPPED — a visible regression bought for no visible gain. `vertical-align` is
- * inert on a flex item, so that is not the lever either.
- *
- * `text-box` is: trimming to `cap alphabetic` makes the box edges the cap band,
- * so centring the box centres the letterforms and the offset is zero by
- * construction, at every font size and in every font, with no value authored
- * here. Chrome 133+ / Safari 18.2+ / Firefox 154+, so it is Baseline newly
- * available rather than the Chromium-and-Safari-only feature this used to record;
- * an engine without it degrades to exactly the untrimmed rendering, which is why
- * it is safe to state plainly rather than guard.
- *
- * The trim moves the block-END edge up to the baseline, so descenders leave the
- * content box — which the clipping labels below have to answer for.
- *
- * The same defect and the same fix apply to `.sidebar-email`; its half lives
- * with the sidebar in 10-shell-app.css.
- *
- * THE MODEL PILL'S TIER READOUT AND THE MODEL LIST'S ROWS ARE THE SAME DEFECT,
- * and each was reported against a different reference edge. `.pill-model-effort`
- * sits in the same `align-items: center` line as `#ctx-model-pill`, which IS
- * trimmed, so the two labels disagreed with each other by exactly the offset
- * above — 0.58px measured in the sidecar's DejaVu Sans, and 1.81px at the Segoe
- * UI the report came from, which is why "the effort is a bit too low" is a
- * report about the label beside it rather than about the row. `.pill-model-item`
- * centres its own spans in a row whose height comes from `--ctl-h-sm` rather
- * than from the font, and the ACTIVE row carries an accent fill
- * (70-selection.css), so there the offset has a box edge to be measured
- * against — every row was low, and only the filled one showed it.
- *
- * THE EFFORT SLIDER'S KNOB LABEL WAS A THIRD MEMBER and is gone with the label:
- * the knob carries no text now, so there is no line to centre in it — its tier is
- * named by `.effort-label` on the row above, which sits in no centred flex line
- * and therefore has no offset to correct.
- *
- * Neither survivor joins the padding list below, because neither clips: the pill
- * declares no `overflow`, so a 'g' in "high" hangs outside the trimmed box and
- * paints, and `.pill-model-item`'s own `white-space: nowrap` clips nothing either.
- * `#context-label` is in the same position for a different reason (no descender
- * is spellable in digits and a percent sign), so absence from that list means
- * "the descender is safe here", never "the descender was forgotten".
- *
- * THE LIST IS THE DEFECT, and it is a bounded fix rather than the whole one.
- * Measured on one live chat page: 19 distinct label shapes / 350 labels sit in
- * the class this prose describes — a single-line text label centred in a flex
- * row — against the six selectors enrolled here, and entries have been appended
- * on four separate occasions after somebody noticed one label. That is the shape
- * `61-mcp-tools.css`'s hit floor already retired once by replacing a 25-name
- * allow-list with one zero-specificity rule. The same move is not available
- * here: CSS cannot select "my parent is a centred flex row", and a universal
- * trim reaches prose, where it moves the block edges of every paragraph in the
- * transcript. So a rule over the class needs either a design-system label
- * primitive or a measured sweep of the other 17 shapes, and both are their own
- * change. */
+/* A TEXT LABEL CENTRED IN A FLEX ROW sits off the row's centre by ((ascent - descent) - band) / 2
+ * (0.8 to 1.8px at 11px across DejaVu, Noto and Segoe UI): `align-items: center` centres its box.
+ * A `line-height` cannot move it (leading splits evenly, CSS 2.2 §10.8.1) and `vertical-align` is
+ * inert on a flex item. `text-box: trim-both cap alphabetic` makes the box the cap band, so the
+ * centred box centres the letterforms in any font; descenders leave the box. `.sidebar-email` and
+ * `.tab-name` take the same fix in 10-shell-app.css. The labels are listed because CSS cannot
+ * select "my parent is a centred flex row" and a universal trim moves every paragraph's block
+ * edges; `text-alignment.test.ts` measures the third list on its screens. */
 :where(
   [id="context-label"],
   [id="ctx-model-pill"],
@@ -520,19 +454,40 @@
   text-box: trim-both cap alphabetic;
 }
 
-/* Room for the descenders the trim put outside the box, on the labels that clip.
- * SYMMETRIC, which is the whole trick: `align-items: center` centres the margin
- * box, so equal padding leaves the cap band exactly where the trim put it while
- * giving a 'g' or a 'p' somewhere to hang.
- *
- * 0.35em is derived, not picked: the deepest descender across `--font-sans` and
- * `--font-mono` on this image and on the two the metrics above name is 0.300em
- * (Liberation Mono; Noto Sans and Open Sans 0.293em, Segoe UI 0.251em, DejaVu
- * Sans 0.236em), so 0.35em clears the worst of them with margin at both label
- * sizes. #context-label is excluded because it renders digits and a percent sign
- * and can never have a descender. */
+/* Room for the descenders the trim put outside the box, on the labels that clip: symmetric,
+ * since the row centres the margin box, and 0.35em clears the deepest descender of either font
+ * stack (0.300em, Liberation Mono). A label of the first list left out of it clips nothing. */
 :where([id="ctx-model-pill"], .pill-role-label) {
   padding-block: 0.35em;
+}
+
+/* Every other label of the class measured over 0.5px off its row's or its own
+ * box's centre, and every first line a leading glyph or control centres on:
+ * trimmed, then padded back to one line box, so the row or box keeps the height
+ * its line gave it and the cap band sits on the centre, with (1lh - 1cap) / 2 under
+ * the baseline for a descender. A diff row's marker and code are trimmed with its
+ * line number, so they keep one baseline. */
+:where(
+  .mcp-result-name,
+  .chat-opt-name,
+  .pr-merge-method-name,
+  .user-input-sub-option > .user-input-option-title,
+  .turn-n,
+  .code-refs-license,
+  .ev-sum-steps,
+  .fb-meta,
+  .list-row-meta,
+  .tool-diff-stats > :is(.diff-add-count, .diff-del-count),
+  .entry-title,
+  .ev-dock-more,
+  .tool-source-chip,
+  .mcp-result-status,
+  .user-input-recommended,
+  .diff-row > .diff-gutter,
+  .diff-content > *
+) {
+  text-box: trim-both cap alphabetic;
+  padding-block: calc((1lh - 1cap) / 2);
 }
 
 /* Context pill: its share as text, inked along the compaction ramp (`context-indicator.ts` `contextInk`). */
@@ -1743,7 +1698,6 @@
   justify-content: center;
   flex-shrink: 0;
   inline-size: 1rem;
-  margin-block-start: 0.125rem;
   color: var(--c-text-tertiary);
 
   & > svg {
@@ -1754,7 +1708,6 @@
 
 .chat-opt-row {
   & input {
-    margin-block-start: 0.125rem;
     flex-shrink: 0;
     cursor: pointer;
   }

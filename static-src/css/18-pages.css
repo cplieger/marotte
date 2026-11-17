@@ -943,7 +943,7 @@ label.toggle-inline:has(> .toggle) {
   color: var(--c-text-tertiary);
   border: 1px solid var(--c-border);
   border-radius: var(--r);
-  padding: 0 var(--sp-1);
+  padding-inline: var(--sp-1);
   line-height: 1.4;
 }
 

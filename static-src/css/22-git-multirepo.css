@@ -946,11 +946,14 @@
 
    FLEX, so the ellipsis can live on the TEXT span rather than here: the clip this
    rule used to carry would cut away the `::after` below, which is the same trade
-   `.tool-file-link` made (14-tools.css). */
+   `.tool-file-link` made (14-tools.css). The 11px number sits on the 12px
+   title's baseline (centred, 0.5px apart), and the box hugs that line, since a
+   baseline group packs at the top of a stretched one. */
 .git-pr-row-title {
   grid-area: title;
+  align-self: center;
   display: flex;
-  align-items: center;
+  align-items: baseline;
   position: relative;
   min-width: 0;
   font-weight: 500;

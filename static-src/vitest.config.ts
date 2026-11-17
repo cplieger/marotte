@@ -283,6 +283,26 @@ const pointerEngineFiles = [
   "messages-rewind-focus.pointer.test.ts",
 ];
 
+/** The alignment suite again at the pixel ratios and engine CI does not run: a real device scale, since
+ *  Chromium rounds text metrics to device pixels only under one, not under `setDeviceScaleFactor`'s
+ *  emulation. Opt-in (`ALIGN_ENGINES=1`): it needs `npx playwright install webkit`, which CI does not. */
+const alignInstances = (
+  [
+    ["chromium", 2],
+    ["webkit", 1],
+    ["webkit", 2],
+  ] as const
+).map(([browser, dpr]) => ({
+  browser,
+  name: `align-${browser}-dpr${String(dpr)}`,
+  provider: playwright({
+    contextOptions: { deviceScaleFactor: dpr },
+    ...(browser === "chromium"
+      ? { launchOptions: { channel: "chromium", args: ["--disable-frame-rate-limit"] } }
+      : {}),
+  }),
+}));
+
 export default defineConfig({
   // Serves the MSW worker script from the package for the browser tests that mock the network;
   // each such test starts its own worker.
@@ -406,6 +426,32 @@ export default defineConfig({
                   provider: playwright(),
                   instances: [{ browser: "webkit" }, { browser: "firefox" }],
                   viewport: { width: 1440, height: 900 },
+                },
+              },
+            } satisfies TestProjectInlineConfiguration,
+          ]
+        : []),
+      ...(process.env["ALIGN_ENGINES"] === "1"
+        ? [
+            {
+              extends: true,
+              test: {
+                name: "browser-align-engines",
+                include: ["text-alignment.test.ts"],
+                exclude: sharedExclude,
+                setupFiles: [
+                  "./ro-loop-gate.ts",
+                  "./storage-reset-setup.ts",
+                  "./pointer-park-setup.ts",
+                ],
+                browser: {
+                  enabled: true,
+                  headless: true,
+                  screenshotFailures: false,
+                  provider: playwright(),
+                  instances: alignInstances,
+                  viewport: { width: 1280, height: 720 },
+                  commands: { parkPointer: parkPointerCommand },
                 },
               },
             } satisfies TestProjectInlineConfiguration,

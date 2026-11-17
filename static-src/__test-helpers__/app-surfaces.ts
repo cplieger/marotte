@@ -774,8 +774,10 @@ function plantPermissions(): void {
     host.appendChild(
       box("native-rule native-rule-ask", [
         effect,
-        text("span", "native-rule-cap mono", cap),
-        text("span", "native-rule-src", "workspace"),
+        box("native-rule-text", [
+          text("span", "native-rule-cap mono", cap),
+          text("span", "native-rule-src", "workspace"),
+        ]),
         iconButton("icon-btn native-rule-remove", "Remove rule"),
       ]),
     );

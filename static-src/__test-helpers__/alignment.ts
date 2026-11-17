@@ -4,7 +4,7 @@
 // leave their baselines apart by `Δfont-size × (ascent − descent) / 2`.
 
 /** One run of text: where its first line sits and the styles that put it there. */
-export interface TextPiece {
+interface TextPiece {
   readonly sel: string;
   readonly text: string;
   readonly baseline: number;
@@ -33,7 +33,7 @@ export interface TextPiece {
   readonly parentAlignItems: string;
 }
 
-export type FindingKind = "baseline" | "icon-text" | "box-text" | "box-icon";
+type FindingKind = "baseline" | "icon-text" | "box-text" | "box-icon";
 
 export interface Finding {
   readonly kind: FindingKind;
@@ -48,7 +48,7 @@ export interface Finding {
   readonly frame: Element;
 }
 
-export interface BoxInfo {
+interface BoxInfo {
   readonly sel: string;
   readonly cy: number;
   readonly h: number;
@@ -62,7 +62,7 @@ export interface BoxInfo {
 const r2 = (n: number): number => Math.round(n * 100) / 100;
 
 /** `tag#id.class.class` of an element and its parent, enough to grep its rule. */
-export function selectorKey(el: Element): string {
+function selectorKey(el: Element): string {
   const one = (e: Element): string => {
     const id = e.id === "" ? "" : `#${e.id}`;
     const cls = [...e.classList]
@@ -296,6 +296,8 @@ function sameRow(a: Node, b: Node, root: Element, lineH: number): Element | null
 export interface MeasureOptions {
   /** Subtrees left out of the sweep. */
   readonly skip?: string;
+  /** The tallest painted box whose one line of text is checked against its centre; 48 px. */
+  readonly maxBox?: number;
 }
 
 /** Every alignment the eye reads under `root`: neighbouring text runs' baselines, each icon against
@@ -395,7 +397,7 @@ export function measureAlignment(root: Element, opts: MeasureOptions = {}): Find
       continue;
     }
     const r = el.getBoundingClientRect();
-    if (r.height === 0 || r.height > 48) {
+    if (r.height === 0 || r.height > (opts.maxBox ?? 48)) {
       continue;
     }
     const own = texts.filter((t) => el.contains(t.node) && unitOf(t.node, root) === el);
@@ -457,6 +459,7 @@ function painted(el: Element): boolean {
 /** One instance of the shape 15-input.css's label note counts: a single-line text label that is a
  *  flex item centred in a row, measured against the row's centre. */
 export interface LabelShape {
+  readonly el: Element;
   readonly sel: string;
   readonly parent: string;
   readonly fontSize: string;
@@ -498,6 +501,7 @@ export function labelShapes(root: Element, opts: MeasureOptions = {}): LabelShap
     }
     const rowCy = flexLineCentre(el, p, pcs);
     out.push({
+      el,
       sel: selectorKey(el),
       parent: selectorKey(p),
       fontSize: cs.fontSize,
@@ -510,6 +514,14 @@ export function labelShapes(root: Element, opts: MeasureOptions = {}): LabelShap
     });
   }
   return out;
+}
+
+/** How far the label's [cap-middle, x-middle] band lies off its row's centre, positive low; 0 when
+ *  the centre falls inside the band. */
+export function labelOffset(l: LabelShape): number {
+  const lo = Math.min(l.capOff, l.xOff);
+  const hi = Math.max(l.capOff, l.xOff);
+  return lo > 0 ? lo : hi < 0 ? hi : 0;
 }
 
 /** The centre of the flex line `el` sits on: the content box of a one-line row, else the margin

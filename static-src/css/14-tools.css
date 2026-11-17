@@ -1780,11 +1780,12 @@ a.subagent-header {
 
 /* A chip rides INLINE with the name, so a badged row measures what a chipless one
    does; `wrap` breaks name plus chips at a narrow width rather than crushing the
-   ellipsis. */
+   ellipsis. The 11px chip sits on the 12px name's baseline: centred, it rode
+   0.5 to 0.7px high of it. */
 .tool-name-wrap {
   display: inline-flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: baseline;
   gap: var(--sp-2);
   min-width: 0;
   flex: 1;
@@ -1834,6 +1835,9 @@ a.subagent-header {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+
+  /* A one-line option on the touch floor sits on the box's centre, not its top. */
+  justify-content: center;
   gap: var(--sp-1);
   /* The option is its own target, so it takes the hit floor. */
   min-block-size: var(--row-tap-sm);
@@ -1859,9 +1863,10 @@ a.subagent-header {
   outline-offset: var(--focus-offset);
 }
 
+/* The 11px badge sits on the title's baseline: centred, it rode 1.75px high of it. */
 .user-input-option-head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   flex-wrap: wrap;
   gap: var(--sp-2);
 }
@@ -1873,7 +1878,7 @@ a.subagent-header {
 /* THE BADGE WEARS THE CARD'S HUE (the blocked-ask yellow, 26-dock.css), not the
    accent; its contrast is checked with `css-contrast.py pair`. Its chip SHAPE stays. */
 .user-input-recommended {
-  padding: 0 0.4rem;
+  padding-inline: 0.4rem;
   border-radius: var(--r-sm);
   font-size: var(--fs-xs);
   line-height: 1.5;
@@ -1905,7 +1910,7 @@ a.subagent-header {
   align-content: center;
   min-block-size: var(--row-tap-sm);
   column-gap: var(--sp-2);
-  align-items: baseline;
+  align-items: start;
   padding: var(--sp-1) var(--sp-2);
   border-radius: var(--r);
   cursor: pointer;
