@@ -40,14 +40,14 @@ vi.mock("./store.js", async () => {
   };
 });
 
-// A mock proves the card asks through model-list's retryCatalog, not a handler of its own.
+// A mock proves the card's Retry goes through model-list's retryCatalog with the injected read.
 const { retried } = vi.hoisted(() => ({ retried: { calls: 0 } }));
 vi.mock("./model-list.js", () => ({
   getCachedModels: () => cachedModels,
   watchCatalog: () => undefined,
   catalogNotice: () => notice,
-  retryCatalog: () => {
-    retried.calls += 1;
+  retryCatalog: (reread: () => Promise<void>) => {
+    void reread();
   },
   RETRY_LABEL: "Retry loading the model list",
 }));
@@ -106,7 +106,10 @@ describe("the model card with no models", () => {
     const card = document.createElement("div");
     card.id = "model-switch-list";
     document.body.append(pill, card);
-    initModelSwitcher();
+    initModelSwitcher(() => {
+      retried.calls += 1;
+      return Promise.resolve();
+    });
   });
 
   beforeEach(() => {
@@ -222,7 +225,7 @@ describe("the model card's rows", () => {
       const card = document.createElement("div");
       card.id = "model-switch-list";
       document.body.append(pill, card);
-      initModelSwitcher();
+      initModelSwitcher(() => Promise.resolve());
     }
   });
 

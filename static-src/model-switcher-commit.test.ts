@@ -144,7 +144,7 @@ describe("the model card sends once, when it closes", () => {
     away.id = "away";
     away.textContent = "elsewhere";
     document.body.append(away, slot);
-    initModelSwitcher();
+    initModelSwitcher(() => Promise.resolve());
   });
 
   beforeEach(() => {

@@ -17,7 +17,6 @@ import {
   retryCatalog,
   setCatalogModels,
   setCatalogPhase,
-  setCatalogRetry,
   watchCatalog,
 } from "./model-list.js";
 
@@ -33,15 +32,16 @@ beforeEach(() => {
   announced.said.length = 0;
   nextReadLands = null;
   retries = 0;
-  setCatalogRetry(() => {
-    retries += 1;
-    return Promise.resolve().then(() => {
-      if (nextReadLands !== null) {
-        setCatalogModels(nextReadLands);
-      }
-    });
-  });
 });
+
+function reread(): Promise<void> {
+  retries += 1;
+  return Promise.resolve().then(() => {
+    if (nextReadLands !== null) {
+      setCatalogModels(nextReadLands);
+    }
+  });
+}
 
 describe("the catalog notice", () => {
   it("says it is loading, with no Retry, while nothing has answered", () => {
@@ -93,15 +93,15 @@ describe("watchCatalog", () => {
 });
 
 describe("retryCatalog", () => {
-  it("runs the injected read", () => {
-    retryCatalog();
+  it("runs the read it is given", () => {
+    retryCatalog(reread);
     expect(retries).toBe(1);
   });
 
   it("says it is asking again, then what a failed re-read answered", async () => {
     setCatalogPhase("unavailable");
 
-    retryCatalog();
+    retryCatalog(reread);
 
     expect(announced.said).toEqual(["Reloading the model list…"]);
     await vi.waitFor(() => {
@@ -116,7 +116,7 @@ describe("retryCatalog", () => {
     setCatalogPhase("ready");
     nextReadLands = [MODEL_A];
 
-    retryCatalog();
+    retryCatalog(reread);
 
     await vi.waitFor(() => {
       expect(announced.said).toEqual(["Reloading the model list…", "Model list loaded."]);

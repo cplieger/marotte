@@ -211,17 +211,17 @@
   display: grid;
   place-items: center;
   pointer-events: none;
+}
 
-  /* Grey in both themes: --c-text-primary has zero chroma. The wash is `opacity` on the
-   * group, never a translucent colour, because the mark's eye overlaps its body and each
-   * shape would composite its own alpha, painting the overlap darker. */
-  & svg {
-    inline-size: min(36cqmin, 15rem);
-    block-size: auto;
-    aspect-ratio: 1;
-    color: var(--c-text-primary);
-    opacity: 0.12;
-  }
+/* Grey in both themes: --c-text-primary has zero chroma. The wash is `opacity` on the
+ * group, never a translucent colour, because the mark's eye overlaps its body and each
+ * shape would composite its own alpha, painting the overlap darker. */
+.empty-chat-logo svg {
+  inline-size: min(36cqmin, 15rem);
+  block-size: auto;
+  aspect-ratio: 1;
+  color: var(--c-text-primary);
+  opacity: 0.12;
 }
 
 /* Message rows with avatars */

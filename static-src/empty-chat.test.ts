@@ -132,7 +132,7 @@ describe("the empty chat", () => {
     ]);
     setCatalogPhase("ready");
     initEmptyChatLogo();
-    initModelSwitcher();
+    initModelSwitcher(() => Promise.resolve());
   });
 
   beforeEach(() => {

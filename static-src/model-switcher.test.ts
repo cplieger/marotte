@@ -95,14 +95,25 @@ vi.mock("./settings.js", () => ({
   }),
 }));
 
-vi.mock("./model-list.js", () => ({
-  getCachedModels: () => cachedModels,
-  watchCatalog: () => undefined,
-  catalogNotice: () => notice,
-  // Browser Mode links ESM for real: a missing name fails collection, not one case.
-  retryCatalog: vi.fn(),
-  RETRY_LABEL: "Retry loading the model list",
-}));
+// `bump` stands for a catalog read landing, which moves the revision `watchCatalog` reads.
+const catalogTick = vi.hoisted(() => ({ bump: (): void => undefined }));
+vi.mock("./model-list.js", async () => {
+  const { signal } = (await vi.importActual("@cplieger/reactive")) as { signal: SignalFactory };
+  const revision = signal(0);
+  catalogTick.bump = () => {
+    revision.value += 1;
+  };
+  return {
+    getCachedModels: () => cachedModels,
+    watchCatalog: () => {
+      void revision.value;
+    },
+    catalogNotice: () => notice,
+    // Browser Mode links ESM for real: a missing name fails collection, not one case.
+    retryCatalog: vi.fn(),
+    RETRY_LABEL: "Retry loading the model list",
+  };
+});
 vi.mock("./actions/index.js", () => ({
   bindLoadingState: vi.fn(),
   // Two actions share this factory; the name routes each to its own spy.
@@ -233,7 +244,7 @@ describe("the effort section", () => {
     notice = null;
     onExpand.fn = null;
     lastEffortByModel = {};
-    initModelSwitcher();
+    initModelSwitcher(() => Promise.resolve());
   });
 
   it("marks the tier the session reports running at when the chat chose none", () => {
@@ -513,7 +524,7 @@ describe("the effort slider's thinking Off stop", () => {
     notice = null;
     onExpand.fn = null;
     lastEffortByModel = {};
-    initModelSwitcher();
+    initModelSwitcher(() => Promise.resolve());
     effortDispatch.mockClear();
     thinkingDispatch.mockClear();
   });
@@ -630,7 +641,7 @@ describe("the Fallback row", () => {
     cachedModels = [model("model-a", "high"), model("model-b", "high")];
     notice = null;
     shownSettingsSignal.value = null;
-    initModelSwitcher();
+    initModelSwitcher(() => Promise.resolve());
     setSession({ id: "c1", model: "model-a", effort: "", effort_levels: fiveTiers() });
   });
 
@@ -826,6 +837,29 @@ describe("the Fallback row", () => {
     shownSettingsSignal.value = shown(true, "model-c");
     expect(fallbackRow()).toBe(s);
     expect(choiceOf(s)).toBe("model-c");
+  });
+
+  it("keeps the drill-in and its focus when a catalog with the same models lands", async () => {
+    shownSettingsSignal.value = shown(true);
+    openCard();
+    const s = fallbackRow();
+    if (s === null) {
+      throw new Error("no Fallback row");
+    }
+    await userEvent.click(s);
+    const panel = document.getElementById("model-fallback-panel");
+    const option = panel?.querySelector<HTMLElement>('[role="option"]');
+    option?.focus();
+    expect(document.activeElement).toBe(option);
+
+    cachedModels = [...cachedModels];
+    catalogTick.bump();
+
+    expect(fallbackRow()).toBe(s);
+    expect(s.getAttribute("aria-expanded")).toBe("true");
+    expect(panel?.isConnected).toBe(true);
+    expect(panel?.hidden).toBe(false);
+    expect(document.activeElement).toBe(option);
   });
 
   it("leaves a closed card alone on a settings change", () => {

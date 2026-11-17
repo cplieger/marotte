@@ -27,7 +27,6 @@ const RETRY_LOADED = "Model list loaded.";
 
 let models: ModelInfo[] = [];
 let phase: CatalogPhase = "unknown";
-let catalogRetry: (() => Promise<void>) | null = null;
 
 const revision = signal(0);
 
@@ -72,19 +71,11 @@ export function catalogNotice(): CatalogNotice | null {
   }
 }
 
-/** The re-read Retry runs, injected by app.ts; its promise settles once the read has. */
-export function setCatalogRetry(run: () => Promise<void>): void {
-  catalogRetry = run;
-}
-
-/** Ask for the catalog again and announce the start and the verdict. */
-export function retryCatalog(): void {
-  const run = catalogRetry;
-  if (run === null) {
-    return;
-  }
+/** Run `reread` for the Retry and announce the start and the verdict; `reread` settles once the
+ *  read has. */
+export function retryCatalog(reread: () => Promise<void>): void {
   announce(RETRY_STARTED);
-  void run().then(() => {
+  void reread().then(() => {
     const settled = catalogNotice();
     announce(settled === null ? RETRY_LOADED : settled.text);
   });

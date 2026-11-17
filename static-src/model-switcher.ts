@@ -166,7 +166,8 @@ interface PillDraft {
 }
 
 class ModelSwitchController {
-  init(): void {
+  init(rereadCatalog: () => Promise<void>): void {
+    this.rereadCatalog = rereadCatalog;
     // Prepended because the label follows it. The `.switching` face hides this svg by
     // descendant selector, so it must not be wrapped.
     $.switchModelBtn.prepend(iconEl(ICON_MODEL));
@@ -210,18 +211,19 @@ class ModelSwitchController {
         this.syncFallbackRow(shown);
       }
     });
-    // An open card repaints when the catalog lands or its read gives up. Untracked, so the
-    // render subscribes this effect to nothing but the catalog.
+    // An open card showing a notice repaints when the catalog lands or its read gives up. A card
+    // already listing models is left alone: a repaint would rebuild its Fallback row (FallbackSlot
+    // keys on the catalog array), dropping the drill-in and its focus. Untracked, so the render
+    // subscribes this effect to nothing but the catalog.
     effect(() => {
       watchCatalog();
-      if (this.expanded) {
+      if (this.expanded && this.noticeRow !== null) {
         untracked(() => {
           this.renderCondensedList();
         });
       }
     });
-    // Reading activeSession makes the knob per-chat. Created here rather than in a render,
-    // because an effect created inside the catalog effect's run is disposed on its next run.
+    // Reading activeSession makes the knob per-chat.
     effect(() => {
       this.effortActive = sliderVocabulary(activeSession.value).active;
       this.syncEffortActive();
@@ -303,12 +305,15 @@ class ModelSwitchController {
     ) as HTMLButtonElement;
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      retryCatalog();
+      retryCatalog(this.rereadCatalog);
     });
     return btn;
   }
 
   private card: Expandable | null = null;
+
+  /** Set by `init`, which runs before any card, and so any Retry, exists. */
+  private rereadCatalog!: () => Promise<void>;
 
   private modelNav: RovingFocusController | null = null;
 
@@ -542,8 +547,9 @@ class ModelSwitchController {
 
 const controller = new ModelSwitchController();
 
-export function initModelSwitcher(): void {
-  controller.init();
+/** `rereadCatalog` is the read the card's Retry runs; its promise settles once the read has. */
+export function initModelSwitcher(rereadCatalog: () => Promise<void>): void {
+  controller.init(rereadCatalog);
 }
 
 /** Open the model pill's card. */

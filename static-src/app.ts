@@ -42,7 +42,6 @@ import { ingestTabsChanged, listTabs, removePendingFor } from "./tabs-sync.js";
 import { setParkedViewExemption } from "./messages.js";
 import { onPopState } from "./router.js";
 import type { Route } from "./route-path.js";
-import { setCatalogRetry } from "./model-list.js";
 import { initEmptyChatLogo } from "./empty-chat-logo.js";
 import { refreshRuntimeLine } from "./status.js";
 import { initShellPanel, revealShellKeys } from "./shell.js";
@@ -492,9 +491,7 @@ function setupInput(): void {
   });
 
   // The model switcher owns its button click, popover, queue and outside-click dismissal.
-  initModelSwitcher();
-  // The Retry the pill's card offers while no models are listed; model-list.ts announces its verdict.
-  setCatalogRetry(() => fetchCatalog());
+  initModelSwitcher(() => fetchCatalog());
   initEmptyChatLogo();
   // The role picker owns the prompt-bar role pill (expand, list, selection).
   initRolePicker(() => {

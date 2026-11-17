@@ -78,7 +78,7 @@ const { initModelSwitcher } = await import("./model-switcher.js");
 // `configure({})` is the framework's silent mode; the transport must answer or the rollback undoes the optimistic write.
 configure({});
 configureTransport(() => Promise.resolve({ ok: true, status: 200 }));
-initModelSwitcher();
+initModelSwitcher(() => Promise.resolve());
 
 // The one subscriber under test, as installStoreSubscribers registers it.
 effect(() => {
