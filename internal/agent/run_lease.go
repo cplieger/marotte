@@ -74,6 +74,7 @@ func (rs *Runs) grantRetryLease(ctx context.Context, workflowID string, o *runOr
 	var host *runlease.HostSecurity
 	if o.parent.chat == "" {
 		host = hostSecurityOf(rs.doorSettings(ctx).Presets)
+		rs.recordHost(ctx, workflowID, o.parent.session)
 	}
 	lo := retryLaunch(o)
 	rs.grantKeeping(ctx, workflowID, o.recipe, &lo, host, &leaseKeep{chats: chatIDs(holders)})
@@ -87,6 +88,9 @@ func (rs *Runs) grantEventRetryLease(
 ) {
 	lo := triggeredLaunch(ev.RuleID, ev.EventKey, ev.CoalesceKey, ev.Label)
 	host := hostSecurityOf(rs.doorSettings(ctx).Presets)
+	if o.parent.chat == "" {
+		rs.recordHost(ctx, workflowID, o.parent.session)
+	}
 	rs.grantKeeping(ctx, workflowID, o.recipe, &lo, host, &leaseKeep{chats: chatIDs(holders)})
 	rs.recordParentSession(ctx, workflowID, o.parent.session)
 }

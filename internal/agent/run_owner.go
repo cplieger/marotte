@@ -63,14 +63,14 @@ func RunHolders(parents []string, l *runlease.Lease, owners chat.SessionOwners) 
 // and found no holder, or a run that names no launcher.
 func (rs *Runs) RunOwner(ctx context.Context, workflowID string) (command.RunOwner, error) {
 	if l, held := rs.lease(workflowID); held {
-		return rs.ownersOf(ctx, []string{l.ParentSessionID}, &l)
+		return rs.ownersOf(ctx, workflowID, []string{l.ParentSessionID}, &l)
 	}
 	runs, err := rs.listRaw(ctx)
 	if err != nil {
 		return command.RunOwner{}, fmt.Errorf("%w: reading the run inventory: %w", errRunHostStart, err)
 	}
 	if i := slices.IndexFunc(runs, func(r kasWorkflowRun) bool { return r.WorkflowID == workflowID }); i >= 0 {
-		return rs.ownersOf(ctx, []string{runs[i].ParentSessionID}, nil)
+		return rs.ownersOf(ctx, workflowID, []string{runs[i].ParentSessionID}, nil)
 	}
 	raw, err := rs.rawInspect(ctx, workflowID)
 	if err != nil {
@@ -80,11 +80,14 @@ func (rs *Runs) RunOwner(ctx context.Context, workflowID string) (command.RunOwn
 	if json.Unmarshal(raw, &res) != nil || !res.names(workflowID) {
 		return command.RunOwner{Verdict: command.RunUnknown}, nil
 	}
-	return rs.ownersOf(ctx, []string{res.State.ParentSessionID}, nil)
+	return rs.ownersOf(ctx, workflowID, []string{res.State.ParentSessionID}, nil)
 }
 
-// ownersOf is RunOwner's verdict over one fresh owner scan.
-func (rs *Runs) ownersOf(ctx context.Context, parents []string, l *runlease.Lease) (command.RunOwner, error) {
+// ownersOf is RunOwner's verdict over one fresh owner scan. An incomplete scan proves nothing of a parent session
+// unless it is the run's recorded host (parentlessHost).
+func (rs *Runs) ownersOf(
+	ctx context.Context, workflowID string, parents []string, l *runlease.Lease,
+) (command.RunOwner, error) {
 	scan := rs.chats.SessionOwners(ctx)
 	holders, known := RunHolders(parents, l, scan.Owners)
 	out := command.RunOwner{Holders: holders, ParentSessions: slices.DeleteFunc(slices.Clone(parents), func(p string) bool {
@@ -93,7 +96,7 @@ func (rs *Runs) ownersOf(ctx context.Context, parents []string, l *runlease.Leas
 	switch {
 	case len(holders) > 0:
 		out.Verdict = command.RunOwned
-	case !scan.Complete:
+	case !scan.Complete && !slices.ContainsFunc(parents, func(p string) bool { return rs.parentlessHost(ctx, workflowID, p) }):
 		return command.RunOwner{}, fmt.Errorf("%w: %w", errRunHostStart, errRunOwnersUnread)
 	case !known:
 		return command.RunOwner{}, errRunNoLauncher

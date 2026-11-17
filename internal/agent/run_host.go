@@ -264,6 +264,7 @@ func (rs *Runs) startLaunched(
 	}
 	parent := sb.SessionID()
 	rs.recordParentSession(ctx, wfID, string(parent))
+	rs.recordHost(ctx, wfID, string(parent))
 	// Visible to Route before invoke is written, so the run's first frame reaches the host's lane.
 	rs.router.registerOwner(wfID, parent)
 	if _, err := rs.write(ctx, a, sb, wfID, methodKiroWorkflowInvoke,
@@ -947,8 +948,8 @@ type runOrigin struct {
 	recipe string
 }
 
-// An ownerless parent is trusted only after a complete chat scan: loading a chat's session as a
-// run host replays that chat's transcript into the run.
+// An ownerless parent is trusted only after a complete chat scan, or as the run's recorded host (parentlessHost):
+// loading a chat's session as a run host replays that chat's transcript into the run.
 func (rs *Runs) originOf(ctx context.Context, workflowID string) runOrigin {
 	runs, err := rs.listRaw(ctx)
 	if err != nil {
@@ -970,7 +971,7 @@ func (rs *Runs) originOf(ctx context.Context, workflowID string) runOrigin {
 	}
 	var complete bool
 	o.parent.chat, complete = rs.chatForSession(ctx, o.parent.session)
-	if o.parent.chat == "" && !complete {
+	if o.parent.chat == "" && !complete && !rs.parentlessHost(ctx, workflowID, o.parent.session) {
 		o.err = fmt.Errorf("%w: a chat file could not be read, so which chat launched the run is unknown",
 			errRunHostStart)
 	}
