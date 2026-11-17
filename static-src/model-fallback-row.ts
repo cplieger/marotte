@@ -9,7 +9,9 @@ import { chevronEl } from "./chevron.js";
 import { setBusy } from "./dom.js";
 import { iconEl } from "./icon-el.js";
 import { modelIcon } from "./icons.js";
+import { repaintKeepingFocus } from "./focus-keep.js";
 import { rovingFocus } from "./legacy-ui/roving-focus.js";
+import { reconcile } from "./reconcile.js";
 import { humanName, rateLabel } from "./strings.js";
 import type { IdentityVerdict } from "./identity.js";
 import { showFallbackAnswer, type EffectiveSettings } from "./persist.js";
@@ -29,6 +31,9 @@ const READ_ONLY_WORDS: ReadonlyMap<string, string> = new Map([
   ["locked", "This fallback setting is locked by policy."],
   ["multiple-targets", "This fallback chain has multiple targets and cannot be edited here."],
 ]);
+
+/** A list option: its target (empty for Kiro default), its name and the model whose glyph it shows. */
+type Entry = [value: string, label: string, logo: string];
 
 interface FallbackRowInput {
   /** The chat's model id. */
@@ -59,8 +64,8 @@ interface FallbackRow {
   busy(): boolean;
   /** The row the list shows once no write is pending. */
   shown(): ModelFallback;
-  /** Repaints the row and its list in place, so a focused option keeps focus. */
-  show(row: ModelFallback): void;
+  /** Repaints the row and its list in place for `catalog`, so a focused option keeps focus. */
+  show(row: ModelFallback, catalog: readonly ModelInfo[]): void;
   /** Shows the first panel at once. */
   reset(): void;
   /** Takes the row and its list out of the card. */
@@ -95,7 +100,8 @@ function buildFallbackRow(
   if (row === null) {
     return null;
   }
-  const { model, catalog } = input;
+  const { model } = input;
+  let { catalog } = input;
   const signedOut = noAccount(input.identity);
   const nameOf = (id: string): string => {
     const name = catalog.find((m) => m.model_id === id)?.model_name ?? "";
@@ -131,36 +137,35 @@ function buildFallbackRow(
     chevronEl(),
     el("span", { className: "pill-model-name" }, "Back"),
   ) as HTMLButtonElement;
+  const note = el("div", { className: "fallback-note" });
   const panel = el(
     "div",
     { id: PANEL_ID, className: "model-panel model-panel-fallback" },
-    el("div", { className: "fallback-note" }, `Fallback for ${nameOf(model)}`),
+    note,
     list,
     el("div", { className: "effort-row" }, back),
   );
   panel.hidden = true;
   const nav = rovingFocus(list, '[role="option"]');
 
-  const option = (value: string, label: string, logo: string): HTMLElement => {
+  /** Writes an option's name, glyph and credits, which follow the catalog. */
+  const fill = (opt: HTMLElement, [, label, logo]: Entry): void => {
     const rate = rateLabel(catalog.find((m) => m.model_id === logo)?.rate_multiplier);
-    const opt = el(
-      "div",
-      {
-        role: "option",
-        className: "pill-model-item",
-        "data-target": value,
-        "aria-label": rate === "" ? label : `${label}, ${rate} credits`,
-      },
+    opt.setAttribute("aria-label", rate === "" ? label : `${label}, ${rate} credits`);
+    opt.replaceChildren(
       el(
         "span",
         { className: "pill-model-item-icon", "aria-hidden": "true" },
         iconEl(modelIcon(logo, "ui")),
       ),
       el("span", { className: "pill-model-name" }, label),
+      ...(rate === "" ? [] : [el("span", { className: "pill-model-meta" }, rate)]),
     );
-    if (rate !== "") {
-      opt.append(el("span", { className: "pill-model-meta" }, rate));
-    }
+  };
+  const option = (entry: Entry): HTMLElement => {
+    const [value] = entry;
+    const opt = el("div", { role: "option", className: "pill-model-item", "data-target": value });
+    fill(opt, entry);
     opt.addEventListener("click", (e) => {
       e.stopPropagation();
       choose(value);
@@ -168,30 +173,34 @@ function buildFallbackRow(
     return opt;
   };
 
-  let listed = "";
   let selected = row.configured;
-  /** Shows `target` as the choice; the list is rebuilt only when its options change, so a focused one keeps focus. */
+  /** Shows `target` as the choice. The options are keyed by target, so a focused one keeps focus. */
   const paint = (r: ModelFallback, target = r.configured): void => {
     const targets = catalog.map((m) => m.model_id).filter((id) => id !== model && id !== AUTO);
     if (r.configured !== "" && !targets.includes(r.configured)) {
       targets.push(r.configured);
     }
-    const entries: [string, string, string][] = [
+    const entries: Entry[] = [
       ["", kiroLabel(r), r.vendor_default === "" ? AUTO : r.vendor_default],
-      ...targets.map((id): [string, string, string] => [id, nameOf(id), id]),
+      ...targets.map((id): Entry => [id, nameOf(id), id]),
     ];
-    const sig = JSON.stringify(entries);
-    if (sig !== listed) {
-      listed = sig;
-      list.replaceChildren(...entries.map(([value, label, logo]) => option(value, label, logo)));
-      nav.refresh();
-    }
     selected = target;
-    for (const opt of list.querySelectorAll<HTMLElement>('[role="option"]')) {
-      const on = opt.dataset["target"] === target;
-      opt.classList.toggle("active", on);
-      opt.setAttribute("aria-selected", on ? "true" : "false");
-    }
+    repaintKeepingFocus(
+      list,
+      () =>
+        list.querySelector<HTMLElement>('[aria-selected="true"]') ??
+        list.querySelector<HTMLElement>('[role="option"]'),
+      () => {
+        reconcile(list, entries, { key: ([value]) => value, mount: option, update: fill });
+        for (const opt of list.querySelectorAll<HTMLElement>('[role="option"]')) {
+          const on = opt.dataset["target"] === target;
+          opt.classList.toggle("active", on);
+          opt.setAttribute("aria-selected", on ? "true" : "false");
+        }
+        nav.refresh();
+      },
+    );
+    note.textContent = `Fallback for ${nameOf(model)}`;
     const label = target === "" ? kiroLabel(r) : nameOf(target);
     choice.textContent = label;
     opener.setAttribute("aria-label", `Fallback: ${label}`);
@@ -305,8 +314,9 @@ function buildFallbackRow(
     panel,
     busy: () => pending > 0,
     shown: () => shown,
-    show: (r) => {
+    show: (r, c) => {
       shown = r;
+      catalog = c;
       paint(r);
       showReason(r);
     },
@@ -328,9 +338,10 @@ function sameRow(a: ModelFallback, b: ModelFallback): boolean {
   );
 }
 
-/** The card's one Fallback row, kept across settings steps: rebuilding it would replace a row the
- *  user has focus on. A step that comes while a write is pending is not applied then: `onSettled`
- *  runs when the write settles, for the card to sync again from the settings shown by then. */
+/** The card's one Fallback row, kept across settings steps and catalog reads: rebuilding it would
+ *  replace a row the user has focus on. A step that comes while a write is pending is not applied
+ *  then: `onSettled` runs when the write settles, for the card to sync again from the settings
+ *  shown by then. */
 export class FallbackSlot {
   private row: FallbackRow | null = null;
   private built: FallbackRowInput | null = null;
@@ -349,11 +360,10 @@ export class FallbackSlot {
       was !== null &&
       next !== null &&
       was.model === input.model &&
-      was.catalog === input.catalog &&
       noAccount(was.identity) === noAccount(input.identity)
     ) {
-      if (!sameRow(this.row.shown(), next)) {
-        this.row.show(next);
+      if (!sameRow(this.row.shown(), next) || was.catalog !== input.catalog) {
+        this.row.show(next, input.catalog);
       }
     } else {
       this.row?.remove();

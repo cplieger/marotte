@@ -26,6 +26,7 @@ import {
 import { makeExpandable, collapseAll, type Expandable } from "./pill-expand.js";
 import { bindLoadingState, transportAction, RETRY_STANDARD } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
+import { repaintKeepingFocus } from "./focus-keep.js";
 import { el, effect, untracked } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
 import { errorAbout } from "./actions/subject.js";
@@ -208,18 +209,20 @@ class ModelSwitchController {
     effect(() => {
       const shown = shownSettingsSignal.value;
       if (this.expanded) {
-        this.syncFallbackRow(shown);
+        this.repaint(() => {
+          this.syncFallbackRow(shown);
+        });
       }
     });
-    // An open card showing a notice repaints when the catalog lands or its read gives up. A card
-    // already listing models is left alone: a repaint would rebuild its Fallback row (FallbackSlot
-    // keys on the catalog array), dropping the drill-in and its focus. Untracked, so the render
-    // subscribes this effect to nothing but the catalog.
+    // An open card repaints when the catalog moves. Untracked, so the render subscribes this
+    // effect to nothing but the catalog.
     effect(() => {
       watchCatalog();
-      if (this.expanded && this.noticeRow !== null) {
+      if (this.expanded) {
         untracked(() => {
-          this.renderCondensedList();
+          this.repaint(() => {
+            this.renderCondensedList();
+          });
         });
       }
     });
@@ -231,6 +234,20 @@ class ModelSwitchController {
     // Wired ONCE: re-wiring per render stacks keydown handlers. The first panel's own: the Fallback list has its.
     this.modelNav = rovingFocus(this.mainPanel, '.pill-model-item[role="option"]');
     bindLoadingState("chat.switch_model", $.switchModelBtn, { pendingClass: "switching" });
+  }
+
+  /** Runs a repaint of the open card. One that takes focus out of the card (a removed or
+   *  re-seated row) hands it to the chat's model, else the card's first control. */
+  private repaint(paint: () => void): void {
+    repaintKeepingFocus(
+      $.modelSwitchList,
+      () =>
+        this.mainPanel.querySelector<HTMLElement>('.pill-model-item.active[role="option"]') ??
+        this.mainPanel.querySelector<HTMLElement>(
+          '[role="option"], [role="slider"], button:not(:disabled)',
+        ),
+      paint,
+    );
   }
 
   private renderCondensedList(): void {
@@ -252,7 +269,7 @@ class ModelSwitchController {
 
     // Before sliderVocabulary prepends Off, so a tierless toggleable model shows no row (effort.ts effortVocabulary).
     if (effortVocabulary(session, getCachedModels(), "").levels.length > 0) {
-      this.ensureEffortRow(list);
+      this.ensureEffortRow(scroll);
     } else {
       this.removeEffortRow();
     }
@@ -269,14 +286,15 @@ class ModelSwitchController {
     this.modelNav?.refresh();
   }
 
-  /** The listbox role goes with the OPTIONS; the copy is model-list.ts's. */
+  /** The listbox role goes with the OPTIONS; the copy is model-list.ts's. The row and its Retry
+   *  are kept across notices, so a focused Retry keeps focus when a read fails again. */
   private syncCatalogNotice(scroll: HTMLElement): void {
-    this.noticeRow?.remove();
-    this.noticeRow = null;
-    this.noticeRetry?.remove();
-    this.noticeRetry = null;
     const notice = catalogNotice();
     if (notice === null) {
+      this.noticeRow?.remove();
+      this.noticeRow = null;
+      this.noticeRetry?.remove();
+      this.noticeRetry = null;
       scroll.setAttribute("role", "listbox");
       scroll.setAttribute("aria-label", "Available models");
       scroll.removeAttribute("aria-busy");
@@ -285,11 +303,17 @@ class ModelSwitchController {
     scroll.removeAttribute("role");
     scroll.removeAttribute("aria-label");
     setBusy(scroll, notice.busy);
-    // Prepended: reconcile inserts each keyed row after every unkeyed sibling, so an
-    // appended notice would sort below the first model of a late catalog.
-    this.noticeRow = el("div", { className: "list-empty" }, notice.text) as HTMLDivElement;
-    scroll.prepend(this.noticeRow);
-    if (notice.retry) {
+    if (this.noticeRow === null) {
+      // Prepended: reconcile inserts each keyed row after every unkeyed sibling, so an
+      // appended notice would sort below the first model of a late catalog.
+      this.noticeRow = el("div", { className: "list-empty" }) as HTMLDivElement;
+      scroll.prepend(this.noticeRow);
+    }
+    this.noticeRow.textContent = notice.text;
+    if (!notice.retry) {
+      this.noticeRetry?.remove();
+      this.noticeRetry = null;
+    } else if (this.noticeRetry === null) {
       this.noticeRetry = this.buildRetryRow();
       // After the notice, still ahead of every keyed row.
       this.noticeRow.after(this.noticeRetry);
@@ -338,7 +362,9 @@ class ModelSwitchController {
 
   private readonly fallback = new FallbackSlot(() => {
     if (this.expanded) {
-      this.syncFallbackRow(settingsAsShown());
+      this.repaint(() => {
+        this.syncFallbackRow(settingsAsShown());
+      });
     }
   });
 
@@ -380,7 +406,7 @@ class ModelSwitchController {
   /** Ticks are rebuilt when the model's vocabulary changes: the set is per model, so
    *  a track built once would offer `xhigh` on a model without it. Effort arrives
    *  on the chat record, so there is no settings fetch. */
-  private ensureEffortRow(list: HTMLElement): void {
+  private ensureEffortRow(scroll: HTMLElement): void {
     const { levels, active } = sliderVocabulary(getActive());
     this.effortActive = active;
     // No role/aria-label: the knob carries the name, and a group around one slider
@@ -394,9 +420,10 @@ class ModelSwitchController {
       this.effortSlider.setLevels(levels);
       this.effortLevelsShown = [...levels];
     }
-    // Outside the scroller, so reconcile never sees it; syncFallbackRow then puts its row last.
-    if (list.lastElementChild !== this.effortSlider.el) {
-      list.appendChild(this.effortSlider.el);
+    // Beside the scroller, so reconcile never sees it. Re-seating a node blurs it, so only a
+    // slider out of place moves.
+    if (scroll.nextElementSibling !== this.effortSlider.el) {
+      scroll.after(this.effortSlider.el);
     }
     // The effect re-runs only on the active chat's own level; a rebuild or a newly
     // resolved tier is not a signal read, so re-apply the mark here.

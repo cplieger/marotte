@@ -128,7 +128,6 @@ vi.mock("./actions/chat.js", () => ({ switchModel: { dispatch: vi.fn() } }));
 vi.mock("./actions/model-fallback.js", () => ({
   setModelFallback: { dispatch: fallbackDispatch },
 }));
-vi.mock("./reconcile.js", () => ({ reconcile: vi.fn() }));
 vi.mock("./context-ui.js", () => ({ refreshContextUI: vi.fn() }));
 vi.mock("./session-context.js", () => ({
   setLastModel: vi.fn(),
@@ -143,9 +142,6 @@ vi.mock("./strings.js", async (importOriginal) => ({
 }));
 vi.mock("./icon-el.js", () => ({ iconEl: () => document.createElement("span") }));
 vi.mock("./icons.js", () => ({ ICON_MODEL: "", ICON_CHEVRON_DOWN: "", modelIcon: () => "" }));
-vi.mock("./legacy-ui/roving-focus.js", () => ({
-  rovingFocus: () => ({ refresh: vi.fn(), focusFirst: vi.fn(), dispose: vi.fn() }),
-}));
 
 import { activeSession } from "./store.js";
 import { shownSettingsSignal } from "./persist.js";
@@ -860,6 +856,58 @@ describe("the Fallback row", () => {
     expect(panel?.isConnected).toBe(true);
     expect(panel?.hidden).toBe(false);
     expect(document.activeElement).toBe(option);
+  });
+
+  /** Opens the card while the catalog read is still out; `land` then lands it. */
+  function openWhileLoading(): { land: () => void } {
+    const models = cachedModels;
+    cachedModels = [];
+    notice = { text: "Loading models…", busy: true };
+    shownSettingsSignal.value = shown(true);
+    openCard();
+    return {
+      land: () => {
+        cachedModels = models;
+        notice = null;
+        catalogTick.bump();
+      },
+    };
+  }
+
+  it("keeps focus on the effort knob when the catalog lands", () => {
+    const { land } = openWhileLoading();
+    const k = knob();
+    k.focus();
+
+    land();
+
+    expect(knob()).toBe(k);
+    expect(document.activeElement).toBe(k);
+  });
+
+  it("keeps focus on the Fallback row when the catalog lands", () => {
+    const { land } = openWhileLoading();
+    const s = fallbackRow();
+    s?.focus();
+    expect(document.activeElement).toBe(s);
+
+    land();
+
+    expect(fallbackRow()).toBe(s);
+    expect(document.activeElement).toBe(s);
+  });
+
+  it("moves focus to the chat's model when the Model fallback switch goes off under the row", () => {
+    shownSettingsSignal.value = shown(true);
+    openCard();
+    fallbackRow()?.focus();
+
+    shownSettingsSignal.value = shown(false);
+
+    expect(fallbackRow()).toBeNull();
+    expect(document.activeElement).toBe(
+      document.querySelector('#model-switch-list [role="option"][data-model="model-a"]'),
+    );
   });
 
   it("leaves a closed card alone on a settings change", () => {

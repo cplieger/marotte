@@ -311,6 +311,64 @@ describe("the Fallback list", () => {
     ]);
   });
 
+  /** A catalog read landing while the card is open: the same settings, a new catalog array. */
+  function landCatalog(c: Card, rows: ModelFallback[], next: ModelInfo[]): void {
+    c.slot.sync(
+      { card: c.card, main: c.main },
+      {
+        model: "model-a",
+        settings: settingsPayload({ model_fallback_enabled: true, model_fallbacks: rows }),
+        catalog: next,
+        identity: signedIn,
+      },
+    );
+  }
+
+  it("takes a new catalog in place, keeping the open list and its focused option", async () => {
+    const rows = [fallback({ configured: "model-b" })];
+    const c = mount(rows);
+    const row = openerOf(c);
+    await userEvent.click(row);
+    const bravo = optionsOf(c)[1];
+    bravo?.focus();
+    expect(document.activeElement).toBe(bravo);
+
+    landCatalog(c, rows, [
+      ...catalog,
+      { model_id: "model-d", model_name: "Delta", rate_multiplier: 1 },
+    ]);
+
+    expect(openerOf(c)).toBe(row);
+    expect(shownPanel(c)).toBe("fallback");
+    expect(listed(c).map(([name]) => name)).toEqual([
+      "Kiro default (Bravo)",
+      "Bravo",
+      "Charlie",
+      "Delta",
+    ]);
+    expect(optionsOf(c)[1]).toBe(bravo);
+    expect(document.activeElement).toBe(bravo);
+  });
+
+  it("moves focus to the selected option when the focused one leaves the catalog", async () => {
+    const rows = [fallback({ configured: "model-b" })];
+    const c = mount(rows);
+    await userEvent.click(openerOf(c));
+    optionsOf(c)[2]?.focus();
+
+    landCatalog(
+      c,
+      rows,
+      catalog.filter((m) => m.model_id !== "model-c"),
+    );
+
+    expect(listed(c)).toEqual([
+      ["Kiro default (Bravo)", false],
+      ["Bravo", true],
+    ]);
+    expect(document.activeElement).toBe(optionsOf(c)[1]);
+  });
+
   it("moves focus to the selected option, and back to the row on return", async () => {
     const c = mount([fallback({ configured: "model-b" })]);
     openerOf(c).focus();
