@@ -17,6 +17,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/cplieger/marotte/internal/testsupport/testchild"
 )
 
 // procIDs reads pid's process group and session from /proc/<pid>/stat (fields 5 and 6, after the
@@ -113,11 +115,12 @@ func TestAgentTerminal_IncidentLoopLeavesItsHostAlive(t *testing.T) {
 	child := exec.CommandContext(ctx, os.Args[0], // #nosec G204 -- the test binary itself
 		"-test.run=^TestAgentTerminalIncidentHarness$", "-test.count=1", "-test.v")
 	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	child.Env = append(os.Environ(),
+	child.Env = testchild.Env(
 		incidentHarnessEnv+"=1",
 		"INCIDENT_TOKEN="+token,
 		"RUNNER_SID="+strconv.Itoa(runnerSid),
-		"RUNNER_PGID="+strconv.Itoa(runnerPgrp))
+		"RUNNER_PGID="+strconv.Itoa(runnerPgrp),
+	)
 	var out bytes.Buffer
 	child.Stdout, child.Stderr = &out, &out
 	stdin, err := child.StdinPipe()

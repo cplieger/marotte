@@ -15,6 +15,7 @@ import (
 	"github.com/cplieger/forgeapi/v2"
 	"github.com/cplieger/forgeapi/v2/creds"
 	"github.com/cplieger/marotte/internal/systembin"
+	"github.com/cplieger/marotte/internal/testsupport/testchild"
 )
 
 // TestMain runs the test binary as the credential helper when git re-executes
@@ -355,6 +356,7 @@ func TestGitCredentialFill_ReachesTheHelper(t *testing.T) {
 		t.Fatal("no system git")
 	}
 	cmd := exec.CommandContext(t.Context(), git, "credential", "fill")
+	cmd.Env = testchild.Env() // git hands it to the helper, a copy of this test binary
 	cmd.Stdin = strings.NewReader("protocol=https\nhost=forge.test\n\n")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

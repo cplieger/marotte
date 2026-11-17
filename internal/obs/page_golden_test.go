@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cplieger/marotte/internal/testsupport/testchild"
 )
 
 // The marotte families' page through one fixed sequence of states, as the shipped alert rules and users' dashboards
@@ -23,7 +25,7 @@ const (
 func TestMetricsPage_MatchesTheGolden(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "page.txt")
 	child := exec.Command(os.Args[0], "-test.run=^TestMetricsPage_GoldenChild$")
-	child.Env = append(os.Environ(), pageGoldenEnv+"="+out)
+	child.Env = testchild.Env(pageGoldenEnv + "=" + out)
 	if o, err := child.CombinedOutput(); err != nil {
 		t.Fatalf("the child test binary: %v\n%s", err, o)
 	}
