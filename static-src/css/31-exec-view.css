@@ -1110,8 +1110,10 @@
     padding-inline-end: var(--sp-1);
   }
 
+  /* The corner follows the verb's block inset on the tier in force; `--head-act-in` is touch-sized
+     on both tiers, so it would square a mouse's corner. */
   & .run-icon-btn {
-    border-radius: max(0px, calc(var(--stack-in-r) - var(--head-act-in)));
+    border-radius: max(0px, calc(var(--stack-in-r) - (var(--row-tap) - var(--ctl-h-dense)) / 2));
   }
 }
 
@@ -1128,7 +1130,8 @@
   justify-content: start;
   padding: 0;
   border: 0;
-  border-radius: max(0px, calc(var(--stack-in-r) - var(--head-act-in)));
+  /* It starts on the head's own start edge, with no verb's end inset to subtract. */
+  border-radius: var(--stack-in-r);
   background: none;
   color: var(--c-text-control);
   cursor: pointer;
