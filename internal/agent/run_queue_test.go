@@ -71,11 +71,11 @@ func seedQueue(t *testing.T, cs *testChatStore, chatID marotte.ChatID, rows ...m
 	}); err != nil {
 		t.Fatalf("seed queue: %v", err)
 	}
-	h, ok := seededHubs.Load(cs)
-	if !ok {
+	h := cs.runtime.Load()
+	if h == nil {
 		return
 	}
-	lc, ok := h.(*Runtime).coord.turns.lookup(chatID)
+	lc, ok := h.coord.turns.lookup(chatID)
 	if !ok {
 		return
 	}
@@ -92,9 +92,6 @@ func seedQueue(t *testing.T, cs *testChatStore, chatID marotte.ChatID, rows ...m
 	lc.run.touch()
 	lc.wakeLocked()
 }
-
-// seededHubs maps a hub's chat store to the hub, so seedQueue reaches a chat's live list.
-var seededHubs sync.Map
 
 // runPrompt sends messageID as a prompt and waits until its turn closed and the list is idle again.
 func runPrompt(t *testing.T, h *Runtime, cs *testChatStore, chatID marotte.ChatID, messageID string) {
