@@ -304,8 +304,6 @@ class ModelSwitchController {
     scroll.removeAttribute("aria-label");
     setBusy(scroll, notice.busy);
     if (this.noticeRow === null) {
-      // Prepended: reconcile inserts each keyed row after every unkeyed sibling, so an
-      // appended notice would sort below the first model of a late catalog.
       this.noticeRow = el("div", { className: "list-empty" }) as HTMLDivElement;
       scroll.prepend(this.noticeRow);
     }
@@ -315,7 +313,6 @@ class ModelSwitchController {
       this.noticeRetry = null;
     } else if (this.noticeRetry === null) {
       this.noticeRetry = this.buildRetryRow();
-      // After the notice, still ahead of every keyed row.
       this.noticeRow.after(this.noticeRetry);
     }
   }

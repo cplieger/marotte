@@ -229,12 +229,16 @@ describe("the model card with no models", () => {
     onExpand.fn?.();
     retryBtn()?.focus();
     expect(document.activeElement).toBe(retryBtn());
+    const scrolled = vi.spyOn(HTMLElement.prototype, "scrollIntoView");
 
     cachedModels = [model("model-b-5"), model("model-a-4.7")];
     notice = null;
     catalogTick.bump();
 
-    expect(document.activeElement).toBe(scroller().querySelector('[data-model="model-a-4.7"]'));
+    const row = scroller().querySelector('[data-model="model-a-4.7"]');
+    expect(document.activeElement).toBe(row);
+    expect(scrolled.mock.contexts).toContain(row);
+    scrolled.mockRestore();
   });
 
   it("keeps focus on the Retry when the read fails again", () => {
