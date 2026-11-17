@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } 
 import { renderMarkdown } from "@cplieger/ui/markdown";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { isRunnableShell, finishCodeBlock, setShellRunCallback } from "./code-blocks.js";
+import { asksClosed } from "./legacy-ui/ask.js";
 import { createMarkdownStream, renderMarkdownInto } from "./markdown.js";
 
 describe("isRunnableShell", () => {
@@ -148,6 +149,12 @@ function ownButtons(root: HTMLElement): HTMLButtonElement[] {
 
 function runButton(root: HTMLElement): HTMLButtonElement | undefined {
   return ownButtons(root)[0];
+}
+
+/** After a click on the confirm: its answer reaches the caller once the dialog has closed, a task later. */
+async function answered(): Promise<void> {
+  await asksClosed();
+  await new Promise((r) => setTimeout(r, 0));
 }
 
 describe("finishCodeBlock", () => {
@@ -422,7 +429,7 @@ describe("Run on a line that is partly out of view", () => {
     expect(msg?.scrollWidth).toBeLessThanOrEqual(msg?.clientWidth ?? 0);
     expect(dlg?.scrollWidth).toBeLessThanOrEqual(dlg?.clientWidth ?? 0);
     dlg?.querySelector<HTMLButtonElement>(".uip-ask-cancel")?.click();
-    await new Promise((r) => setTimeout(r, 0));
+    await answered();
     expect(run).not.toHaveBeenCalled();
   });
 
@@ -434,7 +441,7 @@ describe("Run on a line that is partly out of view", () => {
     const ok = openAsk()?.querySelector<HTMLButtonElement>(".uip-ask-ok");
     expect(ok?.textContent).toBe("Run");
     ok?.click();
-    await new Promise((r) => setTimeout(r, 0));
+    await answered();
     expect(run).toHaveBeenCalledTimes(1);
     expect(run).toHaveBeenCalledWith(long);
   });
@@ -460,7 +467,7 @@ describe("Run on a line that is partly out of view", () => {
     // Collapsed white space would draw the six spaces as one.
     expect(measure(runAt, runAt + 6)).toBeGreaterThan(one * 4);
     dlg?.querySelector<HTMLButtonElement>(".uip-ask-cancel")?.click();
-    await new Promise((r) => setTimeout(r, 0));
+    await answered();
   });
 });
 
@@ -510,7 +517,7 @@ describe("Run on a multi-line block", () => {
     expect(dlg).not.toBeNull();
     expect(dlg?.querySelector(".uip-ask-msg")?.textContent).toContain(block);
     dlg?.querySelector<HTMLButtonElement>(".uip-ask-cancel")?.click();
-    await new Promise((r) => setTimeout(r, 0));
+    await answered();
   });
 
   it("sends nothing when the reader cancels", async () => {
@@ -519,7 +526,7 @@ describe("Run on a multi-line block", () => {
     const root = mounted(block);
     runButton(root)?.click();
     openAsk()?.querySelector<HTMLButtonElement>(".uip-ask-cancel")?.click();
-    await new Promise((r) => setTimeout(r, 0));
+    await answered();
     expect(run).not.toHaveBeenCalled();
   });
 
@@ -531,7 +538,7 @@ describe("Run on a multi-line block", () => {
     const ok = openAsk()?.querySelector<HTMLButtonElement>(".uip-ask-ok");
     expect(ok?.textContent).toBe("Run");
     ok?.click();
-    await new Promise((r) => setTimeout(r, 0));
+    await answered();
     expect(run).toHaveBeenCalledTimes(1);
     expect(run).toHaveBeenCalledWith(block);
   });
@@ -544,7 +551,7 @@ describe("Run on a multi-line block", () => {
     const dlg = openAsk();
     expect(dlg?.querySelector(".uip-ask-msg")?.textContent).toContain(block);
     dlg?.querySelector<HTMLButtonElement>(".uip-ask-ok")?.click();
-    await new Promise((r) => setTimeout(r, 0));
+    await answered();
     expect(run).toHaveBeenCalledWith(block);
   });
 });

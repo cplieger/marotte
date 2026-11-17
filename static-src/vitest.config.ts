@@ -252,7 +252,11 @@ const webkitDevices = [
 
 /** The mouse files whose clicks a browser engine decides, run again in WebKit and Firefox on a desktop
  *  viewport. Opt-in (`POINTER_ENGINES=1`): it needs `npx playwright install firefox webkit`, which CI does not. */
-const pointerEngineFiles = ["context-menu.pointer.test.ts", "focus-ring-scripted.pointer.test.ts"];
+const pointerEngineFiles = [
+  "context-menu.pointer.test.ts",
+  "focus-ring-scripted.pointer.test.ts",
+  "messages-rewind-focus.pointer.test.ts",
+];
 
 export default defineConfig({
   // Serves the MSW worker script from the package for the browser tests that mock the network;

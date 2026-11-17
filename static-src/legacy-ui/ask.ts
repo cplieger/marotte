@@ -441,6 +441,27 @@ export function ask(message: string, opts?: AskOptions): Promise<boolean | strin
   });
 }
 
+/** Resolves once no ask dialog is open, its fade-out included: until then the page outside is inert and refuses
+ *  focus. */
+export function asksClosed(): Promise<void> {
+  const dialogs = [slots.boolean, slots.input].flatMap((s) => (s === null ? [] : [s.refs.dialog]));
+  return new Promise((resolve) => {
+    const check = (): void => {
+      if (dialogs.some((d) => d.open)) {
+        return;
+      }
+      for (const d of dialogs) {
+        d.removeEventListener("close", check);
+      }
+      resolve();
+    };
+    for (const d of dialogs) {
+      d.addEventListener("close", check);
+    }
+    check();
+  });
+}
+
 /** Test-only: settle the live question, remove both shared dialogs and reset internal state. */
 // deadset:ignore DS1102 -- test seam: settles the live question and removes both shared dialogs
 export function _resetForTest(): void {

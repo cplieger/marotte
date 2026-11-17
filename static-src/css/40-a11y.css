@@ -42,12 +42,11 @@
   outline-offset: var(--focus-offset);
 }
 
-/* The turn map's Escape focuses the transcript by script, and focus moved from a keyboard-focused
- * link keeps `:focus-visible`: without this the UA's `outline: auto` rings the scroller. Inset,
- * because the scroller's own edges clip an outset ring. */
-[id="messages-wrap"]:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-offset-inset);
+/* The transcript scroller holds focus (tabindex -1) only so a tap, a scroll key or a script can park it
+ * there; it is not a control, so it never rings, whatever focused it. `:focus`, because the UA's own
+ * `outline: auto` follows `:focus-visible` in one engine and `:focus` in another. */
+[id="messages-wrap"]:focus {
+  outline: none;
 }
 
 /* A CONTROL ITS CLIPPING CARD DOES NOT CLEAR TAKES THE RING INSIDE ITS OWN EDGE.

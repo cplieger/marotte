@@ -6,7 +6,7 @@ import { reopenChat } from "./chat.js";
 import { showContextMenu } from "./context-menu.js";
 import { sectionFolded, setSectionFolded } from "./device-view.js";
 import { isSliding, slideBox } from "./disclosure-row.js";
-import { $, maybeEl, queryEl, setText } from "./dom.js";
+import { $, maybeEl, setText } from "./dom.js";
 import { iconEl } from "./icon-el.js";
 import { bindContextPress } from "./context-hold.js";
 import { ICON_TRASH } from "./icons.js";
@@ -231,20 +231,7 @@ export function initHistorySection(): void {
     } finally {
       busy.delete(ref);
       row.remove.removeAttribute("aria-busy");
-      // The confirm answers before its dialog has faded; its close then puts focus back on what opened it,
-      // which a frame may have taken meanwhile.
-      const modal = queryEl<HTMLDialogElement>("dialog:modal");
-      if (modal === null) {
-        restoreFocus(mark);
-      } else {
-        modal.addEventListener(
-          "close",
-          () => {
-            restoreFocus(mark);
-          },
-          { once: true },
-        );
-      }
+      restoreFocus(mark);
     }
   }
 

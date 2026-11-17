@@ -85,4 +85,58 @@ describe("a confirm's focus", () => {
     await shut;
     expect(document.activeElement).toBe(field);
   });
+
+  it("resolves once its dialog has closed, so a focus the caller moves then lands", async () => {
+    const opener = document.createElement("button");
+    opener.type = "button";
+    opener.textContent = "Rewind";
+    const field = document.createElement("textarea");
+    let answer: Promise<boolean> | undefined;
+    opener.addEventListener("click", () => {
+      answer = confirm({ title: "Rewind to this turn?", confirmLabel: "Rewind" });
+    });
+    document.body.append(opener, field);
+    hosts.push(opener, field);
+
+    await userEvent.click(opener);
+    const ok = document.querySelector<HTMLButtonElement>("dialog.uip-ask[open] .uip-ask-ok");
+    if (ok === null || answer === undefined) {
+      throw new Error("the click opened no confirm");
+    }
+    await userEvent.click(ok);
+    await expect(answer).resolves.toBe(true);
+    field.focus();
+
+    expect(document.activeElement).toBe(field);
+  });
+
+  it("hands focus to the first control left beside its opener when the opener is gone", async () => {
+    const box = document.createElement("div");
+    const opener = document.createElement("button");
+    opener.type = "button";
+    opener.textContent = "Rewind";
+    const other = document.createElement("button");
+    other.type = "button";
+    other.textContent = "Copy";
+    let answer: Promise<boolean> | undefined;
+    opener.addEventListener("click", () => {
+      answer = confirm({ title: "Rewind to this turn?", confirmLabel: "Rewind" });
+    });
+    box.append(opener, other);
+    document.body.append(box);
+    hosts.push(box);
+
+    await userEvent.click(opener);
+    const cancel = document.querySelector<HTMLButtonElement>(
+      "dialog.uip-ask[open] .uip-ask-cancel",
+    );
+    if (cancel === null || answer === undefined) {
+      throw new Error("the click opened no confirm");
+    }
+    opener.remove();
+    await userEvent.click(cancel);
+    await expect(answer).resolves.toBe(false);
+
+    expect(document.activeElement).toBe(other);
+  });
 });

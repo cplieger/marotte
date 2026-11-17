@@ -1,7 +1,8 @@
 // Confirm dialog over `./legacy-ui/ask.js`'s `ask`: a short question as the heading, what it does as the body.
 // The destructive variant uses role="alertdialog" and focuses Cancel. Skin: `.uip-ask` in css/04-uip-skin.css.
 
-import { ask } from "./legacy-ui/ask.js";
+import { ask, asksClosed } from "./legacy-ui/ask.js";
+import { focusOptions } from "./legacy-ui/scripted-focus.js";
 
 const CONTROL = "button, summary, a[href], [role='button'], [role='menuitem']";
 
@@ -33,15 +34,18 @@ export interface Confirmation {
 }
 
 /** Show a confirmation dialog. Resolves true if the user confirms, false on cancel / Escape / backdrop click /
- *  preemption by a later confirm(). Focus returns to the control whose click opened it. */
-export function confirm(q: Confirmation): Promise<boolean> {
+ *  preemption by a later confirm(), once the dialog has closed: a focus the caller moves then lands. Focus
+ *  returns to the control whose click opened it. */
+export async function confirm(q: Confirmation): Promise<boolean> {
   if (activated?.isConnected === true && document.activeElement !== activated) {
     // Before `showModal`, which records the focused element as the one its close restores.
-    activated.focus({ preventScroll: true });
+    activated.focus({ preventScroll: true, ...focusOptions(activated) });
   }
-  return ask(q.body ?? "", {
+  const yes = await ask(q.body ?? "", {
     title: q.title,
     confirmLabel: q.confirmLabel ?? "Confirm",
     variant: q.variant ?? "normal",
   });
+  await asksClosed();
+  return yes;
 }

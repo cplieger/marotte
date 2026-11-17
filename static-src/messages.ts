@@ -40,6 +40,7 @@ import {
   swapTranscript,
 } from "./transcript-cover.js";
 import { $ } from "./dom.js";
+import { focusOptions } from "./legacy-ui/scripted-focus.js";
 import {
   followTargetChanged,
   getScrollEl,
@@ -1642,7 +1643,7 @@ function rewindConfirmation(target: EntryPrompt, discarded: readonly Turn[]): Co
 
 /** Refused mid-turn: KAS throws on a session with a live abortController. `mountRewind` disables the
  *  button; this is the second gate. A revert that lands while its chat is still active puts the prompt's
- *  text (never its attachments) in the composer, unless the composer already holds text. */
+ *  text (never its attachments) in the composer, unless the composer already holds text, and focuses it. */
 async function handleRewindClick(target: EntryPrompt): Promise<void> {
   const session = getPainted();
   if (session === undefined) {
@@ -1674,17 +1675,17 @@ async function handleRewindClick(target: EntryPrompt): Promise<void> {
     const back = paintRewinds(session.id, target.id);
     // Disabling the focused button dropped focus to <body>; give it back while the button is still mounted.
     if (back?.isConnected === true && document.activeElement === document.body) {
-      back.focus();
+      back.focus(focusOptions(back));
     }
   }
   if (outcome.status !== "success" || getPaintedId() !== session.id) {
     return;
   }
   const input = $.promptInput;
-  if (input.value.trim() !== "") {
-    return;
+  if (input.value.trim() === "") {
+    setComposerValue(target.text);
   }
-  setComposerValue(target.text);
+  // Also over a draft: the cut is about to remove the clicked button, which would leave focus on <body>.
   input.focus();
 }
 

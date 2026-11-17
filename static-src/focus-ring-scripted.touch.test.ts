@@ -1,6 +1,6 @@
 // The pointer suite's rules for a finger: a tap into the transcript or on a dialog's opener draws no ring, and a
 // hardware keyboard's Tab inside the dialog does (an iPad with a keyboard attached is both at once).
-import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -71,5 +71,18 @@ describe("a tap", () => {
     const next = focusedIn(dialog);
     expect(next).not.toBe(first);
     expect(outlineOf(next)).toBe(RING);
+  });
+
+  it("on the confirm's Cancel hands focus back to Rewind with no ring", async () => {
+    const rewind = mountRewindButton();
+    await tap("#focus-ring-rewind");
+    openConfirm();
+
+    await tap("dialog.uip-ask[open] .uip-ask-cancel");
+
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(rewind);
+    });
+    expect(outlineOf(rewind)).toBe("none");
   });
 });

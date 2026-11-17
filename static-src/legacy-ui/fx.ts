@@ -3,6 +3,8 @@
 // only what differs and then checks the pass, so a pass made stale by that
 // code restarts before its next effect.
 
+import { focusOptions, quietPlatformFocus } from "./scripted-focus.js";
+
 /** The inline style properties realization writes. */
 export type StyleProp =
   | "height"
@@ -35,8 +37,10 @@ export interface Fx {
   append(parent: Node, child: Node): void;
   /** Skipped when detached. */
   remove(node: ChildNode): void;
-  /** Skipped when `el` is focused or detached. */
+  /** Skipped when `el` is focused or detached. Rings only when the keyboard led to it (`focusOptions`). */
   focus(el: HTMLElement): void;
+  /** `quietPlatformFocus`: after `showModal` or a close, whose focus the platform places. */
+  quietFocus(): void;
   /** Skipped unless `el` is focused. */
   blur(el: HTMLElement): void;
   click(el: HTMLElement): void;
@@ -165,9 +169,13 @@ export function fxAt(pass: Pass): Fx {
     },
     focus(el) {
       if (el.isConnected && document.activeElement !== el) {
-        el.focus();
+        el.focus(focusOptions(el));
         pass.check();
       }
+    },
+    quietFocus() {
+      quietPlatformFocus();
+      pass.check();
     },
     blur(el) {
       if (document.activeElement === el) {
