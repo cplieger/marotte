@@ -527,7 +527,7 @@ func laneOf(s engineSession) *fakeBridge {
 }
 
 // awaitEngine blocks until h's first engine is ready, forever when none can start: call it only for a hub whose
-// engine is coming (bootComing).
+// engine is ready or coming.
 func awaitEngine(h *Runtime) { <-h.EngineReady() }
 
 // hostSec is a launch's recorded host security for the Custom profile, so a test lease loads its host session.

@@ -75,29 +75,31 @@ func TestReprobe_AProviderBackMakesTheRecordAnswerableAtOnce(t *testing.T) {
 // A provider still down keeps the record unreachable, and the caller's deadline bounds its wait on a renewal that
 // hangs.
 func TestReprobe_AProviderStillDownStaysUnreachableWithinTheCallersDeadline(t *testing.T) {
-	h, fb, _ := unreachableHarness(t)
-	if a := h.v.Reprobe(t.Context(), "cb"); a != ProviderUnreachable {
-		t.Errorf("Reprobe with the provider down = %v, want %v", a, ProviderUnreachable)
-	}
-
-	release := make(chan struct{})
-	t.Cleanup(func() { close(release) })
-	fb.setRefresh(func(ctx context.Context, _ fakeCred) (fakeCred, error) {
-		select {
-		case <-release:
-		case <-ctx.Done():
+	synctest.Test(t, func(t *testing.T) {
+		h, fb, _ := unreachableHarness(t)
+		if a := h.v.Reprobe(t.Context(), "cb"); a != ProviderUnreachable {
+			t.Errorf("Reprobe with the provider down = %v, want %v", a, ProviderUnreachable)
 		}
-		return fakeCred{}, errNetworkDown
+
+		release := make(chan struct{})
+		t.Cleanup(func() { close(release) })
+		fb.setRefresh(func(ctx context.Context, _ fakeCred) (fakeCred, error) {
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+			return fakeCred{}, errNetworkDown
+		})
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
+		defer cancel()
+		start := time.Now()
+		if a := h.v.Reprobe(ctx, "cb"); a != ProviderUnreachable {
+			t.Errorf("Reprobe on a hanging renewal = %v, want %v", a, ProviderUnreachable)
+		}
+		if took := time.Since(start); took > 10*h.answerWindow {
+			t.Errorf("Reprobe waited %v on a hanging renewal, want about its 30ms deadline", took)
+		}
 	})
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
-	defer cancel()
-	start := time.Now()
-	if a := h.v.Reprobe(ctx, "cb"); a != ProviderUnreachable {
-		t.Errorf("Reprobe on a hanging renewal = %v, want %v", a, ProviderUnreachable)
-	}
-	if took := time.Since(start); took > 10*h.answerWindow {
-		t.Errorf("Reprobe waited %v on a hanging renewal, want about its 30ms deadline", took)
-	}
 }
 
 // Callers reprobing together share one renewal.

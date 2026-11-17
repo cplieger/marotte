@@ -93,32 +93,35 @@ func TestInterfaceSatisfaction(_ *testing.T) {
 // TestShutdown_BoundsAWedgedHandler pins that a handler that never decrements inflight must not hold Shutdown, which
 // runs synchronously inside httpserver.Run's pre-drain hook.
 func TestShutdown_BoundsAWedgedHandler(t *testing.T) {
-	h, _, _ := newTestHub()
+	synctest.Test(t, func(t *testing.T) {
+		h, _, _ := newTestHub()
+		t.Cleanup(func() { shutdownHub(t, h) })
 
-	// A handler that never returns.
-	h.lifecycle.inflight.Add(1)
-	t.Cleanup(h.lifecycle.inflight.Done)
+		// A handler that never returns.
+		h.lifecycle.inflight.Add(1)
+		t.Cleanup(h.lifecycle.inflight.Done)
 
-	const budget = 150 * time.Millisecond
-	ctx, cancel := context.WithTimeout(context.Background(), budget)
-	defer cancel()
+		const budget = 150 * time.Millisecond
+		ctx, cancel := context.WithTimeout(context.Background(), budget)
+		defer cancel()
 
-	start := time.Now()
-	err := h.Shutdown(ctx)
-	elapsed := time.Since(start)
+		start := time.Now()
+		err := h.Shutdown(ctx)
+		elapsed := time.Since(start)
 
-	if err == nil {
-		t.Fatal("Shutdown reported success while a handler was still in flight")
-	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("error %v does not carry context.DeadlineExceeded", err)
-	}
-	if !strings.Contains(err.Error(), "in-flight handlers") {
-		t.Errorf("error %q does not name the wait that expired", err)
-	}
-	if elapsed > 20*budget {
-		t.Errorf("Shutdown took %v on a %v budget", elapsed, budget)
-	}
+		if err == nil {
+			t.Fatal("Shutdown reported success while a handler was still in flight")
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("error %v does not carry context.DeadlineExceeded", err)
+		}
+		if !strings.Contains(err.Error(), "in-flight handlers") {
+			t.Errorf("error %q does not name the wait that expired", err)
+		}
+		if elapsed > 20*budget {
+			t.Errorf("Shutdown took %v on a %v budget", elapsed, budget)
+		}
+	})
 }
 
 // stallingStopEngine's Stop blocks until release closes, like kiro-cli in its SIGTERM grace.

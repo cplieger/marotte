@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -53,21 +54,23 @@ func TestRewindChat_WaitsOutAReservationThatOpensNoTurn(t *testing.T) {
 
 // A rewind while a turn runs is refused at once, with a reason the client can tell apart.
 func TestRewindChat_ARunningTurnRefusesAtOnceWithItsReason(t *testing.T) {
-	shrinkAdmissionWait(t, 5*time.Second)
-	h, _, _ := newTestHub()
-	t.Cleanup(func() { shutdownHub(t, h) })
-	openChat(t, h, "c1")
-	h.stagePromptTurn(t, "c1")
+	synctest.Test(t, func(t *testing.T) {
+		shrinkAdmissionWait(t, 5*time.Second)
+		h, _, _ := newTestHub()
+		t.Cleanup(func() { shutdownHub(t, h) })
+		openChat(t, h, "c1")
+		h.stagePromptTurn(t, "c1")
 
-	start := time.Now()
-	rec := rewindTo(t, h, "m-c1")
+		start := time.Now()
+		rec := rewindTo(t, h, "m-c1")
 
-	if code, reason := rewindAnswer(t, rec); code != http.StatusConflict || reason != "turn_open" {
-		t.Errorf("rewind beside a running turn = %d reason %q, want 409 turn_open", code, reason)
-	}
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Errorf("the refusal took %v, want it at once rather than after the %v wait", elapsed, 5*time.Second)
-	}
+		if code, reason := rewindAnswer(t, rec); code != http.StatusConflict || reason != "turn_open" {
+			t.Errorf("rewind beside a running turn = %d reason %q, want 409 turn_open", code, reason)
+		}
+		if elapsed := time.Since(start); elapsed > time.Second {
+			t.Errorf("the refusal took %v, want it at once rather than after the %v wait", elapsed, 5*time.Second)
+		}
+	})
 }
 
 // A slot held past the wait refuses with its own reason, not as a running turn.

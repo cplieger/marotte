@@ -49,7 +49,6 @@ func TestGovernanceLockChange_ReachesTheEngineReadableOrNot(t *testing.T) {
 					}
 				}))
 			awaitBoot(h)
-			awaitEngine(h)
 			before := len(contentCollectionWrites(lane))
 			if tc.document != "" {
 				rewriteConfigByHand(t, h.lifecycle.configDir, tc.document)
