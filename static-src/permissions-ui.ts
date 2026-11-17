@@ -512,6 +512,13 @@ class NativePolicyController {
         "Custom, with no rules. Every capability asks, including reading a file. " +
         "Add rules below, or pick a profile to start from one.";
     }
+    if (text === "" && !this.profileSaved) {
+      // The unsaved default checks the same radio as a saved pick of it, but parentless runs follow
+      // only a saved profile (policyfile.DefaultRunProfile).
+      text =
+        `No profile is saved yet. New chats start on ${profileLabel(this.activeProfile)}, and ` +
+        "workflow runs not started from a chat use Trusted until you click a profile to save it.";
+    }
     status.textContent = text;
     status.classList.toggle("hidden", text === "");
     status.classList.toggle("native-policy-status-error", this.profileNoteIsError);

@@ -57,6 +57,17 @@ func (rt *Runtime) settingsProfile(ctx context.Context) string {
 	return knownProfile(doc.session.profile)
 }
 
+// SecurityProfileChoice is the Settings profile settingsProfile pins and whether config.json names it, from the same
+// snapshot, so a view of it shows what a new chat's door sends; saved is false while no readable generation names a
+// known profile.
+func (rt *Runtime) SecurityProfileChoice(ctx context.Context) (id string, saved bool) {
+	doc, _ := rt.configDocument(ctx)
+	if _, ok := policyfile.ProfileFor(doc.session.profile); ok {
+		return doc.session.profile, true
+	}
+	return policyfile.DefaultProfile, false
+}
+
 // pinSecurityProfile gives a chat with no profile of its own the Settings profile at its door, so a later Settings
 // change leaves it on the profile it opened with.
 func (bc *bridgeCoordinator) pinSecurityProfile(ctx context.Context, chatID marotte.ChatID, rec *marotte.Chat) {

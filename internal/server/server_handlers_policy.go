@@ -32,7 +32,7 @@ func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scope := r.URL.Query().Get("scope")
-	profile, saved := s.profiles().Choice(r.Context())
+	profile, saved := s.agent.SecurityProfileChoice(r.Context())
 	view := marotte.PolicyView{
 		WritableScopes: []string{policyfile.ScopeUser, policyfile.ScopeWorkspace},
 		Profiles:       securityProfileCatalog(),

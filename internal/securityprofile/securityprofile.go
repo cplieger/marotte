@@ -47,24 +47,18 @@ type Store struct {
 	WorkDir   string
 }
 
-// Active is the Settings profile a new chat starts on, with the session door's fallback, so a
-// reader shows what that chat's door sends.
+// Active is the profile config.json names now, read fresh for a profile write's decision:
+// policyfile.DefaultProfile while it names no known profile or cannot be read. A view reads
+// agent.Runtime.SecurityProfileChoice, which keeps the last readable profile.
 func (s *Store) Active(ctx context.Context) string {
-	id, _ := s.Choice(ctx)
-	return id
-}
-
-// Choice is Active plus whether config.json names that profile. An unsaved default and a saved
-// pick of it differ for a parentless run, which opens on policyfile.DefaultRunProfile while
-// nothing is saved.
-func (s *Store) Choice(ctx context.Context) (id string, saved bool) {
-	if !settings.FieldInto(ctx, s.ConfigDir, settings.KeySecurityProfile, &id) || id == "" {
-		return policyfile.DefaultProfile, false
+	var id string
+	if !settings.FieldInto(ctx, s.ConfigDir, settings.KeySecurityProfile, &id) {
+		return policyfile.DefaultProfile
 	}
 	if _, ok := policyfile.ProfileFor(id); !ok {
-		return policyfile.DefaultProfile, false
+		return policyfile.DefaultProfile
 	}
-	return id, true
+	return id
 }
 
 // Select persists id into config.json; an unreadable document refuses. It writes no policy file.

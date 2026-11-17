@@ -100,3 +100,46 @@ func parentlessFixture(t *testing.T, saved string) (*Runtime, *fakeBridge) {
 	settleBoot(t, h)
 	return h, br
 }
+
+// The choice is saved only while config.json names a profile, so a picker can tell the default it shows from a saved
+// pick of the same profile.
+func TestSecurityProfileChoice_IsSavedOnlyWhileConfigNamesAProfile(t *testing.T) {
+	for _, tc := range []struct {
+		name, stored, want string
+		saved              bool
+	}{
+		{"a_fresh_config", "", policyfile.ProfileDelegated, false},
+		{"an_unknown_value", "no-such-profile", policyfile.ProfileDelegated, false},
+		{"a_saved_approve_for_me", policyfile.ProfileDelegated, policyfile.ProfileDelegated, true},
+		{"a_saved_trusted", policyfile.ProfileTrusted, policyfile.ProfileTrusted, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _ := parentlessFixture(t, tc.stored)
+			if id, saved := h.SecurityProfileChoice(t.Context()); id != tc.want || saved != tc.saved {
+				t.Errorf("SecurityProfileChoice = (%q, %v), want (%q, %v)", id, saved, tc.want, tc.saved)
+			}
+		})
+	}
+}
+
+// While config.json cannot be read, the choice Settings shows is the profile a new chat is pinned to: the last
+// readable one, still saved.
+func TestSecurityProfileChoice_IsTheChatDoorsProfileWhileConfigIsUnreadable(t *testing.T) {
+	configDir := t.TempDir()
+	writeProfileSetting(t, configDir, policyfile.ProfileTrusted)
+	h := reopenFixtureIn(t, configDir, nil)
+	if id, saved := h.SecurityProfileChoice(t.Context()); id != policyfile.ProfileTrusted || !saved {
+		t.Fatalf("Setup: SecurityProfileChoice = (%q, %v), want saved trusted", id, saved)
+	}
+	rewriteConfigByHand(t, configDir, `{"security_profile":`)
+
+	if id, saved := h.SecurityProfileChoice(t.Context()); id != policyfile.ProfileTrusted || !saved {
+		t.Errorf("SecurityProfileChoice on an unreadable config = (%q, %v), want the last readable (trusted, true)", id, saved)
+	}
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+	if rec, _ := h.chatStore.Get(t.Context(), "c1"); rec.SecurityProfile != policyfile.ProfileTrusted {
+		t.Errorf("the new chat was pinned to %q, want trusted", rec.SecurityProfile)
+	}
+}

@@ -33,6 +33,8 @@ type chatEngine interface {
 	// SettingsWritten is the one after-write rule for a config.json write: keys are the keys it
 	// changed, nil when any may have. Call it once the write has landed.
 	SettingsWritten(ctx context.Context, keys []string)
+	// SecurityProfileChoice is the Settings profile a new chat is pinned to and whether config.json names it.
+	SecurityProfileChoice(ctx context.Context) (id string, saved bool)
 }
 
 // governanceLocks is the administrator's lock map as this package reads it, to

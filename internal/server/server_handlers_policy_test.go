@@ -39,6 +39,9 @@ func (f *fakePolicy) PolicyListing(_ context.Context, _ string) ([]marotte.Polic
 
 func getPolicyView(t *testing.T, s *Server) (marotte.PolicyView, map[string]json.RawMessage) {
 	t.Helper()
+	if s.agent == nil {
+		s.agent = &fakeEngine{}
+	}
 	rec := httptest.NewRecorder()
 	s.handlePolicyView(rec, httptest.NewRequest(http.MethodGet, "/api/permissions", http.NoBody))
 	if rec.Code != http.StatusOK {
@@ -149,7 +152,7 @@ func TestPolicyViewLive(t *testing.T) {
 	f := &fakePolicy{rules: []marotte.PolicyRule{
 		{Capability: "fs_write", Effect: "allow", Scope: "user", Source: "/x/permissions.yaml"},
 	}}
-	s := &Server{policy: f, workDir: t.TempDir()}
+	s := &Server{policy: f, agent: &fakeEngine{}, workDir: t.TempDir()}
 	req := httptest.NewRequest(http.MethodGet, "/api/permissions", http.NoBody)
 	rec := httptest.NewRecorder()
 	s.handlePolicyView(rec, req)
@@ -192,7 +195,7 @@ func TestPolicyViewFileFallback(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{policy: &fakePolicy{listErr: context.DeadlineExceeded}, workDir: work}
+	s := &Server{policy: &fakePolicy{listErr: context.DeadlineExceeded}, agent: &fakeEngine{}, workDir: work}
 	req := httptest.NewRequest(http.MethodGet, "/api/permissions", http.NoBody)
 	rec := httptest.NewRecorder()
 	s.handlePolicyView(rec, req)
@@ -682,7 +685,7 @@ func TestPolicyView_DropsIdenticalDuplicatesFromKAS(t *testing.T) {
 		Capability: "fs_read", Effect: "allow", Scope: "agent", Source: "agent-profile", Match: []string{"./**"},
 	})
 
-	s := &Server{policy: &fakePolicy{rules: rules}, workDir: t.TempDir()}
+	s := &Server{policy: &fakePolicy{rules: rules}, agent: &fakeEngine{}, workDir: t.TempDir()}
 	req := httptest.NewRequest(http.MethodGet, "/api/permissions", http.NoBody)
 	rec := httptest.NewRecorder()
 	s.handlePolicyView(rec, req)

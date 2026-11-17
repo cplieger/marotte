@@ -222,6 +222,31 @@ describe("the profile ladder", () => {
   });
 });
 
+// An unsaved default and a saved pick of it check the same radio, yet a parentless run opens on
+// Trusted only while nothing is saved, so the picker has to say which one it is showing.
+describe("a profile that is not saved yet", () => {
+  it("says new chats start on it and workflow runs on Trusted until a click saves one", async () => {
+    await mount(view("delegated", [], false));
+    expect(statusText()).toContain("Approve for me");
+    expect(statusText()).toContain("Trusted");
+    expect(statusText()).toContain("click a profile");
+  });
+
+  it("says nothing once the profile is saved", async () => {
+    await mount(view("delegated"));
+    expect(statusText()).toBe("");
+  });
+
+  it("clears the line once the click that saves the default reloads a saved view", async () => {
+    await mount(view("delegated", [], false));
+    mocks.apiGet.mockResolvedValue(view("delegated"));
+    radioFor("delegated").click();
+    await flush();
+    expect(profileCalls()).toEqual([{ profile: "delegated", seed: false }]);
+    expect(statusText()).toBe("");
+  });
+});
+
 describe("the Customize button", () => {
   it("is offered on a named profile and hidden on Custom", async () => {
     await mount(view("trusted"));
