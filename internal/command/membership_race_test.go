@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
@@ -124,7 +125,7 @@ func TestMembership_ADeleteWhoseTabCloseFailsRetriesUnderRace(t *testing.T) {
 // injection included only where a case asks for it.
 func newRacedMembership(t *testing.T, chats chatStore) (*Membership, *tabs.Store) {
 	t.Helper()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
@@ -155,7 +156,7 @@ func (h *hookedChats) Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat
 // between its record read and its tab write, the one window a delete could split.
 func TestMembership_ADeleteCannotInterleaveWithACreate(t *testing.T) {
 	inner := testsupport.NewInMemoryChatStore()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}

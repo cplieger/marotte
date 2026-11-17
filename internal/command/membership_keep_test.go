@@ -14,6 +14,7 @@ import (
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/chat/archive"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 )
 
@@ -65,7 +66,7 @@ func newKeepFixture(t *testing.T) *keepFixture {
 	if err != nil {
 		t.Fatalf("Setup: chat.NewStore: %v", err)
 	}
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("Setup: tabs.NewStore: %v", err)
 	}
@@ -588,7 +589,7 @@ func TestAdmitRunPurge_RefusesWhileTheArrangementIsUnread(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "tabs.json"), []byte("{not json"), 0o600); err != nil {
 		t.Fatalf("Setup: write tabs.json: %v", err)
 	}
-	st, _ := tabs.NewStore(dir)
+	st, _ := tabs.NewStore(dir, settings.DefaultHistoryWindow)
 	if st.Unread() == "" {
 		t.Fatal("Setup: the tab store read a garbage arrangement")
 	}

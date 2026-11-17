@@ -15,6 +15,7 @@ import (
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/turnlog"
@@ -33,7 +34,7 @@ type ownerHub struct {
 
 func newOwnerHub(t *testing.T, tabbed bool) *ownerHub {
 	t.Helper()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("Setup: tab store: %v", err)
 	}
@@ -846,7 +847,7 @@ func TestCloseOwner_PendingReloadClosesAndTheNextOpenLoads(t *testing.T) {
 
 func TestCloseOwner_AStepMessageReachesItsParentAfterAPendingReload(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		st, err := tabs.NewStore(t.TempDir())
+		st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 		if err != nil {
 			t.Fatalf("Setup: tab store: %v", err)
 		}

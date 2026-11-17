@@ -14,13 +14,14 @@ import (
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 )
 
 // closeTabHub is a runtime with a tab store and chat c1 open in a tab.
 func closeTabHub(t *testing.T) (*Runtime, *testChatStore, *fakeBridge, marotte.TabSubject) {
 	t.Helper()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("Setup: tab store: %v", err)
 	}

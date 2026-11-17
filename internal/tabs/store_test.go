@@ -413,7 +413,7 @@ func TestReparent_MovesTheRowBehindTheNewParentsChildren(t *testing.T) {
 		t.Errorf("List()[spec].Parent = %q, want %q", tabs[i].Parent, parent.ID)
 	}
 
-	reloaded, err := NewStore(dir)
+	reloaded, err := NewStore(dir, testWindow)
 	if err != nil {
 		t.Fatalf("NewStore(%q) after Reparent: %v", dir, err)
 	}

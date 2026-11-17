@@ -883,12 +883,16 @@ export interface EffectiveSettings {
   rejected_keys: string[];
   /** ModelFallbacks is kiro-cli's fallback for each model it serves, empty until the engine reported a view. */
   model_fallbacks: ModelFallback[];
+  /** HistoryWindowChoices are the hours HistoryWindowHours accepts, ascending; never stored. */
+  history_window_choices: number[];
   /**
    * ChatRetentionDays is -1 (keep forever), 0 (delete on close) or a day count.
    * Zero is the most destructive value in the document, so absent must never
    * resolve to it.
    */
   chat_retention_days: number;
+  /** HistoryWindowHours is the stored choice, served uncapped; Days kept caps it where it is used. */
+  history_window_hours: number;
   /**
    * AutoCompactPct is inside AutoCompactPctRange; a stored value outside it reads as
    * settings.DefaultAutoCompactPct and is listed in RejectedKeys.
@@ -2978,8 +2982,8 @@ export interface QueuedPrompt {
 }
 
 /**
- * RecentClose is one chat whose last tab closed in the last tabs.RecentWindow, a row of the
- * sidebar's History section. Field order is fieldalignment's.
+ * RecentClose is one closed chat the tab store holds until tabs.RecentHold; the sidebar's History
+ * section shows the ones inside the History window. Field order is fieldalignment's.
  */
 export interface RecentClose {
   ref: string;

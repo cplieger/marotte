@@ -123,6 +123,38 @@ func TestRetention_KeepState(t *testing.T) {
 				t.Errorf("Recent() after the restart = %+v, want the gone chat's entry dropped", got)
 			}
 		}},
+		"recently_closed_the_history_window_survives_a_restart": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
+			setWindow := func(hours int) {
+				writeConfig(t, filepath.Join(root, "config.json"),
+					fmt.Sprintf(`{"chat_retention_days":%d,"history_window_hours":%d}`, seamRetentionDays, hours))
+			}
+			setWindow(72)
+			b1 := bootSeam(t, root, eng, logs, seamOpts{})
+			b1.create(t, "c-1", sess("c-1"))
+			b1.closeTab(t, "c-1")
+			b1.shutdown(t)
+			backdateRecent(t, root, "c-1", 30*time.Hour)
+
+			b2 := bootSeam(t, root, eng, logs, seamOpts{})
+			if got := b2.tabs.Recent(); len(got) != 1 || got[0].Ref != "c-1" {
+				t.Errorf("Recent() after a restart under 72h of a close 30h old = %+v, want c-1", got)
+			}
+			b2.shutdown(t)
+			setWindow(24)
+			b3 := bootSeam(t, root, eng, logs, seamOpts{})
+			if got := b3.tabs.Recent(); len(got) != 0 {
+				t.Errorf("Recent() after a restart under 24h = %+v, want nothing", got)
+			}
+			if held := heldRecent(t, root); len(held) != 1 || held[0] != "c-1" {
+				t.Errorf("tabs.json recent under 24h = %v, want c-1 still held", held)
+			}
+			b3.shutdown(t)
+			setWindow(72)
+			b4 := bootSeam(t, root, eng, logs, seamOpts{})
+			if got := b4.tabs.Recent(); len(got) != 1 || got[0].Ref != "c-1" {
+				t.Errorf("Recent() after a restart back under 72h = %+v, want c-1 again", got)
+			}
+		}},
 		"recently_closed_lists_nothing_with_retention_off": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
 			b := bootSeam(t, root, eng, logs, seamOpts{})
 			b.create(t, "c-1", sess("c-1"))

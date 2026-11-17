@@ -17,6 +17,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
@@ -56,7 +57,7 @@ func (f *flakyTabs) Close(ctx context.Context, id string, unlisted []string, fac
 
 func newFlakyMembership(t *testing.T, chats chatStore) (*Membership, *flakyTabs, *tabBus) {
 	t.Helper()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
@@ -455,7 +456,7 @@ func TestCloseTab_AnIdThatIsNotOpenIsNotAnError(t *testing.T) {
 // without a tab and reopening it loads everything back.
 func TestCloseTab_AChatTabRunsTheTeardownAndKeepsTheRecord(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
@@ -490,7 +491,7 @@ func TestCmdCloseTab_OnlyThePagesCloseIsAPersons(t *testing.T) {
 		{name: "api_caller", from: &marotte.Caller{Label: "script"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			st, err := tabs.NewStore(t.TempDir())
+			st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 			if err != nil {
 				t.Fatalf("open tab store: %v", err)
 			}
@@ -522,7 +523,7 @@ func TestCmdCloseTab_OnlyThePagesCloseIsAPersons(t *testing.T) {
 // off to an hour and a month-old chat can outlive its window by that much.
 func TestCloseTab_AChatTabCloseWakesRetention(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
@@ -551,7 +552,7 @@ func TestCloseTab_AChatTabCloseWakesRetention(t *testing.T) {
 // A run tab is the run purge's exemption the way a chat tab is the chat purge's, so
 // closing one wakes retention too, and while it is open the run reads as shown.
 func TestCloseTab_ARunTabCloseWakesRetention(t *testing.T) {
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
@@ -582,7 +583,7 @@ func TestCloseTab_ARunTabCloseWakesRetention(t *testing.T) {
 // An admitted purge holds the run until its delete returns: a run-tab open in that
 // window is refused, and the same open succeeds once the purge reports done.
 func TestOpenTab_ARunBeingPurgedIsRefusedUntilThePurgeIsDone(t *testing.T) {
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
@@ -620,7 +621,7 @@ func (incompleteClaims) SessionOwners(context.Context) chat.OwnerScan {
 
 func newClaimsMembership(t *testing.T, claims sessionClaims) *Membership {
 	t.Helper()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
@@ -1328,7 +1329,7 @@ func storedChatIDs(t *testing.T, store *testsupport.InMemoryChatStore) []marotte
 // teardown's engine calls can outlast the browser's request budget while kiro-cli stalls, and must still finish.
 func TestDeleteChatAndCloseTabs_AnswersBeforeTheTeardownEnds(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}

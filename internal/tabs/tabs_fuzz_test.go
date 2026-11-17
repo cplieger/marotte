@@ -33,7 +33,7 @@ func FuzzNewStore(f *testing.F) {
 		}
 
 		// The error is a warning; a store always comes back.
-		s, loadErr := NewStore(dir)
+		s, loadErr := NewStore(dir, testWindow)
 		if s == nil {
 			t.Fatal("NewStore returned a nil store; the caller has nothing to run on")
 		}

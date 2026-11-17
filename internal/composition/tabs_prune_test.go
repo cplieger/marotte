@@ -10,6 +10,7 @@ import (
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 )
 
@@ -33,7 +34,7 @@ func TestPruneTabs_DropsAChatTabWhoseChatIsGoneAndKeepsTheRest(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(chatsDir, "c-unread", "chat.json"), []byte("{not json"), 0o600); err != nil {
 		t.Fatalf("seed unread chat: %v", err)
 	}
-	tabStore, err := tabs.NewStore(t.TempDir())
+	tabStore, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("tab store: %v", err)
 	}
@@ -91,7 +92,7 @@ func TestPruneTabs_DropsARecentlyClosedEntryWhoseChatIsGone(t *testing.T) {
 		t.Fatalf("Setup: chat store: %v", err)
 	}
 	tabsDir := t.TempDir()
-	first, err := tabs.NewStore(tabsDir)
+	first, err := tabs.NewStore(tabsDir, settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("Setup: tab store: %v", err)
 	}
@@ -120,7 +121,7 @@ func TestPruneTabs_DropsARecentlyClosedEntryWhoseChatIsGone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Setup: reopen chat store: %v", err)
 	}
-	tabStore, err := tabs.NewStore(tabsDir)
+	tabStore, err := tabs.NewStore(tabsDir, settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("Setup: reopen tab store: %v", err)
 	}
@@ -183,7 +184,7 @@ func TestPruneTabs_OpensEachKeptChatTabsLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("chat store: %v", err)
 	}
-	tabStore, err := tabs.NewStore(t.TempDir())
+	tabStore, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("tab store: %v", err)
 	}

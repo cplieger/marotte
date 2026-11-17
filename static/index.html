@@ -650,6 +650,17 @@
                   <input type="number" id="chat-retention-days" class="rf-input rf-number" autocomplete="off" min="0" max="90" value="1" aria-label="Chat retention days">
                 </div>
               </div>
+              <div class="section-option section-option-fixed" id="history-window-row">
+                <div class="section-field">
+                  <div class="section-title-status-row">
+                    <label class="section-option-label" for="history-window-hours">History in the sidebar</label>
+                    <span class="settings-save-status hidden" data-save-status="history_window_hours" aria-live="polite"></span>
+                  </div>
+                  <select id="history-window-hours" class="rf-select" aria-describedby="history-window-hours-hint history-window-hours-cap"></select>
+                  <p class="section-hint" id="history-window-hours-hint">How long a chat you close stays in the sidebar's <strong>History</strong>, up to the 10 most recent. 24 hours is the default, and the History page keeps a closed chat for as long as <strong>Chat retention</strong> does.</p>
+                  <p class="section-hint" id="history-window-hours-cap" hidden></p>
+                </div>
+              </div>
             </div>
 
             <div class="page-section" id="general-links-section">

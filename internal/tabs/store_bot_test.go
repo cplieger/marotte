@@ -68,7 +68,7 @@ func TestBotFact_SurvivesEveryLaterTabWrite(t *testing.T) {
 		t.Error("a tab reparented under a Bot tab gained the Bot fact")
 	}
 
-	reloaded, err := NewStore(dir)
+	reloaded, err := NewStore(dir, testWindow)
 	if err != nil {
 		t.Fatalf("NewStore(%q): %v", dir, err)
 	}
@@ -103,7 +103,7 @@ func TestBotFact_IsAChatTabsOnly(t *testing.T) {
 			{ID: "t-run", Kind: marotte.TabKindRun, Ref: "wf_1", Bot: true},
 			{ID: "t-spec", Kind: marotte.TabKindSpec, Ref: ".kiro/specs/x", Bot: true},
 		}})
-		s, err := NewStore(dir)
+		s, err := NewStore(dir, testWindow)
 		if err != nil {
 			t.Fatalf("NewStore(%q): %v", dir, err)
 		}

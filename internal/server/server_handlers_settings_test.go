@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
@@ -266,5 +267,42 @@ func TestSettingsWrite_TriggerCaps(t *testing.T) {
 	}
 	if live, hourly := settings.TriggerCaps(t.Context(), config); live != 2 || hourly != 4 {
 		t.Errorf("stored caps (%d, %d) after the refused PATCHes, want the accepted (2, 4)", live, hourly)
+	}
+}
+
+func TestSettingsWrite_HistoryWindow(t *testing.T) {
+	patch := func(t *testing.T, s *Server, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPatch, "/api/settings", strings.NewReader(body)).WithContext(t.Context())
+		rec := httptest.NewRecorder()
+		s.handleSettingsWrite(rec, req)
+		return rec
+	}
+	config := t.TempDir()
+	s := &Server{agent: &fakeEngine{}, push: &testPush{}, configDir: config, workDir: t.TempDir()}
+	if rec := patch(t, s, `{"history_window_hours": 6}`); rec.Code != http.StatusOK {
+		t.Fatalf("PATCH history_window_hours 6 = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	if got := settings.HistoryWindow(t.Context(), config); got != 6*time.Hour {
+		t.Errorf("HistoryWindow after the PATCH of 6 = %v, want 6h", got)
+	}
+	if rec := patch(t, s, `{"chat_retention_days": 1}`); rec.Code != http.StatusOK {
+		t.Fatalf("PATCH chat_retention_days 1 = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	if rec := patch(t, s, `{"history_window_hours": 168}`); rec.Code != http.StatusOK {
+		t.Fatalf("PATCH history_window_hours 168 while Days kept is 1 = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	for _, body := range []string{
+		`{"history_window_hours": 0}`, `{"history_window_hours": 5}`, `{"history_window_hours": "24"}`, `{"history_window_hours": null}`,
+	} {
+		if rec := patch(t, s, body); rec.Code != http.StatusBadRequest {
+			t.Errorf("PATCH %s = %d %s, want 400", body, rec.Code, rec.Body)
+		}
+	}
+	if stored, ok := settings.Field[int](t.Context(), config, settings.KeyHistoryWindowHours); !ok || stored != 168 {
+		t.Errorf("stored history_window_hours = (%d, %v) after the refused PATCHes, want the accepted 168", stored, ok)
+	}
+	if got := settings.HistoryWindow(t.Context(), config); got != 24*time.Hour {
+		t.Errorf("HistoryWindow of a stored week under Days kept 1 = %v, want 24h", got)
 	}
 }

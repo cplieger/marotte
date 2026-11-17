@@ -25,7 +25,7 @@ func chatSpec(ref string) marotte.OpenTab {
 func newTestStore(t *testing.T) (*Store, string) {
 	t.Helper()
 	dir := t.TempDir()
-	s, err := NewStore(dir)
+	s, err := NewStore(dir, testWindow)
 	if err != nil {
 		t.Fatalf("Setup: NewStore(%q): %v", dir, err)
 	}
@@ -119,7 +119,7 @@ func TestStore_RoundTripsAcrossProcesses(t *testing.T) {
 		t.Fatalf("Setup: two opens and a pin left version %d, want 3", wantVersion)
 	}
 
-	second, err := NewStore(dir)
+	second, err := NewStore(dir, testWindow)
 	if err != nil {
 		t.Fatalf("NewStore(%q) after a clean write: %v", dir, err)
 	}
@@ -154,7 +154,7 @@ func TestNewStore_WarnsAndStartsEmpty(t *testing.T) {
 			dir := t.TempDir()
 			writeRaw(t, dir, tc.data, fileMode)
 
-			s, err := NewStore(dir)
+			s, err := NewStore(dir, testWindow)
 			if err == nil {
 				t.Errorf("NewStore(%s) = nil error, want a diagnostic for the caller to warn with", tc.desc)
 			}
@@ -179,7 +179,7 @@ func TestNewStore_OversizedIsRefusedBeforeItIsParsed(t *testing.T) {
 	padding := strings.Repeat("x", maxBytes)
 	writeRaw(t, dir, []byte(`{"version":9,"tabs":[],"pad":"`+padding+`"}`), fileMode)
 
-	s, err := NewStore(dir)
+	s, err := NewStore(dir, testWindow)
 	if err == nil || !strings.Contains(err.Error(), "decode bound") {
 		t.Errorf("NewStore(oversized) error = %v, want one naming the decode bound", err)
 	}
@@ -197,7 +197,7 @@ func TestNewStore_TightensAWideMode(t *testing.T) {
 		t.Fatalf("Setup: chmod 0644 %s: %v", path, err)
 	}
 
-	s, err := NewStore(dir)
+	s, err := NewStore(dir, testWindow)
 	if err != nil {
 		t.Fatalf("NewStore(%q) over a 0644 file: %v", dir, err)
 	}
@@ -232,7 +232,7 @@ func TestNewStore_RefusesASymlinkAtTheName(t *testing.T) {
 		t.Fatalf("Setup: symlink %s: %v", target, err)
 	}
 
-	s, err := NewStore(dir)
+	s, err := NewStore(dir, testWindow)
 	if err == nil {
 		t.Error("NewStore(dir holding a symlink at tabs.json) = nil error, want a refusal")
 	}
@@ -294,7 +294,7 @@ func TestSanitize_DropsWhatOpenCouldNotHaveWritten(t *testing.T) {
 		t.Run(strings.ReplaceAll(tc.desc, " ", "-"), func(t *testing.T) {
 			dir := t.TempDir()
 			writeDoc(t, dir, file{Version: 5, Tabs: tc.in})
-			s, err := NewStore(dir)
+			s, err := NewStore(dir, testWindow)
 			if err != nil {
 				t.Fatalf("NewStore over %s: %v", tc.desc, err)
 			}
@@ -318,7 +318,7 @@ func TestNewStore_DropsAStoredHistoryTab(t *testing.T) {
 		{ID: "e", Kind: marotte.TabKindEditor, Ref: "/workspace/a.ts"},
 	}})
 
-	s, err := NewStore(dir)
+	s, err := NewStore(dir, testWindow)
 	if err != nil {
 		t.Fatalf("NewStore over a file holding a history tab: %v, want no error", err)
 	}
@@ -347,7 +347,7 @@ func TestSanitize_TruncatesAtTheDecodeBound(t *testing.T) {
 	}
 	writeDoc(t, dir, file{Version: 1, Tabs: over})
 
-	s, err := NewStore(dir)
+	s, err := NewStore(dir, testWindow)
 	if err != nil {
 		t.Fatalf("NewStore over a %d-tab file: %v", len(over), err)
 	}
@@ -368,7 +368,7 @@ func TestStore_PersistFailureLeavesNothingBehind(t *testing.T) {
 	}
 
 	// A path under a file holds no arrangement, so nothing is unread and writes resume once it is a directory.
-	s, err := NewStore(dir)
+	s, err := NewStore(dir, testWindow)
 	if err != nil || s.Unread() != "" {
 		t.Errorf("NewStore(dir that is a file) = %v with Unread() %q, want a first run", err, s.Unread())
 	}
@@ -436,7 +436,7 @@ func TestNewStore_AdoptsTheVersionEvenWhenSanitizeDropped(t *testing.T) {
 		{ID: "good", Kind: marotte.TabKindGit},
 		{ID: "bad", Kind: "plan", Ref: "x"},
 	}})
-	s, err := NewStore(dir)
+	s, err := NewStore(dir, testWindow)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
