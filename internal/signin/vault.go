@@ -2,7 +2,6 @@ package signin
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -91,6 +90,9 @@ type slot struct {
 	basis      *record
 	flight     *flight
 	cancelPoll context.CancelFunc
+	// failingSince is the first transient or short renewal of effective since its last usable one; replacing
+	// effective, a usable renewal or a rejection zeroes it.
+	failingSince time.Time
 	// unavailable is the user text for a file refused or unreadable at Open, until a write
 	// replaces that file.
 	unavailable  string
@@ -334,7 +336,7 @@ func (v *Vault) EngineSpawned(id BackendID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.effective != s.desired {
-		s.unreachable = false
+		s.unreachable, s.failingSince = false, time.Time{}
 	}
 	s.effective = s.desired
 	s.basis = nil
@@ -354,20 +356,19 @@ func (v *Vault) Answerability(id BackendID) Answerability {
 	return s.answerabilityLocked()
 }
 
-// UnreachableReason returns the backend's own refusal text for RefusedUnreachable while its Answerability is
-// ProviderUnreachable, and false in every other state.
-func (v *Vault) UnreachableReason(id BackendID) (string, bool) {
+// Standing reads the backend's Standing with no renewal; an unknown backend needs a sign-in it cannot get.
+func (v *Vault) Standing(id BackendID) Standing {
 	s := v.slots[id]
 	if s == nil {
-		return "", false
+		return Standing{Answerability: NeedsSignIn}
 	}
 	s.mu.Lock()
-	down := s.answerabilityLocked() == ProviderUnreachable
-	s.mu.Unlock()
-	if !down {
-		return "", false
+	defer s.mu.Unlock()
+	return Standing{
+		Answerability: s.answerabilityLocked(),
+		Lapsed:        s.effective != nil && s.effective.lapsed,
+		FailingSince:  s.failingSince,
 	}
-	return s.b.Refusal(RefusedUnreachable).Message, true
 }
 
 // OnAnswerability registers fn for every move of a backend's Answerability. Calls arrive one at a time with no
@@ -574,10 +575,10 @@ func (v *Vault) SignOut(id BackendID) error {
 // renewGap until answerWindow passes or ctx ends; only that window passing, or a short lease, marks
 // the record ProviderUnreachable. ctx bounds only this caller's wait: the renewal runs once per
 // backend under the vault's lifetime, so an asker giving up never cancels the renewal others share.
-func (v *Vault) Answer(ctx context.Context, id BackendID) (json.RawMessage, *marotte.RPCError) {
+func (v *Vault) Answer(ctx context.Context, id BackendID) Reply {
 	s := v.slots[id]
 	if s == nil {
-		return nil, &marotte.RPCError{Code: -32603, Message: textNoBackend}
+		return Reply{Err: &marotte.RPCError{Code: -32603, Message: textNoBackend}, Refusal: RefusedSignedOut}
 	}
 	ctx, cancel := context.WithTimeoutCause(ctx, v.answerWindow, errAnswerWindow)
 	defer cancel()
@@ -600,8 +601,8 @@ func (v *Vault) Answer(ctx context.Context, id BackendID) (json.RawMessage, *mar
 			discards++
 			continue
 		}
-		if res, rerr, again := v.afterRenewal(ctx, s, r, f, spawns); !again {
-			return res, rerr
+		if rep, again := v.afterRenewal(ctx, s, r, f, spawns); !again {
+			return rep
 		}
 	}
 	return refuse(s, RefusedUnreachable)
@@ -609,31 +610,39 @@ func (v *Vault) Answer(ctx context.Context, id BackendID) (json.RawMessage, *mar
 
 // afterRenewal answers from f, a finished renewal of r, or reports again once renewGap passed after a transient
 // failure on a record that cannot be served.
-func (v *Vault) afterRenewal(
-	ctx context.Context, s *slot, r *record, f *flight, spawns uint64,
-) (res json.RawMessage, rerr *marotte.RPCError, again bool) {
-	if f.out == renewOK {
-		res, rerr = v.serve(s, f.renewed, spawns)
-		return res, rerr, false
-	}
-	if f.out == renewRejected {
-		res, rerr = refuse(s, RefusedRejected)
-		return res, rerr, false
-	}
-	if s.b.Servable(r.cred, v.now()) {
-		res, rerr = v.serve(s, r, spawns)
-		return res, rerr, false
-	}
+func (v *Vault) afterRenewal(ctx context.Context, s *slot, r *record, f *flight, spawns uint64) (rep Reply, again bool) {
+	switch {
+	case f.out == renewOK:
+		return v.serve(s, f.renewed, spawns), false
+	case f.out == renewRejected:
+		return refuse(s, RefusedRejected), false
+	case s.b.Servable(r.cred, v.now()):
+		return v.serve(s, r, spawns), false
 	// A short lease is the provider's answer; asking again only rotates its refresh token.
-	if f.out == renewShort {
-		res, rerr = refuse(s, RefusedUnreachable)
-		return res, rerr, false
+	case f.out == renewShort:
+		return refuse(s, RefusedUnreachable), false
+	case !sleepCtx(ctx, v.renewGap):
+		return v.windowEnded(ctx, s, r.gen), false
 	}
-	if !sleepCtx(ctx, v.renewGap) {
-		res, rerr = v.windowEnded(ctx, s, r.gen)
-		return res, rerr, false
+	return Reply{}, true
+}
+
+// Reprobe renews a record the vault holds ProviderUnreachable once, joining a renewal already in flight, and reports
+// the Answerability after it; any other record is reported with no renewal. ctx bounds only this caller's wait: the
+// renewal runs under the vault's lifetime, so a caller giving up never cancels the renewal others share.
+func (v *Vault) Reprobe(ctx context.Context, id BackendID) Answerability {
+	s := v.slots[id]
+	if s == nil {
+		return NeedsSignIn
 	}
-	return nil, nil, true
+	s.mu.Lock()
+	r, a := s.effective, s.answerabilityLocked()
+	s.mu.Unlock()
+	if a != ProviderUnreachable {
+		return a
+	}
+	v.awaitRenewal(ctx, s, r)
+	return v.Answerability(id)
 }
 
 // errAnswerWindow is the cause of Answer's own window ending, which an asker's earlier deadline or cancel is not.
@@ -641,7 +650,7 @@ var errAnswerWindow = errors.New("the answer window elapsed without a usable ren
 
 // windowEnded refuses an asker whose wait ended with no usable renewal. Only Answer's own window elapsing marks the
 // account's record unreachable: an asker that gave up first says nothing about the provider.
-func (v *Vault) windowEnded(ctx context.Context, s *slot, gen uint64) (json.RawMessage, *marotte.RPCError) {
+func (v *Vault) windowEnded(ctx context.Context, s *slot, gen uint64) Reply {
 	if errors.Is(context.Cause(ctx), errAnswerWindow) && v.lifetime.Err() == nil {
 		v.markUnreachable(s, gen)
 	}
@@ -708,7 +717,7 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 }
 
 // serve answers from r, which becomes basis unless an engine spawned since the ask began.
-func (v *Vault) serve(s *slot, r *record, spawns uint64) (json.RawMessage, *marotte.RPCError) {
+func (v *Vault) serve(s *slot, r *record, spawns uint64) Reply {
 	res, err := s.b.Result(r.cred, v.now())
 	if err != nil {
 		slog.Error("sign-in: the backend could not build its credential answer", "backend", s.decl.Backend, "error", err)
@@ -720,10 +729,10 @@ func (v *Vault) serve(s *slot, r *record, spawns uint64) (json.RawMessage, *maro
 	}
 	s.lastRefusal = 0
 	s.mu.Unlock()
-	return res, nil
+	return Reply{Result: res}
 }
 
-func refuse(s *slot, why Refusal) (json.RawMessage, *marotte.RPCError) {
+func refuse(s *slot, why Refusal) Reply {
 	s.mu.Lock()
 	changed := s.lastRefusal != why
 	s.lastRefusal = why
@@ -731,7 +740,7 @@ func refuse(s *slot, why Refusal) (json.RawMessage, *marotte.RPCError) {
 	if changed {
 		slog.Warn("sign-in: the engine's credential request was refused", "backend", s.decl.Backend, "refusal", why.String())
 	}
-	return nil, s.b.Refusal(why)
+	return Reply{Err: s.b.Refusal(why), Refusal: why}
 }
 
 func (r Refusal) String() string {
@@ -809,6 +818,7 @@ func (v *Vault) renew(s *slot, f *flight) {
 			probe = !s.unreachable
 		}
 		s.unreachable = short
+		s.failingSince = failingFrom(s.failingSince, short, now)
 		f.renewed = &record{cred: cred, gen: f.from.gen}
 		s.effective = f.renewed
 		if paired {
@@ -818,7 +828,7 @@ func (v *Vault) renew(s *slot, f *flight) {
 	case errors.Is(err, ErrRejected):
 		f.out = renewRejected
 		lapsed := &record{cred: f.from.cred, gen: f.from.gen, lapsed: true}
-		s.effective, s.unreachable = lapsed, false
+		s.effective, s.unreachable, s.failingSince = lapsed, false, time.Time{}
 		if paired {
 			from := s.kindLocked()
 			s.desired = lapsed
@@ -829,6 +839,7 @@ func (v *Vault) renew(s *slot, f *flight) {
 		}
 	default:
 		f.out = renewTransient
+		s.failingSince = failingFrom(s.failingSince, true, now)
 	}
 	// After the Change's ticket, so a lapse reaches OnChange before OnAnswerability.
 	at, a := v.noteAnswerLocked(s)
@@ -853,6 +864,19 @@ func (v *Vault) renew(s *slot, f *flight) {
 		v.deliver(t, c)
 	}
 	v.deliverAnswer(at, s.decl.Backend, a)
+}
+
+// failingFrom is a renewal's next failingSince: kept while failing, set at now on the first failure, zero after a
+// usable renewal.
+func failingFrom(since time.Time, failed bool, now time.Time) time.Time {
+	switch {
+	case !failed:
+		return time.Time{}
+	case since.IsZero():
+		return now
+	default:
+		return since
+	}
 }
 
 func (r renewal) String() string {

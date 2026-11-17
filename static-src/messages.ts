@@ -148,6 +148,8 @@ import {
 import { wakeLine } from "./turn-wake.js";
 import { rewindChat } from "./actions/rewind.js";
 import { compactChat } from "./actions/chat.js";
+import { showLoginModal } from "./modals.js";
+import { apiKeySignsIn, signInMendsFailure } from "./signin-health.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { confirm as confirmDialog, type Confirmation } from "./confirm.js";
 import { setComposerValue } from "./composer-value.js";
@@ -663,6 +665,16 @@ export function mountChatView(): void {
     if (id !== "") {
       bumpMessages(id, "shape");
     }
+  });
+  // whoami can name the API key after the transcript painted, and the newest row's Sign in again follows it.
+  effect(() => {
+    touch(apiKeySignsIn());
+    untracked(() => {
+      const id = getPaintedId();
+      if (id !== "") {
+        bumpMessages(id, "shape");
+      }
+    });
   });
   // The tool layer sits below this module, so the multiplexer injects whether a view is parked and that a resident
   // view's chat must not have its messages evicted.
@@ -1798,6 +1810,7 @@ function cardInputsOf(card: HTMLElement, t: Turn): readonly unknown[] {
     hasTurnBody(card),
     liveRefusalFor(chatID, t.id),
     codeReferencesFor(chatID, t.id),
+    apiKeySignsIn().peek(),
   ];
 }
 
@@ -2270,7 +2283,13 @@ function syncTurnFace(card: HTMLElement, t: Turn): void {
  */
 function syncTurnNotice(card: HTMLElement, t: Turn): void {
   syncNoticeText(card, t);
-  syncCompactAction(card, t);
+  syncNoticeAction(card, t);
+}
+
+/** Whether t is the painted chat's newest turn, the one turn whose notice may offer an action. */
+function isNewestTurn(t: Turn): boolean {
+  const s = get(getPaintedId());
+  return s?.turn_order[s.turn_order.length - 1] === t.id;
 }
 
 /**
@@ -2279,38 +2298,62 @@ function syncTurnNotice(card: HTMLElement, t: Turn): void {
  * turn's compaction, which stops its end's.
  */
 function offersCompact(t: Turn): boolean {
-  if (closeOfBody(t.body)?.failure_kind !== "context_limit") {
-    return false;
-  }
-  const s = get(getPaintedId());
-  if (s?.turn_order[s.turn_order.length - 1] !== t.id) {
+  if (closeOfBody(t.body)?.failure_kind !== "context_limit" || !isNewestTurn(t)) {
     return false;
   }
   const closeAt = t.body.findIndex((e) => e.kind === "turn_close");
   return !t.body.some((e, i) => i > closeAt && e.kind === "compaction");
 }
 
+type NoticeAction = "compact" | "sign-in";
+
+/** The notice's action: Compact for an overflow, Sign in again for the newest turn's sign-in failure that a sign-in
+ *  can mend, read from its close and never while the API key signs the engine in: a replayed close with no stored
+ *  reason reads `sign_in` whatever signed the engine in. */
+function noticeActionOf(t: Turn): NoticeAction | null {
+  if (offersCompact(t)) {
+    return "compact";
+  }
+  if (
+    signInMendsFailure(closeOfBody(t.body)?.failure_kind) &&
+    !apiKeySignsIn().peek() &&
+    isNewestTurn(t)
+  ) {
+    return "sign-in";
+  }
+  return null;
+}
+
+function noticeButton(action: NoticeAction): HTMLElement {
+  const label = action === "compact" ? "Compact the context" : "Sign in again";
+  const btn = el("button", { type: "button", className: "btn-small", [CHROME_ATTR]: "" }, label);
+  if (action === "compact") {
+    const chatID = getPaintedId();
+    btn.addEventListener("click", () => {
+      void compactChat.dispatch({ chatID });
+    });
+  } else {
+    btn.addEventListener("click", showLoginModal);
+  }
+  return btn;
+}
+
 /** The notice's one action, as a sibling, so the notice's text node stays what find-in-chat searches. */
-function syncCompactAction(card: HTMLElement, t: Turn): void {
+function syncNoticeAction(card: HTMLElement, t: Turn): void {
   const existing = card.querySelector<HTMLElement>(":scope > .turn-notice-actions");
   const notice = card.querySelector<HTMLElement>(":scope > .turn-notice");
-  if (notice === null || !offersCompact(t)) {
+  const action = notice === null ? null : noticeActionOf(t);
+  if (action === null || notice === null) {
     existing?.remove();
     return;
   }
-  if (existing !== null) {
+  if (existing?.dataset["action"] === action) {
     return;
   }
-  const chatID = getPaintedId();
-  const btn = el(
-    "button",
-    { type: "button", className: "btn-small", [CHROME_ATTR]: "" },
-    "Compact the context",
-  );
-  btn.addEventListener("click", () => {
-    void compactChat.dispatch({ chatID });
-  });
-  notice.after(el("div", { className: "turn-notice-actions" }, btn));
+  existing?.remove();
+  const row = el("div", { className: "turn-notice-actions" }, noticeButton(action));
+  row.dataset["action"] = action;
+  notice.after(row);
 }
 
 function syncNoticeText(card: HTMLElement, t: Turn): void {

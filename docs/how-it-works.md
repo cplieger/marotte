@@ -37,7 +37,7 @@ On every start, marotte runs the installed kiro-cli to confirm it is the expecte
 | `kiro-cli required settings not enforced` | marotte could not switch off kiro-cli's self-update. |
 | `sign-in required` | A chat's last turn failed because marotte is not signed in to Kiro, or Kiro refused the sign-in. The next turn that succeeds clears it. |
 
-Attempts wait 30 seconds, then double each time up to 10 minutes. The page shows a banner when the first reason in the list is a kiro-cli or sign-in reason, and only chats wait. Starting up or shutting down shows no banner. The `sign-in required` banner has a **Sign in** button.
+Attempts wait 30 seconds, then double each time up to 10 minutes. The page shows a banner when the first reason in the list is a kiro-cli reason, and only chats wait. Starting up or shutting down shows no banner. `sign-in required` shows no banner of its own: the sign-in banner described in [Kiro account](features.md#kiro-account) follows the sign-in itself, including an outage of Kiro's sign-in service, which never makes `/healthz` unhealthy.
 
 To repair an install by hand, fix `kiro-cli-versions` in the tools folder (by default `/config/tools`) inside the container, then run `curl -X POST localhost:9847/api/kiro-cli/rescan` (if you set `LISTEN_ADDR`, use its port, and its host too when that is a loopback address other than `localhost`) from inside the container. marotte picks it up without a container restart. When the rescan activates another version, the agent engine moves to it at its next restart. The command works only from inside the container.
 

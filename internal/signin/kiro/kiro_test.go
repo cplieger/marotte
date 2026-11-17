@@ -147,7 +147,7 @@ func TestAnswer_ErrorShapes(t *testing.T) {
 
 	t.Run("no_record", func(t *testing.T) {
 		h := newVaultHarness(t, "alice")
-		if _, rerr := h.v.Answer(t.Context(), ID); rerr == nil || !strings.Contains(string(rerr.Data), "unauthenticated") {
+		if rerr := h.v.Answer(t.Context(), ID).Err; rerr == nil || !strings.Contains(string(rerr.Data), "unauthenticated") {
 			t.Errorf("answer with no record = %v, want unauthenticated", rerr)
 		}
 	})
@@ -173,7 +173,8 @@ func TestAnswer_ErrorShapes(t *testing.T) {
 			// A transient failure is retried until the asker's deadline, so this one keeps the case short.
 			ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
 			defer cancel()
-			res, rerr := h.v.Answer(ctx, ID)
+			rep := h.v.Answer(ctx, ID)
+			res, rerr := rep.Result, rep.Err
 			switch {
 			case tc.details == "" && (rerr != nil || !bytes.Contains(res, []byte(`"alice-access"`))):
 				t.Errorf("answer = %s, %v; want the old token", res, rerr)

@@ -41,6 +41,7 @@ func (bc *bridgeCoordinator) openTurn(ctx context.Context, chatID marotte.ChatID
 			log.SetModel(model)
 		}
 		t = lc.openLocked(chatID, opened, source, model, log)
+		t.askMark = bc.signin.asks.mark()
 		t.takeOpenLocked(&open)
 		return nil
 	})
@@ -108,6 +109,7 @@ func (bc *bridgeCoordinator) openWireTurn(ctx context.Context, chatID marotte.Ch
 			log.SetModel(model)
 		}
 		t = lc.openTurnLocked(chatID, opened, marotte.TurnSourceWireTurnStart, model, log, bracketed)
+		t.askMark = bc.signin.asks.mark()
 		t.acked = true
 		created = true
 		return nil

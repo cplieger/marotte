@@ -59,6 +59,7 @@ import type { RouteOrigin } from "./router.js";
 import { createSession } from "./chat.js";
 import { initGovernance } from "./governance.js";
 import { initRuntimeHealth } from "./runtime-health.js";
+import { adoptSignInHealth, initSignInHealth } from "./signin-health.js";
 import { initEngineStatus } from "./engine-status.js";
 import { initStatusVersions, setStatus } from "./status.js";
 import type { ConnectionStatus } from "./types.js";
@@ -191,6 +192,9 @@ function adoptShell(v: IdentityVerdict): void {
  */
 async function adoptIdentity(v: IdentityVerdict, workspace: Promise<boolean>): Promise<void> {
   renderIdentity(v);
+  if (v.health) {
+    adoptSignInHealth(v.health);
+  }
   if (v.state === "signed_out") {
     // Nothing hydrates the store behind a login modal, so release the held frames
     // rather than stalling the stream until the watchdog fires.
@@ -362,6 +366,8 @@ export function initPostAuth(): void {
   initPostAuthUI();
   // Degraded-runtime banner; re-checks on every gap so recovery self-heals.
   initRuntimeHealth();
+  // The sign-in banner and the account button's mark; the event keeps them current from here.
+  initSignInHealth();
   // The engine banner and the Settings restart controls; the event keeps it current from here.
   initEngineStatus();
   // The FETCH-ONLY fan-outs a reduced boot withholds, each with a usable empty state; the three

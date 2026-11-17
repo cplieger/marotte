@@ -48,7 +48,7 @@ func TestCounters_EveryKnownValueIsOnThePageBeforeItsFirstEvent(t *testing.T) {
 	} {
 		want = append(want, `marotte_engine_exits_total{cause="`+cause+`"} `)
 	}
-	for _, class := range []string{"fatal", "pipe_death", "busy", "transient", "throttled", "rejected", "auth"} {
+	for _, class := range []string{"fatal", "pipe_death", "busy", "transient", "throttled", "rejected", "auth", "signin_outage"} {
 		want = append(want, `marotte_prompt_failures_total{class="`+class+`"} `)
 	}
 	for _, reason := range []string{"staged_copy_left", "write_failed"} {
@@ -118,6 +118,24 @@ func TestEngineUp_IsOneOnlyForAReadyEngine(t *testing.T) {
 	EngineUp(false)
 	if v, ok := sample("marotte_engine_up"); !ok || v != "0" {
 		t.Errorf("marotte_engine_up after an engine that is not ready = %q (on the page %v), want 0", v, ok)
+	}
+}
+
+// The sign-in's state is one-hot over all four states, every one on the page from the start.
+func TestSignInState_IsOneForTheCurrentStateOnly(t *testing.T) {
+	states := []string{"ok", "failing", "signed_out", "none"}
+	for _, current := range []string{"failing", "ok"} {
+		SignInState(current)
+		for _, st := range states {
+			want := "0"
+			if st == current {
+				want = "1"
+			}
+			series := `marotte_signin_state{state="` + st + `"}`
+			if v, ok := sample(series); !ok || v != want {
+				t.Errorf("after %s, %s = %q (on the page %v), want %s", current, series, v, ok, want)
+			}
+		}
 	}
 }
 

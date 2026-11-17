@@ -11,13 +11,14 @@ marotte_engine_exits_total{cause="restart_confirmed"} 0
 marotte_engine_exits_total{cause="shutdown"} 0
 marotte_engine_exits_total{cause="stdin_stalled"} 0
 marotte_engine_exits_total{cause="stopped"} 0
-# HELP marotte_prompt_failures_total Failed prompts, failed empty-turn retries included, by failure class; pipe_death is a prompt the engine's own exit ended.
+# HELP marotte_prompt_failures_total Failed prompts, failed empty-turn retries included, by failure class; pipe_death is a prompt the engine's own exit ended, signin_outage one refused at once during a known Kiro sign-in outage.
 # TYPE marotte_prompt_failures_total counter
 marotte_prompt_failures_total{class="auth"} 0
 marotte_prompt_failures_total{class="busy"} 0
 marotte_prompt_failures_total{class="fatal"} 0
 marotte_prompt_failures_total{class="pipe_death"} 0
 marotte_prompt_failures_total{class="rejected"} 0
+marotte_prompt_failures_total{class="signin_outage"} 0
 marotte_prompt_failures_total{class="throttled"} 0
 marotte_prompt_failures_total{class="transient"} 0
 # HELP marotte_unattended_run_failures_total Scheduled and triggered runs that failed with nobody watching, by origin and reason.
@@ -46,6 +47,12 @@ marotte_schedule_slots_not_started_total{event="signin_held"} 0
 # HELP marotte_build_info Build information, always 1.
 # TYPE marotte_build_info gauge
 marotte_build_info{version="dev"} 1
+# HELP marotte_signin_state 1 for the Kiro sign-in's current state and 0 for the others: ok, failing (renewals have failed for 2 minutes and the identity provider is unreachable), signed_out (the sign-in ended), none (no account).
+# TYPE marotte_signin_state gauge
+marotte_signin_state{state="failing"} 0
+marotte_signin_state{state="none"} 0
+marotte_signin_state{state="ok"} 0
+marotte_signin_state{state="signed_out"} 0
 # HELP marotte_engine_up 1 while the agent engine is ready to take prompts, else 0.
 # TYPE marotte_engine_up gauge
 marotte_engine_up 0
@@ -62,13 +69,14 @@ marotte_engine_exits_total{cause="restart_confirmed"} 0
 marotte_engine_exits_total{cause="shutdown"} 0
 marotte_engine_exits_total{cause="stdin_stalled"} 0
 marotte_engine_exits_total{cause="stopped"} 0
-# HELP marotte_prompt_failures_total Failed prompts, failed empty-turn retries included, by failure class; pipe_death is a prompt the engine's own exit ended.
+# HELP marotte_prompt_failures_total Failed prompts, failed empty-turn retries included, by failure class; pipe_death is a prompt the engine's own exit ended, signin_outage one refused at once during a known Kiro sign-in outage.
 # TYPE marotte_prompt_failures_total counter
 marotte_prompt_failures_total{class="auth"} 1
 marotte_prompt_failures_total{class="busy"} 0
 marotte_prompt_failures_total{class="fatal"} 0
 marotte_prompt_failures_total{class="pipe_death"} 0
 marotte_prompt_failures_total{class="rejected"} 0
+marotte_prompt_failures_total{class="signin_outage"} 0
 marotte_prompt_failures_total{class="throttled"} 0
 marotte_prompt_failures_total{class="transient"} 0
 # HELP marotte_signin_save_failures_total Sign-in changes the sign-in file could not take, by backend and reason.
@@ -101,6 +109,12 @@ marotte_schedule_slots_not_started_total{event="signin_held"} 0
 # HELP marotte_build_info Build information, always 1.
 # TYPE marotte_build_info gauge
 marotte_build_info{version="dev"} 1
+# HELP marotte_signin_state 1 for the Kiro sign-in's current state and 0 for the others: ok, failing (renewals have failed for 2 minutes and the identity provider is unreachable), signed_out (the sign-in ended), none (no account).
+# TYPE marotte_signin_state gauge
+marotte_signin_state{state="failing"} 0
+marotte_signin_state{state="none"} 0
+marotte_signin_state{state="ok"} 0
+marotte_signin_state{state="signed_out"} 0
 # HELP marotte_engine_resident_memory_bytes Resident memory of the running agent engine's node process at its last sample.
 # TYPE marotte_engine_resident_memory_bytes gauge
 marotte_engine_resident_memory_bytes 3145728
@@ -146,13 +160,14 @@ marotte_engine_exits_total{cause="restart_confirmed"} 0
 marotte_engine_exits_total{cause="shutdown"} 0
 marotte_engine_exits_total{cause="stdin_stalled"} 0
 marotte_engine_exits_total{cause="stopped"} 0
-# HELP marotte_prompt_failures_total Failed prompts, failed empty-turn retries included, by failure class; pipe_death is a prompt the engine's own exit ended.
+# HELP marotte_prompt_failures_total Failed prompts, failed empty-turn retries included, by failure class; pipe_death is a prompt the engine's own exit ended, signin_outage one refused at once during a known Kiro sign-in outage.
 # TYPE marotte_prompt_failures_total counter
 marotte_prompt_failures_total{class="auth"} 1
 marotte_prompt_failures_total{class="busy"} 0
 marotte_prompt_failures_total{class="fatal"} 0
 marotte_prompt_failures_total{class="pipe_death"} 0
 marotte_prompt_failures_total{class="rejected"} 0
+marotte_prompt_failures_total{class="signin_outage"} 0
 marotte_prompt_failures_total{class="throttled"} 0
 marotte_prompt_failures_total{class="transient"} 0
 # HELP marotte_signin_save_failures_total Sign-in changes the sign-in file could not take, by backend and reason.
@@ -185,6 +200,12 @@ marotte_schedule_slots_not_started_total{event="signin_held"} 0
 # HELP marotte_build_info Build information, always 1.
 # TYPE marotte_build_info gauge
 marotte_build_info{version="dev"} 1
+# HELP marotte_signin_state 1 for the Kiro sign-in's current state and 0 for the others: ok, failing (renewals have failed for 2 minutes and the identity provider is unreachable), signed_out (the sign-in ended), none (no account).
+# TYPE marotte_signin_state gauge
+marotte_signin_state{state="failing"} 0
+marotte_signin_state{state="none"} 0
+marotte_signin_state{state="ok"} 0
+marotte_signin_state{state="signed_out"} 0
 # HELP marotte_engine_resident_memory_bytes Resident memory of the running agent engine's node process at its last sample.
 # TYPE marotte_engine_resident_memory_bytes gauge
 marotte_engine_resident_memory_bytes 4194304
@@ -226,13 +247,14 @@ marotte_engine_exits_total{cause="restart_confirmed"} 0
 marotte_engine_exits_total{cause="shutdown"} 0
 marotte_engine_exits_total{cause="stdin_stalled"} 0
 marotte_engine_exits_total{cause="stopped"} 0
-# HELP marotte_prompt_failures_total Failed prompts, failed empty-turn retries included, by failure class; pipe_death is a prompt the engine's own exit ended.
+# HELP marotte_prompt_failures_total Failed prompts, failed empty-turn retries included, by failure class; pipe_death is a prompt the engine's own exit ended, signin_outage one refused at once during a known Kiro sign-in outage.
 # TYPE marotte_prompt_failures_total counter
 marotte_prompt_failures_total{class="auth"} 1
 marotte_prompt_failures_total{class="busy"} 0
 marotte_prompt_failures_total{class="fatal"} 0
 marotte_prompt_failures_total{class="pipe_death"} 0
 marotte_prompt_failures_total{class="rejected"} 0
+marotte_prompt_failures_total{class="signin_outage"} 0
 marotte_prompt_failures_total{class="throttled"} 0
 marotte_prompt_failures_total{class="transient"} 0
 # HELP marotte_signin_save_failures_total Sign-in changes the sign-in file could not take, by backend and reason.
@@ -265,6 +287,12 @@ marotte_schedule_slots_not_started_total{event="signin_held"} 0
 # HELP marotte_build_info Build information, always 1.
 # TYPE marotte_build_info gauge
 marotte_build_info{version="dev"} 1
+# HELP marotte_signin_state 1 for the Kiro sign-in's current state and 0 for the others: ok, failing (renewals have failed for 2 minutes and the identity provider is unreachable), signed_out (the sign-in ended), none (no account).
+# TYPE marotte_signin_state gauge
+marotte_signin_state{state="failing"} 0
+marotte_signin_state{state="none"} 0
+marotte_signin_state{state="ok"} 0
+marotte_signin_state{state="signed_out"} 0
 # HELP marotte_engine_up 1 while the agent engine is ready to take prompts, else 0.
 # TYPE marotte_engine_up gauge
 marotte_engine_up 0

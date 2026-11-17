@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"regexp"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/signin"
 )
 
@@ -23,7 +24,9 @@ var awsRegionRe = regexp.MustCompile(`^[a-z]{2}(?:-[a-z]+)+-\d+$`)
 
 // Handler is the /api/whoami, /api/login and /api/logout bundle for one backend of the vault.
 type Handler struct {
-	vault   *signin.Vault
+	vault *signin.Vault
+	// health reads the sign-in's state for whoami; nil leaves it out.
+	health  func() marotte.SignInHealth
 	backend signin.BackendID
 	// managedSettingsPath is the administrator's file the sign-in controls come from.
 	managedSettingsPath string
@@ -47,6 +50,11 @@ func WithTrustedProxies(trusted []netip.Prefix) Option {
 // while it does, keeping the vault's stored account for when the key is removed.
 func WithAPIKey(active bool) Option {
 	return func(h *Handler) { h.apiKey = active }
+}
+
+// WithSignInHealth wires the sign-in's state, which whoami reports on every arm.
+func WithSignInHealth(health func() marotte.SignInHealth) Option {
+	return func(h *Handler) { h.health = health }
 }
 
 // NewHandler returns the routes over backend's sign-in in vault.

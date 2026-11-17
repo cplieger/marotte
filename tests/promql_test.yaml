@@ -186,7 +186,7 @@ tests:
                 stops. Raise Agent engine memory limit in Settings if the container
                 has memory to spare.
 
-  - name: MarottePromptFailures fires at 5 failures across classes and leaves pipe deaths out
+  - name: MarottePromptFailures fires at 5 failures across classes and leaves pipe deaths and sign-in outages out
     interval: 1m
     input_series:
       - series: 'marotte_prompt_failures_total{job="marotte",instance="a:9847",class="auth"}'
@@ -194,6 +194,8 @@ tests:
       - series: 'marotte_prompt_failures_total{job="marotte",instance="a:9847",class="throttled"}'
         values: "0 0 0 0 1 2x20"
       - series: 'marotte_prompt_failures_total{job="marotte",instance="b:9847",class="pipe_death"}'
+        values: "0 2 4 6 8 10x20"
+      - series: 'marotte_prompt_failures_total{job="marotte",instance="b:9847",class="signin_outage"}'
         values: "0 2 4 6 8 10x20"
       - series: 'marotte_prompt_failures_total{job="marotte",instance="b:9847",class="fatal"}'
         values: "0 1 1 1 1 1x20"
@@ -231,6 +233,58 @@ tests:
                 sign-in change fails until it goes. marotte retries the cleanup.
                 The log line names the file, which you can delete inside the
                 container.
+
+  - name: MarotteSignInFailing fires while the state is failing and clears when it recovers
+    interval: 1m
+    input_series:
+      - series: 'marotte_signin_state{job="marotte",instance="a:9847",state="failing"}'
+        values: "0 1 1 0"
+      - series: 'marotte_signin_state{job="marotte",instance="a:9847",state="ok"}'
+        values: "1 0 0 1"
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: MarotteSignInFailing
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: MarotteSignInFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, job: marotte, instance: "a:9847", state: failing}
+            exp_annotations:
+              summary: "marotte cannot renew the Kiro sign-in"
+              description: >
+                Kiro's sign-in service has not answered marotte's renewals for 2
+                minutes or more, which is usually an outage on Kiro's side. Chats
+                and workflow steps fail until it answers again. marotte keeps
+                retrying and resumes the workflows it held by itself.
+      - eval_time: 3m
+        alertname: MarotteSignInFailing
+        exp_alerts: []
+
+  - name: MarotteSignedOut fires on an ended sign-in and not on a deliberate sign-out
+    interval: 1m
+    input_series:
+      - series: 'marotte_signin_state{job="marotte",instance="a:9847",state="signed_out"}'
+        values: "0 1 0 0"
+      - series: 'marotte_signin_state{job="marotte",instance="a:9847",state="none"}'
+        values: "0 0 1 1"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: MarotteSignedOut
+        exp_alerts:
+          - exp_labels: {severity: warning, job: marotte, instance: "a:9847", state: signed_out}
+            exp_annotations:
+              summary: "marotte's Kiro sign-in ended"
+              description: >
+                Kiro refused marotte's sign-in or its renewal, so every chat and
+                workflow step fails. Sign in again from the account menu in
+                marotte. When marotte signs in with KIRO_API_KEY, Kiro refused the
+                key: replace it in marotte's environment, then restart marotte.
+      - eval_time: 3m
+        alertname: MarotteSignedOut
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: MarotteSignInFailing
+        exp_alerts: []
 
   - name: MarotteScheduleFailing fires at the second failed slot in a row and clears on a success
     interval: 1m

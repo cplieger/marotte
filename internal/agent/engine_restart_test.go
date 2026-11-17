@@ -176,7 +176,7 @@ func TestEngineRestart_WaitsForOpenTurns(t *testing.T) {
 	pendRestart(t, h, dir, 1024)
 	assertNoRestart(t, src, "a chat's turn is open")
 
-	h.coord.turns.finish(turn, marotte.TurnResult{})
+	h.coord.turns.finish(turn, &marotte.TurnResult{})
 
 	assertOneRestart(t, h, src)
 }
