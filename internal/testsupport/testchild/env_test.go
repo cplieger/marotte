@@ -25,11 +25,12 @@ func TestEnv_EndsWithExtraThenTheRaceSetting(t *testing.T) {
 			}
 			base := os.Environ()
 			want := append(slices.Clone(base), "A=1", "B=2")
-			if raceEnabled {
+			if wantRaceLine {
 				want = append(want, tc.wantRace)
 			}
 			if got := Env("A=1", "B=2"); !slices.Equal(got, want) {
-				t.Errorf("Env(A=1, B=2) ends %q, want %q (race build %v)", got[len(base):], want[len(base):], raceEnabled)
+				t.Errorf("Env(A=1, B=2) has %d entries ending %q, want %d ending %q (race build %v)",
+					len(got), got[min(len(base), len(got)):], len(want), want[len(base):], wantRaceLine)
 			}
 		})
 	}
