@@ -3,7 +3,7 @@ import { userEvent } from "vitest/browser";
 import indexHtml from "../static/index.html?raw";
 import faviconSvg from "../static/favicon.svg?raw";
 import manifestRaw from "../static/manifest.json?raw";
-import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 
 const BRAND_VIOLET: [number, number, number] = [0x90, 0x46, 0xff];
 
@@ -181,6 +181,14 @@ describe("the rendered brand", () => {
     });
   }
 
+  it("gates the sidebar brand's hover colour on any-hover", () => {
+    const shell = loadCSS("10-shell-app.css");
+    expect(ruleContaining(shell, ".logo:hover").body).toMatch(/\bcolor:/u);
+    expect(ruleContaining(shell, ".logo:hover", "@media (any-hover: hover)").body).toMatch(
+      /\bcolor:/u,
+    );
+  });
+
   for (const selector of [".logo", ".modal-logo"]) {
     it(`sits the mark level with the wordmark in ${selector}`, () => {
       const icon = part(`${selector} svg`).getBoundingClientRect();
@@ -252,9 +260,12 @@ describe("the app icons", () => {
     // Apple's default when a link names no size.
     sizes: l.getAttribute("sizes") ?? "180x180",
   }));
-  const pngs = [...manifest.icons, ...manifest.shortcuts.flatMap((s) => s.icons), ...touch].filter(
-    (i) => i.src.endsWith(".png"),
-  );
+  const declared = [
+    ...manifest.icons,
+    ...manifest.shortcuts.flatMap((s) => s.icons),
+    ...touch,
+  ].filter((i) => i.src.endsWith(".png"));
+  const pngs = [...new Map(declared.map((i) => [`${i.src} ${i.sizes}`, i])).values()];
 
   it("names every icon it declares in static/", () => {
     for (const icon of [...manifest.icons, ...touch]) {
@@ -288,7 +299,7 @@ describe("the app icons", () => {
       }
       expect(white / (img.width * img.height)).toBeGreaterThan(0.02);
       expect(outside, "white ink outside the mark's square").toBe(0);
-      // A point on the hat's top-left tip, which the previous mark left violet.
+      // A point on the hat's top-left tip.
       const probe = at(
         img,
         Math.round(0.35 * (img.width - 1)),
@@ -333,7 +344,13 @@ describe("the notification images", () => {
     }
     expect(at(img, 0, 0)[3]).toBe(0);
     expect(opaque / (img.width * img.height)).toBeGreaterThan(0.02);
-    expect(Math.min(x0, y0), "the badge's 4 px clear margin").toBeGreaterThanOrEqual(4);
-    expect(Math.max(x1, y1), "the badge's 4 px clear margin").toBeLessThanOrEqual(91);
+    expect(
+      Math.min(x0, y0),
+      "Android's status-bar icon keeps 1 dp of its 24 dp frame clear: 4 px at 96 px",
+    ).toBeGreaterThanOrEqual(4);
+    expect(
+      Math.max(x1, y1),
+      "Android's status-bar icon keeps 1 dp of its 24 dp frame clear: 4 px at 96 px",
+    ).toBeLessThanOrEqual(91);
   });
 });
