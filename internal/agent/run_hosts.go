@@ -69,7 +69,7 @@ func (rs *Runs) ensureResident(ctx context.Context, workflowID string) (host *dr
 	}
 	l, held := rs.lease(workflowID)
 	if !held {
-		return nil, func() {}, fmt.Errorf("%w: a run marotte did not launch has no recorded security profile",
+		return nil, func() {}, fmt.Errorf("%w: this run holds no lease, so the security profile its launching session needs is unknown",
 			errLaunchSessionUnavailable)
 	}
 	presets, err := l.HostPresets()

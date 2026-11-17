@@ -128,9 +128,9 @@ type runOwner interface {
 	// RunsParentedBy answers the runs whose parent is sessionID: live is every leased or
 	// non-terminal one, all adds the terminal ones. An error means some source could not be read.
 	RunsParentedBy(ctx context.Context, sessionID string) (live, all []string, err error)
-	// RunHostedBy answers the parentless run whose recorded host session is sessionID, "" for none. An error means the
-	// run records could not be read.
-	RunHostedBy(ctx context.Context, sessionID string) (workflowID string, err error)
+	// RunHostedBy answers whether sessionID hosts a parentless run, and which one ("" while its launch has not
+	// created it). An error means the run records could not be read.
+	RunHostedBy(ctx context.Context, sessionID string) (workflowID string, hosted bool, err error)
 	// RunReadBound is the run's read position now, the clamp for an ack_tab.
 	RunReadBound(ctx context.Context, workflowID string) (uint64, error)
 }
@@ -1408,9 +1408,10 @@ type parentedRuns struct {
 	err error
 	// hostedErr is the failure to read whether the session hosts a run.
 	hostedErr error
-	// hosted is the parentless run the session hosts.
-	hosted    string
+	// hostedRun names the parentless run hosted reports, "" until its launch created it.
+	hostedRun string
 	live, all []string
+	hosted    bool
 }
 
 func (m *Membership) sessionRuns(ctx context.Context, sessionID string) parentedRuns {
@@ -1421,8 +1422,8 @@ func (m *Membership) sessionRuns(ctx context.Context, sessionID string) parented
 		return parentedRuns{err: errRunsUnavailable}
 	}
 	live, all, err := m.runs.RunsParentedBy(ctx, sessionID)
-	hosted, hostedErr := m.runs.RunHostedBy(ctx, sessionID)
-	return parentedRuns{live: live, all: all, err: err, hosted: hosted, hostedErr: hostedErr}
+	hostedRun, hosted, hostedErr := m.runs.RunHostedBy(ctx, sessionID)
+	return parentedRuns{live: live, all: all, err: err, hostedRun: hostedRun, hosted: hosted, hostedErr: hostedErr}
 }
 
 // refuseRunHost refuses binding the session marotte opened to host a parentless run: the run's retry and owner reads
@@ -1432,8 +1433,8 @@ func refuseRunHost(sessionID string, runs *parentedRuns) error {
 	case runs.hostedErr != nil:
 		slog.Warn("could not read whether a session hosts a run, so it was not bound", "acp_session", sessionID, keyError, runs.hostedErr)
 		return StatusError(http.StatusServiceUnavailable, fmt.Errorf("%w: %w", errChatUnread, runs.hostedErr))
-	case runs.hosted != "":
-		slog.Info("refused binding a session that hosts a parentless run", "acp_session", sessionID, "workflow_id", runs.hosted)
+	case runs.hosted:
+		slog.Info("refused binding a session that hosts a parentless run", "acp_session", sessionID, "workflow_id", runs.hostedRun)
 		return StatusError(http.StatusConflict, errSessionHostsRun)
 	}
 	return nil

@@ -248,18 +248,73 @@ func TestObserveStart_AParentlessRunIsAttributedWhenTheChatsDirectoryIsUnlistabl
 }
 
 // RunHostedBy names the run whose recorded host a session is, which the claim check refuses to bind into a chat, and
-// names none for any other session.
+// names none for any other session, past a run directory that holds no host record.
 func TestRunHostedBy_NamesTheParentlessRunASessionHosts(t *testing.T) {
 	h, _, br := newTestHub(WithConfigDir(t.TempDir()))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	host := launchFailedParentless(t, h, br)
+	if err := os.Mkdir(filepath.Join(h.runs.log.root, "wf_2"), 0o700); err != nil {
+		t.Fatalf("Setup: %s", err)
+	}
 
-	if wf, err := h.runs.RunHostedBy(t.Context(), host); err != nil || wf != "wf_1" {
-		t.Errorf("RunHostedBy(host) = %q, %v, want wf_1", wf, err)
+	if wf, hosted, err := h.runs.RunHostedBy(t.Context(), host); err != nil || !hosted || wf != "wf_1" {
+		t.Errorf("RunHostedBy(host) = %q, %v, %v, want wf_1", wf, hosted, err)
 	}
-	if wf, err := h.runs.RunHostedBy(t.Context(), "sess_other"); err != nil || wf != "" {
-		t.Errorf("RunHostedBy(another session) = %q, %v, want none", wf, err)
+	if wf, hosted, err := h.runs.RunHostedBy(t.Context(), "sess_other"); err != nil || hosted || wf != "" {
+		t.Errorf("RunHostedBy(another session) = %q, %v, %v, want none", wf, hosted, err)
 	}
+}
+
+// A launch's host session is hosted from its mint, before workflow/new names the run and long before its record is
+// written, and a launch that fails leaves it hosting nothing.
+func TestRunHostedBy_ALaunchHostsItsSessionFromItsMint(t *testing.T) {
+	t.Run("before workflow/new", func(t *testing.T) {
+		h, _, br := newTestHub(WithConfigDir(t.TempDir()))
+		t.Cleanup(func() { shutdownHub(t, h) })
+		launchableRecipe(br, "wf_1")
+		var wf string
+		var hosted bool
+		var err error
+		br.setOnCall(func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+			if method == methodKiroWorkflowNew {
+				session, _ := params["parentSessionId"].(string)
+				wf, hosted, err = h.runs.RunHostedBy(t.Context(), session)
+			}
+			return nil, nil, false
+		})
+
+		if _, _, _, lErr := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); lErr != nil {
+			t.Fatalf("Setup: Launch = %v", lErr)
+		}
+		if err != nil || !hosted || wf != "" {
+			t.Errorf("RunHostedBy(host) during workflow/new = %q, %v, %v, want hosted by an unnamed run", wf, hosted, err)
+		}
+	})
+	t.Run("after a failed launch", func(t *testing.T) {
+		h, _, br := newTestHub(WithConfigDir(t.TempDir()))
+		t.Cleanup(func() { shutdownHub(t, h) })
+		launchableRecipe(br, "wf_1")
+		var session string
+		br.mu.Lock()
+		br.onCallFails = func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool, error) {
+			if method != methodKiroWorkflowNew {
+				return nil, nil, false, nil
+			}
+			session, _ = params["parentSessionId"].(string)
+			return nil, nil, false, errors.New("workflow/new refused")
+		}
+		br.mu.Unlock()
+
+		if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err == nil {
+			t.Fatal("Setup: Launch = nil, want workflow/new's failure")
+		}
+		if session == "" {
+			t.Fatal("Setup: workflow/new named no parent session")
+		}
+		if wf, hosted, err := h.runs.RunHostedBy(t.Context(), session); err != nil || hosted {
+			t.Errorf("RunHostedBy(host) after a failed launch = %q, %v, %v, want none", wf, hosted, err)
+		}
+	})
 }
 
 // An unlistable runs/ directory is an error, never "hosts nothing", which would let a host session be bound.
@@ -273,7 +328,7 @@ func TestRunHostedBy_AnUnlistableRunsDirectoryIsAnError(t *testing.T) {
 		t.Fatalf("Setup: %s", err)
 	}
 
-	if _, err := h.runs.RunHostedBy(t.Context(), "sess_any"); err == nil {
+	if _, _, err := h.runs.RunHostedBy(t.Context(), "sess_any"); err == nil {
 		t.Error("RunHostedBy over an unlistable runs/ = nil error, want the listing failure")
 	}
 }
@@ -299,12 +354,51 @@ func TestRunHostedBy_AnUnreadableHostRecordIsAnError(t *testing.T) {
 				t.Fatalf("Setup: %s", err)
 			}
 
-			if wf, err := h.runs.RunHostedBy(t.Context(), host); err == nil {
-				t.Errorf("RunHostedBy(host) over an unreadable record = %q, nil, want the read failure", wf)
+			if wf, hosted, err := h.runs.RunHostedBy(t.Context(), host); err == nil {
+				t.Errorf("RunHostedBy(host) over an unreadable record = %q, %v, nil, want the read failure", wf, hosted)
 			}
 			if h.runs.parentlessHost(t.Context(), "wf_1", host) {
 				t.Error("parentlessHost over an unreadable record = true, want false")
 			}
 		})
+	}
+}
+
+// An unleased parentless run's verb over an incomplete scan is refused 409 as a run with no lease, never 500 as a run
+// whose launching chat is unknown: its host record proves no chat launched it.
+func TestEnsureResident_AnUnleasedParentlessRunIsRefusedForItsLeaseWhileAChatFileIsUnreadable(t *testing.T) {
+	dir := t.TempDir()
+	h, _, br := newTestHub(WithConfigDir(dir))
+	host := launchFailedParentless(t, h, br)
+	shutdownHub(t, h)
+
+	h, cs, br := newTestHub(WithConfigDir(dir))
+	t.Cleanup(func() { shutdownHub(t, h) })
+	unreadableChat(t, cs, "c9")
+	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: failedRunList("wf_1", host)}
+
+	_, release, err := h.runs.ensureResident(t.Context(), "wf_1")
+	release()
+	if !errors.Is(err, errLaunchSessionUnavailable) || errors.Is(err, errRunHostStart) {
+		t.Fatalf("ensureResident = %v, want errLaunchSessionUnavailable (409), not errRunHostStart (500)", err)
+	}
+}
+
+// A retry of an unleased run whose inventory cannot be read answers that failure, minting no lease and sending no verb.
+func TestRetry_AnUnleasedRunWhoseInventoryIsUnreadableAnswersTheReadFailure(t *testing.T) {
+	h, _, br := newTestHub(WithConfigDir(t.TempDir()))
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br.setCallResult(methodKiroWorkflowRetry, json.RawMessage(`{}`))
+	br.setCallErr(methodKiroWorkflowList, errors.New("inventory unreadable"))
+
+	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "failed"}))
+	if !errors.Is(err, errRunHostStart) {
+		t.Fatalf("Retry with the inventory unreadable = %v, want errRunHostStart (500)", err)
+	}
+	if _, held := h.runs.lease("wf_1"); held {
+		t.Error("the refused retry left a lease")
+	}
+	if slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
+		t.Error("the retry verb was sent for a run whose launching session is unknown")
 	}
 }

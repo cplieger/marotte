@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"path/filepath"
+	"sync"
 
 	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/ids"
@@ -51,9 +52,6 @@ func (r *runLog) hostSession(ctx context.Context, workflowID string) (string, er
 	if err != nil {
 		return "", fmt.Errorf("read run %s host record: %w", workflowID, err)
 	}
-	if !ids.ValidSessionID(string(data)) {
-		return "", nil
-	}
 	return string(data), nil
 }
 
@@ -87,13 +85,57 @@ func (r *runLog) hostedBy(ctx context.Context, session string) (string, error) {
 	return "", nil
 }
 
-// RunHostedBy answers the run whose recorded host session is sessionID, "" for none (command.runOwner). A chat that
-// bound that session would make parentlessHost's claim false, so the claim check refuses the bind.
-func (rs *Runs) RunHostedBy(ctx context.Context, sessionID string) (string, error) {
-	if rs.log == nil || !ids.ValidSessionID(sessionID) {
-		return "", nil
+// RunHostedBy answers whether sessionID hosts a parentless run (command.runOwner): its recorded host, or one a launch
+// opened and has not recorded yet, whose workflowID is "" until workflow/new names the run. An unreadable runs/
+// directory or host record is an error.
+func (rs *Runs) RunHostedBy(ctx context.Context, sessionID string) (workflowID string, hosted bool, err error) {
+	if wf, ok := rs.launchHosts.lookup(sessionID); ok {
+		return wf, true, nil
 	}
-	return rs.log.hostedBy(ctx, sessionID)
+	if rs.log == nil || !ids.ValidSessionID(sessionID) {
+		return "", false, nil
+	}
+	wf, err := rs.log.hostedBy(ctx, sessionID)
+	return wf, wf != "", err
+}
+
+// launchHosts holds each host session a parentless launch has opened, mapped to its run's id once workflow/new named
+// it, until launchAs returns. From the mint to recordHost no run, record or chat names the session, so without this
+// entry nothing would refuse binding it into a chat (RunHostedBy). The zero value is ready.
+type launchHosts struct {
+	m  map[string]string
+	mu sync.Mutex
+}
+
+// claim enters session and answers its drop.
+func (l *launchHosts) claim(session string) (drop func()) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.m == nil {
+		l.m = map[string]string{}
+	}
+	l.m[session] = ""
+	return func() {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		delete(l.m, session)
+	}
+}
+
+// name records workflowID as the run session hosts.
+func (l *launchHosts) name(session, workflowID string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if _, ok := l.m[session]; ok {
+		l.m[session] = workflowID
+	}
+}
+
+func (l *launchHosts) lookup(session string) (workflowID string, ok bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	workflowID, ok = l.m[session]
+	return workflowID, ok
 }
 
 // parentlessHost reports whether session is the host session marotte opened for workflowID's parentless launch, which

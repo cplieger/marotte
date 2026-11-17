@@ -195,6 +195,7 @@ func (rs *Runs) launchAs(
 		sb.closeOwned(rs.bridges.closeSession)
 		return "", "", nil, fmt.Errorf("%w: the host session's door answered no session id", errRunHostStart)
 	}
+	defer rs.launchHosts.claim(string(parent))()
 	var wfID string
 	err = sb.useRun(cctx, func(ctx context.Context, s engineSession) error {
 		var nErr error
@@ -208,6 +209,7 @@ func (rs *Runs) launchAs(
 		}
 		return "", "", nil, err
 	}
+	rs.launchHosts.name(string(parent), wfID)
 	if !rs.bridges.insert(runChatID(wfID), sb) {
 		sb.closeOwned(rs.bridges.closeSession)
 		return "", "", nil, fmt.Errorf("workflow %s %w", wfID, errHostSessionTaken)
@@ -654,6 +656,9 @@ func (rs *Runs) retry(
 	defer lease.end()
 	// Read before the verb and reused throughout: nothing can learn it once the run re-drives, and two reads can disagree.
 	origin := rs.originOf(ctx, workflowID)
+	if uErr := rs.unroutableOrigin(workflowID, &origin); uErr != nil {
+		return out, uErr
+	}
 	cctx, cancel := context.WithTimeout(ctx, retryTimeout)
 	defer cancel()
 
@@ -976,6 +981,18 @@ func (rs *Runs) originOf(ctx context.Context, workflowID string) runOrigin {
 			errRunHostStart)
 	}
 	return o
+}
+
+// unroutableOrigin is origin's error when nothing else names the run's launching session: a leased or resident run
+// routes from its lease or its resident host (ensureResident), and an origin naming a parent session is routable.
+func (rs *Runs) unroutableOrigin(workflowID string, origin *runOrigin) error {
+	if origin.parent.session != "" || rs.residentRunHost(workflowID) != nil {
+		return nil
+	}
+	if _, held := rs.lease(workflowID); held {
+		return nil
+	}
+	return origin.err
 }
 
 // isCtxErr reports a cancellation or deadline at any depth: KAS may have taken a verb whose context ended.

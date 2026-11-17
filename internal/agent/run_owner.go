@@ -60,7 +60,7 @@ func RunHolders(parents []string, l *runlease.Lease, owners chat.SessionOwners) 
 // chats; an unleased one from KAS's inventory row, or its inspect reply when the inventory omits it, and the chats.
 // RunUnknown when no lease, row or reply names the run: the list leaves out a run whose state it could not read, so
 // an omission is not parentless. The error is an unreadable inventory, an owner scan that could not read every chat
-// and found no holder, or a run that names no launcher.
+// and found no holder unless the parent is the run's recorded host (parentlessHost), or a run that names no launcher.
 func (rs *Runs) RunOwner(ctx context.Context, workflowID string) (command.RunOwner, error) {
 	if l, held := rs.lease(workflowID); held {
 		return rs.ownersOf(ctx, workflowID, []string{l.ParentSessionID}, &l)
@@ -83,8 +83,7 @@ func (rs *Runs) RunOwner(ctx context.Context, workflowID string) (command.RunOwn
 	return rs.ownersOf(ctx, workflowID, []string{res.State.ParentSessionID}, nil)
 }
 
-// ownersOf is RunOwner's verdict over one fresh owner scan. An incomplete scan proves nothing of a parent session
-// unless it is the run's recorded host (parentlessHost).
+// ownersOf is RunOwner's verdict over one fresh owner scan.
 func (rs *Runs) ownersOf(
 	ctx context.Context, workflowID string, parents []string, l *runlease.Lease,
 ) (command.RunOwner, error) {

@@ -554,6 +554,7 @@ func TestCreateChatAndOpen_RefusesASessionThatLaunchedALiveOrShownRunOrHostsOne(
 		{name: "a finished run a tab shows", runs: &fakeRunOwner{parentedAll: map[string][]string{"sess_1": {"wf_1"}}}, showRun: true, status: http.StatusConflict, want: errSessionParentsRun},
 		{name: "the session's runs could not be read", runs: &fakeRunOwner{parentedErr: errors.New("runs/ not read yet")}, status: http.StatusServiceUnavailable, want: errChatUnread},
 		{name: "a parentless run's host", runs: &fakeRunOwner{parentedAll: map[string][]string{"sess_1": {"wf_1"}}, hosted: map[string]string{"sess_1": "wf_1"}}, status: http.StatusConflict, want: errSessionHostsRun},
+		{name: "a launching host its run is not named for yet", runs: &fakeRunOwner{hosted: map[string]string{"sess_1": ""}}, status: http.StatusConflict, want: errSessionHostsRun},
 		{name: "the run records could not be read", runs: &fakeRunOwner{hostedErr: errors.New("runs/ unlistable")}, status: http.StatusServiceUnavailable, want: errChatUnread},
 		{name: "a finished run no tab shows", runs: &fakeRunOwner{parentedAll: map[string][]string{"sess_1": {"wf_1"}}, hosted: map[string]string{"sess_2": "wf_2"}}},
 	}
