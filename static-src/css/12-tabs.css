@@ -66,8 +66,8 @@
    leading element and it REPLACED the per-mode role glyph: the strip's job is
    peripheral awareness of chats you are not looking at, and a chat's role is
    the same every time you glance at it while its activity is the thing that
-   changed. Every other tab kind keeps its glyph and uses this element in the
-   trailing slot for the editor's unsaved mark.
+   changed. Every other tab kind keeps its glyph and carries this element after
+   it, before the name: a run's or a delegate's state, the editor's unsaved mark.
 
    MOVED HERE from 61-mcp-tools.css, which is the MCP-tools stylesheet and had
    nothing to do with the tab strip. It is not extracted to a shared file: there
@@ -123,52 +123,38 @@
   margin-inline: calc((var(--icon-ui) - var(--dot-size)) / 2);
 }
 
-/* The TRAILING dot (every other kind: the editor's unsaved mark) sits after the
-   pin marker and needs its own separation from it. */
+/* A dot that is not leading and follows no glyph is a section header's fold dot,
+   after the section's name, and keeps a separation from it. */
 .tab-status-dot:not(:first-child) {
   margin-inline-start: var(--sp-1);
 }
 
-/* A SUB-TAB's dot is leading too; it just has the nesting arrow ahead of it. So
-   it wants neither the 14px glyph slot above (the arrow holds that slot) nor the
-   trailing separation below — the row's own `gap` is the whole spacing.
+/* A dot after the row's leading glyph (a sub-tab's nesting arrow, another kind's
+   glyph) wants neither the 14px glyph slot above (the glyph holds that slot) nor
+   the header's separation: the row's own `gap` is the whole spacing.
 
    This ties `.tab-status-dot:not(:first-child)` on specificity (two compound
    parts each), so it wins by coming AFTER it and must stay after it. */
-.tab-nest + .tab-status-dot {
+.tab-nest + .tab-status-dot,
+.tab-icon + .tab-status-dot {
   margin-inline-start: 0;
 }
 
 /* The diamond's slot correction, one position over from the leading one below.
-   `failed` is the smaller mark, so a run sub-tab's name would move sideways at the
-   exact moment its status flipped to or from failed — which for a run is the
-   moment that matters most. Derived from the two dot tokens rather than the 14px
-   glyph slot, because here the nesting arrow holds the glyph slot and the dot only
-   has to match its own siblings. */
-.tab.tab-child .tab-status-dot[data-status="failed"] {
+   `failed` is the smaller mark, so the name would move sideways at the exact
+   moment a run's status flipped to or from failed, which for a run is the moment
+   that matters most. Derived from the two dot tokens rather than the 14px glyph
+   slot, because the glyph holds that slot and the dot only has to match its own
+   siblings. (0,4,0), above the header dot's correction below. */
+.tab.tab-child .tab-status-dot[data-status="failed"],
+.tab > .tab-icon + .tab-status-dot[data-status="failed"] {
   margin-inline: calc((var(--dot-size) - var(--dot-size-sm)) / 2);
 }
 
-/* AND THE SAME CORRECTION IN THE TRAILING SLOT, which a PARENTLESS run's row uses:
-   tabs.ts spends the leading glyph slot on the kind mark there, so the dot sits
-   after the name (`icon, name, sr, pin, dot, close`). That row had the separation
-   rule above and no correction, so the 6px diamond was laid out in a 6px box where
-   the 8px disc had had an 8px one — and `.tab-name` is the flex grower, so it
-   absorbed the 2px and pushed the mark 1px to the right. Measured on a real row:
-   the mark's centre moved 207 -> 208 while the × stayed put, which is the same
-   defect the sub-tab rule above exists to prevent with the two neighbours swapped.
-
-   The `:not(:first-child)` half is what keeps this off the LEADING chat dot, whose
-   own correction is derived from the 14px glyph slot instead (the `failed` state
-   block below). It scores (0,3,0), so the sub-tab rule above (0,4,0) still wins for
-   a nested row and this cannot reach one; a trailing dot on any other kind — the
-   editor's unsaved mark — takes it correctly for the same reason it exists here,
-   the slot being the disc's whatever the row is.
-
-   The two sides differ, which is why the shorthand carries two values: only the END
-   is the pure re-centring term, while the START also has to keep the separation from
-   the pin marker that the rule above it grants — so this rule replaces that value
-   rather than adding to it, and the `var(--sp-1)` term is what carries it over. */
+/* THE SAME CORRECTION FOR THE HEADER'S FOLD DOT: the 6px diamond laid out in a
+   6px box where the 8px disc had had an 8px one moves the mark 1px. Only the END
+   is the pure re-centring term; the START also keeps the separation the rule
+   above grants, which is the `var(--sp-1)` term. */
 .tab-status-dot[data-status="failed"]:not(:first-child) {
   margin-inline: calc(var(--sp-1) + (var(--dot-size) - var(--dot-size-sm)) / 2)
     calc((var(--dot-size) - var(--dot-size-sm)) / 2);
@@ -179,27 +165,18 @@
    while the two kinds that nest here can both be stateless for a while — a run
    until its first frame lands, a subagent until its invocation is resident — and
    an `idle` ring would claim a state neither can support. Without this the name
-   sat 17px left and then jumped sideways the moment the state arrived, which is
-   the same defect the failed diamond's re-derived margin exists to prevent, one
-   element over.
+   sat 17px left and then jumped sideways the moment the state arrived.
 
-   BOTH consumers write through this slot now (run-dots.ts and subagent-dots.ts),
-   so it is a hidden gap only until the first state lands rather than forever —
-   which is what the subagent kind lacked when it had no writer at all.
-
-   WITHDRAWING it for the subagent kind was tried and reverted (2026-09). The
-   argument for withdrawing was a delegate whose invocation is gone for good — a
-   turn the agent process died holding persists none of it — where the promise this
-   rule makes can never be kept and 16px of the row sits empty forever. What
-   defeats it is the TITLE ORIGIN: a chat sub-tab, a run sub-tab and a subagent
-   sub-tab are arrow, gap, slot, gap, title, and they line up because all three
-   reserve. Scoping this rule to `run` puts a stateless delegate's title 16px left
-   of its siblings', so the strip trades invisible whitespace for a ragged column
-   the reader sees on every row. `chat-run-dots.test.ts` pins that alignment
-   across all three kinds. The delegate whose record is gone is answered where the
-   claim was actually wrong instead: its page said "not started", and
-   `subagent-exec-source.ts` now reads an absent invocation as `unknown`. */
-.tab.tab-child .tab-status-dot:not([data-status]) {
+   A chat sub-tab, a run sub-tab and a subagent sub-tab are arrow, gap, slot, gap,
+   title, and they line up because all three reserve (`chat-run-dots.test.ts`).
+   A top-level row reserves for the kinds a producer writes a dot for (a run, a
+   delegate whose chat has no tab, the editor's unsaved mark), so its name does
+   not jump when the first state or the first edit lands; a kind with no producer
+   keeps no slot and its title stays at a chat row's. */
+.tab.tab-child .tab-status-dot:not([data-status]),
+[data-kind="run"] > .tab-icon + .tab-status-dot:not([data-status]),
+[data-kind="subagent"] > .tab-icon + .tab-status-dot:not([data-status]),
+[data-kind="editor"] > .tab-icon + .tab-status-dot:not([data-status]) {
   display: block;
   visibility: hidden;
 }
@@ -424,8 +401,8 @@
    KEYED ON THE KIND, not on `.tab-child`, so a PARENTLESS run's row takes it too: a
    manual or scheduled run is the same subject reported by the same element, and the
    silhouette may not depend on whether the run happens to have a launching chat.
-   The slot differs there (that row leads with its kind glyph and carries the dot in
-   the trailing one) and the treatment does not, which is the right way round.
+   A Runs section row (`.runs-section`, runs-section.ts) and that section's fold dot
+   report the same subject, so they take it too.
 
    `failed` KEEPS ITS OWN ROTATED SQUARE at --dot-size-sm with its own measured
    corner, so it is excluded from the radius rule below rather than re-rounded: that
@@ -440,7 +417,8 @@
    closing beat's hole, the still band at the end of this file — are the mark's, and
    `tab-dot.test.ts` measures both marks against each other rather than against a
    transcription. */
-.tab[data-kind="run"] .tab-status-dot:not([data-status="failed"]) {
+.tab[data-kind="run"] .tab-status-dot:not([data-status="failed"]),
+.runs-section .tab-status-dot:not([data-status="failed"]) {
   border-radius: var(--dot-radius-square);
 }
 
@@ -461,7 +439,8 @@
    --run-band is the mark's name for the band, read by the closing beat below so the
    two cannot drift apart on width. `overflow` and the promotion are that beat's, for
    the reasons its own state rule gives. */
-.tab[data-kind="run"] .tab-status-dot[data-status="working"] {
+.tab[data-kind="run"] .tab-status-dot[data-status="working"],
+.runs-section .tab-status-dot[data-status="working"] {
   background: transparent;
   border: var(--run-band) solid var(--dot-color);
   position: relative;
@@ -484,7 +463,8 @@
    snapped it there — 1.5px against 2px is 1.33:1 written down, under the 2:1 the
    band channel is gated at, while 1px against 2px is 2:1 whether an engine snaps or
    not. The gate reads the numbers, so the numbers are the ones that have to hold. */
-.tab[data-kind="run"] .tab-status-dot[data-status="waiting"] {
+.tab[data-kind="run"] .tab-status-dot[data-status="waiting"],
+.runs-section .tab-status-dot[data-status="waiting"] {
   border-width: 1px;
 }
 
@@ -492,7 +472,8 @@
    the FILL, because on this row a disc means the run has ENDED and this one has not.
    It is the state that was solid here and a ring on the mark 8px up, which is the
    same defect `working` was reported for, one state over. */
-.tab[data-kind="run"] .tab-status-dot[data-status="input"] {
+.tab[data-kind="run"] .tab-status-dot[data-status="input"],
+.runs-section .tab-status-dot[data-status="input"] {
   background: transparent;
   border: 2px solid var(--dot-color);
 }
@@ -752,7 +733,8 @@
 .tab-run-dot[data-status="working"]::before,
 .run-bar-glyph[data-status="working"]::before,
 .entry-mark[data-status="working"]::before,
-.tab[data-kind="run"] .tab-status-dot[data-status="working"]::before {
+.tab[data-kind="run"] .tab-status-dot[data-status="working"]::before,
+.runs-section .tab-status-dot[data-status="working"]::before {
   content: "";
   position: absolute;
   inset: round(down, var(--mark-hole) - (var(--mark-hole) + 1px) / var(--mark-close), 1px);
@@ -773,7 +755,8 @@
 .tab-run-dot[data-status="working"]::after,
 .run-bar-glyph[data-status="working"]::after,
 .entry-mark[data-status="working"]::after,
-.tab[data-kind="run"] .tab-status-dot[data-status="working"]::after {
+.tab[data-kind="run"] .tab-status-dot[data-status="working"]::after,
+.runs-section .tab-status-dot[data-status="working"]::after {
   content: "";
   position: absolute;
   inset: -1px;
@@ -897,10 +880,12 @@
   .run-bar-glyph[data-status="working"]::before,
   .entry-mark[data-status="working"]::before,
   .tab[data-kind="run"] .tab-status-dot[data-status="working"]::before,
+  .runs-section .tab-status-dot[data-status="working"]::before,
   .tab-run-dot[data-status="working"]::after,
   .run-bar-glyph[data-status="working"]::after,
   .entry-mark[data-status="working"]::after,
-  .tab[data-kind="run"] .tab-status-dot[data-status="working"]::after {
+  .tab[data-kind="run"] .tab-status-dot[data-status="working"]::after,
+  .runs-section .tab-status-dot[data-status="working"]::after {
     content: none;
   }
 
@@ -916,7 +901,8 @@
      answer either: it is (0,2,0) against this rule's (0,4,0), so it loses on a row
      that is already a ring. The overlay itself is removed by the square marks' own
      `content: none` above, which names this row's selector alongside the other two. */
-  .tab[data-kind="run"] .tab-status-dot[data-status="working"] {
+  .tab[data-kind="run"] .tab-status-dot[data-status="working"],
+  .runs-section .tab-status-dot[data-status="working"] {
     --run-band: 3px;
   }
 
@@ -980,7 +966,7 @@
   cursor: default;
 }
 
-/* THE SIDEBAR'S SECTIONS (Open, Pinned, History): a disclosure header over each list. */
+/* THE SIDEBAR'S SECTIONS (Open, Pinned, Runs, History): a disclosure header over each list. */
 .side-section + .side-section {
   margin-block-start: var(--sp-1);
 }
@@ -1043,15 +1029,16 @@
   font-variant-numeric: tabular-nums;
 }
 
-.history-list {
+.history-list,
+.runs-list {
   margin: 0;
   list-style: none;
 }
 
-/* A tab row's geometry, so the closed rows and More line up with the tab rows above them. A closed
-   row's box is its item, as on the History page: the reopen target and Delete sit side by side in
-   it, so the hover wash covers both and neither target lies over the other. */
-:is(.history-item, .history-more) {
+/* A tab row's geometry, so the run rows, the closed rows and More line up with the tab rows above
+   them. A closed row's box is its item, as on the History page: the reopen target and Delete sit
+   side by side in it, so the hover wash covers both and neither target lies over the other. */
+:is(.history-item, .history-more, .runs-item) {
   display: flex;
   align-items: center;
   min-block-size: var(--tab-row-h);
@@ -1079,7 +1066,7 @@
   }
 }
 
-:is(.history-row, .history-more) {
+:is(.history-row, .history-more, .runs-row) {
   gap: var(--sp-2);
   padding-block: var(--sp-2);
   padding-inline: var(--sp-3) var(--sp-2);
@@ -1122,7 +1109,24 @@
   }
 }
 
-.history-row-name {
+/* A run's state can land a beat after its row, so the dot's slot is held and the name never moves. */
+.runs-row > .tab-status-dot:not([data-status]) {
+  display: block;
+  visibility: hidden;
+}
+
+.runs-row {
+  flex: 1;
+  min-inline-size: 0;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  color: inherit;
+  text-decoration: none;
+}
+
+.history-row-name,
+.runs-row-name {
   flex: 1;
   min-inline-size: 0;
   overflow: hidden;

@@ -32,11 +32,13 @@ You can also search inside a chat, export a chat, search across chats, and brows
 
 ## Sidebar
 
-The sidebar lists your tabs in sections, in this order: **Open**, **Pinned** and **History**. A section's header shows only while the section has rows, and it shows a count: **Open** and **Pinned** count their tabs and not the rows nested under them, such as tangents, and **History** counts every chat it lists.
+The sidebar lists your tabs in sections, in this order: **Open**, **Pinned**, **Runs** and **History**. A section's header shows only while the section has rows, and it shows a count: **Open** and **Pinned** count their tabs and not the rows nested under them, such as tangents, **Runs** counts its runs, and **History** counts every chat it lists. Every tab with a dot shows it before its name, as a chat tab does: a workflow run's state, a subagent's state, or a file's unsaved changes.
 
 Right-click a chat tab, or press and hold it on a touch screen, to open its menu. **Pin** there moves the tab to **Pinned**, and **Unpin** moves it back. A tangent moves with its chat, so its menu has neither. Drag a tab, or use **Move up** and **Move down** in a chat tab's menu, to reorder it inside its section. A tab dropped on another section goes back where it was.
 
 Pressing a header folds its section or opens it again, and each browser remembers its own folds. A folded section still shows the tab you are on. Its header shows a dot for the most urgent of the tabs it hides, such as one waiting for your answer or one still working, in the colour that tab's row uses.
+
+**Runs** lists the workflow runs no chat started, such as a run started with **Run**, by a schedule or by an event rule, while they are running, paused or waiting for your answer. A run whose tab is open shows in **Open** or **Pinned** instead, and goes back to **Runs** when you close its tab while it still runs. Each row starts with the run's dot, the same square its tab shows, and every device lists the same runs in order of their names. Click a row, or press Enter on it, to open the run's tab. A row leaves the list when its run ends, whether it completed, failed or was stopped, or when kiro-cli has not reported the run for 6 hours. The History page still lists a finished run, at `/history/runs`.
 
 **History** lists the chats whose last tab you closed in the past 24 hours, newest first, up to 10, each with the time it closed, or its date when it closed on an earlier day. A closed chat's row starts with the same dot as an open chat's tab, drawn as an empty ring. The section starts folded, showing only its header and count, plus **More** while the History page is open, and opening it shows the chats and, under them, **More**. Closing a chat lists its tangents too, and closing any other tab, such as a file, Settings or a workflow run, lists nothing.
 

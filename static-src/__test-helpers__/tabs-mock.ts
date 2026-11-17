@@ -46,6 +46,8 @@ export function tabsMock(): Record<string, unknown> {
     renameTab: vi.fn(),
     setTabStatus: vi.fn(),
     statusDotEl: vi.fn(() => document.createElement("span")),
+    dotPhrase: vi.fn(() => ""),
+    FOLD_DOT_PRECEDENCE: [],
     setTabRunStatus: vi.fn(),
     setTabDirty: vi.fn(),
     setSettingsTab: vi.fn(),

@@ -215,7 +215,8 @@ body.sidebar-resizing {
 }
 
 .side-section-list,
-.history-list {
+.history-list,
+.runs-list {
   /* THE SAME INSET `.sidebar-actions` TAKES, so a tab's border box and the New chat
    button's are the same box: the list carries no border and no inset of its own
    beyond this, so there is no second expression to keep in step. */

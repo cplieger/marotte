@@ -13,7 +13,7 @@ export interface SidebarSection {
   readonly list: HTMLElement;
   readonly foldedByDefault: boolean;
   /** The count's word for a screen reader, made plural by an `s`. */
-  readonly noun: "tab" | "chat";
+  readonly noun: "tab" | "chat" | "run";
   /** What an empty section hides: the whole section, or only its header. */
   readonly emptyHides: "section" | "header";
 }

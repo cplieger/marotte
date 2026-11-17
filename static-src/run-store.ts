@@ -1783,8 +1783,7 @@ export function hasLiveRunForChat(chatID: string): boolean {
 }
 
 /** The live runs this chat launched, in the order they were recorded. Parked runs are INCLUDED
- *  like `hasLiveRunForChat`; parentless ones are EXCLUDED, their own tab dot already surfacing
- *  them (`run-dots.ts`). */
+ *  like `hasLiveRunForChat`; parentless ones are EXCLUDED, `parentlessLiveRuns` reads them. */
 export function liveRunsForChat(chatID: string): LiveRunEntry[] {
   const entries = liveRuns.entries();
   if (chatID === "") {
@@ -1797,6 +1796,15 @@ export function liveRunsForChat(chatID: string): LiveRunEntry[] {
     }
   }
   return out;
+}
+
+/** The live runs no chat launched, parked ones included: a lease's chat is empty exactly for a
+ *  parentless run (`LiveRun.chat_id`). Subscribes to the inventory. */
+export function parentlessLiveRuns(): LiveRunEntry[] {
+  return liveRuns
+    .entries()
+    .filter(([, r]) => r.chat === "")
+    .map(([id, r]) => ({ id, ...r }));
 }
 
 /** This run's live row WITHOUT subscribing, or `undefined` when nothing holds it live.

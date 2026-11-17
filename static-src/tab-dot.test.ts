@@ -551,10 +551,12 @@ describe("the tab's accessible name announces its state", () => {
     expect(chat.querySelector(".tab-icon")).toBeNull();
     expect(chat.firstElementChild?.classList.contains("tab-status-dot")).toBe(true);
 
-    // Every other kind is untouched: it keeps its glyph and the dot stays in the
-    // trailing slot, which is where the editor's unsaved mark already lived.
+    // Every other kind keeps its glyph in that slot, and its dot comes right after it.
     expect(files?.querySelector(".tab-icon")).not.toBeNull();
     expect(files?.firstElementChild?.classList.contains("tab-icon")).toBe(true);
+    expect(files?.firstElementChild?.nextElementSibling?.classList.contains("tab-status-dot")).toBe(
+      true,
+    );
     expect(files?.querySelector(".tab-status-dot")?.hasAttribute("data-status")).toBe(false);
   });
 });
@@ -1636,7 +1638,7 @@ describe("a run sub-tab's dot takes the workflow mark's square", () => {
 
   it("gives a PARENTLESS run's row the same mark", async () => {
     // Keyed on the KIND, not the nesting: a top-level run row reports the same subject, so it takes the
-    // same silhouette in its trailing slot.
+    // same silhouette after its glyph.
     const { setTabStatus } = await import("./tabs.js");
     const id = await openSubject("run", "wf_2");
     await paint();
@@ -1653,39 +1655,115 @@ describe("a run sub-tab's dot takes the workflow mark's square", () => {
     expect(Number.parseFloat(getComputedStyle(dot).borderTopWidth)).toBeGreaterThan(0);
   });
 
-  it("holds a PARENTLESS row's trailing slot when the run fails", async () => {
-    // Here the name is the flex grower, so the smaller diamond would move the MARK. `done` is the
-    // departure state; `failed` is the only state with a different box.
+  it("holds a PARENTLESS row's name still across every state, before the first one too", async () => {
+    // The run's state lands a beat after its row, and `failed` is the smaller mark: neither may move
+    // the name, which the reserved slot and the diamond's correction each promise.
     const { setTabStatus } = await import("./tabs.js");
     const id = await openSubject("run", "wf_slot");
     await paint();
     const row = rowOf(id);
-    const dot = dotOf(row);
     const name = row.querySelector<HTMLElement>(".tab-name");
     if (name === null) {
       throw new Error("no name element");
     }
-    const centre = (): number => {
-      const r = dot.getBoundingClientRect();
-      return r.left + r.width / 2 - row.getBoundingClientRect().left;
-    };
+    const offset = (): number =>
+      name.getBoundingClientRect().left - row.getBoundingClientRect().left;
 
-    setTabStatus(id, "done");
-    const disc = centre();
-    const nameWidth = name.getBoundingClientRect().width;
-    // The LAYOUT box is what the correction is derived from and what changes: a
-    // rotated square's client rect is its diagonal, so the rect would read as the
-    // mark having GROWN when its box shrank.
-    const discBox = dot.offsetWidth;
-
-    setTabStatus(id, "failed");
-    expect(
-      dot.offsetWidth,
-      "failed must be the smaller box, or there is nothing to correct",
-    ).toBeLessThan(discBox);
-    expect(Math.abs(centre() - disc), "failed moved the mark").toBeLessThan(0.5);
-    expect(name.getBoundingClientRect().width, "failed resized the name").toBeCloseTo(nameWidth, 1);
+    const blank = offset();
+    for (const state of ["working", "waiting", "input", "done", "failed"] as const) {
+      setTabStatus(id, state);
+      expect(Math.abs(offset() - blank), `${state} moved the name`).toBeLessThan(0.5);
+    }
   });
+});
+
+// 4f. Every row that draws a dot draws it on the left of its name, whatever its kind or nesting:
+// the strip reads one way down its whole length.
+
+describe("every row draws its dot before its name", () => {
+  let sheet: HTMLStyleElement;
+
+  beforeAll(() => {
+    sheet = mountAppCSS();
+  });
+
+  afterAll(() => {
+    sheet.remove();
+  });
+
+  beforeEach(async () => {
+    await resetProjection();
+  });
+
+  /** The row's dot box and name box, after the state lands. */
+  async function boxes(
+    id: string,
+    status: TabDotStatus,
+  ): Promise<{ dot: DOMRect; name: DOMRect; close: DOMRect }> {
+    const { setTabStatus } = await import("./tabs.js");
+    setTabStatus(id, status);
+    await paint();
+    const row = document.querySelector<HTMLElement>(`[data-tab-id="${id}"]`);
+    if (row === null) {
+      throw new Error(`row ${id} did not render`);
+    }
+    const dot = row.querySelector<HTMLElement>(".tab-status-dot");
+    const name = row.querySelector<HTMLElement>(".tab-name");
+    const close = row.querySelector<HTMLElement>(".tab-close");
+    if (dot === null || name === null || close === null) {
+      throw new Error(`row ${id} lacks a dot, a name or a close`);
+    }
+    expect(dot.dataset["status"]).toBe(status);
+    return {
+      dot: dot.getBoundingClientRect(),
+      name: name.getBoundingClientRect(),
+      close: close.getBoundingClientRect(),
+    };
+  }
+
+  const cases: readonly (readonly [string, () => Promise<string>, TabDotStatus])[] = [
+    ["a chat", () => openSubject("chat", "c1"), "working"],
+    [
+      "a chat's tangent",
+      async () => {
+        const { openTab, tabIdFor } = await import("./tabs.js");
+        const parent = await openSubject("chat", "c1");
+        await openTab({ kind: "chat", ref: "c2", parent });
+        return tabIdFor("chat", "c2");
+      },
+      "working",
+    ],
+    [
+      "a run under its chat",
+      async () => {
+        const { openTab, tabIdFor } = await import("./tabs.js");
+        const parent = await openSubject("chat", "c1");
+        await openTab({ kind: "run", ref: "wf_1", parent, owns: false });
+        return tabIdFor("run", "wf_1");
+      },
+      "working",
+    ],
+    ["a parentless run", () => openSubject("run", "wf_2"), "working"],
+    [
+      "a subagent whose chat has no tab",
+      async () => {
+        const { subagentRef } = await import("./tab-materialize.js");
+        return openSubject("subagent", subagentRef("c1", "task-1"));
+      },
+      "failed",
+    ],
+    ["an editor with unsaved changes", () => openSubject("editor", "/a.ts"), "dirty"],
+  ];
+
+  for (const [what, open, status] of cases) {
+    it(`draws ${what}'s dot left of its name and the close after it`, async () => {
+      const id = await open();
+      await paint();
+      const { dot, name, close } = await boxes(id, status);
+      expect(dot.right, "the dot ends before the name starts").toBeLessThanOrEqual(name.left);
+      expect(name.right, "the name ends before the close").toBeLessThanOrEqual(close.left);
+    });
+  }
 });
 
 // 5b. EVERY wire outcome reaches the dot and none as "nothing is happening": `interrupted` once fell

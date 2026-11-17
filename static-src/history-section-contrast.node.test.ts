@@ -78,8 +78,8 @@ function row(selector: string): { rule: string; hover: string; hoverFill: string
   };
 }
 
-/** The rule the closed rows' items and More paint from; a closed row's button takes its item's ink. */
-const ROWS = ":is(.history-item, .history-more)";
+/** The rule the closed rows' items, More and the Runs rows paint from; a row's button takes its item's ink. */
+const ROWS = ":is(.history-item, .history-more, .runs-item)";
 
 // The script lives outside static-src, and Stryker's sandbox copies static-src alone.
 describe.skipIf(!existsSync(script))("the History section's row inks", () => {
