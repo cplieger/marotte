@@ -40,7 +40,8 @@ import { onWorkspaceRoot, relToWorkspace } from "./workspace.js";
 import { isPreviewablePage } from "./preview-page.js";
 import { openWebPreview } from "./web-open.js";
 import { iconEl } from "./icon-el.js";
-import { ICON_DOWNLOAD, ICON_GIT_COMMIT, ICON_TAB_WEB } from "./icons.js";
+import { ICON_DOWNLOAD, ICON_GIT_COMMIT, ICON_TAB_FILES, ICON_TAB_WEB } from "./icons.js";
+import { BUS_FILES_REVEAL, emitBus } from "./bus.js";
 import { onGitStatusChange, statusForPath } from "./git-status-store.js";
 import { isViewableImage } from "./file-extensions.js";
 import { normalize, serialize } from "./viewer-eol.js";
@@ -49,21 +50,42 @@ import { countLines } from "./viewer-rows.js";
 import { initLive, liveHold, liveSaved } from "./viewer-live.js";
 import { initViewerCopy } from "./viewer-copy.js";
 import { initGoto } from "./editor-goto.js";
+import { initEditorRename, renaming } from "./editor-rename.js";
 import type { FileRefusal } from "./wire/types.gen.js";
 
+/** A press during a rename (field open or answer pending) would act on the path being renamed away. */
+function unlessRenaming(press: () => void): () => void {
+  return () => {
+    if (!renaming()) {
+      press();
+    }
+  };
+}
+
 export function initEditor(): void {
-  $.editorEditBtn.addEventListener("click", startEditing);
+  $.editorEditBtn.addEventListener("click", unlessRenaming(startEditing));
   $.editorCancelBtn.addEventListener("click", confirmStopEditing);
   $.editorSaveBtn.addEventListener("click", saveFile);
-  $.editorDiffBtn.addEventListener("click", toggleDiffMode);
+  $.editorDiffBtn.addEventListener("click", unlessRenaming(toggleDiffMode));
   $.editorDownloadBtn.replaceChildren(iconEl(ICON_DOWNLOAD));
-  $.editorDownloadBtn.addEventListener("click", downloadActive);
+  $.editorDownloadBtn.addEventListener("click", unlessRenaming(downloadActive));
+  $.editorRevealBtn.replaceChildren(iconEl(ICON_TAB_FILES));
+  $.editorRevealBtn.addEventListener(
+    "click",
+    unlessRenaming(() => {
+      const path = getActiveFilePath();
+      if (path !== "") {
+        emitBus(BUS_FILES_REVEAL, { path });
+      }
+    }),
+  );
   $.editorError.addEventListener("click", onSaveWay);
   wireTextarea();
   trackEditorView();
   initLive();
   initViewerCopy();
   initGoto();
+  initEditorRename();
 
   // Sole owner of the save button's disabled state.
   effect(() => {
@@ -76,7 +98,7 @@ export function initEditor(): void {
   // The glyph is injected rather than drawn in static/index.html, because a concept with an
   // icons.ts entry may not be redrawn there.
   $.editorGitDiffBtn.replaceChildren(iconEl(ICON_GIT_COMMIT));
-  $.editorGitDiffBtn.addEventListener("click", toggleGitDiffMode);
+  $.editorGitDiffBtn.addEventListener("click", unlessRenaming(toggleGitDiffMode));
 
   // Sole owner of the git-diff button's visibility and its toggle attributes. Two triggers: this
   // effect for the active path, error and mode signals, and the git-status subscription armed
@@ -89,9 +111,12 @@ export function initEditor(): void {
   });
 
   $.editorPreviewBtn.replaceChildren(iconEl(ICON_TAB_WEB));
-  $.editorPreviewBtn.addEventListener("click", () => {
-    openWebPreview(previewPath());
-  });
+  $.editorPreviewBtn.addEventListener(
+    "click",
+    unlessRenaming(() => {
+      openWebPreview(previewPath());
+    }),
+  );
   effect(() => {
     paintPreviewBtn();
   });

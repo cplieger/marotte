@@ -8,7 +8,7 @@ import type * as Dom from "./dom.js";
 import type * as ApiClient from "./api-client.js";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
+vi.mock("./router.js", () => ({ pushRoute: vi.fn(), replaceRoute: vi.fn() }));
 // EVERY glyph, generated from the module: real-ESM linking needs each name to be a real
 // property (a Proxy still fails to link).
 vi.mock("./icons.js", () => ({
@@ -282,7 +282,7 @@ function registerOpeners(): void {
       close: vi.fn(),
       dot: (chatID: string) => seededDots.get(chatID) ?? "",
     },
-    editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn() },
+    editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn(), move: vi.fn() },
     run: { show: vi.fn(), refresh: vi.fn() },
     subagent: { show: vi.fn(), refresh: vi.fn() },
     // `TabOpeners` requires `spec`; inert here, since no case opens a spec tab.

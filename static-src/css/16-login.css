@@ -17,6 +17,13 @@
   font-weight: var(--fw-semibold);
 }
 
+/* 3:5 is the #vk-logo symbol's viewBox. */
+.modal-logo-icon {
+  flex-shrink: 0;
+  block-size: 1.5em;
+  aspect-ratio: 3 / 5;
+}
+
 .modal-subtitle {
   color: var(--c-text-tertiary);
   font-size: var(--fs-sm);

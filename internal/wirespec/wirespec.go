@@ -25,6 +25,7 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.ToolDiff](),
 	wiregen.TypeRef[marotte.ToolCheckpoint](),
 	wiregen.TypeRef[marotte.ToolDisclosed](),
+	wiregen.TypeRef[marotte.LoadedResource](),
 	wiregen.TypeRef[marotte.ToolDenialRule](),
 	wiregen.TypeRef[marotte.ToolDenial](),
 	wiregen.TypeRef[marotte.ToolOffload](),
@@ -136,6 +137,7 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.SpecApproval](),
 	wiregen.TypeRef[marotte.Spec](),
 	wiregen.TypeRef[marotte.SpecChangedPayload](),
+	wiregen.TypeRef[marotte.FilesChangedPayload](),
 	wiregen.TypeRef[marotte.SpecApprovedPayload](),
 	wiregen.TypeRef[marotte.MCPToolIdentity](),
 	wiregen.TypeRef[marotte.PermissionConsent](),
@@ -353,6 +355,8 @@ var wireTypes = []wiregen.Type{
 var wireEnums = []wiregen.EnumRef{
 	wiregen.StringEnum[marotte.ToolKind](),
 	wiregen.StringEnum[marotte.ToolStatus](),
+	// The load card's glyph is picked by it, so the icon table must be total.
+	wiregen.StringEnum[marotte.LoadedType](),
 	// The denial block words each basis, so its Record must be total.
 	wiregen.StringEnum[marotte.DenialBasis](),
 	wiregen.StringEnum[marotte.PlanStatus](),
@@ -537,6 +541,7 @@ var wireEvents = []wiregen.Event{
 	{Name: "turn_closed", Data: wiregen.TypeRef[marotte.TurnClosedPayload]()},
 	{Name: "tabs_changed", Data: wiregen.TypeRef[marotte.TabsChangedPayload]()},
 	{Name: "spec_changed", Data: wiregen.TypeRef[marotte.SpecChangedPayload]()},
+	{Name: "files_changed", Data: wiregen.TypeRef[marotte.FilesChangedPayload]()},
 	{Name: "spec_approved", Data: wiregen.TypeRef[marotte.SpecApprovedPayload]()},
 	{Name: "forge_inventory", Data: wiregen.TypeRef[forges.InventoryChangedPayload]()},
 	{Name: "engine_status", Data: wiregen.TypeRef[marotte.EngineStatus]()},

@@ -108,17 +108,15 @@ func statesOf(hs []marotte.SignInHealth) []marotte.SignInState {
 var errProviderDown = errors.New("kiro: the token endpoint answered 500")
 
 // failPastTheGrace makes every renewal fail, asks once, which spends the vault's answer window and marks the
-// provider unreachable, then waits out the rest of the grace. It returns when the first renewal failed.
-func (s *healthHub) failPastTheGrace(t *testing.T) time.Time {
+// provider unreachable, then waits out the rest of the grace.
+func (s *healthHub) failPastTheGrace(t *testing.T) {
 	t.Helper()
 	s.b.set(false, false, func() error { return errProviderDown })
-	first := time.Now()
 	if rerr := s.ask(t); rerr == nil {
 		t.Fatal("an ask was answered with every renewal failing")
 	}
 	time.Sleep(signInGrace)
 	synctest.Wait()
-	return first
 }
 
 // Renewals failing for longer than the grace, with no usable lease left, read failing from the episode's first

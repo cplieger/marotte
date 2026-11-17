@@ -3,7 +3,7 @@ import { userEvent } from "vitest/browser";
 import type { ModelInfo } from "./types.js";
 import type * as Strings from "./strings.js";
 import type * as Store from "./store.js";
-import type * as Picker from "./picker.js";
+import type * as ModelList from "./model-list.js";
 import type * as Actions from "./actions/index.js";
 import type * as ChatActions from "./actions/chat.js";
 import type * as SessionContext from "./session-context.js";
@@ -47,10 +47,9 @@ vi.mock("./store.js", async (importOriginal) => {
     setThinkingChoice: vi.fn(),
   };
 });
-vi.mock("./picker.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof Picker>()),
+vi.mock("./model-list.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelList>()),
   getCachedModels: () => cachedModels,
-  refreshPickerIfVisible: vi.fn(),
   catalogNotice: () => null,
 }));
 vi.mock("./actions/index.js", async (importOriginal) => ({
@@ -145,7 +144,7 @@ describe("the model card sends once, when it closes", () => {
     away.id = "away";
     away.textContent = "elsewhere";
     document.body.append(away, slot);
-    initModelSwitcher();
+    initModelSwitcher(() => Promise.resolve());
   });
 
   beforeEach(() => {

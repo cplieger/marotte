@@ -6,7 +6,7 @@
 // Local by design: the ACTIVE tab (device-view.ts), the live DOT, the NAME override, the
 // SECTION partition, and the DOM.
 
-import { pushRoute } from "./router.js";
+import { pushRoute, replaceRoute } from "./router.js";
 import { parseRoute } from "./route-path.js";
 import type {
   Route,
@@ -119,6 +119,7 @@ import { viewportBox, viewportMoved } from "./viewport-frame.js";
 import { showContextMenu } from "./context-menu.js";
 import { bindContextPress } from "./context-hold.js";
 import { isContextPressRelease } from "./legacy-ui/context-press.js";
+import { type Press, focusAs } from "./legacy-ui/scripted-focus.js";
 import type { ContextMenuItem } from "./context-menu.js";
 import { downloadChatExport } from "./chat-export.js";
 import { MAX_CHAT_NAME_UNITS, downloadKiroSession, renameChat } from "./actions/chat.js";
@@ -587,7 +588,7 @@ function reset(subjects: readonly TabSubject[], recent: readonly RecentClose[]):
       continue;
     }
     before.delete(subject.id);
-    existing.subject = subject;
+    replaceRowSubject(existing, subject);
     next.push(existing);
   }
   state.tabs = next;
@@ -681,20 +682,42 @@ function apply(delta: TabsChangedPayload, local: boolean): void {
 }
 
 /** Upsert one subject: the frame-apply path for `changed` and adoptSubject's paint. One code path,
- *  so the echo of an adopted open changes nothing.
- *
- *  An existing row's SUBJECT is replaced wholesale while the spec, name override and dot stay.
- *  Nothing here may re-materialize: `owns` is immutable after open and every reader of the parent
- *  takes it from the subject, so the spec cannot go stale. */
+ *  so the echo of an adopted open changes nothing. */
 function upsertSubject(subject: TabSubject): void {
   const existing = rowOfID(subject.id);
   if (existing === undefined) {
     insertRow(buildRow(subject));
     return;
   }
-  existing.subject = subject;
-  existing.name = nameFor(subject, existing.spec);
+  replaceRowSubject(existing, subject);
   applySectionOrder();
+}
+
+/** Replace a kept row's SUBJECT wholesale. The spec, name override and dot stay, because `owns` is
+ *  immutable after open and every reader of the parent takes it from the subject; the one
+ *  re-materialization is a new ref (the server's rename follow). The old spec then hands its state
+ *  over (`onRetarget`) or is torn down, and an active row writes its new address in place, so Back
+ *  does not return to the old path, and shows the new ref. */
+function replaceRowSubject(row: TabRow, subject: TabSubject): void {
+  const was = row.subject;
+  row.subject = subject;
+  if (subject.ref === was.ref) {
+    row.name = nameFor(subject, row.spec);
+    return;
+  }
+  if (row.spec.onRetarget === undefined) {
+    tearDown(row);
+  } else {
+    row.spec.onRetarget(subject.ref);
+  }
+  nameOverrides.delete(subjectKey(was.kind, was.ref));
+  row.spec = materializeTab(subject);
+  row.name = nameFor(subject, row.spec);
+  if (state.active === subject.id && !activationPending()) {
+    replaceRoute(row.spec.route);
+    row.spec.onShow?.();
+    refreshActiveView();
+  }
 }
 
 /** `owns: false` tears down nothing: dismissing a view must not kill the work it watched. The
@@ -2697,14 +2720,15 @@ function paintStripNow(): void {
 }
 
 /** Focus a tab's row when it is drawn and not folded away, drawing a queued render first, since a
- *  row adopted from a reply is drawn one frame later. Answers whether the row took focus. */
-export function focusTabRow(id: string): boolean {
+ *  row adopted from a reply is drawn one frame later, with the ring of `press` (`focusAs`). Answers whether the
+ *  row took focus. */
+export function focusTabRow(id: string, press?: Press | null): boolean {
   paintStripNow();
   const node = elementOf(id);
   if (node === null || node.hidden || node.classList.contains("exiting")) {
     return false;
   }
-  node.focus();
+  focusAs(node, press);
   return document.activeElement === node;
 }
 
@@ -2740,13 +2764,16 @@ function syncHistoryRow(on: boolean): void {
 }
 
 /** Focus More, else, when no closed chat draws it or its section is folded, the shown History
- *  page's pill. False when neither is in sight, so the caller lands focus elsewhere. */
-export function focusHistoryEntry(): boolean {
+ *  page's pill, with the ring of `press` (`focusAs`). False when neither is in sight, so the caller
+ *  lands focus elsewhere. */
+export function focusHistoryEntry(press?: Press | null): boolean {
   const pill = queryEl<HTMLElement>(HISTORY_VIEW)?.querySelector<HTMLElement>(
     '[data-history-tab][aria-selected="true"]',
   );
   const to = [$.historyMore, pill].find((e) => e != null && e.getClientRects().length > 0);
-  to?.focus();
+  if (to != null) {
+    focusAs(to, press);
+  }
   return to !== undefined;
 }
 

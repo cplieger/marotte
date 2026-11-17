@@ -70,7 +70,15 @@ const PATH = "/config/.kiro/sessions/cli/sess_1/tool-outputs/shell-0a1b2c3d.txt"
 function stage(readOnly: boolean, utf8 = true): ReturnType<typeof freshState> {
   const state = freshState(PATH);
   state.loaded = true;
-  state.facts.value = { kind: "small", binary: false, utf8, conflict: false, readOnly, size: 6 };
+  state.facts.value = {
+    kind: "small",
+    binary: false,
+    utf8,
+    conflict: false,
+    readOnly,
+    renamable: true,
+    size: 6,
+  };
   state.original.value = "output";
   state.current.value = "output";
   fileStates.set(PATH, state);

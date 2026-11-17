@@ -15,6 +15,7 @@ import (
 
 	"github.com/cplieger/go/sse/v2"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/translate"
@@ -193,7 +194,7 @@ func TestResolveDigest_RunTurnFollowsTheRunRegistry(t *testing.T) {
 }
 
 func TestResolveDigest_TabsIsTheStoresCollectionVersion(t *testing.T) {
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("tabs store: %v", err)
 	}

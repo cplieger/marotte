@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
@@ -79,7 +80,7 @@ func (s *slowRunOwner) RunOwner(ctx context.Context, workflowID string) (RunOwne
 
 func newRunTabMembership(t *testing.T, chats chatStore, runs runOwner) (*Membership, *tabs.Store) {
 	t.Helper()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
@@ -229,7 +230,7 @@ func TestOpenTab_LeavesAParentlessRunTopLevel(t *testing.T) {
 // so the run opens under that chat's reopened tab rather than at the top of the strip.
 func TestOpenTab_ReopensAClosedLaunchersTab(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}

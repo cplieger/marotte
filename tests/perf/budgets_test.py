@@ -35,10 +35,6 @@ PR_SETUP_SECONDS = 104 + 93
 # so its size moves rep to rep on one runner. perf_gate.py reports a measured cell that has no
 # entry.
 CLOCK_SIZED = frozenset({'max_bytes:GET /api/engine'})
-# view.mjs counts the server's 15 s `heartbeat` keepalive (internal/liveness) as a stream frame,
-# so a cold load that runs past one gains a frame: whole held-out runs of unchanged code read 4
-# against an agreed 3. Until the harness stops counting it, these cells gate nothing.
-HEARTBEAT_COUNTED = ('cold', 'sse_frames')
 
 
 def key(d: dict) -> tuple:
@@ -162,14 +158,6 @@ class Budgets(unittest.TestCase):
     def test_no_entry_holds_an_answer_size_that_carries_a_clock(self):
         held = [key(e) for e in self.budgets['budgets'] if e['metric'] in CLOCK_SIZED]
         self.assertEqual(held, [])
-
-    def test_no_cold_stream_frame_count_gates(self):
-        gating = [
-            key(e)
-            for e in self.budgets['budgets']
-            if (e['window'], e['metric']) == HEARTBEAT_COUNTED and e['tier'] != 'reported'
-        ]
-        self.assertEqual(gating, [])
 
     def test_each_cell_has_one_entry(self):
         for k, es in self.entries.items():

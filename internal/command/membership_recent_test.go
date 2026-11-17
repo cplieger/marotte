@@ -14,6 +14,7 @@ import (
 
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
@@ -409,7 +410,7 @@ func TestTabMutations_PastTheWindowOnlyARealChangeDropsTheEntry(t *testing.T) {
 		seedNamed(t, store, "c-a", "Alpha")
 		closeListed(t, mem, "c-old")
 		a := openChatTab(t, mem, "c-a", "")
-		time.Sleep(tabs.RecentWindow)
+		time.Sleep(settings.DefaultHistoryWindow)
 		_, before := st.List()
 		mark := len(bus.frames(t))
 
@@ -482,7 +483,7 @@ func TestTabMutations_PastTheWindowEachRealChangeCarriesTheEmptiedList(t *testin
 				a := openChatTab(t, r.mem, "c-a", "").ID
 				b := openChatTab(t, r.mem, "c-b", "").ID
 				r.chats.bound = 3
-				time.Sleep(tabs.RecentWindow)
+				time.Sleep(settings.DefaultHistoryWindow)
 				_, before := r.st.List()
 				mark := len(r.bus.frames(t))
 
@@ -539,7 +540,7 @@ func TestRunRecentExpiry_EmitsAtEachEntrysExpiry(t *testing.T) {
 		synctest.Wait()
 		mark := len(bus.frames(t))
 
-		time.Sleep(tabs.RecentWindow - time.Hour - time.Millisecond)
+		time.Sleep(settings.DefaultHistoryWindow - time.Hour - time.Millisecond)
 		synctest.Wait()
 		if n := len(bus.frames(t)) - mark; n != 0 {
 			t.Fatalf("the runner emitted %d frames before c-a's expiry, want 0", n)
@@ -584,7 +585,7 @@ func TestRunRecentExpiry_RetriesAFailedWriteAfterAMinute(t *testing.T) {
 	logs := capture.Default(t)
 	synctest.Test(t, func(t *testing.T) {
 		store := testsupport.NewInMemoryChatStore()
-		st, err := tabs.NewStore(t.TempDir())
+		st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 		if err != nil {
 			t.Fatalf("Setup: open tab store: %v", err)
 		}
@@ -596,7 +597,7 @@ func TestRunRecentExpiry_RetriesAFailedWriteAfterAMinute(t *testing.T) {
 		mark := len(bus.frames(t))
 		stop := runExpiry(t, mem)
 
-		time.Sleep(tabs.RecentWindow)
+		time.Sleep(settings.DefaultHistoryWindow)
 		synctest.Wait()
 		if n := len(bus.frames(t)) - mark; n != 0 {
 			t.Errorf("a failed expiry write emitted %d frames, want 0", n)

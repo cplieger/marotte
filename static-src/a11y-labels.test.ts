@@ -182,28 +182,6 @@ describe("a11y: the composer's chat options button (static markup)", () => {
   });
 });
 
-describe("a11y: keyboard navigation on picker grid", () => {
-  it("rovingFocus makes items focusable via tabindex", async () => {
-    const { rovingFocus } = await import("./legacy-ui/roving-focus.js");
-    const container = document.createElement("div");
-    const btn1 = document.createElement("button");
-    btn1.className = "picker-btn";
-    btn1.textContent = "Model A";
-    const btn2 = document.createElement("button");
-    btn2.className = "picker-btn";
-    btn2.textContent = "Model B";
-    container.append(btn1, btn2);
-    document.body.appendChild(container);
-
-    rovingFocus(container, ".picker-btn", { orientation: "horizontal" });
-
-    expect(btn1.getAttribute("tabindex")).toBe("0");
-    expect(btn2.getAttribute("tabindex")).toBe("-1");
-
-    document.body.removeChild(container);
-  });
-});
-
 describe("a11y: tool-card aria-expanded on toggle", () => {
   it("tool-disclosure button starts with aria-expanded=false and aria-label", async () => {
     vi.resetModules();

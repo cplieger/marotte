@@ -5,7 +5,7 @@ import { createBus } from "@cplieger/reactive";
 
 import type {
   EngineStatus,
-  SignInHealth,
+  FilesChangedPayload,
   MCPPrewarmPayload,
   MCPSignInClosedPayload,
   MCPStatusPayload,
@@ -13,6 +13,7 @@ import type {
   RunAsksPayload,
   RunRevPayload,
   SettingsUpdatedPayload,
+  SignInHealth,
   SubjectStamp,
 } from "./wire/types.gen.js";
 import type {
@@ -104,6 +105,8 @@ export interface SSEPayloads {
   // window; the spec tab whose ref matches refetches. Workspace-global.
   readonly spec_changed: SpecChangedPayload;
   readonly spec_approved: SpecApprovedPayload;
+  // Folders whose entries a file action, a save, an upload or a docs create or delete changed. Workspace-global.
+  readonly files_changed: FilesChangedPayload;
   readonly permission_needed: PermissionNeeded;
   readonly permissions_changed: undefined;
   readonly policy_error: PolicyErrorPayload;
@@ -296,6 +299,12 @@ export const BUS_FOLDS_CHANGED = "folds:changed" as const;
  */
 export const BUS_ENGINE_READY = "engine:ready" as const;
 
+/**
+ * Show this file in the file browser: its folder listed and the file selected. On the bus so the editor does not
+ * import the file browser.
+ */
+export const BUS_FILES_REVEAL = "files:reveal" as const;
+
 /** Payload shape per bus event. Events with no payload use `undefined`. */
 interface BusPayloads {
   readonly [BUS_RECONCILE]: { readonly cause: string; readonly signal: AbortSignal };
@@ -313,6 +322,7 @@ interface BusPayloads {
   readonly [BUS_CATALOG_MODELS]: undefined;
   readonly [BUS_FOLDS_CHANGED]: undefined;
   readonly [BUS_ENGINE_READY]: undefined;
+  readonly [BUS_FILES_REVEAL]: { readonly path: string };
 }
 
 // The generic bus is @cplieger/reactive's createBus; the SSE surface stays bespoke

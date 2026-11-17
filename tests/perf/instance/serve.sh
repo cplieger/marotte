@@ -122,13 +122,49 @@ req = urllib.request.Request(
 )
 with urllib.request.urlopen(req, timeout=60) as r:
     r.read()
-for _ in range(180):
+
+
+def ready_cycle():
+    """The oldest cycle id among the entries once all read ready, else None."""
     with urllib.request.urlopen(base + '/api/forges/inventory', timeout=60) as r:
         entries = json.loads(r.read()).get('entries') or []
     if entries and all(e.get('state') == 'ready' for e in entries):
+        return min(int(e['cycle_id']) for e in entries)
+    return None
+
+
+def refresh():
+    req = urllib.request.Request(
+        base + '/api/forges/inventory/refresh',
+        data=b'{}',
+        headers={'Content-Type': 'application/json'},
+        method='POST',
+    )
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return int(json.loads(r.read())['cycle_id'])
+
+
+def wait_ready(after):
+    for _ in range(180):
+        seen = ready_cycle()
+        if seen is not None and seen >= after:
+            return seen
+        time.sleep(0.5)
+    sys.exit('serve.sh: the fake forge inventory never read ready')
+
+
+# A read that finds no entry queues a cycle after the one in flight (cycleClock.ask), so the
+# polls above can leave one queued past the first ready entry, and its forge_inventory frame
+# would land in the first window. A refresh names the cycle in flight, or rings one when none
+# runs; once it names a cycle past the ready one, that cycle's entry leaves nothing queued.
+seen = wait_ready(1)
+for _ in range(100):
+    queued = refresh()
+    if queued > seen:
+        wait_ready(queued)
         sys.exit(0)
-    time.sleep(0.5)
-sys.exit('serve.sh: the fake forge inventory never read ready')
+    time.sleep(0.2)
+sys.exit('serve.sh: the forge inventory refresh never named a cycle past the ready one')
 EOF
     printf 'pid %s ready on %s (forge pid %s on %s)\n' "$pid" "$port" "$fpid" "$fport"
     exit 0

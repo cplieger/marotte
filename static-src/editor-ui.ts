@@ -317,11 +317,13 @@ export function rulesOf(state: FileState): Rules {
   return rulesFor(state.facts.value, state.path, requestedBy(state), gitBase);
 }
 
-/** The toolbar controls every view shares: Download, Go to line and the read-only label. The
- *  large view shows Download alone. */
+/** The toolbar controls every view shares: Download, Rename, Show in file browser, Go to line and
+ *  the read-only label. The large view shows Download, Rename and Show in file browser alone. */
 export function paintCommonControls(state: FileState): void {
   const rules = rulesOf(state);
   $.editorDownloadBtn.classList.toggle("hidden", !rules.download || state.error.value !== "");
+  $.editorRenameBtn.classList.toggle("hidden", !rules.rename || state.error.value !== "");
+  $.editorRevealBtn.classList.toggle("hidden", !rules.reveal);
   $.editorDownloadBtn.dataset["fileId"] = state.fileId;
   paintGoto(state);
   const label =

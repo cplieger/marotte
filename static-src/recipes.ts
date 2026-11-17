@@ -27,7 +27,7 @@ import {
   type RunDefaults,
   type RunDefaultsPicker,
 } from "./run-defaults-picker.js";
-import { getCachedModels } from "./picker.js";
+import { getCachedModels } from "./model-list.js";
 import type { LaunchRuleView } from "./launch-rule-types.js";
 import { openRunView } from "./run-view.js";
 import { loadSettings, refreshSettings } from "./persist.js";
@@ -37,7 +37,8 @@ import { forceReflow } from "./dom.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_RUN_WHEN_UI } from "./icons.js";
 import type { Recipe, WorkflowRun } from "./types.js";
-import { entryDetail, entryList, entryRow } from "./entry-row.js";
+import { entryDetail, entryList, entryRow, replaceEntrySub } from "./entry-row.js";
+import type { EntrySub } from "./entry-row.js";
 import { classifyRunStatus, runStatusTerminal } from "./run-status.js";
 import { configStanding, standingBadge, standingLabel } from "./config-standing.js";
 import type { ConfigStanding } from "./wire/types.gen.js";
@@ -373,20 +374,20 @@ async function removeRule(v: LaunchRuleView): Promise<void> {
   await refreshRules();
 }
 
-/** Reflect a recipe's rules onto its row's second line and its button. */
-function syncRules(row: HTMLElement, r: Recipe): void {
-  const line = rulesLineOf(row);
-  if (line === null) {
-    return;
-  }
+/** Repaint the row's lines (KAS's reason it cannot launch, else its description; then its rules) and the Run when…
+ *  button from them. Re-run on every repaint: a `recipes_changed` refetch can fix or break the recipe under a kept row. */
+function syncSub(row: HTMLElement, r: Recipe): void {
+  const reason = invalidReason(r);
   const list = rules.get(r.source) ?? [];
   const enabled = list.filter((v) => v.enabled).length;
   const failing = list.some((v) => ruleError(v) !== "");
-  line.textContent = rulesLine(r);
-  // The row's width cuts the line; on touch the Run when… list shows each rule's whole line.
-  line.setAttribute("data-tooltip", line.textContent);
-  line.classList.toggle("is-scheduled", enabled > 0 && !failing);
-  line.classList.toggle("entry-sub-error", failing);
+  replaceEntrySub(row, subFor(r, reason, failing));
+  const line = rulesLineOf(row);
+  if (line !== null) {
+    // The row's width cuts the line; on touch the Run when… list shows each rule's whole line.
+    line.setAttribute("data-tooltip", line.textContent);
+    line.classList.toggle("is-scheduled", enabled > 0 && !failing);
+  }
   const btn = row.querySelector<HTMLButtonElement>(".recipe-sched-btn");
   const count = btn?.querySelector(".recipe-sched-count");
   if (btn != null && count != null) {
@@ -397,7 +398,19 @@ function syncRules(row: HTMLElement, r: Recipe): void {
       "aria-label",
       `${RUN_WHEN}${enabled > 1 ? ` ${String(enabled)}` : ""} for ${r.name}`,
     );
+    btn.disabled = reason !== "";
+    toggleTooltip(btn, reason !== "" ? reason : compact() ? RUN_WHEN : "");
   }
+}
+
+function subFor(r: Recipe, reason: string, failing: boolean): EntrySub {
+  return {
+    kind: "lines",
+    lines: [
+      { key: "about", text: reason === "" ? (r.description ?? "") : reason, error: reason !== "" },
+      { key: "rules", text: rulesLine(r), error: failing },
+    ],
+  };
 }
 
 /** Where the row's narrow trailing column applies; `.is-compact` (28-docs.css) draws it. */
@@ -726,7 +739,7 @@ function paint(): void {
         case "row":
           syncCompact(node);
           syncButton(node, e.recipe);
-          syncRules(node, e.recipe);
+          syncSub(node, e.recipe);
           syncStanding(node, e.recipe);
           break;
         case "detail":
@@ -794,16 +807,12 @@ function recipeRow(r: Recipe): HTMLElement {
       ...(r.built_in === true ? [el("span", { className: "docs-badge" }, "bundled")] : []),
       ...(standingSlot === null ? [] : [standingSlot]),
     ],
-    sub: {
-      kind: "lines",
-      lines: [{ text: r.description ?? "" }, { text: rulesLine(r) }],
-    },
     actions: [schedBtn, btn],
     data: { "data-recipe": r.source },
   });
   syncCompact(row);
   syncButton(row, r);
-  syncRules(row, r);
+  syncSub(row, r);
   syncStanding(row, r);
   return row;
 }
@@ -862,24 +871,6 @@ function invalidReason(r: Recipe): string {
   return (r.validation_error ?? "").trim();
 }
 
-/** The row's first line: KAS's reason a recipe cannot launch outranks its description, since it
- *  is why Run is off; re-run on every repaint, because a `recipes_changed` refetch can fix or
- *  break the recipe under a kept row. */
-function syncValidity(row: HTMLElement, r: Recipe): void {
-  const line = row.querySelector<HTMLElement>(".entry-lines > .entry-sub:nth-child(1)");
-  if (line === null) {
-    return;
-  }
-  const reason = invalidReason(r);
-  line.textContent = reason === "" ? (r.description ?? "") : reason;
-  line.classList.toggle("entry-sub-error", reason !== "");
-  const sched = row.querySelector<HTMLButtonElement>(".recipe-sched-btn");
-  if (sched !== null) {
-    sched.disabled = reason !== "";
-    toggleTooltip(sched, reason !== "" ? reason : compact() ? RUN_WHEN : "");
-  }
-}
-
 /** A disabled control still gets hover, so its tooltip says why it is off. */
 function toggleTooltip(btn: HTMLElement, text: string): void {
   if (text === "") {
@@ -907,9 +898,9 @@ function rulesLine(r: Recipe): string {
   return declared.length === 0 ? line : `${line} \u00b7 Inputs: ${declared.join(", ")}`;
 }
 
-/** The line `rulesLine` fills: the second of the row's two subtitle lines. */
+/** The line `rulesLine` fills. */
 function rulesLineOf(row: HTMLElement): HTMLElement | null {
-  return row.querySelector<HTMLElement>(".entry-lines > .entry-sub:nth-child(2)");
+  return row.querySelector<HTMLElement>('[data-line="rules"]');
 }
 
 function syncButton(row: HTMLElement, r: Recipe): void {
@@ -934,7 +925,6 @@ function syncButton(row: HTMLElement, r: Recipe): void {
   } else {
     btn.removeAttribute("aria-expanded");
   }
-  syncValidity(row, r);
 }
 
 function onRunButton(r: Recipe): void {

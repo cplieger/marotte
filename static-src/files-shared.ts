@@ -88,6 +88,12 @@ export function joinPath(base: string, name: string): string {
   return `${base.replace(/\/+$/, "")}/${name}`;
 }
 
+/** The last segment of `p`, "" for the root. */
+export function baseName(p: string): string {
+  const parts = p.split("/").filter((s) => s !== "");
+  return parts.at(-1) ?? "";
+}
+
 /** One level up, bottoming out at `FB_ROOT`. */
 export function parentPath(p: string): string {
   const parts = p.split("/").filter((s) => s !== "");

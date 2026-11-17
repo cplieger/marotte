@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 )
 
@@ -190,7 +191,7 @@ func TestBotRecordWrites_SpecVersionMovesExactlyWhenTheBotsViewChanges(t *testin
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
-			st, err := tabs.NewStore(t.TempDir())
+			st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 			if err != nil {
 				t.Fatalf("Setup: tabs.NewStore: %v", err)
 			}

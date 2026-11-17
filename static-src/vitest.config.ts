@@ -230,7 +230,11 @@ const engineInstances = (
  *  dictation press suites again in WebKit on an iPad's (iPad Pro 13-inch, a touch device laying out its meta
  *  viewport) and a desktop's. Opt-in (`TOUCH_ENGINES=1`): it needs `npx playwright install webkit`, which CI does
  *  not. */
-const touchEngineFiles = ["slash-menu.touch.test.ts", "prompt-input-dictation-tap.touch.test.ts"];
+const touchEngineFiles = [
+  "slash-menu.touch.test.ts",
+  "prompt-input-dictation-tap.touch.test.ts",
+  "focus-ring-scripted.touch.test.ts",
+];
 const webkitDevices = [
   {
     name: "browser-touch-webkit-ipad",
@@ -248,7 +252,12 @@ const webkitDevices = [
 
 /** The mouse files whose clicks a browser engine decides, run again in WebKit and Firefox on a desktop
  *  viewport. Opt-in (`POINTER_ENGINES=1`): it needs `npx playwright install firefox webkit`, which CI does not. */
-const pointerEngineFiles = ["context-menu.pointer.test.ts"];
+const pointerEngineFiles = [
+  "context-menu.pointer.test.ts",
+  "focus-ring-scripted.pointer.test.ts",
+  "history-section-focus.pointer.test.ts",
+  "messages-rewind-focus.pointer.test.ts",
+];
 
 export default defineConfig({
   // Serves the MSW worker script from the package for the browser tests that mock the network;

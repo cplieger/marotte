@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/cplieger/marotte/internal/steering"
 	"github.com/cplieger/marotte/internal/translate"
@@ -241,8 +242,121 @@ func TestScanDocsPrompts_TopLevelOnly(t *testing.T) {
 		t.Fatalf("scanKiroDocsFS prompts = %+v, want only review", prompts)
 	}
 	got := prompts[0]
-	if got.Name != "review" || got.Path != "ws/.kiro/prompts/review.md" || got.Description != "Review the diff" {
-		t.Errorf("prompt row = %+v, want name review, path ws/.kiro/prompts/review.md, description from the H1", got)
+	if got.Name != "review" || got.Path != "ws/.kiro/prompts/review.md" || got.Description != "Review the diff Review: $ARGUMENTS" {
+		t.Errorf("prompt row = %+v, want name review, path ws/.kiro/prompts/review.md, description from the body", got)
+	}
+}
+
+// promptDescription scans one prompt file and answers its row's description.
+func promptDescription(t *testing.T, body string) string {
+	t.Helper()
+	fsys := fstest.MapFS{"prompts/p.md": {Data: []byte(body)}}
+	prompts := docsByCategory(scanKiroDocsFS(t.Context(), fsys, "ws/.kiro", nil).docs, catPrompt)
+	if len(prompts) != 1 {
+		t.Fatalf("scanKiroDocsFS prompts = %+v, want one row", prompts)
+	}
+	return prompts[0].Description
+}
+
+// A kiro-cli prompt is a bare message body, so its card shows what it says.
+func TestScanDocsPrompts_DescribesABodyOnlyPromptByItsText(t *testing.T) {
+	const body = "Remember what we decided about $ARGUMENTS"
+	if got := promptDescription(t, body+"\n"); got != body {
+		t.Errorf("description = %q, want %q", got, body)
+	}
+}
+
+func TestScanDocsPrompts_FrontMatterDescriptionWins(t *testing.T) {
+	got := promptDescription(t, "---\ndescription: Summarise the thread\n---\nSummarise: $ARGUMENTS\n")
+	if got != "Summarise the thread" {
+		t.Errorf("description = %q, want the front matter's", got)
+	}
+}
+
+func TestScanDocsPrompts_DropsHeadingMarksAndCollapsesWhitespace(t *testing.T) {
+	cases := map[string]string{
+		"# Review the diff\n\nReview: $ARGUMENTS\n":   "Review the diff Review: $ARGUMENTS",
+		"---\nname: x\n---\n## Step\n\tdo  it\r\nnow": "Step do it now",
+		"###### Six\n####### seven is not a heading":  "Six ####### seven is not a heading",
+		"#hashtag stays\x00\x1b here":                 "#hashtag stays here",
+	}
+	for in, want := range cases {
+		if got := promptDescription(t, in); got != want {
+			t.Errorf("description of %q = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestScanDocsPrompts_CutsALongBodyWithAnEllipsis(t *testing.T) {
+	if got, want := promptDescription(t, strings.Repeat("é", 1000)), strings.Repeat("é", promptPreviewRunes)+"…"; got != want {
+		t.Errorf("a 1000-rune body gave %d runes, want %d runes ending in an ellipsis", len([]rune(got)), len([]rune(want)))
+	}
+	exact := strings.Repeat("a", promptPreviewRunes)
+	if got := promptDescription(t, exact); got != exact {
+		t.Errorf("a %d-rune body was cut: %q", promptPreviewRunes, got)
+	}
+}
+
+func TestScanDocsPrompts_EmptyPromptHasNoDescription(t *testing.T) {
+	for _, body := range []string{"", "---\ndescription: \n---\n", "  \n\n\t\n"} {
+		if got := promptDescription(t, body); got != "" {
+			t.Errorf("description of %q = %q, want none", body, got)
+		}
+	}
+}
+
+// TestDirSignature_MovesOnAnInPlaceEdit pins that a body edit, which leaves the directory's mtime
+// and names alone, still changes the key: through the file's mtime at the same length, and
+// through its size at the same mtime.
+func TestDirSignature_MovesOnAnInPlaceEdit(t *testing.T) {
+	cases := []struct {
+		name, body string
+		shift      time.Duration
+	}{
+		{"a later mtime at the same length", "other body\n", time.Second},
+		{"a different length at the same mtime", "a longer body\n", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, dir, ".kiro/prompts/a.md", "first body\n")
+			roots := []kiroRoot{{fsPath: filepath.Join(dir, ".kiro")}}
+			before := dirSignature(roots)
+			full := filepath.Join(dir, ".kiro/prompts/a.md")
+			info, err := os.Stat(full)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dirInfo, err := os.Stat(filepath.Dir(full))
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, dir, ".kiro/prompts/a.md", tc.body)
+			mtime := info.ModTime().Add(tc.shift)
+			if err := os.Chtimes(full, mtime, mtime); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(filepath.Dir(full), dirInfo.ModTime(), dirInfo.ModTime()); err != nil {
+				t.Fatal(err)
+			}
+			if after := dirSignature(roots); after == before {
+				t.Errorf("signature unchanged after an in-place edit: %q", after)
+			}
+		})
+	}
+}
+
+func TestCollectKiroDocs_ServesTheEditedPreview(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, ".kiro/prompts/remember.md", "Remember this\n")
+	srv := &Server{workDir: dir, kiroDocs: &docsCache{}}
+	if first, ok := findDoc(srv.collectKiroDocs(t.Context()).Docs, "remember"); !ok || first.Description != "Remember this" {
+		t.Fatalf("first scan = %+v, want the body's preview", first)
+	}
+	writeFile(t, dir, ".kiro/prompts/remember.md", "Remember that, and more\n")
+	second, ok := findDoc(srv.collectKiroDocs(t.Context()).Docs, "remember")
+	if !ok || second.Description != "Remember that, and more" {
+		t.Errorf("after an in-place edit the row = %+v, want the edited preview", second)
 	}
 }
 
@@ -519,16 +633,15 @@ func TestCollectKiroDocs_CachesOnSignature(t *testing.T) {
 		t.Errorf("after adding a doc got %d rows, want 2 (the signature must invalidate)", len(third))
 	}
 
-	// An in-place body edit is the key's documented limit: the cached rows come back, which is
-	// the proof the cached slice is served at all.
+	// An in-place edit moves the file's size, so the key invalidates and the new text is served.
 	writeFile(t, dir, ".kiro/steering/a.md", "---\ndescription: EDITED\n---\n")
 	fourth := srv.collectKiroDocs(t.Context()).Docs
 	edited, ok := findDoc(fourth, "a")
 	if !ok {
 		t.Fatalf("the edited doc lost its row: %+v", fourth)
 	}
-	if edited.Description != "A" {
-		t.Errorf("description after an in-place edit = %q, want the cached %q", edited.Description, "A")
+	if edited.Description != "EDITED" {
+		t.Errorf("description after an in-place edit = %q, want %q", edited.Description, "EDITED")
 	}
 }
 

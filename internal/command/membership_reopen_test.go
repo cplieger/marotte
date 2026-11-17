@@ -14,6 +14,7 @@ import (
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
@@ -193,7 +194,7 @@ func TestReopenForMessage_AGoneOrTearingDownChatOpensNothingQuietly(t *testing.T
 			if tc.seed {
 				seedNamed(t, store, "c-x", "Doomed")
 			}
-			st, err := tabs.NewStore(t.TempDir())
+			st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 			if err != nil {
 				t.Fatalf("Setup: open tab store: %v", err)
 			}
@@ -221,7 +222,7 @@ func TestReopenForMessage_AnyOtherFailureWarnsWithTheChatID(t *testing.T) {
 	logs := capture.Default(t)
 	store := testsupport.NewInMemoryChatStore()
 	seedNamed(t, store, "c-x", "Messaged")
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("Setup: open tab store: %v", err)
 	}

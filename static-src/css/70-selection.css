@@ -106,7 +106,6 @@
 .seg.active,
 .pill-model-item.active,
 .pill-role-item.active,
-.picker-btn.active,
 .fb-row.fb-row-selected,
 .repo-picker-chip-active,
 .repo-picker-row-selected,
@@ -161,7 +160,6 @@
   .seg.active:hover,
   .pill-model-item.active:hover,
   .pill-role-item.active:hover,
-  .picker-btn.active:hover,
   .fb-row.fb-row-selected:hover,
   .repo-picker-chip-active:hover,
   .repo-picker-row-selected:hover,
@@ -201,7 +199,6 @@
 .seg.active:active,
 .pill-model-item.active:active,
 .pill-role-item.active:active,
-.picker-btn.active:active,
 .repo-picker-chip-active:active,
 .repo-picker-row-selected:active,
 .git-branch-popover-row.current:active,
@@ -277,27 +274,10 @@
 /* ==========================================================================
    THE INK THAT DOES NOT INHERIT.
 
-   `color` on the rule above reaches the descendants that INHERIT it, and a
-   row's quiet metadata does not: `.pill-model-meta`, `.pill-role-scope`,
-   `.picker-meta`, `.fb-meta` and `.repo-picker-row-meta` each
-   declare their own `--c-text-tertiary` or `--c-text-secondary`, and an
-   explicit declaration beats an inherited value
-   however specific the ancestor is. So the consolidation coloured the row and
-   left its metadata behind, at 2.464:1 dark / 3.081:1 light on the selected
-   fill — a WCAG 1.4.3 failure in the rows the consolidation exists to make
-   legible. Every current descendant ink was measured on the selected fill and
-   every one of them failed: tertiary 1.823:1 dark / 2.398:1 light at hover,
-   secondary 3.463 / 3.704, accent 2.810 / 2.772, red 2.757 / 2.106.
-
-   Values: 01-tokens.css, `--c-selected-*-fg`, sized by `css-contrast.py
-   selected`. Muted metadata mixes toward the FILL (no hue to protect); a status
-   hue mixes toward the row's INK, which lightens on dark and darkens on light
-   while `color-mix(in oklch)` leaves the hue angle alone — which is true only
-   because that ink's hue is authored `none`, not `0deg`. See 01-tokens.css.
-
-   A NEW SELECTED SURFACE WITH COLOURED METADATA BELONGS HERE. Setting the
-   parent's `color` is not enough, and that is the whole reason this block
-   exists rather than being an oversight anyone can repeat.
+   Row metadata that declares its own ink (`.pill-model-meta`, `.fb-meta` and the
+   rest below) keeps it on the selected fill, where every muted ink fails 4.5:1, so
+   each is re-inked here from 01-tokens.css's `--c-selected-*-fg`. A new selected
+   surface with its own metadata ink joins this list.
    ========================================================================== */
 
 /* A plain list rather than `:is()`, deliberately: `:is()` would hand every
@@ -307,7 +287,6 @@
    here only has to beat its own base declaration, which it does. */
 .pill-model-item.active .pill-model-meta,
 .pill-role-item.active .pill-role-scope,
-.picker-btn.active .picker-meta,
 .fb-row.fb-row-selected .fb-icon,
 .fb-row.fb-row-selected .fb-meta,
 .repo-picker-row-selected .repo-picker-row-meta,

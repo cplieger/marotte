@@ -202,121 +202,24 @@
   padding-block: 0;
 }
 
-/* Model picker */
-[id="model-picker"] {
+/* The empty chat's mark (empty-chat-logo.ts). A size container, so the mark scales with
+ * the pane's shorter side and a phone's short pane above the composer shrinks it too. */
+.empty-chat-logo {
   position: absolute;
   inset: 0;
-  z-index: 5;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-
-  /* `safe center` and NOT `center`. The card count is the model catalog's, so the
-   * column can outgrow the overlay at any width — and a centred flex column that
-   * overflows loses content at BOTH ends, taking the heading that says what the
-   * grid is. `safe` falls back to start alignment exactly when the content does
-   * not fit, which is what makes the heading reachable by scrolling. A browser
-   * that does not know the keyword lands on `normal`, which is start alignment. */
-  justify-content: safe center;
-  overflow-y: auto;
-  gap: var(--sp-4);
-  padding-block: var(--sp-4);
-  opacity: 1;
-  transition: opacity var(--dur-enter);
+  container-type: size;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
 }
 
-.picker-label {
-  font-size: var(--fs-xl);
-
-  /* The empty state's one heading, so it carries the full ink: at
-   * --c-text-secondary it measured past AAA but read 1.84x dimmer than the cards it
-   * introduces. --c-text-control does not apply — this is a heading, not a label. */
+/* Grey in both themes: --c-text-primary has zero chroma. 3:5 is the #vk-logo symbol's
+ * viewBox. */
+.empty-chat-logo svg {
+  block-size: min(26cqmin, 10.75rem);
+  aspect-ratio: 3 / 5;
   color: var(--c-text-primary);
-  font-weight: var(--fw-medium);
-  text-wrap: balance;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-}
-
-.picker-desc {
-  font-size: var(--fs-sm);
-  color: var(--c-text-tertiary);
-  text-align: center;
-  max-width: 28rem;
-  text-wrap: balance;
-}
-
-.picker-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-2);
-  justify-content: center;
-  max-width: 35rem;
-  padding: 0 var(--sp-4);
-}
-
-.picker-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.125rem;
-  padding: var(--sp-3) var(--sp-4);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  background: var(--c-bg-secondary);
-  color: var(--c-text-primary);
-  font-size: var(--fs-sm);
-  cursor: pointer;
-  min-width: 10rem;
-  text-align: left;
-  transition:
-    border-color var(--dur-micro),
-    background var(--dur-micro),
-    transform var(--dur-micro) var(--ease-standard);
-  animation: vk-scale-in var(--dur-enter) var(--ease-enter) backwards;
-
-  &:hover {
-    background: var(--c-bg-tertiary);
-    border-color: var(--c-text-tertiary);
-    transform: translateY(-1px);
-  }
-
-  &:active {
-    transform: translateY(0);
-  }
-
-  /* Selected: 70-selection.css, with every other selected surface. */
-
-  & .picker-name {
-    font-weight: var(--fw-medium);
-  }
-
-  /* Secondary, not the hint ink: this sits on the CARD's fill rather than the
-   * page's, and the hint ink is sized against the page — 4.244:1 at rest and
-   * 3.203:1 hovered, both under AA for 11px text. */
-  & .picker-meta {
-    font-size: var(--fs-xs);
-    color: var(--c-text-secondary);
-  }
-}
-
-/* PHONE: exactly three cards per row, a short last row centred like desktop's. A 10rem
- * card minimum is what pinned the phone to two, spending one row per two models. The
- * basis is a third of the content box less the two gaps; a grid track would equalise
- * the columns but cannot centre a partial last row. */
-@media (width <= 48rem) {
-  .picker-grid {
-    max-width: none;
-    inline-size: 100%;
-    padding-inline: var(--sp-3);
-  }
-
-  .picker-btn {
-    flex: 0 0 calc((100% - 2 * var(--sp-2)) / 3);
-    min-width: 0;
-    padding: var(--sp-2);
-  }
+  opacity: 0.12;
 }
 
 /* Message rows with avatars */

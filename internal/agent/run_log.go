@@ -49,6 +49,11 @@ type runTurn struct {
 	endWait chan struct{}
 	// tail is the newest line the turn's own lane printed (printedLine), nil until it prints; written by the sink.
 	tail atomic.Pointer[string]
+	// calls is the sink's printedLine state, nil until the turn's first entry.
+	calls stepCalls
+	// callTitles is calls' card titles by call id as the sink last left them, which a read's row carries; never
+	// written after it is stored.
+	callTitles atomic.Pointer[map[string]string]
 	// lastError is the newest model error KAS displayed in the step's current KAS turn, zero when none.
 	lastError marotte.EngineError
 	// rawStop is the last turn_end's stop reason, carried by the close.
@@ -97,8 +102,23 @@ func (s runSink) Append(ctx context.Context, e *marotte.Entry) error {
 	}
 	s.turn.seq.Store(e.Seq)
 	s.turn.answer.see(e)
-	if line := printedLine(e); line != "" {
+	if s.turn.calls == nil {
+		s.turn.calls = make(stepCalls)
+	}
+	if line := printedLine(e, s.turn.calls); line != "" {
 		s.turn.tail.Store(&line)
+	}
+	if e.Lane == "" && (e.Kind == marotte.EntryKindToolCall || e.Kind == marotte.EntryKindToolResult) {
+		titles := s.turn.calls.titles()
+		s.turn.callTitles.Store(&titles)
+	}
+	return nil
+}
+
+// openCalls is the card titles of the turn's own-lane calls stepCalls holds, nil when none.
+func (t *runTurn) openCalls() map[string]string {
+	if p := t.callTitles.Load(); p != nil {
+		return *p
 	}
 	return nil
 }
@@ -122,7 +142,10 @@ type runRecord struct {
 	// noteLeases is, per path, the lease node_complete read for the close it sealed, until a trigger records that
 	// close's grade: closeNode is the only writer, gradeLocked the only reader.
 	noteLeases map[string]noteLease
-	host       marotte.ChatID
+	// late is, per path, the calls its newest closed turn's close aborted, which a late tool_result settles
+	// (appendAfterClosed); the path's next open drops them.
+	late map[string]*lateCalls
+	host marotte.ChatID
 	// removed is the tombstone: a frame arriving after Delete opens nothing.
 	removed bool
 }
@@ -343,14 +366,26 @@ func (r *runLog) turnRange(ctx context.Context, workflowID, turn string, from ui
 			}
 		}
 	}
-	read, err := l.SnapshotTurns([]string{turn}, from)
+	// Read from 0: a result in the tail is titled from its call, which may precede from.
+	read, err := l.SnapshotTurns([]string{turn}, 0)
 	r.mu.Unlock()
 	if err != nil || read == nil {
 		return nil, nil, nil, false, err
 	}
-	if entries, err = decodeTurns(read); err != nil {
+	whole, err := decodeTurns(read)
+	if err != nil {
 		return nil, nil, nil, false, err
 	}
+	var calls []marotte.Entry
+	for _, e := range whole {
+		switch {
+		case e.Seq >= from:
+			entries = append(entries, e)
+		case e.Kind == marotte.EntryKindToolCall:
+			calls = append(calls, e)
+		}
+	}
+	marotte.ServeToolEntries(entries, calls)
 	// The page speaks for its newest entry, or for the seq before from when empty.
 	newest := from - 1
 	if n := len(entries); n > 0 {
@@ -605,6 +640,7 @@ func (r *runLog) open(ctx context.Context, step *translate.RunStep, chatID marot
 		return nil, nil, err
 	}
 	delete(rec.staged, nodePath)
+	delete(rec.late, nodePath)
 	t := &runTurn{path: nodePath, top: topStepOf(step), nodeType: step.NodeType, nodeID: nodeIDOf(step)}
 	t.turn = turnlog.Open(e.ID, runSink{log: rec.log, turn: t})
 	if r.steps != nil {
@@ -668,23 +704,35 @@ func hostFor(workflowID string, chatID marotte.ChatID) marotte.ChatID {
 	return chatID
 }
 
-// appendAfterClosed files a content entry after the newest closed turn of its path; false when none is known, so the caller opens one.
-func (r *runLog) appendAfterClosed(ctx context.Context, workflowID, nodePath string, e *marotte.Entry) (bool, error) {
+// appendAfterClosed files a content entry after the newest closed turn of its path; false when none is known, so the
+// caller opens one. A tool_result settles a call that turn's close aborted: call is that call, nil when the close
+// aborted none by its id, and the line the result prints moves the path's attempt.
+func (r *runLog) appendAfterClosed(ctx context.Context, workflowID, nodePath string, e *marotte.Entry) (filed bool, call *marotte.EntryToolCall, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec, ok := r.runs[workflowID]
 	if !ok {
-		return false, nil
+		return false, nil, nil
 	}
 	if rec.removed {
-		return false, errRunLogRemoved
+		return false, nil, errRunLogRemoved
 	}
 	turn, ok := rec.closed[nodePath]
 	if !ok || rec.log == nil {
-		return false, nil
+		return false, nil, nil
 	}
 	e.Turn = turn
-	return true, rec.log.Append(ctx, e)
+	if err := rec.log.Append(ctx, e); err != nil {
+		return true, nil, err
+	}
+	late := rec.late[nodePath]
+	if late == nil || e.Kind != marotte.EntryKindToolResult {
+		return true, nil, nil
+	}
+	if line := printedLine(e, late.dock); line != "" && rec.starts != nil {
+		noteAttemptLine(rec.starts, nodePath, line)
+	}
+	return true, late.cards[marotte.ToolCallIDOfResult(e.ID)], nil
 }
 
 // meter folds a step's turn_completion into its open turn; false with no open turn.
@@ -998,6 +1046,12 @@ func (r *runLog) closeLocked(ctx context.Context, rec *runRecord, t *runTurn, c 
 		r.steps.endStep(rec.host, t.turn.ID())
 	}
 	rec.closed[t.path] = t.turn.ID()
+	if late := lateCallsOf(sealed, t.calls); late != nil {
+		if rec.late == nil {
+			rec.late = make(map[string]*lateCalls)
+		}
+		rec.late[t.path] = late
+	}
 	if rec.closes != nil {
 		rec.closes[t.path] = sealedClose(sealed, t.turn.ID(), &c)
 	}
@@ -1008,6 +1062,32 @@ func (r *runLog) closeLocked(ctx context.Context, rec *runRecord, t *runTurn, c 
 		}
 	}
 	return sealed, err
+}
+
+// lateCalls is a closed turn's calls a late tool_result can still settle: the calls of every lane the close aborted,
+// by call id, which title the result's card, and the root lane's dock state, which settles its line and seeds an
+// interrupted attempt's row (stepStartLocked).
+type lateCalls struct {
+	cards map[string]*marotte.EntryToolCall
+	dock  stepCalls
+}
+
+// lateCallsOf is the calls a close's seals aborted, with the turn's dock state; nil when it aborted none.
+func lateCallsOf(sealed []turnlog.Sealed, dock stepCalls) *lateCalls {
+	var cards map[string]*marotte.EntryToolCall
+	for _, s := range sealed {
+		if s.Call == nil || s.Entry == nil || s.Entry.Kind != marotte.EntryKindToolResult {
+			continue
+		}
+		if cards == nil {
+			cards = make(map[string]*marotte.EntryToolCall)
+		}
+		cards[marotte.ToolCallIDOfResult(s.Entry.ID)] = s.Call
+	}
+	if cards == nil {
+		return nil
+	}
+	return &lateCalls{cards: cards, dock: dock}
 }
 
 // sealedClose is the close a closer sealed, through the scan's constructor so a live close and a scanned one cannot
@@ -1266,6 +1346,7 @@ func scanStepFacts(all []marotte.Entry) *stepFactScan {
 		starts: make(map[string]stepAttempt),
 		turns:  make(map[string][]string),
 		paths:  make(map[string]string),
+		calls:  make(map[string]stepCalls),
 	}
 	for i := range all {
 		sc.see(&all[i])
@@ -1273,12 +1354,14 @@ func scanStepFacts(all []marotte.Entry) *stepFactScan {
 	return sc
 }
 
-// stepFactScan is scanStepFacts' fold, with each turn's path as its turn_open named it.
+// stepFactScan is scanStepFacts' fold, with each turn's path as its turn_open named it and, by path, the dock state
+// of the path's newest turn.
 type stepFactScan struct {
 	closes map[string]stepClose
 	starts map[string]stepAttempt
 	turns  map[string][]string
 	paths  map[string]string
+	calls  map[string]stepCalls
 }
 
 func (sc *stepFactScan) see(e *marotte.Entry) {
@@ -1286,6 +1369,8 @@ func (sc *stepFactScan) see(e *marotte.Entry) {
 	case marotte.EntryKindTurnOpen:
 		var to marotte.EntryTurnOpen
 		if json.Unmarshal(e.Payload, &to) == nil && to.NodePath != "" {
+			// Only the path's newest closed turn takes a late result (appendAfterClosed), so its earlier turns' calls go.
+			delete(sc.calls, to.NodePath)
 			sc.paths[e.Turn] = to.NodePath
 			sc.turns[to.NodePath] = append(sc.turns[to.NodePath], e.Turn)
 			noteAttemptOpen(sc.starts, to.NodePath, e.Ts)
@@ -1296,9 +1381,14 @@ func (sc *stepFactScan) see(e *marotte.Entry) {
 			sc.closes[path] = stepCloseOf(&tc, e.Turn)
 			noteAttemptClose(sc.starts, path, tc.Outcome)
 		}
-	case marotte.EntryKindText, marotte.EntryKindThinking, marotte.EntryKindToolCall:
+	case marotte.EntryKindText, marotte.EntryKindThinking, marotte.EntryKindToolCall, marotte.EntryKindToolResult:
 		if path, ok := sc.paths[e.Turn]; ok {
-			noteAttemptLine(sc.starts, path, printedLine(e))
+			calls := sc.calls[path]
+			if calls == nil {
+				calls = make(stepCalls)
+				sc.calls[path] = calls
+			}
+			noteAttemptLine(sc.starts, path, printedLine(e, calls))
 		}
 	case marotte.EntryKindStepGraded:
 		var g marotte.EntryStepGraded
@@ -1380,6 +1470,11 @@ func stepStartLocked(rec *runRecord, path string, a stepAttempt) marotte.RunStep
 	}
 	if !row.Ended {
 		row.Turn, row.Tail = attemptTail(rec, path, a)
+		if t := rec.open[path]; t != nil {
+			row.Calls = t.openCalls()
+		} else if late := rec.late[path]; late != nil {
+			row.Calls = late.dock.titles()
+		}
 	}
 	return row
 }
@@ -1417,6 +1512,7 @@ func (r *runLog) liveRows(workflowID string, starts map[string]marotte.RunStepSt
 		if line := t.tail.Load(); line != nil {
 			row.Tail = *line
 		}
+		row.Calls = t.openCalls()
 		for _, o := range t.turn.OpenEntries() {
 			if o.Lane == "" {
 				o.Text = dockText(o.Text)

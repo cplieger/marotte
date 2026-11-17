@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html"
 	"slices"
 	"strings"
 	"time"
@@ -322,7 +323,7 @@ func (r *turnRender) writeToolCall(b *strings.Builder, e *marotte.Entry) {
 
 // paired results fold into their call.
 func (r *turnRender) writeUnpairedResult(b *strings.Builder, e *marotte.Entry) {
-	if _, paired := r.calls[toolCallIDOfResult(e.ID)]; paired {
+	if _, paired := r.calls[marotte.ToolCallIDOfResult(e.ID)]; paired {
 		return
 	}
 	var res marotte.EntryToolResult
@@ -516,7 +517,7 @@ func indexResults(turn []marotte.Entry) (results map[string]*marotte.EntryToolRe
 		case marotte.EntryKindToolResult:
 			var res marotte.EntryToolResult
 			if json.Unmarshal(turn[i].Payload, &res) == nil {
-				results[toolCallIDOfResult(turn[i].ID)] = &res
+				results[marotte.ToolCallIDOfResult(turn[i].ID)] = &res
 			}
 		default:
 		}
@@ -659,9 +660,11 @@ const untitledTool = "tool"
 // writeToolCallMarkdown renders one tool call as a collapsible block: summary, duration, locations, then sanitised
 // input and output in fences. A held result supplies the settled status, output and locations.
 func writeToolCallMarkdown(b *strings.Builder, call *marotte.EntryToolCall, res *marotte.EntryToolResult) {
-	title := oneLine(call.Title)
+	settled := marotte.SettledToolCall(call, res)
+	drawn, _ := marotte.ToolCard(&settled)
+	title := oneLine(drawn)
 	if title == "" {
-		title = oneLine(string(call.Kind))
+		title = oneLine(string(settled.Kind))
 	}
 	if title == "" {
 		title = untitledTool
@@ -675,7 +678,8 @@ func writeToolCallMarkdown(b *strings.Builder, call *marotte.EntryToolCall, res 
 			locations = res.Locations
 		}
 	}
-	fmt.Fprintf(b, "<details>\n<summary>Tool: %s — %s</summary>\n\n", title, toolStatusWord(status, declined))
+	// Escaped: a <summary> is raw HTML, and a command title's `<` redirection would open a tag.
+	fmt.Fprintf(b, "<details>\n<summary>Tool: %s — %s</summary>\n\n", html.EscapeString(title), html.EscapeString(toolStatusWord(status, declined)))
 	if durationMs > 0 {
 		fmt.Fprintf(b, "Duration: %dms\n\n", durationMs)
 	}
@@ -693,11 +697,13 @@ func writeToolCallMarkdown(b *strings.Builder, call *marotte.EntryToolCall, res 
 
 // writeToolResultMarkdown renders a result whose call the turn no longer holds.
 func writeToolResultMarkdown(b *strings.Builder, res *marotte.EntryToolResult) {
-	title := oneLine(res.Title)
+	settled := marotte.SettledToolCall(nil, res)
+	drawn, _ := marotte.ToolCard(&settled)
+	title := oneLine(drawn)
 	if title == "" {
 		title = untitledTool
 	}
-	fmt.Fprintf(b, "<details>\n<summary>Tool result: %s — %s</summary>\n\n", title, toolStatusWord(res.Status, res.Declined))
+	fmt.Fprintf(b, "<details>\n<summary>Tool result: %s — %s</summary>\n\n", html.EscapeString(title), html.EscapeString(toolStatusWord(res.Status, res.Declined)))
 	if res.DurationMs > 0 {
 		fmt.Fprintf(b, "Duration: %dms\n\n", res.DurationMs)
 	}

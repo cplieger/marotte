@@ -240,9 +240,6 @@ class Elements {
   get scrollBottom(): HTMLButtonElement {
     return byId("scroll-bottom");
   }
-  get modelPicker(): HTMLDivElement {
-    return byId("model-picker");
-  }
   get promptForm(): HTMLFormElement {
     return byId("prompt-form");
   }
@@ -266,6 +263,10 @@ class Elements {
   }
   get steerStack(): HTMLUListElement {
     return byId("steer-stack");
+  }
+  /** The run bar and the steer stack's one box, between the dock and the composer. */
+  get holdingArea(): HTMLElement {
+    return byId("holding-area");
   }
   get sendBtn(): HTMLButtonElement {
     return byId("send-btn");
@@ -508,6 +509,12 @@ class Elements {
   }
   get editorDownloadBtn(): HTMLButtonElement {
     return byId("editor-download-btn");
+  }
+  get editorRenameBtn(): HTMLButtonElement {
+    return byId("editor-rename-btn");
+  }
+  get editorRevealBtn(): HTMLButtonElement {
+    return byId("editor-reveal-btn");
   }
   get editorGotoBtn(): HTMLButtonElement {
     return byId("editor-goto-btn");

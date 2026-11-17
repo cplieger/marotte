@@ -26,7 +26,9 @@ function client(url: string, focused: boolean): FakeClient {
 
 const handlers = new Map<string, (event: unknown) => void>();
 let windows: FakeClient[] = [];
-const showNotification = vi.fn(async (): Promise<void> => undefined);
+const showNotification = vi.fn(
+  async (_title: string, _options?: unknown): Promise<void> => undefined,
+);
 
 beforeAll(async () => {
   vi.stubGlobal("self", {
@@ -80,5 +82,17 @@ describe("a push while a window is focused", () => {
       },
     ]);
     expect(showNotification).not.toHaveBeenCalled();
+  });
+});
+
+describe("a push with no window focused", () => {
+  it("shows the PNG app icon and the alpha-only badge, both files logo.test.ts pins", async () => {
+    windows = [client("https://m.example/chat/c2", false)];
+    showNotification.mockClear();
+    await push({ id: "n-2", kind: "agent_finished", chat_id: "c1", title: "Fix login", body: "" });
+    expect(showNotification).toHaveBeenCalledWith(
+      "Fix login",
+      expect.objectContaining({ icon: "/icon-192.png", badge: "/badge-96.png" }),
+    );
   });
 });

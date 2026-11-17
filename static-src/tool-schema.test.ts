@@ -8,12 +8,8 @@ import {
   renderInfoFor,
   isToolActive,
   isToolDone,
-  toolTitleText,
-  commandTitle,
-  loadedResources,
-  loadedClaim,
 } from "./tool-schema.js";
-import type { ToolKind, ToolDepth1 as Depth1, LoadedResource } from "./tool-schema.js";
+import type { ToolKind, ToolDepth1 as Depth1 } from "./tool-schema.js";
 import type { ToolStatus } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -215,44 +211,11 @@ describe("renderInfoFor", () => {
     expect(info.fileBasename).toBe("lint.json");
   });
 
-  // An older disclose_context sends `{name}`; the document's kind arrives only with KAS's disclosedContext.
-  it.each([
-    ["skill", "land"],
-    ["steering", "marotte"],
-  ] as const)(
-    "a disclose_context with no id loads the %s its disclosed block names",
-    (type, name) => {
-      const info = renderInfoFor(
-        "other",
-        { name },
-        {
-          toolName: "disclose_context",
-          disclosed: { type, display_name: name, uri: `file:///x/${name}` },
-        },
-      );
-      expect(info.loaded).toEqual([{ id: `${type}::${name}`, type, name, server: "" }]);
-    },
-  );
-
-  it("a disclosed block of a type KAS does not define loads nothing", () => {
-    const info = renderInfoFor(
-      "other",
-      { name: "x" },
-      { disclosed: { type: "memory", display_name: "x", uri: "file:///x" } },
-    );
-    expect(info.loaded).toBeNull();
-  });
-
-  it("an id the call sent wins over the disclosed block", () => {
-    const info = renderInfoFor(
-      "other",
-      { id: "skill::land" },
-      {
-        toolName: "disclose_context",
-        disclosed: { type: "skill", display_name: "Land", uri: "file:///x/land" },
-      },
-    );
-    expect(info.loaded?.map((r) => r.id)).toEqual(["skill::land"]);
+  it("carries the load list the server sent, and none for an empty one", () => {
+    const loaded = [{ id: "skill::land", type: "skill", name: "land", server: "" }] as const;
+    expect(renderInfoFor("other", { id: "skill::land" }, { loaded }).loaded).toEqual(loaded);
+    expect(renderInfoFor("other", { id: "skill::land" }, { loaded: [] }).loaded).toBeNull();
+    expect(renderInfoFor("other", { id: "skill::land" }).loaded).toBeNull();
   });
 });
 
@@ -281,159 +244,4 @@ describe("the status predicates partition the wire enum", () => {
       expect(isToolDone(status)).toBe(want.done);
     });
   }
-});
-
-describe("toolTitleText", () => {
-  const cases: readonly (readonly [string, string])[] = [
-    ["web_search", "web search"],
-    ["remote_web_search", "remote web search"],
-    ["Running: read_files", "read files"],
-    ["Run tests in ./internal/foo_bar", "Run tests in ./internal/foo_bar"],
-    ["Run go test with --dry-run", "Run go test with --dry-run"],
-    ["Check marotte-acp.md", "Check marotte-acp.md"],
-    ["foo_bar.go", "foo_bar.go"],
-    ["Run Command", "Run Command"],
-    ["Hook fired: lint-on-save", "Hook fired: lint-on-save"],
-  ];
-  for (const [raw, want] of cases) {
-    it(`renders ${JSON.stringify(raw)} as ${JSON.stringify(want)}`, () => {
-      expect(toolTitleText(raw)).toBe(want);
-    });
-  }
-});
-
-describe("commandTitle", () => {
-  it("answers the command for KAS's placeholder on an execute call", () => {
-    expect(commandTitle("Run Command", "execute", { command: "go test ./..." })).toBe(
-      "go test ./...",
-    );
-  });
-
-  it("collapses whitespace and bounds the result", () => {
-    expect(commandTitle("Run Command", "execute", { command: "  make\n\tlint  " })).toBe(
-      "make lint",
-    );
-    expect(commandTitle("Run Command", "execute", { command: "a".repeat(200) })).toBe(
-      "a".repeat(119) + "\u2026",
-    );
-  });
-
-  it("leaves a model-written description to the caller", () => {
-    expect(commandTitle("Check vet output", "execute", { command: "go vet ./..." })).toBeNull();
-  });
-
-  // An MCP or custom tool titled "Run Command" with a command input is representable;
-  // the literal is KAS's execute_bash fallback and nothing else's.
-  it("answers nothing for a non-execute kind", () => {
-    expect(commandTitle("Run Command", "other", { command: "go vet ./..." })).toBeNull();
-  });
-
-  it("answers nothing when the input carries no usable command", () => {
-    expect(commandTitle("Run Command", "execute", undefined)).toBeNull();
-    expect(commandTitle("Run Command", "execute", null)).toBeNull();
-    expect(commandTitle("Run Command", "execute", "go vet")).toBeNull();
-    expect(commandTitle("Run Command", "execute", { command: 7 })).toBeNull();
-    expect(commandTitle("Run Command", "execute", { command: " \n " })).toBeNull();
-  });
-});
-
-// KAS's resource-id grammar, one case per prefix the load tools accept, plus ids outside it.
-describe("loadedResources", () => {
-  const cases: { id: string; want: Omit<LoadedResource, "id"> }[] = [
-    {
-      id: "tool::agent-mail::fetch_inbox",
-      want: { type: "mcp", name: "fetch_inbox", server: "agent-mail" },
-    },
-    { id: "tool::inspect_workflow", want: { type: "tool", name: "inspect_workflow", server: "" } },
-    {
-      id: "builtin::inspect_workflow",
-      want: { type: "tool", name: "inspect_workflow", server: "" },
-    },
-    { id: "skill::land", want: { type: "skill", name: "land", server: "" } },
-    { id: "steering::code-style", want: { type: "steering", name: "code-style", server: "" } },
-    { id: "power::aws::overview", want: { type: "overview", name: "aws", server: "" } },
-    { id: "power::aws::tool::docs::search", want: { type: "mcp", name: "search", server: "docs" } },
-    { id: "power::aws::steering::guide", want: { type: "steering", name: "guide", server: "" } },
-    { id: "plugin::kit::skill::release", want: { type: "skill", name: "release", server: "" } },
-    { id: "plugin::kit::tool::srv::do", want: { type: "mcp", name: "do", server: "srv" } },
-    { id: "tool::mailbox::", want: { type: "unknown", name: "tool::mailbox::", server: "" } },
-    { id: "tool::::x", want: { type: "unknown", name: "tool::::x", server: "" } },
-    { id: "power::aws", want: { type: "unknown", name: "power::aws", server: "" } },
-    { id: "plugin::::skill::x", want: { type: "unknown", name: "plugin::::skill::x", server: "" } },
-    { id: "memory::x", want: { type: "unknown", name: "memory::x", server: "" } },
-    { id: "skill::team::land", want: { type: "skill", name: "team::land", server: "" } },
-    { id: "steering::web::css", want: { type: "steering", name: "web::css", server: "" } },
-    { id: "skill::", want: { type: "unknown", name: "skill::", server: "" } },
-    { id: "power::aws::skill::a::b", want: { type: "skill", name: "a::b", server: "" } },
-    { id: "plugin::kit::steering::a::b", want: { type: "steering", name: "a::b", server: "" } },
-    {
-      id: "power::a::b::skill::x",
-      want: { type: "unknown", name: "power::a::b::skill::x", server: "" },
-    },
-    {
-      id: "plugin::a::b::steering::x",
-      want: { type: "unknown", name: "plugin::a::b::steering::x", server: "" },
-    },
-  ];
-  it.each(cases)("$id", ({ id, want }) => {
-    expect(loadedResources("load_resource", { id })).toEqual([{ id, ...want }]);
-  });
-
-  it("reads an older tool_load's tool_ids, skipping non-strings and empties", () => {
-    const got = loadedResources("tool_load", { tool_ids: ["skill::a", 7, "", "tool::b"] });
-    expect(got?.map((r) => r.id)).toEqual(["skill::a", "tool::b"]);
-  });
-
-  it("is null for a call that is not a load, or names no id yet", () => {
-    expect(loadedResources("read_file", { id: "skill::a" })).toBeNull();
-    expect(loadedResources("load_resource", undefined)).toBeNull();
-    expect(loadedResources("load_resource", {})).toBeNull();
-    expect(loadedResources("tool_load", { tool_ids: [] })).toBeNull();
-  });
-
-  // KAS 3.3.0 calls disclose_context itself, with the id load_resource takes.
-  it.each([
-    ["skill::sync-clones", "skill", "sync-clones"],
-    ["steering::git-commits", "steering", "git-commits"],
-  ] as const)("reads a disclose_context call's %s", (id, type, name) => {
-    expect(loadedResources("disclose_context", { id })).toEqual([{ id, type, name, server: "" }]);
-  });
-
-  it("is null for an older disclose_context that names its document without an id", () => {
-    expect(loadedResources("disclose_context", { name: "release-notes" })).toBeNull();
-  });
-
-  // tool_load's tool_ids schema: `builtin::<tool_name>` or `<server_name>::<tool_name>`.
-  it("reads an older tool_load's <server>::<tool> ids as MCP tools", () => {
-    expect(
-      loadedResources("tool_load", {
-        tool_ids: [
-          "agent-mail::fetch_inbox",
-          "agent-mail::send_message",
-          "builtin::control_process",
-        ],
-      }),
-    ).toEqual([
-      { id: "agent-mail::fetch_inbox", type: "mcp", name: "fetch_inbox", server: "agent-mail" },
-      { id: "agent-mail::send_message", type: "mcp", name: "send_message", server: "agent-mail" },
-      { id: "builtin::control_process", type: "tool", name: "control_process", server: "" },
-    ]);
-  });
-
-  // load_resource's `id` is a catalogue id, where a bare two-part id is no tool.
-  it("keeps a two-part id outside the catalogue grammar unknown when it is a load_resource id", () => {
-    expect(loadedResources("load_resource", { id: "agent-mail::fetch_inbox" })).toEqual([
-      {
-        id: "agent-mail::fetch_inbox",
-        type: "unknown",
-        name: "agent-mail::fetch_inbox",
-        server: "",
-      },
-    ]);
-  });
-
-  it("names what loaded on the claim line", () => {
-    const loaded = loadedResources("load_resource", { id: "tool::agent-mail::fetch_inbox" });
-    expect(loaded === null ? "" : loadedClaim(loaded)).toBe("Loaded agent-mail fetch_inbox");
-  });
 });

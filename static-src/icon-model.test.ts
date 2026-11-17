@@ -6,7 +6,7 @@ import { describe, it, expect } from "vitest";
 import { ICON_MODEL, ICON_MODEL_UI } from "./icons.js";
 
 /**
- * Every render size, in CSS pixels: the model pill (inline tier) and the picker heading (ui tier, 16 on a fine
+ * Every render size, in CSS pixels: the model pill (inline tier) and the model card's rows (ui tier, 16 on a fine
  * pointer). The floors use the smallest member.
  */
 const RENDER_SIZES = [12, 16];

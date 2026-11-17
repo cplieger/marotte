@@ -30,14 +30,13 @@ type SegmentKind string
 
 // Segment kinds in rendered order: a tool card has several segments across its tool_call and tool_result.
 const (
-	segmentContent       SegmentKind = "content"
-	segmentReasoning     SegmentKind = "reasoning"
-	segmentToolTitle     SegmentKind = "tool_title"
-	segmentToolDisclosed SegmentKind = "tool_disclosed"
-	segmentToolDiff      SegmentKind = "tool_diff"
-	segmentToolDenial    SegmentKind = "tool_denial"
-	segmentToolInput     SegmentKind = "tool_input"
-	segmentToolOutput    SegmentKind = "tool_output"
+	segmentContent    SegmentKind = "content"
+	segmentReasoning  SegmentKind = "reasoning"
+	segmentToolTitle  SegmentKind = "tool_title"
+	segmentToolDiff   SegmentKind = "tool_diff"
+	segmentToolDenial SegmentKind = "tool_denial"
+	segmentToolInput  SegmentKind = "tool_input"
+	segmentToolOutput SegmentKind = "tool_output"
 	// segmentSteer is a steer entry's text, the note the transcript renders for it.
 	segmentSteer SegmentKind = "steer"
 	// The turn-level kinds: the prompt's text and attachment names, the plan card, and the turn_close failure reason in
@@ -136,11 +135,33 @@ type searchTurn struct {
 	drawn bool
 }
 
-// searchCall is one tool call for the scan: the create payload and its settled result's diff text, so the input
-// segment can drop the leaf the diff covers (inputLeafInDiff).
+// searchCall is one tool call for the scan: the create payload and its settled result, which the drawn title and the
+// input segment's diff dedupe (inputLeafInDiff) read.
 type searchCall struct {
-	call *marotte.EntryToolCall
-	diff string
+	call   *marotte.EntryToolCall
+	result *marotte.EntryToolResult
+	// drawn caches title(): the call is read by its item's segments and filters alike.
+	drawn  string
+	titled bool
+}
+
+// title is the title the card draws, marotte.ToolCard of the settled call, the result's alone when no call
+// decoded.
+func (c *searchCall) title() string {
+	if !c.titled {
+		tc := marotte.SettledToolCall(c.call, c.result)
+		c.drawn, _ = marotte.ToolCard(&tc)
+		c.titled = true
+	}
+	return c.drawn
+}
+
+// diffText is the settled result's first diff's new text, the one the card previews.
+func (c *searchCall) diffText() string {
+	if c.result == nil || len(c.result.Diffs) == 0 {
+		return ""
+	}
+	return c.result.Diffs[0].NewText
 }
 
 // search scans a chat's entries for a query and returns the hits and tally. Undrawn turns (absent from drawn) are
@@ -198,8 +219,8 @@ func newSearchTurn(drawn bool) *searchTurn {
 	return &searchTurn{calls: make(map[string]*searchCall), drawn: drawn}
 }
 
-// observe folds one entry into the turn: the ordinal from turn_open, the payload from tool_call, the diff from
-// tool_result.
+// observe folds one entry into the turn: the ordinal from turn_open, the payload from tool_call, the settled result
+// from tool_result.
 func (t *searchTurn) observe(e *marotte.Entry) {
 	switch e.Kind {
 	case marotte.EntryKindTurnOpen:
@@ -214,8 +235,9 @@ func (t *searchTurn) observe(e *marotte.Entry) {
 		}
 	case marotte.EntryKindToolResult:
 		var res marotte.EntryToolResult
-		if json.Unmarshal(e.Payload, &res) == nil && len(res.Diffs) > 0 {
-			t.callFor(toolCallIDOfResult(e.ID)).diff = res.Diffs[0].NewText
+		if json.Unmarshal(e.Payload, &res) == nil {
+			c := t.callFor(marotte.ToolCallIDOfResult(e.ID))
+			c.result, c.titled = &res, false
 		}
 	}
 }
@@ -232,7 +254,7 @@ func (t *searchTurn) callFor(id string) *searchCall {
 }
 
 // itemMatchesFilters applies the scoped filters, all of which must hold. `tool:` and `file:` keep only tool items,
-// read through the call and its result together, so output hits are found by the call's title.
+// read through the call and its result together, so output hits are found by the title the card draws.
 func itemMatchesFilters(it *searchItem, q *searchQuery) bool {
 	if q.turn >= 0 && it.ordinal != q.turn {
 		return false
@@ -243,15 +265,11 @@ func itemMatchesFilters(it *searchItem, q *searchQuery) bool {
 	if it.call == nil {
 		return false
 	}
-	if q.tool != "" && !strings.Contains(strings.ToLower(it.call.Title), q.tool) &&
+	if q.tool != "" && !strings.Contains(strings.ToLower(it.title), q.tool) &&
 		!strings.Contains(strings.ToLower(string(it.call.Kind)), q.tool) {
 		return false
 	}
 	return q.file == "" || toolTouchesFile(it.call, it.result, q.file)
-}
-
-func toolCallIDOfResult(resultID string) string {
-	return strings.TrimSuffix(resultID, ":result")
 }
 
 // A read has a location and no diff.
@@ -294,8 +312,8 @@ func sentBy(segs []segment, c *marotte.Caller) []segment {
 	return segs
 }
 
-// entrySegments lists an entry's searchable spans in rendered order: text and steer_ack text; tool_call title and
-// input; tool_result claim, diff, denial and output; steer text; plan entries; compaction_failed or safety_blocked
+// entrySegments lists an entry's searchable spans in rendered order: text and steer_ack text; tool_call drawn title
+// and input; tool_result diff, denial and output; steer text; plan entries; compaction_failed or safety_blocked
 // text; model_routed's message; model_fallback's drawn models; turn_close failure reason; turn_open prompt and
 // attachment names; turn_wake label and messages, its runs named from names. Empty spans add nothing.
 func entrySegments(e *marotte.Entry, t *searchTurn, names map[string]string) []segment {
@@ -441,27 +459,24 @@ func turnOpenSegments(payload json.RawMessage) []segment {
 	return segs
 }
 
-// toolCallSegments is a call's create half: title and input, as the card renders them. Claim, diff, denial and
-// output belong to the settled tool_result.
+// toolCallSegments is the card's head: the drawn title, which reads the settled result too, and the input. Diff,
+// denial and output belong to the settled tool_result.
 func toolCallSegments(c *searchCall) []segment {
 	if c == nil || c.call == nil {
 		return nil
 	}
-	segs := oneSegment(segmentToolTitle, c.call.Title)
-	if input := inputLeafText(c.call.Input, c.diff); input != "" {
+	segs := oneSegment(segmentToolTitle, c.title())
+	if input := inputLeafText(c.call.Input, c.diffText()); input != "" {
 		segs = append(segs, segment{kind: segmentToolInput, text: input})
 	}
 	return segs
 }
 
-// toolResultSegments is the settled half: claim, diff preview, denial, output, each the one rendered field
-// (DisplayName, Diffs[0].NewText, Denial.Resource). old_text is skipped: 97.4% of its lines repeat in new_text. Path is
-// reachable via `file:` and the title.
+// toolResultSegments is the settled half: diff preview, denial, output, each the one rendered field
+// (Diffs[0].NewText, Denial.Resource). old_text is skipped: 97.4% of its lines repeat in new_text. Path is reachable
+// via `file:` and the title, and a disclosed name via the title.
 func toolResultSegments(res *marotte.EntryToolResult) []segment {
 	var segs []segment
-	if res.Disclosed != nil {
-		segs = append(segs, oneSegment(segmentToolDisclosed, res.Disclosed.DisplayName)...)
-	}
 	if len(res.Diffs) > 0 {
 		segs = append(segs, oneSegment(segmentToolDiff, res.Diffs[0].NewText)...)
 	}

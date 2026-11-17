@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   forgetStepTails,
   lastPrintedLine,
+  noteStepTurn,
   seedStepTails,
   stepTail,
+  tailAppended,
   tailDelta,
 } from "./run-step-tail.js";
 import type { Entry, OpenEntry, RunStepStart } from "./wire/types.gen.js";
@@ -50,6 +52,46 @@ describe("lastPrintedLine", () => {
         ]),
       ),
     ).toBe("Run the tests");
+  });
+
+  it("is a tool call's card title over its wire title, as the dock line's server twin reads it", () => {
+    const call = { title: "Run Command", card_title: "go test ./...", id: "c1" };
+    expect(lineOf(turn([entry(1, "tool_call", call)]))).toBe("go test ./...");
+    expect(lineOf(turn([entry(1, "tool_call", { title: "Run Command", id: "c1" })]))).toBe(
+      "Run Command",
+    );
+  });
+
+  // KAS can send a shell call's command only on its update, which the result stores.
+  it("is a result's card title where it differs from its call's", () => {
+    const call = { ...entry(1, "tool_call", shellCall), id: "c1" };
+    const settled = { ...entry(2, "tool_result", { card_title: "go vet ./..." }), id: "c1:result" };
+    expect(lineOf(turn([call, settled]))).toBe("go vet ./...");
+    const same = { ...entry(3, "tool_result", { card_title: "Run Command" }), id: "c1:result" };
+    expect(lineOf(turn([call, entry(2, "text", { text: "Reading the hits" }), same]))).toBe(
+      "Reading the hits",
+    );
+    expect(lineOf(turn([entry(2, "text", { text: "mine" }), settled]))).toBe("mine");
+  });
+
+  it("reads no result against a card appended settled, as the dock line's server twin holds none", () => {
+    const hook = {
+      ...entry(1, "tool_call", { status: "completed", card_title: "Hook fired: lint" }),
+      id: "h1",
+    };
+    const res = { ...entry(3, "tool_result", { card_title: "other" }), id: "h1:result" };
+    expect(lineOf(turn([hook, entry(2, "text", { text: "Reading the brief" }), res]))).toBe(
+      "Reading the brief",
+    );
+  });
+
+  // A description-less shell call's card title is its command, which markdown would read as markup.
+  it("keeps a card title whole where a text would lose its block markers", () => {
+    const call = { title: "Run Command", card_title: "> /tmp/out", id: "c1" };
+    expect(lineOf(turn([entry(1, "tool_call", call)]))).toBe("> /tmp/out");
+    const pending = { ...entry(1, "tool_call", shellCall), id: "c1" };
+    const settled = { ...entry(2, "tool_result", { card_title: "# rebuild" }), id: "c1:result" };
+    expect(lineOf(turn([pending, settled]))).toBe("# rebuild");
   });
 
   it("skips a delegate's lane and an entry with nothing to say", () => {
@@ -98,6 +140,76 @@ describe("lastPrintedLine", () => {
     for (const [text, line] of cases) {
       expect(lineOf(turn([entry(1, "text", { text })])), text).toBe(line);
     }
+  });
+});
+
+const shellCall = { title: "Run Command", card_title: "Run Command", id: "c1" };
+
+describe("a tail cell moved by appended entries", () => {
+  it("takes a result's card title where it differs from its call's", () => {
+    const wf = "wf_cell_result";
+    noteStepTurn(wf, "t1", "s");
+    tailAppended(wf, { ...entry(1, "tool_call", shellCall), id: "c1" });
+    expect(stepTail(wf, "s")).toBe("Run Command");
+    tailAppended(wf, {
+      ...entry(2, "tool_result", { card_title: "go vet ./..." }),
+      id: "c1:result",
+    });
+    expect(stepTail(wf, "s")).toBe("go vet ./...");
+    tailAppended(wf, { ...entry(3, "tool_call", { ...shellCall, id: "c2" }), id: "c2" });
+    tailAppended(wf, entry(4, "text", { text: "Reading the hits" }));
+    tailAppended(wf, {
+      ...entry(5, "tool_result", { card_title: "Run Command" }),
+      id: "c2:result",
+    });
+    expect(stepTail(wf, "s")).toBe("Reading the hits");
+    forgetStepTails(wf);
+  });
+
+  // A close aborts a call still in flight, and KAS can then say how it ended in a late result.
+  it("keeps an aborted call for the late result that settles it", () => {
+    const wf = "wf_cell_late";
+    noteStepTurn(wf, "t1", "s");
+    tailAppended(wf, { ...entry(1, "tool_call", shellCall), id: "c1" });
+    const aborted = { status: "aborted", card_title: "Run Command" };
+    tailAppended(wf, { ...entry(2, "tool_result", aborted), id: "c1:result" });
+    tailAppended(wf, entry(3, "turn_close", {}));
+    expect(stepTail(wf, "s")).toBe("Run Command");
+    const late = { status: "completed", card_title: "go vet ./..." };
+    tailAppended(wf, { ...entry(4, "tool_result", late), id: "c1:result" });
+    expect(stepTail(wf, "s")).toBe("go vet ./...");
+    forgetStepTails(wf);
+  });
+
+  it("holds nothing for a card appended settled", () => {
+    const wf = "wf_cell_hook";
+    noteStepTurn(wf, "t1", "s");
+    const hook = { status: "completed", card_title: "Hook fired: lint" };
+    tailAppended(wf, { ...entry(1, "tool_call", hook), id: "hook-1" });
+    expect(stepTail(wf, "s")).toBe("Hook fired: lint");
+    tailAppended(wf, entry(2, "text", { text: "Reading the brief" }));
+    tailAppended(wf, { ...entry(3, "tool_result", { card_title: "other" }), id: "hook-1:result" });
+    expect(stepTail(wf, "s")).toBe("Reading the brief");
+    forgetStepTails(wf);
+  });
+
+  // A page attached while the call was in flight, or after an interruption aborted it and before its
+  // late result, never saw its tool_call frame.
+  it("takes a seeded call's card title as the call a result settles", () => {
+    const wf = "wf_cell_seeded_call";
+    const seeded: RunStepStart = {
+      started_at: "2026-11-10T10:00:00Z",
+      ended: false,
+      turn: "t1",
+      tail: "Run Command",
+      calls: { c1: "Run Command" },
+    };
+    seedStepTails(wf, [["s", seeded]]);
+    expect(stepTail(wf, "s")).toBe("Run Command");
+    const settled = { ...entry(2, "tool_result", { card_title: "go vet ./..." }), id: "c1:result" };
+    tailAppended(wf, settled);
+    expect(stepTail(wf, "s")).toBe("go vet ./...");
+    forgetStepTails(wf);
   });
 });
 

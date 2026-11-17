@@ -53,10 +53,6 @@ func (t *Translator) publishSealedRefused(ctx context.Context, sc entryScope, se
 	broadcastSealed(ctx, t.bus, sc.chatID, sc.runID, sealed, refusal)
 }
 
-func (t *Translator) publishAppended(ctx context.Context, sc entryScope, e *marotte.Entry) {
-	PublishAppended(ctx, t.bus, sc.chatID, sc.runID, e)
-}
-
 // PublishSealed announces what one accumulator step froze, in order: a released
 // carry as entry_delta ahead of its entry_sealed, a streamed entry as
 // entry_sealed, and a born-sealed one as entry_appended. chatID addresses a
@@ -81,7 +77,7 @@ func broadcastSealed(
 	for _, s := range sealed {
 		e := s.Entry
 		if s.N == 0 {
-			PublishAppended(ctx, bus, chatID, runID, e)
+			publishAppended(ctx, bus, sc, e, s.Call)
 			continue
 		}
 		if s.Delta != "" {
@@ -97,17 +93,29 @@ func broadcastSealed(
 }
 
 // PublishAppended announces one born-sealed entry, or a turn_open and turn_close
-// under their own event names.
+// under their own event names. A tool_result goes through PublishSealed, whose seal
+// carries the call that titles it.
 func PublishAppended(ctx context.Context, bus Broadcaster, chatID marotte.ChatID, runID string, e *marotte.Entry) {
-	sc := entryScope{chatID: chatID, runID: runID}
+	publishAppended(ctx, bus, entryScope{chatID: chatID, runID: runID}, e, nil)
+}
+
+func publishAppended(ctx context.Context, bus Broadcaster, sc entryScope, e *marotte.Entry, call *marotte.EntryToolCall) {
 	switch e.Kind {
 	case marotte.EntryKindTurnOpen:
 		bus.Broadcast(ctx, sc.event(marotte.EventTurnOpened, marotte.TurnOpenedPayload{Entry: *e, WorkflowID: sc.runID}))
 	case marotte.EntryKindTurnClose:
 		bus.Broadcast(ctx, sc.event(marotte.EventTurnClosed, marotte.TurnClosedPayload{Entry: *e, WorkflowID: sc.runID}))
 	default:
-		bus.Broadcast(ctx, sc.event(marotte.EventEntryAppended, marotte.EntryAppendedPayload{Entry: *e, WorkflowID: sc.runID}))
+		bus.Broadcast(ctx, sc.event(marotte.EventEntryAppended, marotte.EntryAppendedPayload{Entry: appendedEntry(e, call), WorkflowID: sc.runID}))
 	}
+}
+
+// appendedEntry is e as its frame carries it: a tool entry's copy stamped (marotte.StampToolEntry),
+// a result joined to call, the call its seal settles.
+func appendedEntry(e *marotte.Entry, call *marotte.EntryToolCall) marotte.Entry {
+	out := *e
+	marotte.StampToolEntry(&out, call)
+	return out
 }
 
 // publishOpen announces a delta that reached lane key's open entry: entry_opened when it

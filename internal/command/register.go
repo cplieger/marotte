@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/marotte/internal/chat"
@@ -37,6 +38,9 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		// to false.
 		SupervisedDefault: func(ctx context.Context) bool {
 			return supervisedDefaultSetting(ctx, r.Workspace.ConfigDir)
+		},
+		HistoryWindow: func(ctx context.Context) time.Duration {
+			return settings.HistoryWindow(ctx, r.Workspace.ConfigDir)
 		},
 		Runs:      r.Runs,
 		Sessions:  r.Sessions,

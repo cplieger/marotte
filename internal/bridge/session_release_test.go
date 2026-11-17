@@ -109,12 +109,16 @@ func TestSessionRelease_AHeldSessionIsReportedOnceAndEndsWithTheEngine(t *testin
 // A refusal is reported by the same one ERROR as a silence, and a door waiting on the id fails then.
 func TestSessionRelease_ARefusalIsReportedOnceLikeASilence(t *testing.T) {
 	logs := capture.Default(t)
-	shortenRelease(t, 50*time.Millisecond, []time.Duration{30 * time.Millisecond}, 300*time.Millisecond)
+	// The budget outlasts a loaded reply, so every miss custody records is the refusal and never a timeout.
+	shortenRelease(t, time.Second, []time.Duration{30 * time.Millisecond}, 300*time.Millisecond)
 	k := newFakeKAS(t)
 	s := k.openedSession(nil)
 	stop := make(chan struct{})
-	defer close(stop)
+	refuserDone := make(chan struct{})
+	// The cleanup closes the engine's stdout, so a reply still in flight then fails the finished test.
+	defer func() { close(stop); <-refuserDone }()
 	go func() { // refuse every close
+		defer close(refuserDone)
 		for {
 			select {
 			case f, ok := <-k.frames:

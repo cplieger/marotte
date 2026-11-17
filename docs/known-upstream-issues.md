@@ -22,6 +22,12 @@ When kiro-cli's own automatic compaction fails, the reply can stay open with not
 
 Reported in the Kiro Crew tracker as [kirodotdev/KiroCrew#3583](https://github.com/kirodotdev/KiroCrew/issues/3583), closed after Kiro Crew added a time limit in its own client. kiro-cli itself still leaves the reply open. After a failed compaction, marotte ends a reply that shows no new activity for 60 seconds and marks it interrupted.
 
+### A compaction is thrown away when a message arrives while it runs
+
+kiro-cli summarizes a chat in one to four minutes. If a workflow step's message, a progress row or a reply it starts reaches the chat during that time, kiro-cli discards the finished summary and leaves the chat uncompacted. A chat that many workflow runs report to can fail several compactions in a row, and each failed attempt still costs a model call.
+
+Reported as [kirodotdev/Kiro#12483](https://github.com/kirodotdev/Kiro/issues/12483), open. marotte cannot keep kiro-cli's summary, so it reports the compaction as not run and tries again at the end of the next reply. A `/compact` you send yourself says the same and does not retry.
+
 ### Replies slow down when many chats and workflow steps run at once
 
 kiro-cli's agent engine runs every chat, workflow step and subagent on one JavaScript thread. On Node.js 22, which kiro-cli ships, garbage collection and the tracking of asynchronous code fill that thread when many of them run at once. Replies and workflow steps then slow down, starting a chat or a step can time out, and the engine can fall far behind. The engine's own log, `kiro.log`, falls behind under the same load.

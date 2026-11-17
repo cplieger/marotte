@@ -81,6 +81,7 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	uploaded, totalBytes, err := writeUploads(r.Context(), dirLoc, formFiles, h.sensitive)
+	h.uploadedChange(r.Context(), dir, uploaded)
 	if err != nil {
 		respondUploadError(w, dirLoc.abs, uploaded, err)
 		return
@@ -88,6 +89,18 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	slog.Info("filebrowse: upload",
 		"dir", dirLoc.abs, "count", len(uploaded), "bytes", totalBytes)
 	httpserver.WriteJSON(w, map[string]any{"ok": true, "uploaded": uploaded})
+}
+
+// uploadedChange reports the files of a batch that landed in dir, a partial batch's too.
+func (h *Handler) uploadedChange(ctx context.Context, dir string, uploaded []string) {
+	if len(uploaded) == 0 {
+		return
+	}
+	paths := make([]string, len(uploaded))
+	for i, name := range uploaded {
+		paths[i] = filepath.Join(cleanReqPath(dir), name)
+	}
+	h.changed(ctx, Change{Paths: paths})
 }
 
 // respondUploadError maps a writeUploads failure: invalid filename 400, an over-cap file 413 (never

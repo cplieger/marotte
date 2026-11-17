@@ -201,8 +201,8 @@ describe("chat.switch_model", () => {
   // A chat that never chose reads the target's catalog default, as the server does.
   it("turns thinking on with a tier picked onto a model that defaults it off", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
-    const { setPickerModels } = await import("../picker.js");
-    setPickerModels([
+    const { setCatalogModels } = await import("../model-list.js");
+    setCatalogModels([
       {
         model_id: "model-a",
         model_name: "Model A",
@@ -210,7 +210,7 @@ describe("chat.switch_model", () => {
         thinking_default_off: true,
       },
     ]);
-    onTestFinished(() => setPickerModels([]));
+    onTestFinished(() => setCatalogModels([]));
     const { switchModel } = await import("./chat.js");
 
     await switchModel.dispatch({ chatID: "c1", model: "model-a", effort: "high" });

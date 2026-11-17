@@ -80,6 +80,7 @@ func (rs *Runs) stepTranscript(ctx context.Context, workflowID, nodePath string)
 	for i := range turns {
 		out.Entries = append(out.Entries, turns[i].Entries...)
 	}
+	marotte.ServeToolEntries(out.Entries, nil)
 	gradeNewestClose(out.Entries, func() (workflow.StepRecord, bool) { return kasStepIn(workflowID, raw, nodePath) })
 	return out, nil
 }
@@ -159,6 +160,7 @@ func (rs *Runs) fromRunLog(ctx context.Context, out *marotte.RunStepTranscript) 
 		return false
 	}
 	out.State, out.Source = marotte.RunStepTranscriptReady, marotte.RunStepTranscriptSourceLog
+	marotte.ServeToolEntries(entries, nil)
 	out.Entries = entries
 	if open != nil {
 		out.OpenEntries = open

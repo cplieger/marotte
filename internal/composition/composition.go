@@ -191,7 +191,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// Closed by the server once its listener has bound; the destructive session sweep
 	// waits on it. Created here because the sweep starts before the server is built.
 	listenerBound := make(chan struct{})
-	tabStore := openTabStore(cfg.ConfigDir)
+	tabStore := openTabStore(appCtx, cfg.ConfigDir)
 	approvalStore := openSpecApprovalStore(cfg.ConfigDir)
 	lockedSettings := new(lateLockSink)
 	h := agent.New(appCtx, cfg.WorkDir, engineSource{kiro: kiro, allow: cfg.BridgeEnvAllow}, chatStore,
@@ -283,11 +283,14 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	sensitive := filebrowse.NewSensitive(cfg.ConfigDir)
 	agentDirs := settings.AgentDirs{Workspace: cfg.WorkDir, Config: cfg.ConfigDir}
 	configWatch := newConfigWatch(cfg.ConfigDir, h)
+	fileChange := &fileChanges{hub: h, tabs: h.Membership(), slash: h, workDir: cfg.WorkDir, kiroHome: workspace.KiroHome()}
 	fileOpts := append(ownedFileOptions(ownedFileDeps{Config: configWatch, Tools: tools, Dirs: agentDirs}),
 		filebrowse.WithLiveRoots(func(ctx context.Context) []string {
 			granted, _, _ := agentDirs.Granted(ctx)
 			return granted
-		}))
+		}),
+		filebrowse.WithChangeNotify(fileChange.changed),
+		filebrowse.WithOpenInEditor(h.Membership().EditorTabAt))
 	fileHandler, err := filebrowse.New(sensitive, cfg.BrowseRoots, fileOpts...)
 	if err != nil {
 		return nil, err
@@ -337,6 +340,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithGit(gitHandler),
 		server.WithFiles(fileHandler),
 		server.WithDocDeleter(fileHandler),
+		server.WithFileChanges(fileChange.changed),
 		server.WithAuth(authHandler),
 		server.WithPush(pushSvc),
 		server.WithMCPConfig(mcpStore),
@@ -1016,10 +1020,10 @@ func ensureUploadDir() {
 	}
 }
 
-// openTabStore opens the open-tab set, ALWAYS returning a store: the arrangement is re-derivable,
-// and no store would take the four tab commands down.
-func openTabStore(dir string) *tabs.Store {
-	st, err := tabs.NewStore(dir)
+// openTabStore opens the open-tab set under the History window config.json holds in dir, ALWAYS
+// returning a store: the arrangement is re-derivable, and no store would take the four tab commands down.
+func openTabStore(ctx context.Context, dir string) *tabs.Store {
+	st, err := tabs.NewStore(dir, settings.HistoryWindow(ctx, dir))
 	if err != nil {
 		slog.Warn("tab arrangement starting empty", "error", err)
 	}

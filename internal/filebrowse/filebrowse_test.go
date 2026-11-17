@@ -831,6 +831,25 @@ func TestAction_Rename(t *testing.T) {
 	}
 }
 
+// rename(2) replaces its target, so a rename onto a taken name is refused the way a create is.
+func TestAction_Rename_RefusesATakenName(t *testing.T) {
+	h, dir, prefix := testDir(t)
+	writeTestFile(t, filepath.Join(dir, "a.txt"), "AAA")
+	writeTestFile(t, filepath.Join(dir, "b.txt"), "BBB")
+	rec := postReq(t, h, "/api/files/action", `{"action":"rename","path":"`+prefix+`/a.txt","name":"b.txt"}`)
+	var reply struct{ Error, Code string }
+	_ = json.Unmarshal(rec.Body.Bytes(), &reply)
+	if rec.Code != http.StatusConflict || reply.Code != codeNameTaken || reply.Error != "b.txt already exists" {
+		t.Errorf("rename onto b.txt = %d %+v, want 409 %q %q", rec.Code, reply, codeNameTaken, "b.txt already exists")
+	}
+	if got := readTestFile(t, filepath.Join(dir, "a.txt")); got != "AAA" {
+		t.Errorf("a.txt = %q, want it kept", got)
+	}
+	if got := readTestFile(t, filepath.Join(dir, "b.txt")); got != "BBB" {
+		t.Errorf("b.txt = %q, want it kept", got)
+	}
+}
+
 func TestAction_Rename_InvalidNames(t *testing.T) {
 	bad := []string{"", ".", "..", "a/b", "a\\b", "with\x00nul"}
 	for _, name := range bad {
@@ -842,8 +861,11 @@ func TestAction_Rename_InvalidNames(t *testing.T) {
 			nameJSON, _ := json.Marshal(name)
 			body := `{"action":"rename","path":"` + prefix + `/old.txt","name":` + string(nameJSON) + `}`
 			rec := postReq(t, h, "/api/files/action", body)
-			if rec.Code != 400 {
-				t.Errorf("rename name=%q: status = %d, want 400", name, rec.Code)
+			var reply struct{ Error string }
+			_ = json.Unmarshal(rec.Body.Bytes(), &reply)
+			const want = `a name cannot be empty, "." or "..", or contain / or \`
+			if rec.Code != 400 || reply.Error != want {
+				t.Errorf("rename name=%q = %d %q, want 400 %q", name, rec.Code, reply.Error, want)
 			}
 			if _, err := os.Stat(filepath.Join(dir, "old.txt")); err != nil {
 				t.Errorf("rename name=%q: original file missing: %v", name, err)
@@ -1375,7 +1397,7 @@ func TestWriteFile_RelativeSymlinkSwappedAfterResolve(t *testing.T) {
 	swap()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/file", strings.NewReader(`{"content":"pwn"}`))
-	writeFile(rec, req, l, nil)
+	writeFile(rec, req, l, nil, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}

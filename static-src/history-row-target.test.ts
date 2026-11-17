@@ -128,8 +128,8 @@ describe.each(["fine", "coarse"] as const)("on a %s pointer", (tier) => {
     expect(opens(open, cx, cy), "and the open control does not").toBe(false);
   });
 
-  it("fills the height of a ONE-LINE row, which is the tier's height like any other", () => {
-    // The height is the `--row-h` token, never the content, so the control spans the row with or without a subtitle.
+  it("fills the height of a ONE-LINE row", () => {
+    // The block padding is the control's, so the control spans the row with or without a subtitle.
     const { row, open } = mountRow({ delete: true, sub: false });
     const r = row.getBoundingClientRect();
     const o = open.getBoundingClientRect();

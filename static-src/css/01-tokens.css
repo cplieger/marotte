@@ -451,23 +451,6 @@
 
     /* The page switcher (`.page-header > .seg-bar`): a rung over a control. */
     --bar-h: max(2.5rem, var(--ctl-h));
-
-    /* ---- List-row heights ------------------------------------------------ *
-     * A row's height is a TOKEN, never the sum of its content: content that does
-     * not fit truncates on its own line and the row never grows. Two rungs,
-     * because a list carries either a title plus one line of metadata or a title
-     * plus a description region, and a page picks one for every row it renders.
-     * One value on every tier: both rungs already clear the touch floor. */
-    --row-h-2: 3.5rem;
-    --row-h-3: 4.5rem;
-
-    /* The rung IN FORCE for the list being rendered, which is what a row reads.
-     * Declared here rather than on the row, because it has to be settable from
-     * whatever element owns the list — a declaration on `.entry` itself would
-     * outrank any inherited value, so no ancestor could set the tier at all. A
-     * three-line list overrides it once (28-docs.css `.docs-panel`) and every row
-     * under it follows. */
-    --row-h: var(--row-h-2);
   }
 
   /* A finger or a pen. */

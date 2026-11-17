@@ -12,7 +12,7 @@ import type { ActionErrorLike } from "./index.js";
 import { readDownload } from "./download.js";
 import { exportFilename } from "../export-filename.js";
 import { THINKING_OFF, thinkingIsOff } from "../effort.js";
-import { getCachedModels } from "../picker.js";
+import { getCachedModels } from "../model-list.js";
 import { join as joinKey } from "@cplieger/keyenc";
 import { errorAbout, successAbout } from "./subject.js";
 import { mayStillApply, retryUnlessStill, stillOr } from "./still-applying.js";

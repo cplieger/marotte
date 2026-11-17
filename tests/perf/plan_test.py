@@ -1,18 +1,23 @@
 """The performance harness's own contract: the plan cplieger/ci's perf-ci.yaml
-reads, the instance's refusal of the live port, a seeded fixture, the git shim
-that counts fetches, the window failures that fail a rep, and the line that ends a shell drive.
+reads, the instance's refusal of the live port and its ready, a seeded fixture, the git shim
+that counts fetches, the fake engine's steer answer, the window failures that fail a rep, the
+line that ends a shell drive, and the stream frames a window counts.
 
 run.sh runs this before it measures anything, so a broken plan fails the shard.
 """
 
 import hashlib
+import http.server
 import json
 import os
 import pathlib
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -193,6 +198,154 @@ class Serve(unittest.TestCase):
         done = self.refuse('19951x')
         self.assertEqual(done.returncode, 2, done.stderr)
         self.assertIn('PERF_PORT', done.stderr)
+
+
+# The routes serve.sh calls, with the forge inventory's cycle rule of internal/forges'
+# cycleClock: a refresh joins the cycle in flight or asks for the next, and a read that finds no
+# entry asks for a cycle after any in flight. Each cycle's start and entry write go to
+# <instance>/cycles.jsonl.
+FAKE_MAROTTE = """#!/usr/bin/env python3
+import json, os, pathlib, threading, time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+inst = pathlib.Path(os.environ['KIRO_CONFIG_DIR']).parent
+lock = threading.Lock()
+wake = threading.Event()
+st = {'last': 0, 'running': False, 'signed_in': False, 'entry': None}
+
+def note(event, cycle):
+    with open(inst / 'cycles.jsonl', 'a') as f:
+        f.write(json.dumps({'event': event, 'cycle': cycle, 't': time.time()}) + '\\n')
+
+def sweeps():
+    while True:
+        wake.wait()
+        with lock:
+            wake.clear()
+            st['last'] += 1
+            st['running'] = True
+            n = st['last']
+        note('begin', n)
+        time.sleep(0.4)
+        with lock:
+            st['entry'] = {'state': 'ready', 'cycle_id': str(n)}
+        note('put', n)
+        time.sleep(0.2)
+        with lock:
+            st['running'] = False
+
+def started():
+    start = inst / 'trigger' / 'trigger-0000-start.json'
+    while not start.exists():
+        time.sleep(0.05)
+    pathlib.Path(str(start) + '.done').touch()
+
+class H(BaseHTTPRequestHandler):
+    def answer(self, code, body):
+        data = json.dumps(body).encode()
+        self.send_response(code)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        if self.path == '/api/test/sse':
+            return self.answer(200, {'clients': 0})
+        if self.path == '/api/forges/inventory':
+            with lock:
+                if not st['signed_in']:
+                    entries = []
+                elif st['entry'] is None:
+                    entries = [{'state': 'loading', 'cycle_id': '0'}]
+                    wake.set()
+                else:
+                    entries = [st['entry']]
+            return self.answer(200, {'entries': entries})
+        self.answer(404, {})
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get('Content-Length') or 0))
+        if self.path == '/api/forges/login':
+            with lock:
+                st['signed_in'] = True
+                wake.set()
+            return self.answer(200, {})
+        if self.path == '/api/forges/inventory/refresh':
+            with lock:
+                if st['running']:
+                    n = st['last']
+                else:
+                    wake.set()
+                    n = st['last'] + 1
+            return self.answer(202, {'cycle_id': str(n)})
+        self.answer(404, {})
+
+    def log_message(self, *args):
+        pass
+
+threading.Thread(target=sweeps, daemon=True).start()
+threading.Thread(target=started, daemon=True).start()
+host, port = os.environ['LISTEN_ADDR'].rsplit(':', 1)
+ThreadingHTTPServer((host, int(port)), H).serve_forever()
+"""
+
+
+def free_port_pair() -> int:
+    """A port P from 1024 to 65526 with P and P + 9 free, as serve.sh binds."""
+    for _ in range(50):
+        with socket.socket() as a, socket.socket() as b:
+            a.bind(('127.0.0.1', 0))
+            port = a.getsockname()[1]
+            if port > 65526:
+                continue
+            try:
+                b.bind(('127.0.0.1', port + 9))
+            except OSError:
+                continue
+            return port
+    raise RuntimeError('no free port pair')
+
+
+class ServeReady(unittest.TestCase):
+    """serve.sh's ready: the instance it hands over runs no forge inventory cycle, whose frame
+    would land in the first window of a page that connects soon enough."""
+
+    def test_reports_ready_only_once_no_inventory_cycle_is_queued(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build, inst = pathlib.Path(tmp, 'build'), pathlib.Path(tmp, 'instance')
+            build.mkdir()
+            fake = build / 'marotte'
+            fake.write_text(FAKE_MAROTTE)
+            fake.chmod(0o755)
+            for d in ('config', 'trigger', 'forge'):
+                (inst / d).mkdir(parents=True)
+            forge = {'owner': 'o', 'login': 'o', 'repos': [], 'prs': []}
+            (inst / 'forge' / 'forge.json').write_text(json.dumps(forge))
+            (inst / 'seeded.json').write_text('{}')
+            env = {**os.environ, 'PERF_PORT': str(free_port_pair()), 'PERF_BUILD': str(build)}
+            try:
+                done = subprocess.run(
+                    [str(PERF / 'instance' / 'serve.sh'), str(inst)],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    check=False,
+                )
+                returned = time.time()
+                self.assertEqual(done.returncode, 0, done.stderr)
+                # Longer than a fake cycle, so a queued one has begun and written by now.
+                time.sleep(1.5)
+                log = (inst / 'cycles.jsonl').read_text().splitlines()
+            finally:
+                subprocess.run(
+                    [str(PERF / 'instance' / 'stop.sh'), str(inst)], timeout=30, check=False
+                )
+        cycles = [json.loads(line) for line in log]
+        self.assertTrue(cycles, 'the sign-in started no cycle')
+        late = [c for c in cycles if c['t'] > returned]
+        self.assertEqual(late, [], f'serve.sh reported ready before these: {cycles}')
 
 
 class View(unittest.TestCase):
@@ -427,6 +580,39 @@ class Shim(unittest.TestCase):
             self.assertEqual(argv, list(args))
 
 
+class FakeEngine(unittest.TestCase):
+    """tests/perf/synth/fake-kiro-cli.py, the instance's kiro-cli, on one ACP request."""
+
+    def frames(self, request: dict, count: int) -> list[dict]:
+        proc = subprocess.run(
+            [sys.executable, str(PERF / 'synth' / 'fake-kiro-cli.py'), 'acp'],
+            input=json.dumps(request) + '\n',
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        lines = proc.stdout.splitlines()
+        self.assertEqual(len(lines), count, lines)
+        return [json.loads(line) for line in lines]
+
+    def test_a_steer_is_held_as_kas_holds_one_mid_turn(self):
+        params = {'sessionId': 'sess_1', 'messageId': 'm-1', 'message': 'also check the spacing'}
+        update, answer = self.frames(
+            {'jsonrpc': '2.0', 'id': 7, 'method': '_session/steer', 'params': params}, 2
+        )
+        self.assertEqual(update['method'], 'session/update')
+        self.assertEqual(update['params']['sessionId'], 'sess_1')
+        info = update['params']['update']
+        self.assertEqual(info['sessionUpdate'], 'session_info_update')
+        kiro = info['_meta']['kiro']
+        self.assertEqual(
+            (kiro['kind'], kiro['messageId'], kiro['content']),
+            ('steering_queued', 'steer-m-1', 'also check the spacing'),
+        )
+        self.assertEqual(answer, {'jsonrpc': '2.0', 'id': 7, 'result': {'queued': True}})
+
+
 UNSETTLED = {'settled': False, 'ms': 60000, 'inflight': 2, 'path': '/files', 'ready': True}
 
 
@@ -505,6 +691,129 @@ class ShellEnd(unittest.TestCase):
     def test_the_typed_commands_echo_names_no_pid(self):
         self.assertEqual(self.pids(scroll_frame(['$ sleep 3 && ./emit.py 50000'])), [])
         self.assertEqual(self.pids('sleep 3 && ./emit.py 50000'), [])
+
+
+def hello(keepalive_event: str) -> str:
+    """go/sse/v2's handshake frame (Hello, verdict.go) naming the hub's keepalive event."""
+    data = {'epoch': 'e1', 'verdict': 'fresh', 'keepalive_event': keepalive_event, 'wire': 1}
+    return f'event: sse:hello\ndata: {json.dumps(data)}\n\n'
+
+
+class SseCapture(unittest.TestCase):
+    """tests/perf/measure/sse-capture.py: the records it writes for a chunked event stream."""
+
+    def capture(self, chunks: list[str], records: int, close: bool = False) -> list[dict]:
+        held = threading.Event()
+
+        class Stream(http.server.BaseHTTPRequestHandler):
+            # HTTP/1.1 chunked, as net/http serves a stream with no Content-Length.
+            protocol_version = 'HTTP/1.1'
+
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/event-stream')
+                self.send_header('Transfer-Encoding', 'chunked')
+                if close:
+                    self.send_header('Connection', 'close')
+                self.end_headers()
+                for c in chunks:
+                    data = c.encode()
+                    self.wfile.write(b'%x\r\n%s\r\n' % (len(data), data))
+                    self.wfile.flush()
+                held.wait(30)
+
+            def log_message(self, *args):
+                pass
+
+        srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Stream)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                out, stop, scope = (pathlib.Path(tmp, n) for n in ('sse.jsonl', 'stop', 'scope'))
+                scope.write_text('null')
+                proc = subprocess.Popen(
+                    [
+                        sys.executable,
+                        str(PERF / 'measure' / 'sse-capture.py'),
+                        *('--port', str(srv.server_address[1]), '--out', str(out)),
+                        *('--scope-file', str(scope), '--stop-file', str(stop)),
+                    ]
+                )
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline and proc.poll() is None:
+                    if out.exists() and out.read_text().count('\n') >= records:
+                        break
+                    time.sleep(0.05)
+                stop.touch()
+                try:
+                    rc = proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                    self.fail('the stop file did not end the capture')
+                self.assertEqual(rc, 0)
+                return [json.loads(line) for line in out.read_text().splitlines()]
+        finally:
+            held.set()
+            srv.shutdown()
+            srv.server_close()
+
+    def marks(self, chunks: list[str], records: int) -> list[tuple[str, bool]]:
+        return [(r['event'], r.get('keepalive', False)) for r in self.capture(chunks, records)]
+
+    def test_marks_the_keepalive_the_hello_names_and_no_other_frame(self):
+        chunks = [
+            hello('beat'),
+            'event: beat\ndata: {}\n\n',
+            'event: heartbeat\ndata: {}\n\n',
+            'data: {"type":"chat"}\n\n',
+        ]
+        self.assertEqual(
+            self.marks(chunks, 4),
+            [('sse:hello', False), ('beat', True), ('heartbeat', False), ('message', False)],
+        )
+
+    def test_a_hello_naming_the_comment_form_marks_no_frame(self):
+        chunks = [hello(''), ': keepalive\n\n', 'data: {"type":"chat"}\n\n']
+        self.assertEqual(self.marks(chunks, 2), [('sse:hello', False), ('message', False)])
+
+    def test_a_frame_split_across_chunks_is_one_record(self):
+        chunks = [hello('heartbeat'), 'event: chat\n', 'data: {"type":"turn","chat_id":"c1"}\n\n']
+        got = self.capture(chunks, 2)
+        self.assertEqual(len(got), 2, got)
+        self.assertEqual(
+            (got[1]['event'], got[1].get('type'), got[1].get('chat_id')), ('chat', 'turn', 'c1')
+        )
+
+    def test_the_stop_file_ends_a_stream_that_closes_its_connection(self):
+        # http.client hands such a connection to the response and clears conn.sock.
+        got = self.capture([hello('heartbeat'), 'data: {}\n\n'], 2, close=True)
+        self.assertEqual([r['event'] for r in got], ['sse:hello', 'message'])
+
+
+class StreamFrames(unittest.TestCase):
+    """static-src/perf/stream-frames.mjs: the sse_frames count of one window."""
+
+    def count(self, records: list[dict]) -> int:
+        module = ROOT / 'static-src' / 'perf' / 'stream-frames.mjs'
+        script = (
+            f'import {{ streamFrames }} from {json.dumps(module.as_uri())};'
+            f'console.log(JSON.stringify(streamFrames({json.dumps(records)})));'
+        )
+        return json.loads(node(script))
+
+    def test_counts_no_keepalive_and_no_hub_frame(self):
+        records = [
+            {'event': 'sse:hello'},
+            {'event': 'heartbeat', 'keepalive': True},
+            {'event': 'message', 'type': 'chat'},
+            {'event': 'sse:reset'},
+            {'event': 'sse:keepalive', 'keepalive': True},
+        ]
+        self.assertEqual(self.count(records), 1)
+
+    def test_counts_an_event_the_hello_did_not_name_as_its_keepalive(self):
+        self.assertEqual(self.count([{'event': 'heartbeat'}]), 1)
 
 
 if __name__ == '__main__':

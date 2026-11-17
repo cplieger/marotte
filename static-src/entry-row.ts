@@ -12,6 +12,8 @@ export type EntrySub =
 
 interface EntrySubLine {
   readonly text: string;
+  /** Written as `data-line`, so a repaint finds the line by name: a line with no text is not drawn. */
+  readonly key?: string;
   /** A path, a matcher or a command: an identifier rather than prose. */
   readonly mono?: boolean;
   /** Why the row's subject cannot do its job, in the failure ink. */
@@ -30,7 +32,7 @@ export interface EntryRowSpec {
   readonly mark?: HTMLElement | undefined;
   readonly badges?: readonly HTMLElement[] | undefined;
   readonly time?: EntryTime | undefined;
-  /** Absent still renders an empty subtitle line, so the title stays on the column. */
+  /** Absent or empty: no subtitle; the row fits its title. */
   readonly sub?: EntrySub | undefined;
   readonly actions?: readonly HTMLElement[] | undefined;
   /** Present for a door: the body becomes the open control named `Open <name>`. Absent: inert, no role or listener. */
@@ -42,12 +44,20 @@ export interface EntryRowSpec {
 /** A third badge is dropped, not wrapped: the badge column beside the actions is one line. */
 const MAX_BADGES = 2;
 
-function subNode(sub: EntrySub): HTMLElement {
+/** Null when nothing is left to draw: a line with no text is dropped, never drawn as a blank band. */
+function subNode(sub: EntrySub | undefined): HTMLElement | null {
+  if (sub === undefined) {
+    return null;
+  }
   if (sub.kind === "lines") {
+    const lines = sub.lines.filter((l) => l.text !== "");
+    if (lines.length === 0) {
+      return null;
+    }
     return el(
       "span",
       { className: "entry-lines" },
-      ...sub.lines.map((l) => {
+      ...lines.map((l) => {
         const cls = ["entry-sub"];
         if (l.mono === true) {
           cls.push("entry-sub-mono");
@@ -55,12 +65,36 @@ function subNode(sub: EntrySub): HTMLElement {
         if (l.error === true) {
           cls.push("entry-sub-error");
         }
-        return el("span", { className: cls.join(" ") }, l.text);
+        return el(
+          "span",
+          { className: cls.join(" "), ...(l.key === undefined ? {} : { "data-line": l.key }) },
+          l.text,
+        );
       }),
     );
   }
+  if (sub.text === "") {
+    return null;
+  }
   const cls = sub.kind === "clamp" ? "entry-sub entry-sub-clamp" : "entry-sub";
   return el("span", { className: cls }, sub.text);
+}
+
+/** Repaint a kept row's subtitle in place: replaced, added after the title line, or removed. */
+export function replaceEntrySub(row: HTMLElement, sub: EntrySub | undefined): void {
+  const body = row.querySelector<HTMLElement>(":scope > .entry-open, :scope > .entry-body");
+  if (body === null) {
+    return;
+  }
+  const old = body.querySelector(":scope > .entry-sub, :scope > .entry-lines");
+  const next = subNode(sub);
+  if (next === null) {
+    old?.remove();
+  } else if (old === null) {
+    body.querySelector(":scope > .entry-line")?.after(next);
+  } else {
+    old.replaceWith(next);
+  }
 }
 
 function timeNode(time: EntryTime): HTMLElement {
@@ -97,7 +131,7 @@ export function entryRow(spec: EntryRowSpec): HTMLElement {
     ),
     spec.time !== undefined ? timeNode(spec.time) : null,
   );
-  const sub = subNode(spec.sub ?? { kind: "line", text: "" });
+  const sub = subNode(spec.sub);
 
   const body =
     spec.open !== undefined
@@ -147,7 +181,7 @@ export function entryDetail(...children: HTMLElement[]): HTMLElement {
 }
 
 /**
- * N placeholder rows at the list's tier, so the swap to real rows moves nothing.
+ * N placeholder rows, each the height of a title-plus-one-line row.
  * `aria-hidden`: a placeholder names nothing.
  */
 export function entrySkeleton(n: number): HTMLElement[] {

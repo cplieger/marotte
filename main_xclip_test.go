@@ -13,19 +13,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/testsupport/testchild"
 	"github.com/creack/pty"
 )
 
-// xclipCommand runs bin as the image's xclip, in a new session so it has no
-// controlling terminal unless the caller gives it one. A binary that misses the
+// xclipCommand runs bin as the image's xclip over env, in a new session so it has
+// no controlling terminal unless the caller gives it one. A binary that misses the
 // xclip branch boots the server, so its folders and listener point at scratch.
-func xclipCommand(t *testing.T, bin, stdin string, args ...string) *exec.Cmd {
+func xclipCommand(t *testing.T, env []string, bin, stdin string, args ...string) *exec.Cmd {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	t.Cleanup(cancel)
 	dir := t.TempDir()
 	cmd := exec.CommandContext(ctx, bin, args...)
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(env,
 		"LISTEN_ADDR=127.0.0.1:0",
 		"KIRO_CONFIG_DIR="+filepath.Join(dir, "config"),
 		"KIRO_WORK_DIR="+filepath.Join(dir, "workspace"),
@@ -56,7 +57,7 @@ func TestXclipDispatch(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd := xclipCommand(t, self, "copied text", tc.args...)
+			cmd := xclipCommand(t, testchild.Env(), self, "copied text", tc.args...)
 			cmd.Args[0] = filepath.Join(t.TempDir(), "xclip")
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -105,7 +106,7 @@ func TestXclipLinkWritesOneOSC52Sequence(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := strings.Repeat("full-screen drag selection\n", 12_000)
-	cmd := xclipCommand(t, link, text, "-selection", "clipboard")
+	cmd := xclipCommand(t, os.Environ(), link, text, "-selection", "clipboard")
 	cmd.ExtraFiles = []*os.File{slave}
 	cmd.SysProcAttr.Setctty = true
 	cmd.SysProcAttr.Ctty = 3 // ExtraFiles[0] in the child

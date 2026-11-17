@@ -4,8 +4,9 @@
 The scope file holds the page's topics, a JSON array or null for everything: the first read is
 the connect's SSE-Topics header, and each later change is POSTed to /api/events/scope for this
 connection; <out>.scopes.json lists each POST with its status. One JSON line per frame: t (epoch
-ms), event, bytes (the data's), and the payload's type, chat_id, workflow_id and kind when it
-carries them. Stops when --stop-file appears, and exits 1 when the stream ends before it.
+ms), event, bytes (the data's), the payload's type, chat_id, workflow_id and kind when it carries
+them, and keepalive: true on a frame of the keepalive event the hello names. Stops when
+--stop-file appears, and exits 1 when the stream ends before it.
 Usage: sse-capture.py --port N --out FILE --scope-file FILE [--stop-file FILE]
 """
 
@@ -93,6 +94,9 @@ def main() -> None:
         headers['SSE-Topics'] = json.dumps(topics, separators=(',', ':'))
     conn = http.client.HTTPConnection('127.0.0.1', a.port)
     conn.request('GET', '/api/events', headers=headers)
+    # getresponse clears conn.sock when the response closes the connection; the stream reads
+    # on through the same socket, so the stop watcher holds it.
+    sock = conn.sock
     resp = conn.getresponse()
     stop = threading.Event()
     rescope = Rescope(a.port, scope_path, topics, stop)
@@ -103,8 +107,8 @@ def main() -> None:
         while not stop.wait(0.2):
             if a.stop_file and os.path.exists(a.stop_file):
                 stop.set()
-        with contextlib.suppress(OSError, AttributeError):
-            conn.sock.shutdown(socket.SHUT_RDWR)
+        with contextlib.suppress(OSError):
+            sock.shutdown(socket.SHUT_RDWR)
 
     threading.Thread(target=watch_stop, daemon=True).start()
     try:
@@ -117,13 +121,15 @@ def main() -> None:
 def read_frames(
     resp: http.client.HTTPResponse, path: str, rescope: Rescope, stop: threading.Event
 ) -> None:
-    event, data = '', []
+    event, data, keepalive = '', [], ''
     with open(path, 'w') as out:
         while True:
             try:
-                line = resp.fp.readline()
-            except OSError:
-                # The shutdown that ends the read can surface as a reset rather than EOF.
+                # resp.readline, not resp.fp: the stream is chunked, and a chunk boundary
+                # between a frame's lines would read as the blank line that ends the frame.
+                line = resp.readline()
+            except OSError, http.client.IncompleteRead:
+                # The shutdown that ends the read can surface as a reset or a cut chunk.
                 if stop.is_set():
                     return
                 raise
@@ -143,7 +149,12 @@ def read_frames(
                 continue
             rec = record(event, data)
             if event == 'sse:hello':
-                rescope.conn = json.loads('\n'.join(data)).get('conn')
+                hello = json.loads('\n'.join(data))
+                rescope.conn = hello.get('conn')
+                # An empty name means the hub sends its keepalive as an SSE comment, no frame.
+                keepalive = hello.get('keepalive_event', '')
+            elif keepalive and event == keepalive:
+                rec['keepalive'] = True
             out.write(json.dumps(rec) + '\n')
             out.flush()
             event, data = '', []

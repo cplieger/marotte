@@ -2,11 +2,13 @@ package agent
 
 import (
 	"encoding/json"
+	"maps"
 	"strconv"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/turnlog"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
@@ -75,6 +77,139 @@ func TestRunLog_StepStartsCarryAnInFlightStepsTurnAndLine(t *testing.T) {
 			t.Errorf("tail = %q, want %q", tail, "rg heavyRun")
 		}
 	})
+	t.Run("a description-less shell call reads as its command", func(t *testing.T) {
+		r := newRunLog(t.TempDir())
+		turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		call := &marotte.EntryToolCall{
+			ID: "call-1", Title: "Run Command", Kind: marotte.ToolKindExecute,
+			Input: json.RawMessage(`{"command":"go test ./..."}`),
+		}
+		if _, err := turn.ToolCall(t.Context(), "", call); err != nil {
+			t.Fatal(err)
+		}
+		if _, tail := startTail(t, r, step); tail != "go test ./..." {
+			t.Errorf("tail = %q, want %q", tail, "go test ./...")
+		}
+	})
+	t.Run("a command only the result carries moves the line to it", func(t *testing.T) {
+		dir := t.TempDir()
+		r := newRunLog(dir)
+		turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		call := &marotte.EntryToolCall{ID: "call-1", Title: "Run Command", Kind: marotte.ToolKindExecute, Input: json.RawMessage(`{}`)}
+		if _, err := turn.ToolCall(t.Context(), "", call); err != nil {
+			t.Fatal(err)
+		}
+		if _, tail := startTail(t, r, step); tail != "Run Command" {
+			t.Fatalf("Setup: before the result, tail = %q, want %q", tail, "Run Command")
+		}
+		res := &marotte.EntryToolResult{
+			Title: "Run Command", Kind: marotte.ToolKindExecute, Status: marotte.ToolCompleted,
+			Input: json.RawMessage(`{"command":"go vet ./..."}`),
+		}
+		if _, err := turn.ToolResult(t.Context(), "", "call-1", res); err != nil {
+			t.Fatal(err)
+		}
+		if _, tail := startTail(t, r, step); tail != "go vet ./..." {
+			t.Errorf("live tail = %q, want the command the card draws", tail)
+		}
+		if _, tail := startTail(t, newRunLog(dir), step); tail != "go vet ./..." {
+			t.Errorf("tail read back from the log = %q, want the command the card draws", tail)
+		}
+	})
+	t.Run("a command keeps the marks markdown reads as block markers", func(t *testing.T) {
+		dir := t.TempDir()
+		r := newRunLog(dir)
+		turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		call := &marotte.EntryToolCall{
+			ID: "call-1", Title: "Run Command", Kind: marotte.ToolKindExecute, Input: json.RawMessage(`{"command":"> /tmp/out"}`),
+		}
+		if _, err := turn.ToolCall(t.Context(), "", call); err != nil {
+			t.Fatal(err)
+		}
+		if _, tail := startTail(t, r, step); tail != "> /tmp/out" {
+			t.Errorf("call tail = %q, want the command the card draws", tail)
+		}
+		later := &marotte.EntryToolCall{ID: "call-2", Title: "Run Command", Kind: marotte.ToolKindExecute, Input: json.RawMessage(`{}`)}
+		if _, err := turn.ToolCall(t.Context(), "", later); err != nil {
+			t.Fatal(err)
+		}
+		res := &marotte.EntryToolResult{
+			Title: "Run Command", Kind: marotte.ToolKindExecute, Status: marotte.ToolCompleted,
+			Input: json.RawMessage(`{"command":"# rebuild"}`),
+		}
+		if _, err := turn.ToolResult(t.Context(), "", "call-2", res); err != nil {
+			t.Fatal(err)
+		}
+		if _, tail := startTail(t, r, step); tail != "# rebuild" {
+			t.Errorf("live result tail = %q, want the command the card draws", tail)
+		}
+		if _, tail := startTail(t, newRunLog(dir), step); tail != "# rebuild" {
+			t.Errorf("result tail read back from the log = %q, want the command the card draws", tail)
+		}
+	})
+	t.Run("a late result after an interruption moves the line to its command", func(t *testing.T) {
+		dir := t.TempDir()
+		r := newRunLog(dir)
+		turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		call := &marotte.EntryToolCall{ID: "call-1", Title: "Run Command", Kind: marotte.ToolKindExecute, Input: json.RawMessage(`{}`)}
+		if _, err := turn.ToolCall(t.Context(), "", call); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.closeHost(t.Context(), "c-1", marotte.ConcludeStopReason(marotte.StopReasonInterrupted)); err != nil {
+			t.Fatal(err)
+		}
+		if _, tail := startTail(t, r, step); tail != "Run Command" {
+			t.Fatalf("Setup: after the close, tail = %q, want %q", tail, "Run Command")
+		}
+		late := &marotte.Entry{
+			Kind: marotte.EntryKindToolResult, ID: marotte.ToolResultID("call-1"),
+			Payload: json.RawMessage(`{"title":"Run Command","kind":"execute","status":"completed","input":{"command":"go vet ./..."}}`),
+		}
+		if err := (&Runs{log: r, bus: &frameLog{}}).RunAppendAfterClosed(t.Context(), "wf1", step, late); err != nil {
+			t.Fatal(err)
+		}
+		if _, tail := startTail(t, r, step); tail != "go vet ./..." {
+			t.Errorf("live tail = %q, want the command the card draws", tail)
+		}
+		if _, tail := startTail(t, newRunLog(dir), step); tail != "go vet ./..." {
+			t.Errorf("tail read back from the log = %q, want the command the card draws", tail)
+		}
+	})
+	t.Run("a result that changes nothing leaves a later line standing", func(t *testing.T) {
+		r := newRunLog(t.TempDir())
+		turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := turn.ToolCall(t.Context(), "", &marotte.EntryToolCall{ID: "call-1", Title: "rg heavyRun", Kind: marotte.ToolKindOther}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := turn.TextDelta(t.Context(), "", "say-1", "Reading the hits"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := turn.SealOpen(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		res := &marotte.EntryToolResult{Title: "rg heavyRun", Kind: marotte.ToolKindOther, Status: marotte.ToolCompleted}
+		if _, err := turn.ToolResult(t.Context(), "", "call-1", res); err != nil {
+			t.Fatal(err)
+		}
+		if _, tail := startTail(t, r, step); tail != "Reading the hits" {
+			t.Errorf("tail = %q, want the text line standing", tail)
+		}
+	})
 	t.Run("the turn after an interruption keeps the line until it prints", func(t *testing.T) {
 		r := newRunLog(t.TempDir())
 		turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
@@ -115,6 +250,271 @@ func TestRunLog_StepStartsCarryAnInFlightStepsTurnAndLine(t *testing.T) {
 			t.Errorf("ended row = %q %q, want neither", gotTurn, gotTail)
 		}
 	})
+}
+
+// For every card kind, a step's dock line settles where a reload draws its card, live and read back from the log.
+func TestRunLog_TheDockSettlesOnTheReloadedCardsTitle(t *testing.T) {
+	step := workflow.PathKey([]string{"wf1", "build"})
+	placeholder := marotte.EntryToolCall{ID: "call-1", Title: "Run Command", Kind: marotte.ToolKindExecute, Input: json.RawMessage(`{}`)}
+	vet := json.RawMessage(`{"command":"go vet ./..."}`)
+	settled := marotte.EntryToolResult{Title: "Run Command", Kind: marotte.ToolKindExecute, Status: marotte.ToolCompleted, Input: vet}
+	interrupt := func(t *testing.T, r *runLog) {
+		t.Helper()
+		if _, err := r.closeHost(t.Context(), "c-1", marotte.ConcludeStopReason(marotte.StopReasonInterrupted)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tests := []struct {
+		name string
+		run  func(t *testing.T, r *runLog, turn *turnlog.Turn)
+		want string
+	}{
+		{
+			name: "a shell call whose command the call holds",
+			run: func(t *testing.T, _ *runLog, turn *turnlog.Turn) {
+				call := placeholder
+				call.Input = vet
+				sealOK(t)(turn.ToolCall(t.Context(), "", &call))
+			},
+			want: "go vet ./...",
+		},
+		{
+			name: "a placeholder shell call whose command the result holds",
+			run: func(t *testing.T, _ *runLog, turn *turnlog.Turn) {
+				sealOK(t)(turn.ToolCall(t.Context(), "", &placeholder))
+				sealOK(t)(turn.ToolResult(t.Context(), "", "call-1", &settled))
+			},
+			want: "go vet ./...",
+		},
+		{
+			name: "a load call",
+			run: func(t *testing.T, _ *runLog, turn *turnlog.Turn) {
+				call := marotte.EntryToolCall{
+					ID: "call-1", Title: "Tool Load", Kind: marotte.ToolKindOther, ToolName: "tool_load",
+					Input: json.RawMessage(`{"id":"skill::land"}`),
+				}
+				sealOK(t)(turn.ToolCall(t.Context(), "", &call))
+				sealOK(t)(turn.ToolResult(t.Context(), "", "call-1", &marotte.EntryToolResult{Title: "Tool Load", Status: marotte.ToolCompleted}))
+			},
+			want: "Loaded skill: land",
+		},
+		{
+			name: "a call the close aborts after an update revised its command",
+			run: func(t *testing.T, r *runLog, turn *turnlog.Turn) {
+				sealOK(t)(turn.ToolCall(t.Context(), "", &placeholder))
+				folded := marotte.ToolCallOfEntry(&placeholder)
+				folded.Input = vet
+				turn.SetOpenCall("call-1", &folded)
+				interrupt(t, r)
+			},
+			want: "go vet ./...",
+		},
+		{
+			name: "a late result after an interruption",
+			run: func(t *testing.T, r *runLog, turn *turnlog.Turn) {
+				sealOK(t)(turn.ToolCall(t.Context(), "", &placeholder))
+				interrupt(t, r)
+				late := &marotte.Entry{Kind: marotte.EntryKindToolResult, ID: marotte.ToolResultID("call-1")}
+				raw, err := json.Marshal(settled)
+				if err != nil {
+					t.Fatal(err)
+				}
+				late.Payload = raw
+				if err := (&Runs{log: r, bus: &frameLog{}}).RunAppendAfterClosed(t.Context(), "wf1", step, late); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "go vet ./...",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			r := newRunLog(dir)
+			turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			startTail(t, r, step)
+			tt.run(t, r, turn)
+
+			card := reloadedCardTitle(t, runLogEntries(t, r, "wf1"), "call-1")
+			_, live := startTail(t, r, step)
+			_, scanned := startTail(t, newRunLog(dir), step)
+			if card != tt.want || live != card || scanned != card {
+				t.Errorf("reloaded card %q, live dock %q, scanned dock %q; want all %q", card, live, scanned, tt.want)
+			}
+		})
+	}
+}
+
+// sealOK fails the test on a turnlog operation's error.
+func sealOK(t *testing.T) func([]turnlog.Sealed, error) {
+	t.Helper()
+	return func(_ []turnlog.Sealed, err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// reloadedCardTitle is the title call id's card draws on a reload of entries: its result's served title, else
+// its call's.
+func reloadedCardTitle(t *testing.T, entries []marotte.Entry, id string) string {
+	t.Helper()
+	marotte.ServeToolEntries(entries, nil)
+	title := ""
+	for i := range entries {
+		e := &entries[i]
+		switch {
+		case e.Kind == marotte.EntryKindToolCall && e.ID == id:
+			var c marotte.EntryToolCall
+			if err := json.Unmarshal(e.Payload, &c); err != nil {
+				t.Fatal(err)
+			}
+			title = c.CardTitle
+		case e.Kind == marotte.EntryKindToolResult && e.ID == marotte.ToolResultID(id):
+			var res marotte.EntryToolResult
+			if err := json.Unmarshal(e.Payload, &res); err != nil {
+				t.Fatal(err)
+			}
+			if res.CardTitle != "" {
+				title = res.CardTitle
+			}
+		}
+	}
+	return title
+}
+
+// A page that attaches while a step's call is in flight is seeded with the call's card title, so the result that
+// settles a different title moves its dock line.
+func TestRunLog_StepStartsCarryTheOpenTurnsUnsettledCalls(t *testing.T) {
+	step := workflow.PathKey([]string{"wf1", "build"})
+	r := newRunLog(t.TempDir())
+	turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := &marotte.EntryToolCall{ID: "call-1", Title: "Run Command", Kind: marotte.ToolKindExecute, Input: json.RawMessage(`{}`)}
+	if _, err := turn.ToolCall(t.Context(), "", call); err != nil {
+		t.Fatal(err)
+	}
+	delegate := &marotte.EntryToolCall{ID: "call-2", Title: "Read a.go", Kind: marotte.ToolKindRead}
+	if _, err := turn.ToolCall(t.Context(), "uuid-1", delegate); err != nil {
+		t.Fatal(err)
+	}
+	if got := startCalls(t, r, step); !maps.Equal(got, map[string]string{"call-1": "Run Command"}) {
+		t.Errorf("in flight, calls = %v, want the root lane's call by its card title", got)
+	}
+	res := &marotte.EntryToolResult{Title: "Run Command", Kind: marotte.ToolKindExecute, Status: marotte.ToolCompleted}
+	if _, err := turn.ToolResult(t.Context(), "", "call-1", res); err != nil {
+		t.Fatal(err)
+	}
+	if got := startCalls(t, r, step); len(got) != 0 {
+		t.Errorf("settled, calls = %v, want none", got)
+	}
+}
+
+// A card appended settled, as a hook's is, takes no result, so the dock prints its title and holds nothing for it.
+func TestRunLog_ABornSettledCardIsNotHeldForAResult(t *testing.T) {
+	step := workflow.PathKey([]string{"wf1", "build"})
+	hook := &marotte.EntryToolCall{ID: "hook-1", Title: "Hook fired: lint", Kind: marotte.ToolKindHook, Status: marotte.ToolCompleted}
+	t.Run("the dock prints its title", func(t *testing.T) {
+		calls := make(stepCalls)
+		raw, err := json.Marshal(hook)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e := &marotte.Entry{Kind: marotte.EntryKindToolCall, ID: hook.ID, Turn: "t1", Payload: raw}
+		if got := printedLine(e, calls); got != "Hook fired: lint" {
+			t.Errorf("printedLine = %q, want the hook's title", got)
+		}
+		if len(calls) != 0 {
+			t.Errorf("held %v, want nothing", calls)
+		}
+	})
+	t.Run("the row", func(t *testing.T) {
+		r := newRunLog(t.TempDir())
+		turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := turn.ToolCall(t.Context(), "", hook); err != nil {
+			t.Fatal(err)
+		}
+		if got := startCalls(t, r, step); len(got) != 0 {
+			t.Errorf("calls = %v, want none", got)
+		}
+	})
+	t.Run("the scan", func(t *testing.T) {
+		r := newRunLog(t.TempDir())
+		turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := turn.ToolCall(t.Context(), "", hook); err != nil {
+			t.Fatal(err)
+		}
+		if got := scanStepFacts(runLogEntries(t, r, "wf1")).calls[step]; len(got) != 0 {
+			t.Errorf("scan held %v, want nothing", got)
+		}
+	})
+}
+
+// A page that attaches after an interruption aborted a step's call, before KAS sends the call's late result, is seeded
+// with that call, so the late result moves its dock line as it moves the server's.
+func TestRunLog_AnInterruptedStepsRowCarriesTheCallItsLateResultSettles(t *testing.T) {
+	step := workflow.PathKey([]string{"wf1", "build"})
+	r := newRunLog(t.TempDir())
+	turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook := &marotte.EntryToolCall{ID: "hook-1", Title: "Hook fired: lint", Kind: marotte.ToolKindHook, Status: marotte.ToolCompleted}
+	if _, err := turn.ToolCall(t.Context(), "", hook); err != nil {
+		t.Fatal(err)
+	}
+	call := &marotte.EntryToolCall{ID: "call-1", Title: "Run Command", Kind: marotte.ToolKindExecute, Input: json.RawMessage(`{}`)}
+	if _, err := turn.ToolCall(t.Context(), "", call); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.closeHost(t.Context(), "c-1", marotte.ConcludeStopReason(marotte.StopReasonInterrupted)); err != nil {
+		t.Fatal(err)
+	}
+	if got := startCalls(t, r, step); !maps.Equal(got, map[string]string{"call-1": "Run Command"}) {
+		t.Errorf("interrupted, calls = %v, want the aborted call by its card title", got)
+	}
+	late := &marotte.Entry{
+		Kind: marotte.EntryKindToolResult, ID: marotte.ToolResultID("call-1"),
+		Payload: json.RawMessage(`{"title":"Run Command","kind":"execute","status":"completed","input":{"command":"go vet ./..."}}`),
+	}
+	if err := (&Runs{log: r, bus: &frameLog{}}).RunAppendAfterClosed(t.Context(), "wf1", step, late); err != nil {
+		t.Fatal(err)
+	}
+	if got := startCalls(t, r, step); len(got) != 0 {
+		t.Errorf("settled by the late result, calls = %v, want none", got)
+	}
+}
+
+// startCalls is the calls a step's step_starts row carries, read off its wire form.
+func startCalls(t *testing.T, r *runLog, path string) map[string]string {
+	t.Helper()
+	got, err := r.stepStarts(t.Context(), "wf1")
+	if err != nil {
+		t.Fatalf("StepStarts: %v", err)
+	}
+	raw, err := json.Marshal(got[path])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Calls map[string]string `json:"calls"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	return wire.Calls
 }
 
 // servedStart is a run read's step_starts row for path, with the streaming entry it carries.

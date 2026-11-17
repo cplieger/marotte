@@ -4,10 +4,11 @@
 
 import type { ToolStatus, ToolDiff, TextSpan, ToolCall } from "./types.js";
 import type { ToolDenial, ToolDisclosed, ToolInteraction, ToolOffload } from "./types.js";
-import type { MCPToolIdentity } from "./wire/types.gen.js";
+import type { LoadedResource, MCPToolIdentity } from "./wire/types.gen.js";
 
 export interface BuildToolCardOpts {
   id: string;
+  /** The title the card draws as given: the server's `card_title`. */
   title: string;
   kind: string;
   status: ToolStatus;
@@ -25,6 +26,8 @@ export interface BuildToolCardOpts {
   /** KAS's `_meta.kiro.disclosedContext`: the skill or steering document a
    *  `disclose_context` call loaded. */
   disclosed?: ToolDisclosed | undefined;
+  /** What the server says a load call loaded. */
+  loaded?: readonly LoadedResource[] | undefined;
   /** KAS's `_meta.kiro.policyDenial`: the rule that refused this call. */
   denial?: ToolDenial | undefined;
   /** Where KAS wrote the full output when it was too large for the model;
@@ -62,7 +65,7 @@ export interface BuildToolCardOpts {
 export function toolCardOptsFor(tc: ToolCall, live: boolean, chatID = ""): BuildToolCardOpts {
   const opts: BuildToolCardOpts = {
     id: tc.id,
-    title: tc.title,
+    title: tc.card_title ?? tc.title,
     kind: tc.kind,
     status: tc.status,
     live,
@@ -97,6 +100,9 @@ export function toolCardOptsFor(tc: ToolCall, live: boolean, chatID = ""): Build
   }
   if (tc.disclosed !== undefined) {
     opts.disclosed = tc.disclosed;
+  }
+  if (tc.loaded !== undefined) {
+    opts.loaded = tc.loaded;
   }
   if (tc.denial !== undefined) {
     opts.denial = tc.denial;

@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/testsupport/testchild"
 	"golang.org/x/sys/unix"
 )
 
@@ -448,9 +449,9 @@ func unprivilegedDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(exe, "-test.run=^"+t.Name()+"$", "-test.count=1", "-test.v")
-	cmd.Env = append(slices.DeleteFunc(os.Environ(), func(kv string) bool {
+	cmd.Env = slices.DeleteFunc(testchild.Env(unprivilegedDirEnv+"="+work), func(kv string) bool {
 		return strings.HasPrefix(kv, "GOCOVERDIR=")
-	}), unprivilegedDirEnv+"="+work)
+	})
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := startWithoutCapabilities(cmd); err != nil {

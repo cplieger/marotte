@@ -9,25 +9,32 @@ import (
 )
 
 // state is the ordered set, the Recently closed list and the version they describe, travelling
-// together because they are ONE fact, plus the releases closes still owe. Owed and recent entries
-// are never mutated in place.
+// together because they are ONE fact, plus the releases closes still owe. recent is what tabs.json
+// holds; shown is its part inside the window at the last change, and moves only with a version.
+// Owed, recent and shown entries are never mutated in place.
 type state struct {
 	tabs    []marotte.TabSubject
 	owed    []OwedRelease
 	recent  []marotte.RecentClose
+	shown   []marotte.RecentClose
 	version uint64
 }
 
 // mutate is the ONE write path, holding the package doc's lock ordering. apply gets the clock's
 // Unix ms, read under writeMu so closes list in commit order, and reports whether it CHANGED
-// anything; false means no bump, no write, no publish. A change also drops the expired Recently
-// closed entries: every version is announced, so expiry may only ride a change (or ExpireRecent).
-// On error nothing is applied and the version is 0, a value no state carries. A failed persist
-// needs no rollback: the clone was mutated, so the published state is untouched.
+// anything; false means no bump, no write, no publish. A change also drops the entries past
+// RecentHold and recomputes the shown list: every version is announced, so the shown list may only
+// move with a change (or ExpireRecent, SetRecentWindow). On error nothing is applied and the
+// version is 0. A failed persist needs no rollback: the clone was
+// mutated, so the published state is untouched.
 func (s *Store) mutate(ctx context.Context, apply func(st *state, now int64) (bool, error)) (uint64, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	return s.mutateLocked(ctx, apply)
+}
 
+// mutateLocked is mutate for a caller already holding writeMu.
+func (s *Store) mutateLocked(ctx context.Context, apply func(st *state, now int64) (bool, error)) (uint64, error) {
 	now := s.now().UnixMilli()
 	next := s.snapshot()
 	changed, err := apply(&next, now)
@@ -37,7 +44,8 @@ func (s *Store) mutate(ctx context.Context, apply func(st *state, now int64) (bo
 	if !changed {
 		return next.version, nil
 	}
-	next.recent, _ = dropExpired(next.recent, now)
+	next.recent = dropPastHold(next.recent, now)
+	next.shown = shownAt(next.recent, s.window, now)
 	next.version++
 	if err := s.persist(ctx, &next); err != nil {
 		return 0, err
@@ -46,11 +54,14 @@ func (s *Store) mutate(ctx context.Context, apply func(st *state, now int64) (bo
 	return next.version, nil
 }
 
-// snapshot clones the state under stateMu. Owed and recent entries are never mutated in place, so their clones are shallow.
+// snapshot clones the state under stateMu. Owed, recent and shown entries are never mutated in place, so their clones are shallow.
 func (s *Store) snapshot() state {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
-	return state{tabs: cloneTabs(s.tabs), owed: slices.Clone(s.owed), recent: slices.Clone(s.recent), version: s.version}
+	return state{
+		tabs: cloneTabs(s.tabs), owed: slices.Clone(s.owed), recent: slices.Clone(s.recent),
+		shown: slices.Clone(s.shown), version: s.version,
+	}
 }
 
 // cloneTabs copies tabs deeply: a caller's edit of a returned LaunchChats must not reach the published state.
@@ -66,14 +77,15 @@ func cloneTabs(tabs []marotte.TabSubject) []marotte.TabSubject {
 func (s *Store) publish(st *state) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
-	s.tabs, s.owed, s.recent, s.version = st.tabs, st.owed, st.recent, st.version
+	s.tabs, s.owed, s.recent, s.shown, s.version = st.tabs, st.owed, st.recent, st.shown, st.version
 }
 
 // Open adds a tab for spec, or returns the one already open for its (Kind, Ref). created is
 // false then, and nothing is emitted, so the caller resolves from the response. The id is
 // minted here; the position follows the client's insertSpec. A spec naming an unopened parent
 // is PROMOTED to top level, so use the returned subject. A chat listed as recently closed leaves
-// the list in the same version and, opened top level, gets its closed tab's Pinned back. Returns
+// the list in the same version and, opened top level, gets its closed tab's Pinned back, whether
+// the entry is shown or only held. Returns
 // ErrBadKind, ErrBadRef or ErrTooMany (at MaxOpenTabs, or MaxTabs with OverCap); on any error nothing is applied and
 // the version is 0.
 func (s *Store) Open(ctx context.Context, spec marotte.OpenTab) (subject marotte.TabSubject, created bool, version uint64, err error) {
@@ -237,6 +249,28 @@ func (s *Store) Reparent(ctx context.Context, id, parent string) (uint64, error)
 		sub := st.tabs[i]
 		sub.Parent = parent
 		st.tabs = insert(slices.Delete(st.tabs, i, i+1), &sub)
+		return true, nil
+	})
+}
+
+// Retarget moves one tab to another ref of its own kind, keeping its id, position, pin and
+// parent. An unchanged ref or an id not open changes nothing (a retarget racing a close). Returns
+// ErrBadRef for a ref its kind cannot hold and an error when another tab of the kind holds ref;
+// nothing is applied on error.
+func (s *Store) Retarget(ctx context.Context, id, ref string) (uint64, error) {
+	return s.mutate(ctx, func(st *state, _ int64) (bool, error) {
+		i := indexOfID(st.tabs, id)
+		if i < 0 || st.tabs[i].Ref == ref {
+			return false, nil
+		}
+		kind := st.tabs[i].Kind
+		if err := checkSubject(kind, ref); err != nil {
+			return false, err
+		}
+		if indexOfSubject(st.tabs, kind, ref) >= 0 {
+			return false, fmt.Errorf("%w: %s %q", errRefTaken, kind, ref)
+		}
+		st.tabs[i].Ref = ref
 		return true, nil
 	})
 }

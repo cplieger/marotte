@@ -118,7 +118,7 @@ describe("the sheet's content", () => {
     const other = sheetGroups().find((g) => g.name === "Elsewhere");
     // Escape and `?` (keys.ts, above the modifier gate), Ctrl+F TWICE (app.ts's capture-phase
     // listener routes it by the active tab's kind, so the chord has two meanings and the sheet says
-    // both) and F2 (files.ts).
+    // both) and F2 (files.ts and editor-rename.ts).
     expect(other?.rows.map((r) => r.chords[0]?.join("+"))).toEqual([
       "Esc",
       "Ctrl+F",
@@ -130,7 +130,7 @@ describe("the sheet's content", () => {
       "Close a dialog, or clear the file browser selection",
       "Search this conversation",
       "Find in files, from a file browser or editor tab",
-      "Rename in the file browser",
+      "Rename the selected file, or the file open in the editor",
       "Show this list",
     ]);
   });

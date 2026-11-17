@@ -27,7 +27,8 @@ type toolIdentityRow struct {
 	Frame  json.RawMessage `json:"frame"`
 }
 
-// toolIdentityResult is one golden row: the tool_call entry the client is handed for that frame.
+// toolIdentityResult is one golden row: the tool_call entry the client is handed for that frame,
+// as served.
 // static-src/tool-glyph.node.test.ts reads the same file.
 type toolIdentityResult struct {
 	Name string                `json:"name"`
@@ -71,7 +72,9 @@ func TestToolIdentity_RecordedFramesMatchTheGolden(t *testing.T) {
 		}
 		tc.gate()
 		call := toolCallFromWire(&tc, tc.Meta.Kiro.AgentSubtaskID, toolUpdateContent{}, 0)
-		results = append(results, toolIdentityResult{Name: r.Name, Call: marotte.EntryToolCallOf(&call)})
+		served := marotte.EntryToolCallOf(&call)
+		marotte.StampToolCall(&served)
+		results = append(results, toolIdentityResult{Name: r.Name, Call: served})
 	}
 	got, err := json.MarshalIndent(results, "", "  ")
 	if err != nil {

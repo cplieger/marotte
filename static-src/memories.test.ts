@@ -245,6 +245,14 @@ describe("the list", () => {
     expect(titlesIn("repo:org/one")).toEqual(["Newer", "Older"]);
   });
 
+  it("a memory with no summary draws no subtitle", async () => {
+    listReply = ok({ memories: [{ ...record("a", null, "Bare"), summary: "" }], cap: 1000 });
+    await mount();
+    const row = panel.querySelector('[data-memory-id="a"]');
+    expect(row?.querySelector(".entry-title")?.textContent).toBe("Bare");
+    expect(row?.querySelector(".entry-sub")).toBeNull();
+  });
+
   it("shows the count against the cap", async () => {
     await mount();
     expect(panel.querySelector(".memories-count")?.textContent).toBe("5 of 1,000");

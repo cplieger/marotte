@@ -307,6 +307,93 @@ describe("leave lifecycle", () => {
   });
 });
 
+describe("createModal — focus return", () => {
+  /** An opener button beside `others` in one box, the opener focused. */
+  function openerIn(...others: HTMLElement[]): HTMLButtonElement {
+    const box = document.createElement("div");
+    const opener = document.createElement("button");
+    opener.textContent = "Open";
+    box.append(opener, ...others);
+    document.body.append(box);
+    opener.focus();
+    return opener;
+  }
+
+  function button(label: string, disabled = false): HTMLButtonElement {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.disabled = disabled;
+    return b;
+  }
+
+  it("returns to the opener", () => {
+    const opener = openerIn(button("Other"));
+    const m = createModal(makeContent().content);
+    m.open();
+    m.close();
+    vi.advanceTimersByTime(400);
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("goes to the first enabled, rendered control after a removed opener", () => {
+    const other = button("Other");
+    const hidden = button("Hidden");
+    hidden.hidden = true;
+    const opener = openerIn(hidden, button("Off", true), other);
+    const m = createModal(makeContent().content);
+    m.open();
+    opener.remove();
+    m.close();
+    vi.advanceTimersByTime(400);
+    expect(document.activeElement).toBe(other);
+  });
+
+  it("prefers the control after a removed opener to one before it", () => {
+    const before = button("Before");
+    const after = button("After");
+    const opener = openerIn(after);
+    opener.before(before);
+    opener.focus();
+    const m = createModal(makeContent().content);
+    m.open();
+    opener.remove();
+    m.close();
+    vi.advanceTimersByTime(400);
+    expect(document.activeElement).toBe(after);
+  });
+
+  it("goes to the nearest control before a removed opener that had none after it", () => {
+    const first = button("First");
+    const second = button("Second");
+    const opener = openerIn();
+    opener.before(first, second);
+    opener.focus();
+    const m = createModal(makeContent().content);
+    m.open();
+    opener.remove();
+    m.close();
+    vi.advanceTimersByTime(400);
+    expect(document.activeElement).toBe(second);
+  });
+
+  it("climbs past a removed container to the nearest one left", () => {
+    const top = button("Top");
+    const outer = document.createElement("section");
+    const inner = document.createElement("div");
+    const opener = button("Open");
+    inner.append(opener);
+    outer.append(top, inner);
+    document.body.append(outer);
+    opener.focus();
+    const m = createModal(makeContent().content);
+    m.open();
+    inner.remove();
+    m.close();
+    vi.advanceTimersByTime(400);
+    expect(document.activeElement).toBe(top);
+  });
+});
+
 describe("createModal: canDismiss guard", () => {
   it("refuses backdrop and Escape dismissal while the guard returns false, and stays armed", () => {
     const { content } = makeContent();

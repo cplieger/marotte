@@ -682,14 +682,14 @@ func TestRunLog_ABetweenTurnsAppendLandsAfterThePathsNewestClosedTurn(t *testing
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
 	late := &marotte.Entry{ID: "call-1:result", Kind: marotte.EntryKindToolResult, Payload: json.RawMessage(`{"status":"completed"}`)}
-	if ok, err := r.appendAfterClosed(ctx, "wf1", "a", late); ok || err != nil {
+	if ok, _, err := r.appendAfterClosed(ctx, "wf1", "a", late); ok || err != nil {
 		t.Fatalf("AppendAfterClosed on an unknown run = %v, %v; want false", ok, err)
 	}
 	turnA, _, err := r.open(ctx, &translate.RunStep{RunID: "wf1", NodePath: "a"}, "c-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := r.appendAfterClosed(ctx, "wf1", "a", late); ok || err != nil {
+	if ok, _, err := r.appendAfterClosed(ctx, "wf1", "a", late); ok || err != nil {
 		t.Fatalf("AppendAfterClosed while the path is open = %v, %v; want false", ok, err)
 	}
 	if _, _, err := r.open(ctx, &translate.RunStep{RunID: "wf1", NodePath: "b"}, "c-1"); err != nil {
@@ -699,7 +699,7 @@ func TestRunLog_ABetweenTurnsAppendLandsAfterThePathsNewestClosedTurn(t *testing
 		t.Fatal(err)
 	}
 	// The late frame for path a lands after a's close, not the open b's.
-	if ok, err := r.appendAfterClosed(ctx, "wf1", "a", late); !ok || err != nil {
+	if ok, _, err := r.appendAfterClosed(ctx, "wf1", "a", late); !ok || err != nil {
 		t.Fatalf("AppendAfterClosed after the close = %v, %v; want true", ok, err)
 	}
 	entries := runLogEntries(t, r, "wf1")
@@ -818,7 +818,7 @@ func TestRunLog_DeleteClosesCancelledTombstonesAndRemovesLast(t *testing.T) {
 	if _, _, err := r.open(ctx, &translate.RunStep{RunID: "wf1", NodePath: "s2"}, "c-1"); !errors.Is(err, errRunLogRemoved) {
 		t.Fatalf("Open after Delete = %v, want errRunLogRemoved", err)
 	}
-	if _, err := r.appendAfterClosed(ctx, "wf1", "s", &marotte.Entry{Kind: marotte.EntryKindToolResult, Payload: json.RawMessage(`{}`)}); !errors.Is(err, errRunLogRemoved) {
+	if _, _, err := r.appendAfterClosed(ctx, "wf1", "s", &marotte.Entry{Kind: marotte.EntryKindToolResult, Payload: json.RawMessage(`{}`)}); !errors.Is(err, errRunLogRemoved) {
 		t.Fatalf("AppendAfterClosed after Delete = %v, want errRunLogRemoved", err)
 	}
 	if l, err := r.log(ctx, "wf1"); l != nil || err != nil {

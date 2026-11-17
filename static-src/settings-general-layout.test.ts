@@ -39,6 +39,7 @@ afterAll(() => {
 const VALUE_CONTROLS = [
   "clock-choice",
   "chat-retention-days",
+  "history-window-hours",
   "memory-mode",
   "auto-compact-pct",
   "spec-planning",
@@ -94,6 +95,7 @@ describe("Settings > General value rows at desktop width", () => {
   it("puts each row's hint on its own line below the control", () => {
     for (const id of [
       "clock-choice",
+      "history-window-hours",
       "memory-mode",
       "spec-planning",
       "output-style",

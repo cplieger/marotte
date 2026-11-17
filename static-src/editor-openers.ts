@@ -127,14 +127,26 @@ function ensureFileState(path: string): FileState {
   }
   const created = freshState(path);
   fileStates.set(path, created);
+  bindDirtyTab(path, created);
+  return created;
+}
+
+function bindDirtyTab(path: string, state: FileState): void {
   dirtyTabUnbinds.set(
     path,
     effect(() => {
       // Resolved per run: the tab id is server-minted and does not exist on this effect's first run.
-      setTabDirty(tabIdFor("editor", path), created.dirty.value);
+      setTabDirty(tabIdFor("editor", path), state.dirty.value);
     }),
   );
-  return created;
+}
+
+/** Drop what this module keys by `path` beside the record itself. */
+function unbindPath(path: string): void {
+  liveDispose(path);
+  dirtyTabUnbinds.get(path)?.();
+  dirtyTabUnbinds.delete(path);
+  clearAgentLineCache(path);
 }
 
 function open(path: string, opts: OpenOpts): void {
@@ -376,13 +388,14 @@ function failureSentence(r: { status: number; error: string }): string {
 /** The server's facts from a stat. */
 function factsOf(stat: FileStat): FileFacts {
   if (stat.large) {
-    return { kind: "large", size: stat.size };
+    return { kind: "large", readOnly: stat.read_only, renamable: stat.renamable, size: stat.size };
   }
   return {
     kind: "unread",
     binary: stat.binary,
     utf8: stat.utf8,
     readOnly: stat.read_only,
+    renamable: stat.renamable,
     size: stat.size,
   };
 }
@@ -463,7 +476,18 @@ async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
         break;
       case "too_large":
         skeleton?.cancel();
-        adoptUnread(state, "large", { kind: "large", size: answer.size }, stat.modified, "");
+        adoptUnread(
+          state,
+          "large",
+          {
+            kind: "large",
+            readOnly: stat.read_only,
+            renamable: stat.renamable,
+            size: answer.size,
+          },
+          stat.modified,
+          "",
+        );
         finishLoad(state);
         return;
       case "binary":
@@ -552,6 +576,7 @@ export function adoptDiskBytes(state: FileState, read: FileRead): void {
       utf8: read.utf8,
       conflict: parseConflicts(text).hunks.length > 0,
       readOnly: read.read_only,
+      renamable: read.renamable,
       size: read.size,
     };
     state.notice = { size: read.size, modified: read.modified };
@@ -642,7 +667,18 @@ async function reloadForLive(
     return;
   }
   if (answer.kind === "too_large") {
-    adoptUnread(state, "large", { kind: "large", size: answer.size }, stat.modified, "");
+    adoptUnread(
+      state,
+      "large",
+      {
+        kind: "large",
+        readOnly: stat.read_only,
+        renamable: stat.renamable,
+        size: answer.size,
+      },
+      stat.modified,
+      "",
+    );
     repaintAndAnnounce(state);
     return;
   }
@@ -683,13 +719,36 @@ export function refreshEditorFile(path: string): void {
  *  calls it; to close a file programmatically, close its tab. Deleting the record retires it, so
  *  every answer still in flight for it is dropped (`owns`). */
 export function closeEditorFile(path: string): void {
-  liveDispose(path);
-  dirtyTabUnbinds.get(path)?.();
-  dirtyTabUnbinds.delete(path);
+  unbindPath(path);
   fileStates.delete(path);
-  clearAgentLineCache(path);
   const activeFilePath = getActiveFilePath();
   if (activeFilePath === path) {
     setActiveFilePath("");
+  }
+}
+
+/** The editor tab's retarget: the file at `from` was renamed to `to`, so its record moves there with its buffer,
+ *  view, facts and mode, and nothing is re-read. A diff drops to the read view, since its sources were read at `from`;
+ *  every read in flight is retired. The tab's `onShow` repaints an active one. */
+export function moveEditorFile(from: string, to: string): void {
+  const state = fileStates.get(from);
+  if (state === undefined) {
+    return;
+  }
+  const active = getActiveFilePath() === from;
+  if (active) {
+    saveCurrentState();
+  }
+  unbindPath(from);
+  fileStates.delete(from);
+  invalidate(state);
+  state.path = to;
+  if (state.mode.value.kind === "diff") {
+    state.mode.value = { kind: "text", editing: false };
+  }
+  fileStates.set(to, state);
+  bindDirtyTab(to, state);
+  if (active) {
+    setActiveFilePath(to);
   }
 }

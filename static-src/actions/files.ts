@@ -12,6 +12,7 @@ import {
 } from "./index.js";
 
 import { readDownload } from "./download.js";
+import { serverSentence } from "./server-sentence.js";
 import { joinPath } from "../files-shared.js";
 import { uploadFiles } from "../upload.js";
 // `joinKey` (not `joinPath`) builds the dedupe key, so no name's content can forge a component boundary.
@@ -90,7 +91,11 @@ export const renameFile = apiAction<{ dir: string; original: string; newName: st
   }),
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  error: (args) => `Could not rename "${truncate(args.original)}"`,
+  error: (args, err) => {
+    const what = `Could not rename "${truncate(args.original)}"`;
+    const why = serverSentence(err);
+    return why === null ? what : `${what}: ${why}`;
+  },
 });
 
 interface DeleteArgs {

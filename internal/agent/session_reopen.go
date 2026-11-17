@@ -45,6 +45,10 @@ func (rt *Runtime) SecurityProfileChanged(ctx context.Context) {
 // SettingsWritten is the after-write rule for a config.json write that brings none of its own. keys are the keys
 // whose value changed; nil means either side did not parse, so any key may have moved.
 func (rt *Runtime) SettingsWritten(ctx context.Context, keys []string) {
+	if rt.membership != nil && (keys == nil || slices.Contains(keys, settings.KeyHistoryWindowHours) ||
+		slices.Contains(keys, settings.KeyChatRetentionDays)) {
+		rt.membership.HistoryWindowChanged()
+	}
 	if keys == nil || slices.Contains(keys, settings.KeySecurityProfile) {
 		rt.SecurityProfileChanged(ctx)
 		return

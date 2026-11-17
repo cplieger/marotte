@@ -181,17 +181,52 @@ describe("subagentTail reads the lane", () => {
   });
 
   // KAS titles a shell call with no description "Run Command", so a delegate running
-  // three commands would tail three identical lines. The command is what it ran.
-  it("takes the command as a description-less shell call's line", () => {
+  // three commands would tail three identical lines. The served card title is the command.
+  it("takes the card title as a tool call's line", () => {
     const shell = makeToolCall({
       id: "tc-shell",
       title: "Run Command",
+      card_title: "make lint",
       kind: "execute",
       status: "completed",
-      input: { command: "make lint" },
     });
     seed([text(1, "checking", SUB), toolCall(2, shell, SUB)]);
     expect(subagentTail(CHAT, SUB)).toEqual(["checking", "make lint"]);
+  });
+
+  // The card draws the served title whatever the wire title holds.
+  it("takes the card title of a call with no wire title", () => {
+    const untitled = makeToolCall({
+      id: "tc-u",
+      title: "",
+      card_title: "make lint",
+      kind: "execute",
+      status: "completed",
+    });
+    seed([text(1, "checking", SUB), toolCall(2, untitled, SUB)]);
+    expect(subagentTail(CHAT, SUB)).toEqual(["checking", "make lint"]);
+  });
+
+  // A command sent only on the call's update reaches the card through its result.
+  it("takes a held result's card title as its call's line", () => {
+    const shell = makeToolCall({
+      id: "tc-shell",
+      title: "Run Command",
+      card_title: "Run Command",
+      kind: "execute",
+      status: "completed",
+    });
+    const settled: Entry = {
+      id: "tc-shell:result",
+      turn: TURN,
+      kind: "tool_result",
+      seq: 3,
+      ts: 4,
+      payload: { status: "completed", card_title: "go vet ./..." },
+      lane: SUB,
+    };
+    seed([text(1, "checking", SUB), toolCall(2, shell, SUB), settled]);
+    expect(subagentTail(CHAT, SUB)).toEqual(["checking", "go vet ./..."]);
   });
 
   // The open entry IS the lane's tail: it carries no `seq` and no position, so it is read

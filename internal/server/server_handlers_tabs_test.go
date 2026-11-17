@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 )
 
@@ -19,7 +20,7 @@ import (
 // property is the store's own.
 func newTabsServer(t *testing.T) (*Server, *tabs.Store) {
 	t.Helper()
-	st, err := tabs.NewStore(t.TempDir())
+	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
@@ -92,7 +93,7 @@ func TestTabs_AStoredHistoryTabIsNotListed(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "tabs.json"), []byte(doc), 0o600); err != nil {
 		t.Fatalf("Setup: write tabs.json: %v", err)
 	}
-	st, err := tabs.NewStore(dir)
+	st, err := tabs.NewStore(dir, settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("tabs.NewStore over a stored history tab: %v, want no error", err)
 	}

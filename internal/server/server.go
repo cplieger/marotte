@@ -28,12 +28,14 @@ import (
 
 // Server holds shared state and registers all HTTP handlers.
 type Server struct {
-	forges       routeHandler
-	mcpConfig    routeHandler
-	chats        routeHandler
-	git          routeHandler
-	files        routeHandler
-	docDeleter   docDeleter
+	forges     routeHandler
+	mcpConfig  routeHandler
+	chats      routeHandler
+	git        routeHandler
+	files      routeHandler
+	docDeleter docDeleter
+	// fileChanges hears every file the docs page creates or deletes; nil hears nothing.
+	fileChanges  func(ctx context.Context, ch filebrowse.Change)
 	auth         routeHandler
 	push         routeHandler
 	mcpStatus    routeHandler
@@ -115,6 +117,11 @@ func WithFiles(f routeHandler) Option { return func(s *Server) { s.files = f } }
 
 // WithDocDeleter sets what removes a Kiro docs row's files; nil answers the delete route 503.
 func WithDocDeleter(d docDeleter) Option { return func(s *Server) { s.docDeleter = d } }
+
+// WithFileChanges has the docs page's create and delete routes report the files they changed to fn before answering.
+func WithFileChanges(fn func(ctx context.Context, ch filebrowse.Change)) Option {
+	return func(s *Server) { s.fileChanges = fn }
+}
 
 // WithAuth sets the auth handler for login, logout, and whoami endpoints.
 func WithAuth(a routeHandler) Option { return func(s *Server) { s.auth = a } }

@@ -861,6 +861,11 @@ type SpecChangedPayload struct {
 	Dir string `json:"dir"`
 }
 
+// FilesChangedPayload is the payload for type="files_changed": the absolute folders whose entries changed.
+type FilesChangedPayload struct {
+	Dirs []string `json:"dirs"`
+}
+
 // SpecApprovedPayload is the payload for type="spec_approved": the
 // workspace-relative spec directory whose approval record moved. Pure
 // invalidation — it carries neither the phase nor the hash, because the client

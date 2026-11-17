@@ -45,7 +45,7 @@ vi.mock("./dom.js", async (importOriginal) => ({
 }));
 vi.mock("./bus.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Bus>()),
-  onSSE: undefined,
+  onSSE: vi.fn(),
   onBus: vi.fn(),
   BUS_KEYS_ESCAPE: "escape",
 }));

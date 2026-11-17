@@ -31,6 +31,15 @@ export class FileBrowserState {
    */
   pendingOpen = false;
 
+  /** A name to select when `currentPath`'s next listing lands, "" for none; the answer or any move clears it. */
+  pendingSelect = "";
+
+  /**
+   * Run once after `currentPath`'s next listing renders, whichever request lists it (a create's rename or retry must
+   * read a listing taken after the create); a failed listing, any move or another browser's binding drops it.
+   */
+  afterListing: (() => void) | null = null;
+
   /** A browser opened at `at` with both nav buttons disabled (`navigate` would push and enable Back). */
   constructor(at: string = FB_ROOT) {
     this.currentPath = at;
@@ -133,6 +142,8 @@ export class FileBrowserState {
     this.answered = false;
     this.listError = "";
     this.pendingOpen = false;
+    this.pendingSelect = "";
+    this.afterListing = null;
     this.scrollTop = 0;
     this.selected.clear();
     this.lastClickedName = "";

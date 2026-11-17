@@ -99,6 +99,7 @@ function drawn(call: ToolCall): { glyph: string; server: string | null } {
   const info = renderInfoFor(call.kind, call.input as Record<string, unknown> | undefined, {
     toolName: call.tool_name,
     mcp: call.mcp,
+    loaded: call.loaded,
   });
   return { glyph: toolIcon(info), server: info.mcp?.server_name ?? null };
 }

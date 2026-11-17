@@ -18,6 +18,12 @@ func applyDelta(before marotte.ToolCall, d *marotte.ToolProgressPayload) marotte
 	if d.Title != "" {
 		out.Title = d.Title
 	}
+	if d.CardTitle != "" {
+		out.CardTitle = d.CardTitle
+	}
+	if d.Loaded != nil {
+		out.Loaded = d.Loaded
+	}
 	if d.Kind != "" {
 		out.Kind = d.Kind
 	}

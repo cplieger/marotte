@@ -83,6 +83,8 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		AutoCompactPctRange:   AutoCompactPctRange(),
 		RejectedKeys:          []string{},
 		ChatRetentionDays:     DefaultChatRetentionDays,
+		HistoryWindowHours:    defaultHistoryWindowHours,
+		HistoryWindowChoices:  slices.Clone(historyWindowChoices),
 		GuardPayloadLinks:     defaultGuardPayloadLinks,
 		HighThroughput:        defaultHighThroughput,
 		// kiro-cli's own default for hooks.showStatus, until a reader says otherwise.
@@ -194,11 +196,14 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 		KeyAutoCompactionEnabled: func(r json.RawMessage) error { return decodeInto(&out.AutoCompactionEnabled, r) },
 		KeyAutoCompactPct:        func(r json.RawMessage) error { return decodeAutoCompactPct(&out.AutoCompactPct, r) },
 		KeyChatRetentionDays:     func(r json.RawMessage) error { return decodeInto(&out.ChatRetentionDays, r) },
-		KeyTheme:                 func(r json.RawMessage) error { return decodeInto(&out.Theme, r) },
-		KeyLastModel:             func(r json.RawMessage) error { return decodeInto(&out.LastModel, r) },
-		KeyLastEffortByModel:     func(r json.RawMessage) error { return decodeInto(&out.LastEffortByModel, r) },
-		KeyLastMergeMethod:       func(r json.RawMessage) error { return decodeInto(&out.LastMergeMethod, r) },
-		KeyKnowledgeEnabled:      func(r json.RawMessage) error { return decodeInto(&out.KnowledgeEnabled, r) },
+		KeyHistoryWindowHours: func(r json.RawMessage) error {
+			return decodeChecked(&out.HistoryWindowHours, r, KeyHistoryWindowHours, validHistoryWindowHours)
+		},
+		KeyTheme:             func(r json.RawMessage) error { return decodeInto(&out.Theme, r) },
+		KeyLastModel:         func(r json.RawMessage) error { return decodeInto(&out.LastModel, r) },
+		KeyLastEffortByModel: func(r json.RawMessage) error { return decodeInto(&out.LastEffortByModel, r) },
+		KeyLastMergeMethod:   func(r json.RawMessage) error { return decodeInto(&out.LastMergeMethod, r) },
+		KeyKnowledgeEnabled:  func(r json.RawMessage) error { return decodeInto(&out.KnowledgeEnabled, r) },
 		KeyContentCollectionEnabled: func(r json.RawMessage) error {
 			return decodeInto(&out.ContentCollection, r)
 		},

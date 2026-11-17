@@ -248,10 +248,10 @@ export interface ServerEvent {
   subject?: SubjectStamp;
 }
 
-/** Prelaunch model-picker entry, mapped from GET /api/config-template's
+/** One model-list entry (model-list.ts), mapped from GET /api/config-template's
  *  SessionModel list (kiro-cli 2.14 _kiro/config/template). Distinct from
- *  the per-session SessionModel that arrives over the bridge — this shape
- *  exists for the picker cache before any session spawns. */
+ *  the per-session SessionModel that arrives over the bridge: this shape
+ *  exists before any session spawns. */
 export interface ModelInfo {
   model_name: string;
   model_id: string;

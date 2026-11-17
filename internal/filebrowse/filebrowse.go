@@ -3,7 +3,8 @@
 // uploads, plus MAROTTE_BROWSE_ROOTS grants and the WithLiveRoots list), each kernel-confined
 // through its own os.Root; a sensitive-path list additionally blocks the credential and state
 // files inside /config. URLs are container-absolute paths, and "/" lists the mounts.
-// Every route that takes a path runs it through resolveOrForbid (paths.go documents the layers).
+// Every route that takes a path runs it through resolveOrForbid, or resolveEntry for an action on
+// the entry itself (paths.go documents the layers).
 // Directory operations also consult protectedDir, and a secondary path (rename's name, copy/move's
 // dest) re-runs the full guard. The recursive routes (zip download, search) resolve their root once
 // and re-check the sensitive list per entry.
@@ -19,6 +20,7 @@ import (
 	"syscall"
 
 	"github.com/cplieger/go/pathinside"
+	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 )
@@ -44,7 +46,40 @@ type Handler struct {
 	toolOutputs string      // AllowToolOutputs; "" grants nothing
 	mounts      []mount     // sorted longest-dir-first (see sortMounts)
 	liveRoots   func(ctx context.Context) []string
+	notify      func(ctx context.Context, ch Change)
+	inEditor    func(path string) bool
 	sensitive   Sensitive
+}
+
+// Change is one file mutation the browser made: every path it created, wrote, removed or renamed, each in the
+// request's own spelling made absolute and cleaned. From and To are set by a rename only.
+type Change struct {
+	From, To string
+	Paths    []string
+}
+
+// WithChangeNotify has every successful mutation (a file action, a save, an upload) call fn before its answer is
+// written, so whatever fn changes is in place when the client reads the answer. fn runs detached from the
+// request's cancellation: the change has landed, so a client that walks away must not stop its surfaces moving.
+func WithChangeNotify(fn func(ctx context.Context, ch Change)) Option {
+	return func(h *Handler) { h.notify = fn }
+}
+
+// WithOpenInEditor has a rename refuse 409 when fn reports an editor tab at or under its destination. fn takes
+// the destination in Change's spelling; command.Membership.EditorTabAt owns why.
+func WithOpenInEditor(fn func(path string) bool) Option {
+	return func(h *Handler) { h.inEditor = fn }
+}
+
+func (h *Handler) changed(ctx context.Context, ch Change) {
+	if h.notify != nil {
+		h.notify(durable.Context(ctx), ch)
+	}
+}
+
+// cleanReqPath is a request path in the spelling a Change reports.
+func cleanReqPath(reqPath string) string {
+	return filepath.Clean("/" + reqPath)
 }
 
 // Option is an argument to New, which applies options in argument order after the browse
@@ -100,6 +135,20 @@ func (h *Handler) ownerFor(l loc) Owner {
 		}
 	}
 	return nil
+}
+
+// ownsEntry reports whether abs is an owned file or the entry an owned path names, which differ
+// when that path is a link: renaming or removing either takes the file from its owner.
+func (h *Handler) ownsEntry(abs string) bool {
+	for _, r := range h.owners {
+		if resolved, err := resolveRealPath(r.path); err == nil && resolved == abs {
+			return true
+		}
+		if parent, err := resolveRealPath(filepath.Dir(r.path)); err == nil && filepath.Join(parent, filepath.Base(r.path)) == abs {
+			return true
+		}
+	}
+	return false
 }
 
 // ownedAtOrAbove answers the owned path that is abs or one of its ancestors, or "": creating
@@ -190,7 +239,7 @@ func (h *Handler) handleFile(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		writeFile(w, r, l, h.ownerFor(l))
+		writeFile(w, r, l, h.ownerFor(l), func() { h.changed(r.Context(), Change{Paths: []string{cleanReqPath(reqPath)}}) })
 	default:
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPut)
 	}

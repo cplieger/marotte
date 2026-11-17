@@ -6,8 +6,9 @@ import { effect, touch } from "@cplieger/reactive";
 import { get, messagesVersionOf } from "./store.js";
 import { laneSig } from "./store-signals.js";
 import { payloadOf } from "./turns.js";
-import { commandTitle, isInternalToolTitle, isSubagentInvocation } from "./tool-schema.js";
+import { isInternalToolTitle, isSubagentInvocation } from "./tool-schema.js";
 import { readLane, type LaneRead } from "./subagent-slice.js";
+import { callIDOfToolResult } from "./entry-ids.js";
 
 /** How many trailing lines a card's tail shows. */
 export const TAIL_LINES = 3;
@@ -31,20 +32,14 @@ function tailOf(s: string, want: number): string[] {
   return out;
 }
 
-/** The line a `tool_call` entry contributes: its title, or the command a
- *  description-less shell call ran. `commandTitle` owns that derivation for the
- *  card and this line alike. */
-function toolLine(e: Entry): string[] {
+/** The line a `tool_call` entry contributes: the title its card draws, its held result's
+ *  (`settledTitle`) over its own. */
+function toolLine(e: Entry, settledTitle: string | undefined): string[] {
   const call = payloadOf(e, "tool_call");
-  if (
-    call === undefined ||
-    isSubagentInvocation(call) ||
-    isInternalToolTitle(call.title) ||
-    call.title === ""
-  ) {
+  if (call === undefined || isSubagentInvocation(call) || isInternalToolTitle(call.title)) {
     return [];
   }
-  return tailOf(commandTitle(call.title, call.kind, call.input) ?? call.title, 1);
+  return tailOf(settledTitle ?? call.card_title ?? call.title, 1);
 }
 
 function textOf(e: Entry): string | null {
@@ -58,7 +53,8 @@ function textOf(e: Entry): string | null {
 }
 
 /** The last `want` lines of a lane, walking `text`, `thinking` and tool titles backwards; the
- *  open entry carries no `seq`, so it is read first. */
+ *  open entry carries no `seq`, so it is read first. A result follows its call, so the walk meets
+ *  it first. */
 function tailOfLane(lane: LaneRead, want: number): string[] {
   const lines: string[] = [];
   if (want <= 0) {
@@ -67,13 +63,22 @@ function tailOfLane(lane: LaneRead, want: number): string[] {
   if (lane.open !== undefined) {
     lines.unshift(...tailOf(lane.open.text, want));
   }
+  const settled = new Map<string, string>();
   for (let i = lane.entries.length - 1; i >= 0 && lines.length < want; i--) {
     const e = lane.entries[i];
     if (e === undefined) {
       continue;
     }
+    if (e.kind === "tool_result") {
+      const callID = callIDOfToolResult(e.id);
+      const title = payloadOf(e, "tool_result")?.card_title;
+      if (callID !== null && title !== undefined) {
+        settled.set(callID, title);
+      }
+      continue;
+    }
     if (e.kind === "tool_call") {
-      lines.unshift(...toolLine(e));
+      lines.unshift(...toolLine(e, settled.get(e.id)));
       continue;
     }
     const text = textOf(e);

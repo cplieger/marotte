@@ -8,6 +8,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/cplieger/marotte/internal/testsupport/testchild"
 )
 
 // startGroupWithMember starts a head in its own process group plus a second member
@@ -217,7 +219,7 @@ func TestReadStat_ReadsPastAnExecutableNameWithSpacesAndParens(t *testing.T) {
 		t.Fatalf("Setup: link %q -> %s: %v", name, self, err)
 	}
 	cmd := exec.Command(link, "-test.run=^TestHelperSleep$")
-	cmd.Env = append(os.Environ(), helperEnv+"=1")
+	cmd.Env = testchild.Env(helperEnv + "=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("Setup: start %q: %v", name, err)

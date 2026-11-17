@@ -6,12 +6,13 @@ import { reopenChat } from "./chat.js";
 import { showContextMenu } from "./context-menu.js";
 import { sectionFolded, setSectionFolded } from "./device-view.js";
 import { isSliding, slideBox } from "./disclosure-row.js";
-import { $, maybeEl, queryEl, setText } from "./dom.js";
+import { $, maybeEl, setText } from "./dom.js";
 import { iconEl } from "./icon-el.js";
+import { type Press, focusAs, lastPress } from "./legacy-ui/scripted-focus.js";
 import { bindContextPress } from "./context-hold.js";
 import { ICON_TRASH } from "./icons.js";
 import { deleteClosedChat } from "./chat-delete.js";
-import { formatClock, watchClock } from "./locale-time.js";
+import { formatClock, formatShortDate, formatWeekdayStamp, watchClock } from "./locale-time.js";
 import { isRetentionEnabled, onRetentionChange } from "./retention.js";
 import { watchSession } from "./store.js";
 import { dragOwnsStrip } from "./tabs-drag.js";
@@ -64,6 +65,26 @@ function rowMark(_entry: RecentClose): Element {
   return statusDotEl("closed");
 }
 
+/** Local midnight starting the day `ms` falls in. */
+function dayStart(ms: number): number {
+  const d = new Date(ms);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+/** How a row names its close: the clock for a close on the day `today` starts, else the date (the
+ *  year only when it differs), with what a reader hears for it. */
+function closedWhen(ms: number, today: number): { readonly short: string; readonly said: string } {
+  if (dayStart(ms) === today) {
+    const clock = formatClock(ms);
+    return { short: clock, said: `Closed at ${clock}` };
+  }
+  const sameYear = new Date(ms).getFullYear() === new Date(today).getFullYear();
+  return {
+    short: formatShortDate(ms, { year: !sameYear }),
+    said: `Closed ${formatWeekdayStamp(ms)}`,
+  };
+}
+
 /** Wire `#history-section` once its markup is in the page. */
 export function initHistorySection(): void {
   const section = maybeEl("history-section");
@@ -85,6 +106,28 @@ export function initHistorySection(): void {
   /** The refs as last drawn, newest first. */
   let order: readonly string[] = [];
   const busy = new Map<string, "reopen" | "delete">();
+  // A row says its clock only on its close's day, so each midnight redraws the list.
+  const dayTurn = signal(0);
+  const watchDay = (): number => dayTurn.value;
+  let turnAt = 0;
+  const armDayTurn = (today: number): void => {
+    const next = new Date(today);
+    next.setDate(next.getDate() + 1);
+    if (next.getTime() === turnAt) {
+      return;
+    }
+    turnAt = next.getTime();
+    // An early fire re-arms for the same midnight, since turnAt is cleared first.
+    setTimeout(
+      () => {
+        turnAt = 0;
+        dayTurn.value++;
+      },
+      Math.max(0, turnAt - Date.now()),
+    );
+  };
+  /** The press that asked for each delete in flight: its row's focus moves take that press's ring. */
+  const deletePress = new Map<string, Press | null>();
 
   const noteFocus = (): Mark | null => {
     const f = document.activeElement;
@@ -104,8 +147,9 @@ export function initHistorySection(): void {
 
   /** Put focus back after a repaint when it was at `mark` and is now lost: on the same control, re-seated or
    *  not, else the nearest row after, before, More, the header, the Open section's first row, History's entry,
-   *  the composer or the active tab's row. Focus anywhere shown is left alone. */
-  const restoreFocus = (mark: Mark | null): void => {
+   *  the composer or the active tab's row, with the ring of `press` (`focusAs`). Focus anywhere shown is left
+   *  alone. */
+  const restoreFocus = (mark: Mark | null, press?: Press | null): void => {
     const now = document.activeElement;
     if (mark === null || (now !== document.body && isShown(now))) {
       return;
@@ -128,16 +172,16 @@ export function initHistorySection(): void {
     ].find((r) => !r.classList.contains("exiting") && isShown(r));
     for (const to of [...near, $.historyMore, toggle, openRow]) {
       if (isShown(to)) {
-        to.focus();
+        focusAs(to, press);
         if (document.activeElement === to) {
           return;
         }
       }
     }
-    if (!focusHistoryEntry()) {
+    if (!focusHistoryEntry(press)) {
       $.promptInput.focus();
       if (document.activeElement !== $.promptInput) {
-        focusTabRow(getActiveTabId());
+        focusTabRow(getActiveTabId(), press);
       }
     }
   };
@@ -183,6 +227,7 @@ export function initHistorySection(): void {
     row.remove.setAttribute("aria-busy", "true");
     // A click that moves no focus (confirm.ts owns the WebKit case) can leave it outside the section: the row stands for it.
     const mark = noteFocus() ?? { at: "row", ref, order };
+    deletePress.set(ref, lastPress());
     try {
       if (await deleteClosedChat(ref, row.label)) {
         // History refreshes when it shows, so the chat leaves it too.
@@ -191,20 +236,8 @@ export function initHistorySection(): void {
     } finally {
       busy.delete(ref);
       row.remove.removeAttribute("aria-busy");
-      // The confirm answers before its dialog has faded; its close then puts focus back on what opened it,
-      // which a frame may have taken meanwhile.
-      const modal = queryEl<HTMLDialogElement>("dialog:modal");
-      if (modal === null) {
-        restoreFocus(mark);
-      } else {
-        modal.addEventListener(
-          "close",
-          () => {
-            restoreFocus(mark);
-          },
-          { once: true },
-        );
-      }
+      restoreFocus(mark, deletePress.get(ref));
+      deletePress.delete(ref);
     }
   }
 
@@ -271,24 +304,24 @@ export function initHistorySection(): void {
     return row;
   }
 
-  function paintRow(row: Row, entry: RecentClose): void {
+  function paintRow(row: Row, entry: RecentClose, today: number): void {
     row.entry = entry;
     // A rename after the close changes the record, not the entry.
     const named = watchSession(entry.ref)?.name ?? entry.name;
     const label = named === "" ? "Untitled chat" : named;
-    const clock = formatClock(entry.closed_at);
-    const drawn = `${label}\n${clock}`;
+    const when = closedWhen(entry.closed_at, today);
+    const drawn = `${label}\n${when.short}\n${when.said}`;
     if (row.drawn === drawn && row.time.dateTime !== "") {
       return;
     }
     row.drawn = drawn;
     row.label = label;
     setText(row.name, label);
-    setText(row.time, clock);
+    setText(row.time, when.short);
     row.time.dateTime = new Date(entry.closed_at).toISOString();
     row.button.setAttribute("aria-label", `Reopen ${label}`);
-    setText(row.closedAt, `Closed at ${clock}`);
-    row.button.dataset["tooltip"] = `Reopen ${label}\nClosed at ${clock}`;
+    setText(row.closedAt, when.said);
+    row.button.dataset["tooltip"] = `Reopen ${label}\n${when.said}`;
     row.remove.setAttribute("aria-label", `Delete ${label}`);
     row.remove.dataset["tooltip"] = `Delete ${label}`;
   }
@@ -296,6 +329,9 @@ export function initHistorySection(): void {
   effect(() => {
     // A Clock change redraws each row's time through paintRow's drawn key.
     watchClock();
+    watchDay();
+    const today = dayStart(Date.now());
+    armDayTurn(today);
     const focused = document.activeElement;
     // A reopen in flight moves focus off its row itself when it settles.
     const reopening = [...busy].some(
@@ -317,7 +353,7 @@ export function initHistorySection(): void {
         row = makeRow(entry);
         rows.set(entry.ref, row);
       }
-      paintRow(row, entry);
+      paintRow(row, entry, today);
       // Seated only when out of place, since a re-seat blurs a focused row; More stays last.
       const want: Element | null = prev === null ? list.firstElementChild : prev.nextElementSibling;
       if (want !== row.li) {
@@ -339,7 +375,7 @@ export function initHistorySection(): void {
     if (!isSliding(section)) {
       list.hidden = folded;
     }
-    restoreFocus(mark);
+    restoreFocus(mark, mark !== null && "ref" in mark ? deletePress.get(mark.ref) : undefined);
   });
 
   toggle.addEventListener("click", () => {

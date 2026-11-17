@@ -1,8 +1,9 @@
 // Path resolution for the file handler; every layer must pass: (1) mount match plus
 // sensitive-prefix check on the lexically cleaned path, unknown roots denied; (2) symlink
-// evaluation of the target, or its parent when absent, then (1) again on the real path; (3) the
-// per-mount os.Root for every operation, so a later swap cannot escape; (4) per-action guards for
-// containers the lexical layer protects only as leaves.
+// evaluation of the target (of its folder alone for an action on the entry itself, resolveEntry),
+// or of its parent when absent, then (1) again on the real path; (3) the per-mount os.Root for
+// every operation, so a later swap cannot escape; (4) per-action guards for containers the
+// lexical layer protects only as leaves.
 
 package filebrowse
 
@@ -103,6 +104,30 @@ func (h *Handler) resolvePath(reqPath string) (loc, error) {
 		return loc{}, err
 	}
 	return loc{m: m, abs: realPath}, nil
+}
+
+// resolveEntry is resolvePath for an action on the entry reqPath names rather than on its
+// content (rename, delete): only the folder is resolved and the final name kept, so a symlink is
+// acted on itself, as mv(1) and rm(1) do. A granted root resolves as resolvePath does, so the
+// mount-point refusals still see it.
+func (h *Handler) resolveEntry(reqPath string) (loc, error) {
+	clean := filepath.Clean("/" + reqPath)
+	m, err := h.enforce(clean)
+	if err != nil {
+		return loc{}, err
+	}
+	if m.dir == clean {
+		return h.resolvePath(clean)
+	}
+	parent, err := h.resolvePath(filepath.Dir(clean))
+	if err != nil {
+		return loc{}, err
+	}
+	abs := filepath.Join(parent.abs, filepath.Base(clean))
+	if m, err = h.enforce(abs); err != nil {
+		return loc{}, err
+	}
+	return loc{m: m, abs: abs}, nil
 }
 
 // For a target that does not exist it walks up to the first ancestor that resolves and recomposes

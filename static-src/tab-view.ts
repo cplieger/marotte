@@ -93,6 +93,9 @@ export interface TabViewSpec {
   /** CLIENT-LOCAL teardown on close, identical on every device; the server's close does the rest.
    *  Deferred to the pending-op confirmation for this device's own close; immediate for a remote one. */
   readonly onClose?: (() => void) | undefined;
+  /** The subject moved to `to` (a renamed file): the old spec hands its client state over to the new ref. A kind
+   *  without one is torn down (`onClose`) and rebuilt at the new ref instead. */
+  readonly onRetarget?: ((to: string) => void) | undefined;
   /** Whether closing this tab tears down what it shows: a SUBJECT fact copied through, never derived
    *  from the kind. `owns: false` makes it a VIEW. Safe to snapshot: `owns` never changes after open. */
   readonly owns: boolean;
