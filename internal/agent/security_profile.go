@@ -26,14 +26,15 @@ func knownProfile(id string) string {
 		return policyfile.DefaultProfile
 	}
 	if _, ok := policyfile.ProfileFor(id); !ok {
-		slog.Warn("unknown security profile; falling back", "value", id, "fallback", policyfile.DefaultProfile)
+		slog.Warn("unknown security profile; falling back", "value", id, "fallback", policyfile.DefaultProfile,
+			"run_fallback", policyfile.DefaultRunProfile)
 		return policyfile.DefaultProfile
 	}
 	return id
 }
 
-// securityPresets resolves a security profile id into the KAS preset ids a session opens with (SessionOpts.Presets),
-// one resolver for every session.
+// securityPresets resolves a security profile id into the KAS preset ids a chat or observer session opens with
+// (SessionOpts.Presets); runPresets resolves a parentless run host's.
 func securityPresets(id string) []string {
 	p, _ := policyfile.ProfileFor(knownProfile(id))
 	return p.Presets

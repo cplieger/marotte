@@ -15,6 +15,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/policyfile"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/translate"
 )
@@ -869,8 +870,8 @@ func TestRearmRetriedRun_MintsALeaseForARunWhoseTerminalFrameReleasedIt(t *testi
 	if l.Unattended {
 		t.Error("a retried run was marked unattended; the user clicked Retry and can answer")
 	}
-	if presets, err := l.HostPresets(); err != nil || !slices.Equal(presets, hub.readSessionSettings(t.Context()).RunPresets) {
-		t.Errorf("host presets = %v, %v; want the profile's presets now, recorded so its host session can reload", presets, err)
+	if presets, err := l.HostPresets(); err != nil || !slices.Equal(presets, profilePresets(t, policyfile.ProfileTrusted)) {
+		t.Errorf("host presets = %v, %v; want Trusted's presets on a fresh config, recorded so its host session can reload", presets, err)
 	}
 }
 

@@ -38,8 +38,7 @@ func TestChatDoor_StartsOnApproveForMeUnlessAProfileIsSaved(t *testing.T) {
 	}
 }
 
-// A parentless run's host opens on the saved profile, and on Trusted while none is saved: the new-chat default hands
-// unsettled requests to a model, which an unattended run must be given by a choice.
+// A parentless run's host opens on the saved profile, and on Trusted while none is saved (policyfile.DefaultRunProfile).
 func TestParentlessRun_OpensOnTrustedUnlessAProfileIsSaved(t *testing.T) {
 	for _, tc := range []struct{ name, saved, want string }{
 		{"a_fresh_config", "", policyfile.ProfileTrusted},
