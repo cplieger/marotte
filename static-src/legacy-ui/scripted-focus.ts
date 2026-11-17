@@ -1,10 +1,11 @@
-// Chromium and Firefox keep a focus scripted after a pointer press off `:focus-visible`; WebKit matches it, for a
-// script's `focus()` and for the focus `showModal()` and a dialog's close place, so the option is passed explicitly.
+// WebKit matches `:focus-visible` after a pointer press for the focus `showModal()` places, the focus a dialog's
+// close restores, and a script's `focus()` from <body> right after a close, so the option is passed explicitly:
 // https://html.spec.whatwg.org/multipage/interaction.html#focusing-steps (`focusVisible`); support:
 // https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/focus#browser_compatibility (Chrome 145, Firefox 104,
-// Safari 18.4). Chrome 132-144 ignore it, and their own heuristic already gives no ring after a pointer press.
+// Safari 18.4). Chrome 132-144 ignore it: their own heuristic still draws no ring after a pointer press, but the
+// keyboard ring forced on a focus returned after a pointer close is not drawn.
 
-/** What the last press was: a pointer's (mouse, pen or touch), a key's, or none yet. */
+/** A press's kind: a pointer's (mouse, pen or touch) or a key's. */
 export type Press = "pointer" | "key";
 let last: Press | null = null;
 

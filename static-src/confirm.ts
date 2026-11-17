@@ -33,9 +33,9 @@ export interface Confirmation {
   readonly variant?: "destructive" | "normal";
 }
 
-/** Show a confirmation dialog. Resolves true if the user confirms, false on cancel / Escape / backdrop click /
- *  preemption by a later confirm(), once the dialog has closed: a focus the caller moves then lands. Focus
- *  returns to the control whose click opened it. */
+/** Show a confirmation dialog. Resolves true if the user confirms and false on cancel / Escape / backdrop click,
+ *  once the dialog has closed: a focus the caller moves then lands. Preemption by a later confirm() resolves false
+ *  at once, while that dialog is still open. Focus returns to the control whose click opened it. */
 export async function confirm(q: Confirmation): Promise<boolean> {
   if (activated?.isConnected === true && document.activeElement !== activated) {
     // Before `showModal`, which records the focused element as the one its close restores.
