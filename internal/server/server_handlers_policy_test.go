@@ -171,17 +171,22 @@ func TestPolicyViewLive(t *testing.T) {
 	}
 }
 
-// The Settings picker shows the default checked on a fresh config; profile_saved is what lets a click on it save it.
+// The Settings picker shows the default checked on a fresh config; profile_saved is what lets a click on it save it,
+// and run_profile what a run not started from a chat opens on until then.
 func TestPolicyView_ReportsWhetherTheProfileIsSaved(t *testing.T) {
 	s, _, _, _ := profileFixture(t, nil)
-	if view, _ := getPolicyView(t, s); view.Profile != policyfile.ProfileDelegated || view.ProfileSaved {
-		t.Errorf("fresh config: profile %q saved %v, want delegated unsaved", view.Profile, view.ProfileSaved)
+	if view, _ := getPolicyView(t, s); view.Profile != policyfile.ProfileDelegated ||
+		view.RunProfile != policyfile.ProfileTrusted || view.ProfileSaved {
+		t.Errorf("fresh config: profile %q run %q saved %v, want delegated, trusted, unsaved", view.Profile,
+			view.RunProfile, view.ProfileSaved)
 	}
 	if rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileDelegated}); rec.Code != http.StatusOK {
 		t.Fatalf("select: status = %d, body %s", rec.Code, rec.Body)
 	}
-	if view, _ := getPolicyView(t, s); view.Profile != policyfile.ProfileDelegated || !view.ProfileSaved {
-		t.Errorf("after saving delegated: profile %q saved %v, want delegated saved", view.Profile, view.ProfileSaved)
+	if view, _ := getPolicyView(t, s); view.Profile != policyfile.ProfileDelegated ||
+		view.RunProfile != policyfile.ProfileDelegated || !view.ProfileSaved {
+		t.Errorf("after saving delegated: profile %q run %q saved %v, want delegated for both, saved", view.Profile,
+			view.RunProfile, view.ProfileSaved)
 	}
 }
 

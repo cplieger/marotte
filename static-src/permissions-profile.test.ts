@@ -75,6 +75,7 @@ function view(profile: string, rules: PolicyRule[] = [], saved = true): PolicyVi
     capabilities: ["fs_read", "fs_write", "shell"],
     profiles: LADDER,
     profile,
+    run_profile: saved ? profile : "trusted",
     profile_saved: saved,
     rules,
     load_errors: [],
@@ -225,11 +226,16 @@ describe("the profile ladder", () => {
 // An unsaved default and a saved pick of it check the same radio, yet a parentless run opens on
 // Trusted only while nothing is saved, so the picker has to say which one it is showing.
 describe("a profile that is not saved yet", () => {
-  it("says new chats start on it and workflow runs on Trusted until a click saves one", async () => {
+  it("says new chats start on it and workflow runs on the run profile until a click saves one", async () => {
     await mount(view("delegated", [], false));
-    expect(statusText()).toContain("Approve for me");
-    expect(statusText()).toContain("Trusted");
-    expect(statusText()).toContain("click a profile");
+    expect(statusText()).toContain("No saved profile is in use");
+    expect(statusText()).toContain("New chats start on Approve for me");
+    expect(statusText()).toContain("use Trusted until you click a profile");
+  });
+
+  it("names the run profile the server reports, not a copy of its default", async () => {
+    await mount({ ...view("delegated", [], false), run_profile: "guarded" });
+    expect(statusText()).toContain("use Guarded until you click a profile");
   });
 
   it("says nothing once the profile is saved", async () => {
@@ -558,12 +564,6 @@ describe("the Security profile section hint", () => {
     const hint = securityProfileHint();
     expect(hint).toContain("New chats start on this profile");
     expect(hint).toContain("Approve for me unless you pick another");
-  });
-
-  it("says a workflow run not started from a chat stays on Trusted until a profile is picked", () => {
-    expect(securityProfileHint()).toContain(
-      "A workflow run not started from a chat uses Trusted until you pick a profile here",
-    );
   });
 
   it("claims no reach into open chats, which keep their own profile", () => {

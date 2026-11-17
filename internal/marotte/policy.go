@@ -40,10 +40,12 @@ type PolicyRuleCore struct {
 // unioned with every capability the live rules already use, so it can learn a
 // name marotte shipped without.
 type PolicyView struct {
-	// Profile is the Settings profile new chats start on; Profiles below is the ladder
-	// it comes from and ProfileSaved whether it is stored. Split apart here only
+	// Profile is the Settings profile new chats start on and RunProfile the one a
+	// workflow run not started from a chat opens on; Profiles below is the ladder
+	// they come from and ProfileSaved whether one is stored. Split apart here only
 	// for fieldalignment's field order; read them together.
 	Profile        string       `json:"profile"`
+	RunProfile     string       `json:"run_profile"`
 	Rules          []PolicyRule `json:"rules"`
 	WritableScopes []string     `json:"writable_scopes"`
 	Capabilities   []string     `json:"capabilities"`
@@ -61,8 +63,8 @@ type PolicyView struct {
 	// fell back to the files.
 	LoadErrors []PolicyErrorItem `json:"load_errors"`
 	Available  bool              `json:"available"`
-	// ProfileSaved is false while config.json names no known profile, so Profile is the
-	// default (policyfile.DefaultRunProfile owns what a parentless run opens on then).
+	// ProfileSaved is false while no readable generation of config.json names a known
+	// profile; Profile and RunProfile are then their defaults.
 	ProfileSaved bool `json:"profile_saved"`
 }
 

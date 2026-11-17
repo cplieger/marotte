@@ -2113,6 +2113,7 @@ const arbModel = fc.letrec<{
   PolicyView: fc.record(
     {
       profile: fc.string(),
+      run_profile: fc.string(),
       rules: fc.array(tie("PolicyRule"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       writable_scopes: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       capabilities: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
@@ -2121,7 +2122,7 @@ const arbModel = fc.letrec<{
       available: fc.boolean(),
       profile_saved: fc.boolean(),
     },
-    { requiredKeys: ["profile", "rules", "writable_scopes", "capabilities", "profiles", "load_errors", "available", "profile_saved"] },
+    { requiredKeys: ["profile", "run_profile", "rules", "writable_scopes", "capabilities", "profiles", "load_errors", "available", "profile_saved"] },
   ),
   PollResult: fc.record(
     {

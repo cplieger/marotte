@@ -314,8 +314,9 @@ func TestCustomize_ABusyFileReturnsErrBusyAndSwitchesNothing(t *testing.T) {
 	}
 }
 
-// A fresh config starts new chats on Approve for me; a saved choice, Trusted included, is never moved by the default.
-func TestActive_IsApproveForMeUntilAProfileIsSaved(t *testing.T) {
+// Customize decides on the default profile while none is saved, and a saved choice, Trusted included, is never moved
+// by it.
+func TestActive_IsTheDefaultProfileUntilOneIsSaved(t *testing.T) {
 	s := &Store{ConfigDir: t.TempDir()}
 	if got := s.Active(t.Context()); got != policyfile.ProfileDelegated {
 		t.Errorf("Active on a fresh config = %q, want %q", got, policyfile.ProfileDelegated)

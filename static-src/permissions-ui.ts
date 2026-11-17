@@ -303,6 +303,8 @@ class NativePolicyController {
   private activeProfile = "";
   /** PolicyView.profile_saved. */
   private profileSaved = false;
+  /** PolicyView.run_profile. */
+  private runProfile = "";
   /** A transient line under the picker: the outcome of a selection, or a note that Custom is
    *  empty. Carried across the refetch a selection ends in, because that refetch repaints this
    *  same line. */
@@ -420,6 +422,7 @@ class NativePolicyController {
     this.profiles = data.profiles;
     this.activeProfile = data.profile;
     this.profileSaved = data.profile_saved;
+    this.runProfile = data.run_profile;
     this.lastRules = data.rules;
     this.populateCapabilities(data.capabilities);
     if (data.available) {
@@ -516,8 +519,8 @@ class NativePolicyController {
       // The unsaved default checks the same radio as a saved pick of it, but parentless runs follow
       // only a saved profile (policyfile.DefaultRunProfile).
       text =
-        `No profile is saved yet. New chats start on ${profileLabel(this.activeProfile)}, and ` +
-        "workflow runs not started from a chat use Trusted until you click a profile to save it.";
+        `No saved profile is in use. New chats start on ${profileLabel(this.activeProfile)}, and ` +
+        `workflow runs not started from a chat use ${profileLabel(this.runProfile)} until you click a profile to save it.`;
     }
     status.textContent = text;
     status.classList.toggle("hidden", text === "");

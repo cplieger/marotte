@@ -105,18 +105,19 @@ func parentlessFixture(t *testing.T, saved string) (*Runtime, *fakeBridge) {
 // pick of the same profile.
 func TestSecurityProfileChoice_IsSavedOnlyWhileConfigNamesAProfile(t *testing.T) {
 	for _, tc := range []struct {
-		name, stored, want string
-		saved              bool
+		name, stored, chat, run string
+		saved                   bool
 	}{
-		{"a_fresh_config", "", policyfile.ProfileDelegated, false},
-		{"an_unknown_value", "no-such-profile", policyfile.ProfileDelegated, false},
-		{"a_saved_approve_for_me", policyfile.ProfileDelegated, policyfile.ProfileDelegated, true},
-		{"a_saved_trusted", policyfile.ProfileTrusted, policyfile.ProfileTrusted, true},
+		{"a_fresh_config", "", policyfile.ProfileDelegated, policyfile.ProfileTrusted, false},
+		{"an_unknown_value", "no-such-profile", policyfile.ProfileDelegated, policyfile.ProfileTrusted, false},
+		{"a_saved_approve_for_me", policyfile.ProfileDelegated, policyfile.ProfileDelegated, policyfile.ProfileDelegated, true},
+		{"a_saved_trusted", policyfile.ProfileTrusted, policyfile.ProfileTrusted, policyfile.ProfileTrusted, true},
+		{"a_saved_guarded", policyfile.ProfileGuarded, policyfile.ProfileGuarded, policyfile.ProfileGuarded, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _ := parentlessFixture(t, tc.stored)
-			if id, saved := h.SecurityProfileChoice(t.Context()); id != tc.want || saved != tc.saved {
-				t.Errorf("SecurityProfileChoice = (%q, %v), want (%q, %v)", id, saved, tc.want, tc.saved)
+			if chat, run, saved := h.SecurityProfileChoice(t.Context()); chat != tc.chat || run != tc.run || saved != tc.saved {
+				t.Errorf("SecurityProfileChoice = (%q, %q, %v), want (%q, %q, %v)", chat, run, saved, tc.chat, tc.run, tc.saved)
 			}
 		})
 	}
@@ -128,12 +129,12 @@ func TestSecurityProfileChoice_IsTheChatDoorsProfileWhileConfigIsUnreadable(t *t
 	configDir := t.TempDir()
 	writeProfileSetting(t, configDir, policyfile.ProfileTrusted)
 	h := reopenFixtureIn(t, configDir, nil)
-	if id, saved := h.SecurityProfileChoice(t.Context()); id != policyfile.ProfileTrusted || !saved {
+	if id, _, saved := h.SecurityProfileChoice(t.Context()); id != policyfile.ProfileTrusted || !saved {
 		t.Fatalf("Setup: SecurityProfileChoice = (%q, %v), want saved trusted", id, saved)
 	}
 	rewriteConfigByHand(t, configDir, `{"security_profile":`)
 
-	if id, saved := h.SecurityProfileChoice(t.Context()); id != policyfile.ProfileTrusted || !saved {
+	if id, _, saved := h.SecurityProfileChoice(t.Context()); id != policyfile.ProfileTrusted || !saved {
 		t.Errorf("SecurityProfileChoice on an unreadable config = (%q, %v), want the last readable (trusted, true)", id, saved)
 	}
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {

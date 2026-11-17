@@ -48,8 +48,8 @@ type Store struct {
 }
 
 // Active is the profile config.json names now, read fresh for a profile write's decision:
-// policyfile.DefaultProfile while it names no known profile or cannot be read. A view reads
-// agent.Runtime.SecurityProfileChoice, which keeps the last readable profile.
+// policyfile.DefaultProfile while it names no known profile or cannot be read. Views read
+// agent.Runtime.SecurityProfileChoice instead.
 func (s *Store) Active(ctx context.Context) string {
 	var id string
 	if !settings.FieldInto(ctx, s.ConfigDir, settings.KeySecurityProfile, &id) {

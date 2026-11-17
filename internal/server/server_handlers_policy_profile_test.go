@@ -25,7 +25,7 @@ import (
 // profileChoice when set, else a fresh read of configDir.
 type fakeEngine struct {
 	sessionSettings            func(context.Context) string
-	profileChoice              func(context.Context) (string, bool)
+	profileChoice              func(context.Context) (string, string, bool)
 	configDir                  string
 	seen                       string
 	events                     []marotte.ServerEvent
@@ -42,17 +42,18 @@ func (f *fakeEngine) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 func (*fakeEngine) Shutdown(context.Context) error { return nil }
 func (*fakeEngine) Epoch() string                  { return "fake-epoch" }
 
-func (f *fakeEngine) SecurityProfileChoice(ctx context.Context) (id string, saved bool) {
+func (f *fakeEngine) SecurityProfileChoice(ctx context.Context) (chat, run string, saved bool) {
 	if f.profileChoice != nil {
 		return f.profileChoice(ctx)
 	}
+	var id string
 	if !settings.FieldInto(ctx, f.configDir, settings.KeySecurityProfile, &id) {
-		return policyfile.DefaultProfile, false
+		return policyfile.DefaultProfile, policyfile.DefaultRunProfile, false
 	}
 	if _, ok := policyfile.ProfileFor(id); !ok {
-		return policyfile.DefaultProfile, false
+		return policyfile.DefaultProfile, policyfile.DefaultRunProfile, false
 	}
-	return id, true
+	return id, id, true
 }
 
 func (f *fakeEngine) fingerprint(ctx context.Context) string {
@@ -620,12 +621,16 @@ func TestProfileView_CarriesTheLadderAndTheNewChatDefault(t *testing.T) {
 // while it cannot be read, the door keeps the last readable profile.
 func TestProfileViews_ReportTheEnginesChoiceOverAnUnreadableConfig(t *testing.T) {
 	s, _, _, _ := profileFixture(t, nil)
-	s.agent.(*fakeEngine).profileChoice = func(context.Context) (string, bool) { return policyfile.ProfileTrusted, true }
+	s.agent.(*fakeEngine).profileChoice = func(context.Context) (string, string, bool) {
+		return policyfile.ProfileTrusted, policyfile.ProfileTrusted, true
+	}
 	if err := os.WriteFile(filepath.Join(s.configDir, settings.Filename), []byte(`{"security_profile":`), 0o600); err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
-	if view, _ := getPolicyView(t, s); view.Profile != policyfile.ProfileTrusted || !view.ProfileSaved {
-		t.Errorf("policy view: profile %q saved %v, want the engine's saved trusted", view.Profile, view.ProfileSaved)
+	if view, _ := getPolicyView(t, s); view.Profile != policyfile.ProfileTrusted || view.RunProfile != policyfile.ProfileTrusted ||
+		!view.ProfileSaved {
+		t.Errorf("policy view: profile %q run %q saved %v, want the engine's saved trusted", view.Profile, view.RunProfile,
+			view.ProfileSaved)
 	}
 	if got := getProfileView(t, s).Default; got != policyfile.ProfileTrusted {
 		t.Errorf("profile view default = %q, want the engine's trusted", got)

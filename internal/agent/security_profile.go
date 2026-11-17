@@ -50,22 +50,21 @@ func runPresets(id string) []string {
 	return p.Presets
 }
 
-// settingsProfile is the Settings profile as a known id, the profile a chat with none of its own is pinned to: the
-// one its door sends (readSessionSettings), the default while config.json has never been readable.
+// settingsProfile is the profile a chat with none of its own is pinned to at its door.
 func (rt *Runtime) settingsProfile(ctx context.Context) string {
-	doc, _ := rt.configDocument(ctx)
-	return knownProfile(doc.session.profile)
+	chat, _, _ := rt.SecurityProfileChoice(ctx)
+	return chat
 }
 
-// SecurityProfileChoice is the Settings profile settingsProfile pins and whether config.json names it, from the same
-// snapshot, so a view of it shows what a new chat's door sends; saved is false while no readable generation names a
-// known profile.
-func (rt *Runtime) SecurityProfileChoice(ctx context.Context) (id string, saved bool) {
+// SecurityProfileChoice is, from one snapshot of config.json, the Settings profile a chat with none of its own is
+// pinned to (settingsProfile), the one a parentless run's host opens on (runPresets), and whether a readable
+// generation names a known profile; while none does they are policyfile.DefaultProfile and DefaultRunProfile.
+func (rt *Runtime) SecurityProfileChoice(ctx context.Context) (chat, run string, saved bool) {
 	doc, _ := rt.configDocument(ctx)
 	if _, ok := policyfile.ProfileFor(doc.session.profile); ok {
-		return doc.session.profile, true
+		return doc.session.profile, doc.session.profile, true
 	}
-	return policyfile.DefaultProfile, false
+	return policyfile.DefaultProfile, policyfile.DefaultRunProfile, false
 }
 
 // pinSecurityProfile gives a chat with no profile of its own the Settings profile at its door, so a later Settings

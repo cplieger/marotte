@@ -38,7 +38,7 @@ func (s *Server) handlePolicyProfile(w http.ResponseWriter, r *http.Request) {
 // handleProfileView reads only config.json and the two permission files, never an observer pass, because the
 // pill reads it on every chat it opens.
 func (s *Server) handleProfileView(w http.ResponseWriter, r *http.Request) {
-	profile, _ := s.agent.SecurityProfileChoice(r.Context())
+	profile, _, _ := s.agent.SecurityProfileChoice(r.Context())
 	httpserver.WriteJSON(w, marotte.SecurityProfileView{
 		Profiles:    securityProfileCatalog(),
 		Default:     profile,

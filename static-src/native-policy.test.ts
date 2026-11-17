@@ -66,6 +66,7 @@ const sampleView: PolicyView = {
   // Empty: this fixture has no relaxation checkbox (permissions-relax.test.ts owns it).
   profiles: [{ id: "guarded", presets: ["read-workspace"] }],
   profile: "guarded",
+  run_profile: "guarded",
   profile_saved: true,
   load_errors: [],
   rules: [
