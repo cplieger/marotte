@@ -240,3 +240,22 @@ func clip(s string, n int) string {
 	r := []rune(s)
 	return strings.TrimSpace(string(r[:n-1])) + ellipsis
 }
+
+// signInTarget is the workspace: a sign-in problem belongs to no one tab.
+var signInTarget = Target{Name: "Kiro sign-in"}
+
+// SignInFailing is the Kiro sign-in failing for longer than marotte's grace: no renewal is usable.
+func SignInFailing() marotte.NotificationPayload {
+	return build(marotte.PushKindSignIn, signInTarget, "Kiro sign-in is failing", marotte.SignInUnreachableCause)
+}
+
+// SignInKeyRefused is Kiro refusing the KIRO_API_KEY the engine signs in with.
+func SignInKeyRefused() marotte.NotificationPayload {
+	return build(marotte.PushKindSignIn, signInTarget, "Kiro sign-in ended",
+		marotte.SignInAPIKeyCause+". "+marotte.SignInAPIKeyRemedy)
+}
+
+// SignInEnded is the Kiro sign-in ending without a sign-out.
+func SignInEnded() marotte.NotificationPayload {
+	return build(marotte.PushKindSignIn, signInTarget, "Kiro sign-in ended", marotte.SignInRequiredCause+" to continue")
+}

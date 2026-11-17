@@ -162,15 +162,15 @@ type EffectiveSettings struct {
 	// MCPWaitForReady renders waitForReady on every server in KAS's MCP file, so
 	// a prompt waits for the servers to settle. Default off.
 	MCPWaitForReady bool `json:"mcp_wait_for_ready"`
-	// NotificationsEnabled is the push master switch, default off. The three per-kind
+	// NotificationsEnabled is the push master switch, default off. The per-kind
 	// switches below take their defaults from settings.Default*, and those are not
-	// uniform either — pr_status is OFF where its two siblings are ON. So there are
-	// three polarities across these four fields, and that asymmetry is exactly why
-	// the client must not guess any of them.
+	// uniform either: pr_status is OFF where its siblings are ON. That asymmetry is
+	// why the client must not guess any of them.
 	NotificationsEnabled bool `json:"notifications_enabled"`
 	NotifyAgentFinished  bool `json:"notify_agent_finished"`
 	NotifyPRStatus       bool `json:"notify_pr_status"`
 	NotifyRunOutcome     bool `json:"notify_run_outcome"`
+	NotifySignIn         bool `json:"notify_sign_in"`
 	// SupervisedDefault seeds newly created chats; ScheduledAutoApprove decides an
 	// unattended run's permission ask at its deadline and is fail-closed by
 	// decision. DebugLogs raises the log level. All three default off.

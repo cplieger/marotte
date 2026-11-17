@@ -116,7 +116,6 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		jobs:        r.SteerJobs,
 		runq:        r.Run,
 		sendGate:    r.SendGate,
-		auth:        r.AuthReadiness,
 		signIn:      r.SignIn,
 		door:        mem,
 	}

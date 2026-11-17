@@ -275,8 +275,8 @@ type Runtime struct {
 	steeringIssues *steeringIssues
 	mcpRegistry    *mcpRegistry
 	shellMgr       *shellManager
-	// authReadiness carries the command layer's account of a failed sign-in, which readiness reports.
-	authReadiness      *command.AuthReadiness
+	// signInHealth owns the Kiro sign-in's state every surface reports.
+	signInHealth       *signInHealth
 	chatHandlers       map[string]chatHandler
 	workspaceHandlers  map[string]chatHandler
 	askHandlers        map[string]askHandler
@@ -407,11 +407,6 @@ func WithKASMCPRenderer(r kasMCPRenderer) Option {
 // moves it (logctl.SetDebug).
 func WithDebugLogs(current func() bool, set func(on bool)) Option {
 	return func(h *Runtime) { h.debugLogs, h.setDebugLogs = current, set }
-}
-
-// WithAuthReadiness wires command-layer sign-in outcomes to readiness.
-func WithAuthReadiness(readiness *command.AuthReadiness) Option {
-	return func(h *Runtime) { h.authReadiness = readiness }
 }
 
 // WithSessionReaper wires the KAS session reaper a chat delete and the run-log sweep read.
@@ -636,6 +631,11 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	runs.runEnded = h.membership.WakeRetention
 	h.initDispatch()
 	h.signin.onChange(h.onSignInChange)
+	h.signInHealth = newSignInHealth(lc, h.signin, h.engine.boot,
+		func(ctx context.Context, s marotte.SignInHealth) {
+			sseP.Broadcast(ctx, marotte.NewEvent(marotte.EventSignInHealth, "", s))
+		},
+		func(ctx context.Context, n *marotte.NotificationPayload) { h.coord.Notify(ctx, "", n) })
 	runs.gate.wire(h.signin.answerability())
 	h.signin.onAnswerability(runs.gateMoved)
 	requireCollaborators(h)

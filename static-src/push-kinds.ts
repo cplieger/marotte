@@ -6,11 +6,15 @@
  *  blocks the turn, so a channel that could go dark would stall every later turn
  *  with nothing on screen to say why. */
 export const KEYED_PUSH_KINDS: Readonly<
-  Record<string, "notify_agent_finished" | "notify_pr_status" | "notify_run_outcome">
+  Record<
+    string,
+    "notify_agent_finished" | "notify_pr_status" | "notify_run_outcome" | "notify_sign_in"
+  >
 > = {
   agent_finished: "notify_agent_finished",
   pr_status: "notify_pr_status",
   run_outcome: "notify_run_outcome",
+  sign_in: "notify_sign_in",
 };
 
 /** Each keyed kind's default (`pr_status` is OFF). A mirror the payload cannot
@@ -20,4 +24,5 @@ export const KEYED_PUSH_DEFAULTS: Readonly<Record<keyof typeof KEYED_PUSH_KINDS,
   agent_finished: true,
   pr_status: false,
   run_outcome: true,
+  sign_in: true,
 };

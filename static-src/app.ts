@@ -25,6 +25,7 @@ import { installMirrors } from "./mirror.js";
 import { initUI, renderIdentity } from "./settings.js";
 import { initPostAuth, onTransportStatus, startBoot } from "./boot.js";
 import { resolveIdentity } from "./identity.js";
+import { adoptSignInHealth } from "./signin-health.js";
 import { fetchCatalog } from "./session-catalog.js";
 import {
   setOnEmpty,
@@ -430,6 +431,9 @@ function onLoginSuccess(): void {
     // sidebar and read as a sign-out.
     if (v.state === "signed_in") {
       renderIdentity(v);
+    }
+    if (v.health) {
+      adoptSignInHealth(v.health);
     }
   });
   // RESETS a live boot loop rather than being refused by it: a login is exactly the new

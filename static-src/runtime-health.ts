@@ -4,15 +4,10 @@ import { apiGetOrError } from "./api-client.js";
 import { showBanner, clearBannerCodes, GLOBAL_BANNER } from "./banner-stack.js";
 import { onBus, BUS_RECONCILE } from "./bus.js";
 import { openSetting } from "./settings-highlight.js";
-import { showLoginModal } from "./modals.js";
 import { getVersions } from "./versions.js";
 import type { BannerLevel } from "./types.js";
 
 const CODE = "runtime_degraded";
-
-/** The sign-in family's own banner code, separate from the install family's so clearing one
- *  cannot silently drop the other. */
-const AUTH_CODE = "runtime_signed_out";
 
 /** The reason prefix every kiro-cli readiness verdict shares. It is what separates a kiro-cli
  *  verdict from the server's own startup/shutdown 503 (`starting up or shutting down`), which
@@ -98,13 +93,6 @@ function reasonOf(body: unknown): string {
   return "";
 }
 
-const SIGNED_OUT: RuntimeState = {
-  message:
-    "The agent runtime is signed out, so chats will open and then fail. " +
-    "This usually means the sign-in expired while you were away.",
-  level: "error",
-};
-
 /** How long to wait before the FIRST re-probe of an unready runtime. A kiro-cli install is
  *  minutes of work, so this is about how fast the banner should disappear once it finishes
  *  rather than about catching a transition. */
@@ -153,13 +141,8 @@ export async function checkRuntimeHealth(): Promise<void> {
   const reason = reasonOf(res.body);
   if (!res.ok && reason.startsWith(AUTH_REASON_PREFIX)) {
     runtimeLine = LINE_SIGNED_OUT;
-    // Not dismissible, for the same reason as the install family: it blocks the product's core
-    // function and clears itself on the next check once a token vends.
+    // signin-health.ts owns the sign-in banner; this reason only words the status card's line.
     clearBannerCodes(GLOBAL_BANNER, [CODE]);
-    showBanner(GLOBAL_BANNER, AUTH_CODE, SIGNED_OUT.message, SIGNED_OUT.level, false, {
-      label: "Sign in",
-      onClick: showLoginModal,
-    });
     return;
   }
   if (!res.ok && reason.startsWith(KIRO_REASON_PREFIX)) {
@@ -170,7 +153,6 @@ export async function checkRuntimeHealth(): Promise<void> {
     const state = STATES[reason] ?? FALLBACK;
     // Not dismissible: the condition blocks the product's core function, and it clears itself on
     // the next check after recovery.
-    clearBannerCodes(GLOBAL_BANNER, [AUTH_CODE]);
     showBanner(GLOBAL_BANNER, CODE, state.message, state.level, false, {
       label: "Run diagnostics",
       onClick: () => {
@@ -179,11 +161,11 @@ export async function checkRuntimeHealth(): Promise<void> {
     });
     return;
   }
-  // Healthy, network failure, or a startup/shutdown 503: clear BOTH families. The transient cases
+  // Healthy, network failure, or a startup/shutdown 503. The transient cases
   // re-assert on the next gap check if still degraded; a stale banner over a working runtime is the
   // worse failure mode.
   runtimeLine = res.ok ? LINE_READY : LINE_UNKNOWN;
-  clearBannerCodes(GLOBAL_BANNER, [CODE, AUTH_CODE]);
+  clearBannerCodes(GLOBAL_BANNER, [CODE]);
 }
 
 /** Wire the boot probe + the re-probe on a whole reconcile. Called once from app.ts. */

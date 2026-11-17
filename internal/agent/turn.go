@@ -93,6 +93,8 @@ type activeTurn struct {
 	// Seq is the chat's open sequence, stamped at open and never persisted: the
 	// registry's own order, distinct from the transcript's n.
 	Seq uint64
+	// askMark is where the sign-in's ask book stood when the turn opened (signInAsks.refusalFor).
+	askMark uint64
 	// holds is how many completion handles are outstanding, and what bounds
 	// retention: a result a waiter still holds a handle for is never evicted.
 	holds  int
@@ -683,7 +685,7 @@ func (r *turnRegistry) closeWork(chatID marotte.ChatID) []command.CloseTurn {
 
 // finish publishes a claimed turn's result and returns the chat to idle: result stored and done closed before the
 // state moves. It publishes on the turn's own lifecycle, which a forgotten chat would otherwise strand.
-func (r *turnRegistry) finish(t *activeTurn, result marotte.TurnResult) {
+func (r *turnRegistry) finish(t *activeTurn, result *marotte.TurnResult) {
 	lc := t.lc
 	lc.mu.Lock()
 	idle := lc.finishLocked(t, result)
@@ -715,9 +717,9 @@ func (lc *chatLifecycle) closedRecentlyLocked(turnID string) bool {
 }
 
 // finishLocked is finish under mu, reporting whether the chat is now idle.
-func (lc *chatLifecycle) finishLocked(t *activeTurn, result marotte.TurnResult) bool {
-	result.Turn = t.ID
-	t.result = result
+func (lc *chatLifecycle) finishLocked(t *activeTurn, result *marotte.TurnResult) bool {
+	t.result = *result
+	t.result.Turn = t.ID
 	close(t.done)
 	lc.closeRunEntryLocked(t)
 	lc.closedIDs[lc.closedAt%recentCloses] = t.ID

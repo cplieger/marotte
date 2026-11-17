@@ -630,6 +630,23 @@ const FailureKindModelCallLimit FailureKind = "model_call_limit"
 // empty: the steps after it ran without its work, and the remedy is running it again.
 const FailureKindEmptyAnswer FailureKind = "empty_answer"
 
+// FailureKindSignIn is a turn the engine failed because Kiro or the vault refused its credential, or a replayed one
+// whose cause is not known: the remedy is signing in again.
+const FailureKindSignIn FailureKind = "sign_in"
+
+// FailureKindSignInUnreachable is a turn the engine failed because the identity provider gave no usable renewal of
+// its credential: the remedy is waiting out the outage, and signing in again does no harm.
+const FailureKindSignInUnreachable FailureKind = "sign_in_unreachable"
+
+// FailureKindAPIKeyRefused is a turn the engine failed because Kiro refused the KIRO_API_KEY it signs in with: the
+// remedy is replacing the key, since marotte takes no sign-in while one is set.
+const FailureKindAPIKeyRefused FailureKind = "api_key_refused"
+
+// SignIn reports a failure of the Kiro sign-in, whichever its cause.
+func (k FailureKind) SignIn() bool {
+	return k == FailureKindSignIn || k == FailureKindSignInUnreachable || k == FailureKindAPIKeyRefused
+}
+
 // SaySegmentID is the id of the k-th segment of a say a seal split: `<say>#k`.
 func SaySegmentID(say string, k int) string {
 	return say + "#" + strconv.Itoa(k)

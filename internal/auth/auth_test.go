@@ -207,6 +207,42 @@ func TestWhoami_FromTheVault(t *testing.T) {
 	}
 }
 
+// Whoami carries the sign-in's health on every arm, the boot's first read of it.
+func TestWhoami_CarriesSignInHealth(t *testing.T) {
+	since := time.Date(2026, 11, 15, 11, 43, 55, 0, time.UTC)
+	failing := marotte.SignInHealth{
+		State: marotte.SignInFailing, Cause: marotte.SignInCauseProviderUnreachable, Since: &since,
+		Version: marotte.SignInHealthVersion{BootMS: 1, Seq: 7},
+	}
+	health := func() marotte.SignInHealth { return failing }
+	check := func(t *testing.T, w WhoamiResponse) {
+		t.Helper()
+		if w.Health == nil {
+			t.Fatal("whoami carries no health")
+		}
+		if got := *w.Health; got.State != failing.State || got.Cause != failing.Cause || got.Version != failing.Version ||
+			got.Since == nil || !got.Since.Equal(since) {
+			t.Errorf("health = %+v, want %+v", got, failing)
+		}
+	}
+	t.Run("signed out", func(t *testing.T) {
+		check(t, newHarness(t, WithSignInHealth(health)).whoami())
+	})
+	t.Run("signed in", func(t *testing.T) {
+		hs := newHarness(t, WithSignInHealth(health))
+		hs.signIn("a@example.com")
+		check(t, hs.whoami())
+	})
+	t.Run("API key", func(t *testing.T) {
+		check(t, newHarness(t, WithAPIKey(true), WithSignInHealth(health)).whoami())
+	})
+	t.Run("no health source", func(t *testing.T) {
+		if w := newHarness(t).whoami(); w.Health != nil {
+			t.Errorf("health = %+v, want none with no source wired", *w.Health)
+		}
+	})
+}
+
 func TestLogout_ClearsTheVault(t *testing.T) {
 	hs := newHarness(t)
 	hs.signIn("a@example.com")

@@ -195,11 +195,16 @@ export function showBanner(
   const key = bannerKey(chatID, code);
   const existing = banners.get(key);
   if (existing !== undefined) {
-    // Replace message in place on the entry-owned element (a single text node;
-    // the row's identity is unchanged, so no structural reconcile is needed).
+    // Replace message and level in place on the entry-owned element (the row's identity is
+    // unchanged, so no structural reconcile is needed).
     const msg = existing.el.querySelector(".banner-msg");
     if (msg !== null) {
       msg.textContent = message;
+    }
+    existing.el.className = `banner banner-${level}`;
+    const glyph = existing.el.querySelector(".banner-glyph");
+    if (glyph !== null) {
+      glyph.textContent = LEVEL_GLYPH[level];
     }
     if (link !== undefined) {
       updateBannerLink(existing.el, link);

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,6 +37,8 @@ type surfaceDeps struct {
 	closedReason string
 	// closedEngineErrorType, when set, is the class of the display_error AwaitTurn reports latched on the turn.
 	closedEngineErrorType string
+	// closedKind is the failure kind AwaitTurn reports the turn closed with.
+	closedKind marotte.FailureKind
 	// startRefused makes StartTurn answer false, the cancelled-during-open path.
 	startRefused bool
 	// callErr, when set, fails the prompt Call itself.
@@ -74,7 +77,7 @@ func (d *surfaceDeps) AbandonInFlightTurn(_ context.Context, _ marotte.ChatID, t
 
 func (d *surfaceDeps) AwaitTurn(ctx context.Context, chatID marotte.ChatID, turnID string) (marotte.TurnResult, error) {
 	if d.closedReason != "" || d.closedEngineErrorType != "" {
-		return marotte.TurnResult{Turn: turnID, Reason: d.closedReason, EngineErrorType: d.closedEngineErrorType}, nil
+		return marotte.TurnResult{Turn: turnID, Reason: d.closedReason, FailureKind: d.closedKind, EngineErrorType: d.closedEngineErrorType}, nil
 	}
 	if d.startRefused {
 		// A live turn StartTurn refuses was taken by another closer, which the registry retains.
@@ -171,141 +174,161 @@ func TestReportPromptFailure_AnEngineNamedAuthClassRoutesToSignIn(t *testing.T) 
 		callErr     error
 		engineClass string
 		wantCode    marotte.ErrorCode
-		wantLatched bool
+		wantNoted   int64
 	}{
 		"kiro-cli 2.37.0 credential absent": {
 			callErr: reply237, engineClass: "CredentialAbsentError",
-			wantCode: marotte.ErrCodeAuthTokenUnavailable, wantLatched: true,
+			wantCode: marotte.ErrCodeAuthTokenUnavailable, wantNoted: 1,
 		},
 		"kiro-cli 2.32.0 token expired": {
 			callErr: reply232, engineClass: "TokenExpiredError",
-			wantCode: marotte.ErrCodeAuthTokenUnavailable, wantLatched: true,
+			wantCode: marotte.ErrCodeAuthTokenUnavailable, wantNoted: 1,
 		},
 		"a throttle the turn named": {
 			callErr: reply237, engineClass: "ModelThrottleError",
-			wantCode: marotte.ErrCodePromptFailed, wantLatched: false,
+			wantCode: marotte.ErrCodePromptFailed,
 		},
 		"no class on the turn": {
 			callErr:  reply237,
-			wantCode: marotte.ErrCodePromptFailed, wantLatched: false,
+			wantCode: marotte.ErrCodePromptFailed,
 		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			deps := newSurfaceDeps()
 			deps.closedEngineErrorType = tc.engineClass
-			readiness := new(AuthReadiness)
+			reach := &reachRecorder{}
 			roles := promptRolesOf(deps)
-			roles.auth = readiness
+			roles.signIn = reach
 
 			reportPromptFailure(t.Context(), roles, "c1", "t-7", tc.callErr, 3, time.Second, false)
 
 			if got := deps.onlyError(t).Code; got != tc.wantCode {
 				t.Errorf("error code = %q, want %q", got, tc.wantCode)
 			}
-			if got := readiness.Unavailable(); got != tc.wantLatched {
-				t.Errorf("AuthReadiness.Unavailable() = %v, want %v", got, tc.wantLatched)
+			if got := reach.refusals.Load(); got != tc.wantNoted {
+				t.Errorf("refusals noted = %d, want %d", got, tc.wantNoted)
 			}
 		})
 	}
 }
 
-// providerReach answers ProviderUnreachable with its reason, down when it is non-empty.
-type providerReach string
+// reachRecorder counts what the command layer notes for the sign-in's health.
+type reachRecorder struct {
+	// kinds are the failure kinds each refusal was noted with, in order.
+	kinds    []marotte.FailureKind
+	mu       sync.Mutex
+	refusals atomic.Int64
+	accepts  atomic.Int64
+	gates    atomic.Int64
+	// blocked is what TurnBlocked answers: the provider stayed down through the prompt's reprobe.
+	blocked bool
+}
 
-func (p providerReach) ProviderUnreachable() (string, bool) { return string(p), p != "" }
+func (r *reachRecorder) TurnBlocked(context.Context) bool {
+	r.gates.Add(1)
+	return r.blocked
+}
+
+func (r *reachRecorder) NoteEngineRefusal(kind marotte.FailureKind) {
+	r.mu.Lock()
+	r.kinds = append(r.kinds, kind)
+	r.mu.Unlock()
+	r.refusals.Add(1)
+}
+
+func (r *reachRecorder) NoteEngineAccepted() { r.accepts.Add(1) }
 
 // The unreachable refusal internal/signin/kiro words for KAS, which KAS still grades unauthenticated.
 const vaultUnreachable = "marotte could not reach the identity provider to renew the Kiro sign-in; it will try again."
 
-// unreachableCase is one failure graded while the vault does or does not hold the provider unreachable.
+// signInCard is the reason the closer stamps on a turn the engine failed on its credential while the provider is down.
+const signInCard = marotte.SignInFailedUnreachableReason
+
+// unreachableCase is one failure graded after the vault refused the engine's ask for an unreachable provider.
 type unreachableCase struct {
 	callErr     error
 	engineClass string
-	reach       providerReach
 	wantCode    marotte.ErrorCode
-	// wantVault: the frame carries the vault's reason off the card, else the card's own reason.
-	wantVault   bool
-	wantLatched bool
+	// wantNoted: the failure reaches the sign-in's health, which decides whose refusal it is.
+	wantNoted bool
 }
 
-// unreachableCases are both auth shapes KAS reports, on the execution path and the catalog path, with the
-// controls that keep the vault's reason to them. failed is the path's non-auth code.
+// unreachableCases are both auth shapes KAS reports, on the execution path and the catalog path, and a throttle
+// control. failed is the path's non-auth code.
 func unreachableCases(failed marotte.ErrorCode) map[string]unreachableCase {
 	execReply := &marotte.RPCError{Code: -32000, Message: "Authentication token is invalid: Auth refresh callback failed: " + vaultUnreachable + ": transport"}
 	mapped := &marotte.RPCError{Code: -32603, Message: "Internal error", Data: []byte(`{"errorType":"ModelRegistryUnauthenticatedError"}`)}
 	return map[string]unreachableCase{
-		"the turn names a credential class while the provider is down": {
-			callErr: execReply, engineClass: "CredentialAbsentError", reach: vaultUnreachable,
-			wantCode: failed, wantVault: true,
-		},
-		"a mapped auth envelope while the provider is down": {
-			callErr: mapped, reach: vaultUnreachable,
-			wantCode: failed, wantVault: true,
-		},
-		"the turn names a credential class while the provider answers": {
+		"the turn names a credential class": {
 			callErr: execReply, engineClass: "CredentialAbsentError",
-			wantCode: marotte.ErrCodeAuthTokenUnavailable, wantLatched: true,
+			wantCode: marotte.ErrCodeAuthTokenUnavailable, wantNoted: true,
 		},
-		"a throttle while the provider is down": {
-			callErr: execReply, engineClass: "ModelThrottleError", reach: vaultUnreachable,
-			wantCode: failed,
+		"a mapped auth envelope": {
+			callErr: mapped, wantCode: marotte.ErrCodeAuthTokenUnavailable, wantNoted: true,
+		},
+		"a throttle": {
+			callErr: execReply, engineClass: "ModelThrottleError", wantCode: failed,
 		},
 	}
 }
 
-func checkUnreachableFrame(t *testing.T, got marotte.ErrorPayload, tc unreachableCase, cardReason string, latched bool) {
+// checkSignInFrame wants the frame to say what the turn's row says, as a frame the row already carries.
+func checkSignInFrame(t *testing.T, got marotte.ErrorPayload, tc unreachableCase, reach *reachRecorder) {
 	t.Helper()
 	if got.Code != tc.wantCode {
 		t.Errorf("error code = %q, want %q", got.Code, tc.wantCode)
 	}
-	wantMsg := cardReason
-	if tc.wantVault {
-		wantMsg = vaultUnreachable
+	if !strings.HasSuffix(got.Message, signInCard) {
+		t.Errorf("Message = %q, want it to end with the turn's own reason %q", got.Message, signInCard)
 	}
-	if !strings.HasSuffix(got.Message, wantMsg) {
-		t.Errorf("Message = %q, want it to end with %q", got.Message, wantMsg)
+	if !got.TurnScoped {
+		t.Error("TurnScoped = false, want true: the turn's row carries this reason")
 	}
-	if got.TurnScoped == tc.wantVault {
-		t.Errorf("TurnScoped = %v, want %v: the card carries KAS's sentence, not the vault's reason", got.TurnScoped, !tc.wantVault)
+	if noted := reach.refusals.Load() == 1; noted != tc.wantNoted {
+		t.Errorf("refusal noted = %v (%d), want %v: every auth failure reaches the sign-in's health",
+			noted, reach.refusals.Load(), tc.wantNoted)
 	}
-	if latched != tc.wantLatched {
-		t.Errorf("AuthReadiness.Unavailable() = %v, want %v", latched, tc.wantLatched)
+	reach.mu.Lock()
+	kinds := slices.Clone(reach.kinds)
+	reach.mu.Unlock()
+	if tc.wantNoted && !slices.Equal(kinds, []marotte.FailureKind{marotte.FailureKindSignInUnreachable}) {
+		t.Errorf("refusal noted with kinds %q, want the close's own %q", kinds, marotte.FailureKindSignInUnreachable)
 	}
 }
 
-// KAS grades a credential ask the vault refused as unreachable as unauthenticated, but no sign-in fixes an outage
-// of the identity provider, so the vault's reason replaces the Sign in route and health stays signed in.
-func TestReportPromptFailure_AnUnreachableProviderIsNotASignInFailure(t *testing.T) {
-	const card = "Authentication failed. Please sign in again."
+// A credential ask the vault refused while the provider is down is still a sign-in failure the person is told
+// about: the row's sentence names the outage, and the health owner, not this frame, decides it is not a sign-out.
+func TestReportPromptFailure_AnUnreachableProviderIsASignInFailureOnTheTurn(t *testing.T) {
 	for name, tc := range unreachableCases(marotte.ErrCodePromptFailed) {
 		t.Run(name, func(t *testing.T) {
 			deps := newSurfaceDeps()
-			deps.closedReason = card
+			deps.closedReason = signInCard
+			deps.closedKind = marotte.FailureKindSignInUnreachable
 			deps.closedEngineErrorType = tc.engineClass
-			readiness := new(AuthReadiness)
+			reach := &reachRecorder{}
 			roles := promptRolesOf(deps)
-			roles.auth, roles.signIn = readiness, tc.reach
+			roles.signIn = reach
 
 			reportPromptFailure(t.Context(), roles, "c1", "t-7", tc.callErr, 3, time.Second, false)
 
-			checkUnreachableFrame(t, deps.onlyError(t), tc, card, readiness.Unavailable())
+			checkSignInFrame(t, deps.onlyError(t), tc, reach)
 		})
 	}
 }
 
 // The empty-turn retry grades an unreachable provider as its first attempt does.
-func TestRetryEmptyTurnPrompt_AnUnreachableProviderIsNotASignInFailure(t *testing.T) {
-	const card = "Authentication failed. Please sign in again."
+func TestRetryEmptyTurnPrompt_AnUnreachableProviderIsASignInFailureOnTheTurn(t *testing.T) {
 	for name, tc := range unreachableCases(marotte.ErrCodeRecoveryFailed) {
 		t.Run(name, func(t *testing.T) {
 			deps := newSurfaceDeps()
 			deps.callErr = tc.callErr
-			deps.closedReason = card
+			deps.closedReason = signInCard
+			deps.closedKind = marotte.FailureKindSignInUnreachable
 			deps.closedEngineErrorType = tc.engineClass
-			readiness := new(AuthReadiness)
+			reach := &reachRecorder{}
 			roles := promptRolesOf(deps)
-			roles.auth, roles.signIn = readiness, tc.reach
+			roles.signIn = reach
 
 			retryEmptyTurnPrompt(t.Context(), roles, testReservation("c1", true), "t-empty", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
 
@@ -313,7 +336,45 @@ func TestRetryEmptyTurnPrompt_AnUnreachableProviderIsNotASignInFailure(t *testin
 			if !strings.HasPrefix(got.Message, "Retry prompt failed: ") {
 				t.Errorf("Message = %q, want the retry's prefix", got.Message)
 			}
-			checkUnreachableFrame(t, got, tc, card, readiness.Unavailable())
+			checkSignInFrame(t, got, tc, reach)
+		})
+	}
+}
+
+// A prompt whose reply names no auth class, failed by a turn the engine latched an auth class on, is graded auth,
+// and the log line and the failure counter say so too.
+func TestReportPromptFailure_ATurnGradedAuthFromItsLatchedClassCountsAsAuth(t *testing.T) {
+	reply := &marotte.RPCError{Code: -32000, Message: "Auth refresh callback failed: " + vaultUnreachable + ": transport"}
+	cases := map[string]func(context.Context, *promptRoles, *surfaceDeps){
+		"the prompt's own failure": func(ctx context.Context, roles *promptRoles, _ *surfaceDeps) {
+			reportPromptFailure(ctx, roles, "c1", "t-7", reply, 3, time.Second, false)
+		},
+		"the empty-turn retry's failure": func(ctx context.Context, roles *promptRoles, d *surfaceDeps) {
+			d.callErr = reply
+			retryEmptyTurnPrompt(ctx, roles, testReservation("c1", true), "t-empty", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
+		},
+	}
+	for name, run := range cases {
+		t.Run(name, func(t *testing.T) {
+			logs := captureLogs(t)
+			deps := newSurfaceDeps()
+			deps.closedReason = signInCard
+			deps.closedEngineErrorType = "TokenExpiredError"
+			roles := promptRolesOf(deps)
+			roles.signIn = &reachRecorder{}
+			auth, fatal := promptFailures(t, "auth"), promptFailures(t, "fatal")
+
+			run(t.Context(), roles, deps)
+
+			if got := promptFailures(t, "auth") - auth; got != 1 {
+				t.Errorf("prompt_failures_total{class=auth} moved by %v, want 1", got)
+			}
+			if got := promptFailures(t, "fatal") - fatal; got != 0 {
+				t.Errorf("prompt_failures_total{class=fatal} moved by %v, want 0", got)
+			}
+			if lines := logLines(logs, "class=auth"); len(lines) != 1 {
+				t.Errorf("lines logging class=auth = %q, want exactly one:\n%s", lines, logs)
+			}
 		})
 	}
 }
@@ -402,27 +463,27 @@ func TestRetryEmptyTurnPrompt_MarksTheRetryFailureTurnScoped(t *testing.T) {
 	}
 }
 
-// A retry refused for sign-in has the first attempt's remedy: the Sign in route and
-// health's sign-in required. The reply is the probe's kiro-cli 2.37.0 execution-path one.
+// A retry refused for sign-in has the first attempt's remedy: the Sign in route and a refusal noted for the
+// sign-in's health. The reply is the probe's kiro-cli 2.37.0 execution-path one.
 func TestRetryEmptyTurnPrompt_AnAuthFailureRoutesToSignIn(t *testing.T) {
 	reply := &marotte.RPCError{Code: -32000, Message: "Authentication token is invalid: Auth refresh callback failed: Not signed in to Kiro in marotte. Sign in from the account menu.: unauthenticated"}
 	cases := map[string]struct {
 		callErr     error
 		engineClass string
 		wantCode    marotte.ErrorCode
-		wantLatched bool
+		wantNoted   int64
 	}{
 		"the turn names a credential class": {
 			callErr: reply, engineClass: "CredentialAbsentError",
-			wantCode: marotte.ErrCodeAuthTokenUnavailable, wantLatched: true,
+			wantCode: marotte.ErrCodeAuthTokenUnavailable, wantNoted: 1,
 		},
 		"the reply is a mapped auth envelope": {
 			callErr:  &marotte.RPCError{Code: -32603, Message: "Internal error", Data: []byte(`{"errorType":"ModelRegistryUnauthenticatedError"}`)},
-			wantCode: marotte.ErrCodeAuthTokenUnavailable, wantLatched: true,
+			wantCode: marotte.ErrCodeAuthTokenUnavailable, wantNoted: 1,
 		},
 		"the turn names a throttle": {
 			callErr: reply, engineClass: "ModelThrottleError",
-			wantCode: marotte.ErrCodeRecoveryFailed, wantLatched: false,
+			wantCode: marotte.ErrCodeRecoveryFailed,
 		},
 	}
 	for name, tc := range cases {
@@ -430,9 +491,9 @@ func TestRetryEmptyTurnPrompt_AnAuthFailureRoutesToSignIn(t *testing.T) {
 			deps := newSurfaceDeps()
 			deps.callErr = tc.callErr
 			deps.closedEngineErrorType = tc.engineClass
-			readiness := new(AuthReadiness)
+			reach := &reachRecorder{}
 			roles := promptRolesOf(deps)
-			roles.auth = readiness
+			roles.signIn = reach
 
 			retryEmptyTurnPrompt(t.Context(), roles, testReservation("c1", true), "t-empty", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
 
@@ -443,8 +504,8 @@ func TestRetryEmptyTurnPrompt_AnAuthFailureRoutesToSignIn(t *testing.T) {
 			if !got.TurnScoped {
 				t.Error("TurnScoped = false, want true: the retry's turn carries the reason")
 			}
-			if latched := readiness.Unavailable(); latched != tc.wantLatched {
-				t.Errorf("AuthReadiness.Unavailable() = %v, want %v", latched, tc.wantLatched)
+			if got := reach.refusals.Load(); got != tc.wantNoted {
+				t.Errorf("refusals noted = %d, want %d", got, tc.wantNoted)
 			}
 		})
 	}
@@ -726,7 +787,7 @@ func TestRetryEmptyTurnPrompt_AFailedRetryCountsAsAPromptFailure(t *testing.T) {
 // failure and no pre-set class is one no failure can have.
 func TestPromptFailureClass_NamesExactlyTheCountedClasses(t *testing.T) {
 	var got []string
-	for c := classFatal; c <= classAuth; c++ {
+	for c := classFatal; c <= classSignInOutage; c++ {
 		got = append(got, c.String())
 	}
 	slices.Sort(got)

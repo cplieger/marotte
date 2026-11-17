@@ -86,31 +86,6 @@ func TestAnswer_ATransientFailureIsRetriedThenMarksTheProviderUnreachable(t *tes
 	edges.waitFor(t, ProviderUnreachable)
 }
 
-// The reason is the backend's own unreachable refusal, the one the engine was given, and only while the vault
-// holds the record unreachable.
-func TestUnreachableReason_NamesTheBackendsRefusalOnlyWhileTheProviderIsUnreachable(t *testing.T) {
-	fb := newFake(nil, "cb", "_test/auth/token")
-	h := newHarness(t, fb)
-	if why, ok := h.v.UnreachableReason("nope"); ok {
-		t.Errorf("UnreachableReason(unknown backend) = %q, true; want false", why)
-	}
-	if why, ok := h.v.UnreachableReason("cb"); ok {
-		t.Errorf("UnreachableReason with no record = %q, true; want false: a sign-in fixes it", why)
-	}
-	h.signIn(fb, approval{cred: credOf(t, staleAccount(h, "alice"))})
-	if why, ok := h.v.UnreachableReason("cb"); ok {
-		t.Errorf("UnreachableReason while answerable = %q, true; want false", why)
-	}
-	fb.setRefresh(func(context.Context, fakeCred) (fakeCred, error) { return fakeCred{}, errNetworkDown })
-	if _, rerr := h.answer("cb"); rerr == nil {
-		t.Fatal("a renewal that never succeeded was answered")
-	}
-	why, ok := h.v.UnreachableReason("cb")
-	if !ok || why != "cb: unreachable" {
-		t.Errorf("UnreachableReason after the window = %q, %v; want the backend's refusal %q, true", why, ok, "cb: unreachable")
-	}
-}
-
 func TestAnswer_ARetryThatSucceedsInsideTheWindowIsServed(t *testing.T) {
 	fb := newFake(nil, "cb", "_test/auth/token")
 	h := newHarness(t, fb)
@@ -141,7 +116,7 @@ func TestAnswer_ACancelledAskerMarksNothing(t *testing.T) {
 	fb.setRefresh(func(context.Context, fakeCred) (fakeCred, error) { return fakeCred{}, errNetworkDown })
 	ctx, cancel := context.WithCancel(t.Context())
 	time.AfterFunc(20*time.Millisecond, cancel)
-	if _, rerr := h.v.Answer(ctx, "cb"); rerr == nil {
+	if rep := h.v.Answer(ctx, "cb"); rep.Err == nil {
 		t.Fatal("answered with every renewal failing")
 	}
 	if a := h.v.Answerability("cb"); a != Answerable {
@@ -158,7 +133,7 @@ func TestAnswer_AnAskerDeadlineShorterThanTheWindowMarksNothing(t *testing.T) {
 	fb.setRefresh(func(context.Context, fakeCred) (fakeCred, error) { return fakeCred{}, errNetworkDown })
 	ctx, cancel := context.WithTimeout(t.Context(), h.answerWindow/10)
 	defer cancel()
-	if _, rerr := h.v.Answer(ctx, "cb"); rerr == nil {
+	if rep := h.v.Answer(ctx, "cb"); rep.Err == nil {
 		t.Fatal("answered with every renewal failing")
 	}
 	if a := h.v.Answerability("cb"); a != Answerable {
@@ -269,4 +244,79 @@ func TestAnswerability_AShortLeaseIsUnreachableUntilAUsableRenewal(t *testing.T)
 	short = false
 	mu.Unlock()
 	edges.waitFor(t, ProviderUnreachable, Answerable)
+}
+
+// Standing's FailingSince is the episode's first failed renewal: later failures keep it, a usable renewal or a new
+// account clears it, and a rejected renewal reads lapsed. Each reply names the refusal its ask got.
+func TestStanding_FailingSinceIsTheFirstFailureSinceTheLastUsableRenewal(t *testing.T) {
+	fb := newFake(nil, "cb", "_test/auth/token")
+	h := newHarness(t, fb)
+	if s := h.v.Standing("cb"); s.Answerability != NeedsSignIn || !s.FailingSince.IsZero() || s.Lapsed {
+		t.Errorf("Standing with no record = %+v, want needs_sign_in, not failing, not lapsed", s)
+	}
+	if s := h.v.Standing("nope"); s.Answerability != NeedsSignIn {
+		t.Errorf("Standing of an unknown backend = %+v, want needs_sign_in", s)
+	}
+	h.signIn(fb, approval{cred: credOf(t, staleAccount(h, "alice"))})
+	if s := h.v.Standing("cb"); s.Answerability != Answerable || !s.FailingSince.IsZero() {
+		t.Errorf("Standing after the sign-in = %+v, want answerable, not failing", s)
+	}
+
+	var mu sync.Mutex
+	down := true
+	fb.setRefresh(func(_ context.Context, c fakeCred) (fakeCred, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if down {
+			return fakeCred{}, errNetworkDown
+		}
+		c.Token += "+r"
+		c.Expiry = h.clk.now().Add(time.Hour)
+		return c, nil
+	})
+	first := h.clk.now()
+	if _, rerr := h.answer("cb"); rerr == nil {
+		t.Fatal("answered while the provider is down")
+	}
+	h.clk.advance(time.Minute)
+	if rep := h.v.Answer(t.Context(), "cb"); rep.Err == nil || rep.Refusal != RefusedUnreachable {
+		t.Fatalf("a second ask while the provider is down = %+v, want refused unreachable", rep)
+	}
+	if s := h.v.Standing("cb"); s.Answerability != ProviderUnreachable || !s.FailingSince.Equal(first) {
+		t.Errorf("Standing after two failed asks = %+v, want provider_unreachable failing since %v", s, first)
+	}
+
+	mu.Lock()
+	down = false
+	mu.Unlock()
+	if rep := h.v.Answer(t.Context(), "cb"); rep.Err != nil || rep.Refusal != 0 || len(rep.Result) == 0 {
+		t.Fatalf("an ask after the provider came back = %+v, want served", rep)
+	}
+	if s := h.v.Standing("cb"); s.Answerability != Answerable || !s.FailingSince.IsZero() {
+		t.Errorf("Standing after a usable renewal = %+v, want answerable, not failing", s)
+	}
+
+	h.clk.advance(2 * time.Hour)
+	mu.Lock()
+	down = true
+	mu.Unlock()
+	if _, rerr := h.answer("cb"); rerr == nil {
+		t.Fatal("answered while the provider is down")
+	}
+	if s := h.v.Standing("cb"); s.FailingSince.IsZero() {
+		t.Fatalf("Setup: Standing after a failed ask = %+v, want failing", s)
+	}
+	h.signIn(fb, approval{cred: credOf(t, h.account("bob"))})
+	if s := h.v.Standing("cb"); s.Answerability != Answerable || !s.FailingSince.IsZero() {
+		t.Errorf("Standing after a new sign-in = %+v, want answerable, not failing", s)
+	}
+
+	h.clk.advance(2 * time.Hour)
+	fb.setRefresh(func(context.Context, fakeCred) (fakeCred, error) { return fakeCred{}, ErrRejected })
+	if rep := h.v.Answer(t.Context(), "cb"); rep.Err == nil || rep.Refusal != RefusedRejected {
+		t.Fatalf("an ask on a rejected renewal = %+v, want refused rejected", rep)
+	}
+	if s := h.v.Standing("cb"); s.Answerability != NeedsSignIn || !s.Lapsed || !s.FailingSince.IsZero() {
+		t.Errorf("Standing after a rejected renewal = %+v, want needs_sign_in, lapsed, not failing", s)
+	}
 }

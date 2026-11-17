@@ -5,11 +5,13 @@
 import type { SettingsTab } from "../route-path.js";
 import type { ErrorCode } from "../wire/types.gen.js";
 
-/** The in-app jump a routed error offers, as DATA so the routing table stays a table. `setting`
- *  names a Settings control; `sign-in` opens the login modal. */
-export type ErrorAction =
-  | { kind: "setting"; tab: SettingsTab; control: string; label: string }
-  | { kind: "sign-in"; label: string };
+/** The in-app jump a routed error offers, as DATA so the routing table stays a table: the Settings
+ *  control it opens. */
+export interface ErrorAction {
+  tab: SettingsTab;
+  control: string;
+  label: string;
+}
 
 interface ErrorRoute {
   /** Where this error is reported. `toast`: bottom-right beside the turn's own divider, raised for
@@ -30,7 +32,6 @@ export const ERROR_ROUTES: Readonly<Partial<Record<ErrorCode, ErrorRoute>>> = {
   agent_config_error: {
     surface: "toast",
     action: {
-      kind: "setting",
       tab: "instructions",
       control: "steering-input",
       label: "Open custom instructions",
@@ -48,13 +49,9 @@ export const ERROR_ROUTES: Readonly<Partial<Record<ErrorCode, ErrorRoute>>> = {
   supervised_not_applied: { surface: "toast" },
   // A Bot running without its memory file is still a working chat, so this reports without blocking the composer.
   memory_not_loaded: { surface: "toast" },
-  // kiro-cli could not vend a KAS access token, so service-backed surfaces will fail. Sticky, with
-  // the login modal as CTA; turn-scoped AND actionable, so the toast is raised beside the turn's
-  // inline reason.
-  auth_token_unavailable: {
-    surface: "toast",
-    action: { kind: "sign-in", label: "Sign in" },
-  },
+  // A turn refused on its credential. Its row and the app-wide sign-in banner offer Sign in again, so
+  // the toast carries no action and stands down for the chat on screen.
+  auth_token_unavailable: { surface: "toast" },
   // The four failed-attempt codes: each ends the turn and leaves a promptable chat, so none reaches
   // the send button (the next Send is the retry). `recovery_failed` is explicit because it means the
   // automatic repair gave up.

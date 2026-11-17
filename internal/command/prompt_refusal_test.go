@@ -90,7 +90,7 @@ func (s *promptBridgeSpy) Broadcast(_ context.Context, evt marotte.ServerEvent) 
 }
 
 // TestCmdPrompt_AnAuthFailureTravelsAsTheSignInCode: a rejected token travels as
-// auth_token_unavailable, the only code the client routes to a Sign in CTA.
+// auth_token_unavailable, the code the client reads as the turn's sign-in failure.
 func TestCmdPrompt_AnAuthFailureTravelsAsTheSignInCode(t *testing.T) {
 	cases := map[string]struct {
 		callErr  error
@@ -155,20 +155,21 @@ func TestCmdPrompt_AnAuthFailureTravelsAsTheSignInCode(t *testing.T) {
 	}
 }
 
-func TestReportPromptFailure_AuthClassLatchesForReadiness(t *testing.T) {
+// A refused credential the provider did not cause is noted for the sign-in's health; any other failure is not.
+func TestReportPromptFailure_AuthClassNotesARefusal(t *testing.T) {
 	cases := map[string]struct {
 		callErr error
-		want    bool
+		want    int64
 	}{
 		"backend_rejects_credential": {
 			callErr: rpcErr(t, marotte.RPCCodeInternal, "Authentication failed. Please sign in again.", nil),
-			want:    true,
+			want:    1,
 		},
 		"non_auth_failure": {
 			callErr: rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{
 				"details": "PromptTooLong",
 			}),
-			want: false,
+			want: 0,
 		},
 	}
 	for name, tc := range cases {
@@ -177,11 +178,11 @@ func TestReportPromptFailure_AuthClassLatchesForReadiness(t *testing.T) {
 				hostDouble: newTestHost(t, testsupport.NewInMemoryChatStore()),
 				bridge:     &recordingBridge{callErr: tc.callErr},
 			}
-			readiness := new(AuthReadiness)
+			reach := &reachRecorder{}
 			roles := promptRolesOf(spy)
 			roles.bridges = spy
 			roles.bus = spy
-			roles.auth = readiness
+			roles.signIn = reach
 			join := &promptJoin{}
 			roles.lifecycle = join
 
@@ -190,24 +191,26 @@ func TestReportPromptFailure_AuthClassLatchesForReadiness(t *testing.T) {
 			}
 			join.join()
 
-			if got := readiness.Unavailable(); got != tc.want {
-				t.Errorf("AuthReadiness.Unavailable() = %v, want %v", got, tc.want)
+			if got := reach.refusals.Load(); got != tc.want {
+				t.Errorf("refusals noted = %d, want %d", got, tc.want)
+			}
+			if got := reach.accepts.Load(); got != 0 {
+				t.Errorf("acceptances noted = %d, want none for a failed prompt", got)
 			}
 		})
 	}
 }
 
-func TestReportPromptSuccess_ClearsAuthLatch(t *testing.T) {
+func TestReportPromptSuccess_NotesTheAcceptance(t *testing.T) {
 	spy := &promptBridgeSpy{
 		hostDouble: newTestHost(t, testsupport.NewInMemoryChatStore()),
 		bridge:     &recordingBridge{},
 	}
-	readiness := new(AuthReadiness)
-	readiness.record(errors.New("backend rejected the credential"))
+	reach := &reachRecorder{}
 	roles := promptRolesOf(spy)
 	roles.bridges = spy
 	roles.bus = spy
-	roles.auth = readiness
+	roles.signIn = reach
 	join := &promptJoin{}
 	roles.lifecycle = join
 
@@ -216,8 +219,11 @@ func TestReportPromptSuccess_ClearsAuthLatch(t *testing.T) {
 	}
 	join.join()
 
-	if readiness.Unavailable() {
-		t.Error("AuthReadiness stayed unavailable after a completed prompt")
+	if got := reach.accepts.Load(); got != 1 {
+		t.Errorf("acceptances noted = %d, want 1 after a completed prompt", got)
+	}
+	if got := reach.refusals.Load(); got != 0 {
+		t.Errorf("refusals noted = %d, want none", got)
 	}
 }
 

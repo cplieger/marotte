@@ -756,7 +756,7 @@ func TestListCloseOf_CompletedIsTheOutcomesOwnGrade(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			turn := &activeTurn{Chat: "c1", ID: "t-1", lc: h.coord.turns.testLifecycle("c1")}
 			cf := h.coord.closeFactsOf(turn, tc.closer, tc.outcome)
-			c := h.coord.listCloseOf(t.Context(), turn, tc.closer, &cf, marotte.TurnResult{}, false)
+			c := h.coord.listCloseOf(t.Context(), turn, tc.closer, &cf, &marotte.TurnResult{}, false)
 			if c.clean != tc.clean || c.completed != tc.completed {
 				t.Errorf("close = clean %v completed %v, want clean %v completed %v", c.clean, c.completed, tc.clean, tc.completed)
 			}

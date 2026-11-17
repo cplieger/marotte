@@ -15,6 +15,7 @@ const EXPECTED_KEYS = [
   "notify_agent_finished",
   "notify_pr_status",
   "notify_run_outcome",
+  "notify_sign_in",
   // Chat retention — one value, two controls, so one slot on the section title
   "chat_retention_days",
   // Composer (settings.ts initInterruptModeControl)

@@ -268,11 +268,11 @@ func (v *Vault) publishChange(j *job, unsynced bool) {
 	s.mu.Lock()
 	from := s.kindLocked()
 	if j.rec == nil {
-		s.desired, s.effective, s.unreachable = nil, nil, false
+		s.desired, s.effective, s.unreachable, s.failingSince = nil, nil, false, time.Time{}
 	} else {
 		s.endAttemptLocked(j.attempt, AttemptSignedIn, "")
 		if s.basis == nil || s.b.LiveSwitchable(s.basis.cred, j.rec.cred) {
-			s.desired, s.effective, s.unreachable = j.rec, j.rec, false
+			s.desired, s.effective, s.unreachable, s.failingSince = j.rec, j.rec, false, time.Time{}
 		} else {
 			s.desired = j.rec
 		}

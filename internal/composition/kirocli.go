@@ -241,5 +241,5 @@ const engineBackend = kirosignin.ID
 
 // signinBackends is every sign-in backend marotte is built with; their ids and host callbacks are unique.
 func signinBackends() []signin.Backend {
-	return []signin.Backend{kirosignin.New()}
+	return []signin.Backend{qaSignIn(kirosignin.New())}
 }

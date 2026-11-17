@@ -3,7 +3,10 @@
 
 import { onSSE } from "../bus.js";
 import { appendEntry, setWorkingLabel, get, getActiveId, setTurnOpen } from "../store.js";
-import { payloadOf } from "../turns.js";
+import { payloadOf, turnOpenOf } from "../turns.js";
+import { restoreFailedSend } from "../composer-state.js";
+import { isSignInFailure } from "../signin-health.js";
+import type { EntryTurnClose } from "../wire/types.gen.js";
 import { closeNotificationsFor } from "../notify.js";
 import { askTarget } from "../push-subject.js";
 import {
@@ -17,7 +20,6 @@ import { reportFailure } from "../failure-notice.js";
 import { refreshGitBadge } from "../git.js";
 import type { ToastRetry } from "../toast.js";
 import { openSetting } from "../settings-highlight.js";
-import { showLoginModal } from "../modals.js";
 import { respondPermission, respondElicitation, respondUserInput } from "../actions/chat.js";
 import { ERROR_ROUTES, type ErrorAction } from "./error-routing.js";
 import { clearTurnState } from "../turn-teardown.js";
@@ -42,6 +44,28 @@ function anotherTurnOpen(chatID: string, closedTurn: string): boolean {
   return false;
 }
 
+/** A typed prompt the server failed on the sign-in before any engine call (its turn has no `turn_bind`) goes back to
+ *  its chat's composer through the failed-send path, which keeps a draft typed since. Live frames only, so a reload
+ *  never hands it back twice. */
+function giveBackUnsentPrompt(
+  chatID: string,
+  turnID: string,
+  close: EntryTurnClose | undefined,
+): void {
+  if (!isSignInFailure(close?.failure_kind)) {
+    return;
+  }
+  const state = get(chatID)?.turns.get(turnID);
+  if (state === undefined || state.entries.some((e) => e.kind === "turn_bind")) {
+    return;
+  }
+  const prompt = turnOpenOf(state)?.prompt;
+  if (prompt === undefined || prompt.automatic === true || prompt.caller !== undefined) {
+    return;
+  }
+  restoreFailedSend(chatID, prompt.text);
+}
+
 // ONE arm. The frame names its turn in the entry and every turn a chat's log holds is the
 // chat's, so there is nothing left to scope. What decides whether this close SETTLES the
 // chat is the log itself — whether any other turn of it is still open.
@@ -55,6 +79,7 @@ onSSE("turn_closed", (chatID, p) => {
   // fit asks for the turn's range read rather than settling off a frame in the wrong place.
   appendEntry(chatID, p.entry);
   const close = payloadOf(p.entry, "turn_close");
+  giveBackUnsentPrompt(chatID, p.entry.turn, close);
   const settles = !anotherTurnOpen(chatID, p.entry.turn);
   // Read off the close itself: its turn_open may not be resident, and the repair read is async.
   const agentRan = close?.carrier !== true;
@@ -149,20 +174,12 @@ function toastActionFor(action: ErrorAction | undefined): ToastRetry | undefined
   if (action === undefined) {
     return undefined;
   }
-  switch (action.kind) {
-    case "setting":
-      return {
-        label: action.label,
-        onClick: () => {
-          openSetting(action.tab, action.control);
-        },
-      };
-    case "sign-in":
-      return { label: action.label, onClick: showLoginModal };
-    default:
-      action satisfies never;
-      return undefined;
-  }
+  return {
+    label: action.label,
+    onClick: () => {
+      openSetting(action.tab, action.control);
+    },
+  };
 }
 
 // This handler touches no turn state: the server closes every turn exactly once

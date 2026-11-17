@@ -130,6 +130,8 @@ type bridgeCoordinator struct {
 	runLabel func(workflowID string) string `wiring:"optional"`
 	// unknownStops records stop reasons already warned about: one line per unmapped value.
 	unknownStops sync.Map
+	// signin words a turn that failed on the Kiro sign-in from the asks it depended on.
+	signin signinLink
 	// finishMu guards finishes.
 	finishMu sync.Mutex
 	// noSubscribers latches the no-subscriber report once per episode (reportNoSubscribers).
@@ -172,6 +174,7 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		chatHasLiveRun: func(chatID marotte.ChatID) bool {
 			return chatHoldsLiveRun(h.runs.leaseStore().List(), chatID)
 		},
+		signin: h.signin,
 		sessionHasLiveRun: func(chatID marotte.ChatID, acpSessionID string) bool {
 			return sessionHoldsLiveRun(h.runs.leaseStore().List(), chatID, acpSessionID)
 		},

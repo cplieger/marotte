@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/cplieger/go/textsafe"
@@ -188,6 +189,37 @@ var transientClasses = map[string]struct{}{
 func (m Mapped) Transient() bool {
 	_, ok := transientClasses[m.ErrorType]
 	return ok || m.RetryErrorType == RetryThrottling
+}
+
+// authErrorNames are the backend's own names for a request refused because
+// the credential was not usable; kascap.TestAuthClassesMatchBundle pins them
+// to the pinned bundle's auth classes.
+//
+// ModelRegistryAccessDeniedError is deliberately absent: upstream tells
+// that user the account lacks model access, which no sign-in fixes.
+var authErrorNames = []string{
+	"TokenInvalidError",
+	"TokenExpiredError",
+	"CredentialAbsentError",
+	"AuthRefreshFailedError",
+	"SignInRequiredError",
+	"ModelRegistryUnauthenticatedError",
+	"AccessDeniedError",
+	"MISSING_TOKEN",
+	"MALFORMED_TOKEN",
+	"INVALID_AUTH",
+	"INVALID_SSO_AUTH",
+	"INVALID_IDC_AUTH",
+}
+
+// AuthClass reports whether name is a KAS class or token code for a refused credential.
+func AuthClass(name string) bool {
+	return slices.Contains(authErrorNames, name)
+}
+
+// NamesAuthClass reports whether text contains the name of a KAS class or token code for a refused credential.
+func NamesAuthClass(text string) bool {
+	return slices.ContainsFunc(authErrorNames, func(name string) bool { return strings.Contains(text, name) })
 }
 
 // KnownClass reports whether name is a KAS error class a reader can be shown.

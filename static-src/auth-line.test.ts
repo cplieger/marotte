@@ -6,6 +6,7 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
 import { signedIn } from "./__test-helpers__/identity.js";
+import type * as BannerStack from "./banner-stack.js";
 
 // Everything `settings.ts` reaches that touches network, shell, file browser or chat view.
 vi.mock("./modals.js", () => ({ initAllModals: vi.fn(), showLoginModal: vi.fn() }));
@@ -55,10 +56,18 @@ vi.mock("./account-usage.js", () => ({
 
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 
+// The sign-in banner is signin-health.ts's; this file reads only the auth row it words.
+vi.mock("./banner-stack.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof BannerStack>()),
+  showBanner: vi.fn(),
+  clearBannerCodes: vi.fn(),
+}));
+
 const mockFetch = vi.fn();
 
 const { renderIdentity, currentIdentity } = await import("./settings.js");
 const { logout } = await import("./actions/settings.js");
+const { adoptSignInHealth, apiKeySignsIn } = await import("./signin-health.js");
 
 /**
  * The card's three rows as `static/index.html` authors them, including `#st-auth-sep`,
@@ -168,6 +177,7 @@ describe("the sign-in rows and Sign out", () => {
     expect(shown("st-signin-region")).toBeNull();
     expect(logoutBtn().disabled, "the server refuses a sign-out here").toBe(true);
     expect(logoutBtn().getAttribute("data-tooltip")).toContain("KIRO_API_KEY");
+    expect(apiKeySignsIn().peek(), "the server refuses a sign-in here too").toBe(true);
   });
 
   it("hides every sign-in row and offers Sign out again for the arms that name nobody", () => {
@@ -177,6 +187,7 @@ describe("the sign-in rows and Sign out", () => {
       expect(shown(id), id).toBeNull();
     }
     expect(logoutBtn().disabled).toBe(false);
+    expect(apiKeySignsIn().peek()).toBe(false);
   });
 });
 
@@ -261,5 +272,36 @@ describe("logout through the REAL action", () => {
     expect(addr.textContent).toBe("someone@example.invalid");
     expect(row.hidden, "signed_in hides the row again").toBe(true);
     expect(sep.hidden).toBe(true);
+  });
+});
+
+describe("the row while the Kiro sign-in is not working", () => {
+  let seq = 0;
+  function health(state: "ok" | "failing" | "signed_out" | "none"): void {
+    seq += 1;
+    adoptSignInHealth({ state, version: { boot_ms: 1, seq } });
+  }
+
+  it("names a failing or ended sign-in for a signed-in account, and hides again once it works", () => {
+    const { row, sep } = seedCard();
+    renderIdentity(signedIn("someone@example.invalid"));
+    health("failing");
+    expect(row.textContent).toBe("Kiro sign-in failing");
+    expect(row.hidden).toBe(false);
+    expect(sep.hidden).toBe(false);
+    health("signed_out");
+    expect(row.textContent).toBe("Kiro sign-in ended");
+    health("ok");
+    expect(row.textContent).toBe("");
+    expect(row.hidden).toBe(true);
+    expect(sep.hidden).toBe(true);
+  });
+
+  it("keeps the verdict's own words for an account that is not signed in", () => {
+    const { row } = seedCard();
+    health("failing");
+    renderIdentity({ state: "signed_out" });
+    expect(row.textContent).toBe("not signed in");
+    health("ok");
   });
 });
