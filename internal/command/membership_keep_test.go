@@ -542,7 +542,7 @@ func TestOpenTab_AFailedRunTabWriteRollsBackItsRunTabFacts(t *testing.T) {
 	}
 }
 
-func TestCreateChatAndOpen_RefusesASessionThatLaunchedALiveOrShownRun(t *testing.T) {
+func TestCreateChatAndOpen_RefusesASessionThatLaunchedALiveOrShownRunOrHostsOne(t *testing.T) {
 	cases := []struct {
 		name    string
 		runs    *fakeRunOwner
@@ -553,7 +553,9 @@ func TestCreateChatAndOpen_RefusesASessionThatLaunchedALiveOrShownRun(t *testing
 		{name: "a live run", runs: &fakeRunOwner{parented: map[string][]string{"sess_1": {"wf_live"}}}, status: http.StatusConflict, want: errSessionParentsRun},
 		{name: "a finished run a tab shows", runs: &fakeRunOwner{parentedAll: map[string][]string{"sess_1": {"wf_1"}}}, showRun: true, status: http.StatusConflict, want: errSessionParentsRun},
 		{name: "the session's runs could not be read", runs: &fakeRunOwner{parentedErr: errors.New("runs/ not read yet")}, status: http.StatusServiceUnavailable, want: errChatUnread},
-		{name: "a finished run no tab shows", runs: &fakeRunOwner{parentedAll: map[string][]string{"sess_1": {"wf_1"}}}},
+		{name: "a parentless run's host", runs: &fakeRunOwner{parentedAll: map[string][]string{"sess_1": {"wf_1"}}, hosted: map[string]string{"sess_1": "wf_1"}}, status: http.StatusConflict, want: errSessionHostsRun},
+		{name: "the run records could not be read", runs: &fakeRunOwner{hostedErr: errors.New("runs/ unlistable")}, status: http.StatusServiceUnavailable, want: errChatUnread},
+		{name: "a finished run no tab shows", runs: &fakeRunOwner{parentedAll: map[string][]string{"sess_1": {"wf_1"}}, hosted: map[string]string{"sess_2": "wf_2"}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -581,6 +583,31 @@ func TestCreateChatAndOpen_RefusesASessionThatLaunchedALiveOrShownRun(t *testing
 				t.Error("a refused resume still wrote the record")
 			}
 		})
+	}
+}
+
+// A run's host session is refused 409 even while a chat file is unreadable: no owner scan could make the bind safe,
+// so the 503 a retry would invite is not the answer.
+func TestCreateChatAndOpen_RefusesARunHostSessionWhileAChatFileIsUnreadable(t *testing.T) {
+	f := newKeepFixture(t)
+	f.mem.runs = &fakeRunOwner{hosted: map[string]string{"sess_1": "wf_1"}}
+	dir := filepath.Join(f.store.Dir(), "c-unread")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "chat.json"), []byte("{"), 0o600); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+
+	_, err := f.mem.CreateChatAndOpen(t.Context(), &ChatCreate{
+		OpID: "op-resume", ChatID: "c-self", ClaimSession: "sess_1",
+		Init: func(c *marotte.Chat) { c.RecordSession("sess_1") },
+	})
+	if code, _, _ := StatusOf(err); code != http.StatusConflict || !errors.Is(err, errSessionHostsRun) {
+		t.Errorf("CreateChatAndOpen = %v (status %d), want errSessionHostsRun (status 409)", err, code)
+	}
+	if _, found, _ := f.store.Lookup(t.Context(), "c-self"); found {
+		t.Error("a refused resume still wrote the record")
 	}
 }
 

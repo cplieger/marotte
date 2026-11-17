@@ -250,7 +250,7 @@ func (rs *Runs) startHolders(
 	if o := runStartLaunch(chatID); o.origin == runlease.OriginAgent {
 		holders = append(holders, chatID)
 	}
-	hosted := (!scan.Complete || !scan.Listed) && rs.parentlessHost(ctx, workflowID, parent)
+	hosted := !scan.Complete && rs.parentlessHost(ctx, workflowID, parent)
 	if !scan.Complete && !hosted {
 		holders = append(holders, scan.Skipped...)
 	}

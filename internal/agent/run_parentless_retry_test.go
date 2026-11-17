@@ -245,3 +245,34 @@ func TestObserveStart_AParentlessRunIsAttributedWhenTheChatsDirectoryIsUnlistabl
 		t.Error("a parentless run carries an unattributed mark for a chats directory that could not be listed")
 	}
 }
+
+// RunHostedBy names the run whose recorded host a session is, which the claim check refuses to bind into a chat, and
+// names none for any other session.
+func TestRunHostedBy_NamesTheParentlessRunASessionHosts(t *testing.T) {
+	h, _, br := newTestHub(WithConfigDir(t.TempDir()))
+	t.Cleanup(func() { shutdownHub(t, h) })
+	host := launchFailedParentless(t, h, br)
+
+	if wf, err := h.runs.RunHostedBy(t.Context(), host); err != nil || wf != "wf_1" {
+		t.Errorf("RunHostedBy(host) = %q, %v, want wf_1", wf, err)
+	}
+	if wf, err := h.runs.RunHostedBy(t.Context(), "sess_other"); err != nil || wf != "" {
+		t.Errorf("RunHostedBy(another session) = %q, %v, want none", wf, err)
+	}
+}
+
+// An unlistable runs/ directory is an error, never "hosts nothing", which would let a host session be bound.
+func TestRunHostedBy_AnUnlistableRunsDirectoryIsAnError(t *testing.T) {
+	h, _, _ := newTestHub(WithConfigDir(t.TempDir()))
+	t.Cleanup(func() { shutdownHub(t, h) })
+	if err := os.RemoveAll(h.runs.log.root); err != nil {
+		t.Fatalf("Setup: %s", err)
+	}
+	if err := os.WriteFile(h.runs.log.root, nil, 0o600); err != nil {
+		t.Fatalf("Setup: %s", err)
+	}
+
+	if _, err := h.runs.RunHostedBy(t.Context(), "sess_any"); err == nil {
+		t.Error("RunHostedBy over an unlistable runs/ = nil error, want the listing failure")
+	}
+}

@@ -58,8 +58,33 @@ func (rs *Runs) recordHost(ctx context.Context, workflowID, session string) {
 	}
 }
 
+// hostedBy is the run whose recorded host is session, "" for none. A record that cannot be read names no session, as
+// it does for parentlessHost.
+func (r *runLog) hostedBy(ctx context.Context, session string) (string, error) {
+	runs, err := r.recorded()
+	if err != nil {
+		return "", err
+	}
+	for _, id := range runs {
+		if r.hostSession(ctx, id) == session {
+			return id, nil
+		}
+	}
+	return "", nil
+}
+
+// RunHostedBy answers the run whose recorded host session is sessionID, "" for none (command.runOwner). A chat that
+// bound that session would make parentlessHost's claim false, so the claim check refuses the bind.
+func (rs *Runs) RunHostedBy(ctx context.Context, sessionID string) (string, error) {
+	if rs.log == nil || !ids.ValidSessionID(sessionID) {
+		return "", nil
+	}
+	return rs.log.hostedBy(ctx, sessionID)
+}
+
 // parentlessHost reports whether session is the host session marotte opened for workflowID's parentless launch, which
-// no chat launched: an owner scan that could not read every chat hides no launcher of it. This record, not the lease,
+// no chat launched and no chat can bind (RunHostedBy): an owner scan that could not read every chat hides no launcher
+// of it. This record, not the lease,
 // is the signal: a parentless run always names a parent session (its host), and observeComplete releases its lease on
 // the terminal frame, so a failed run usually has no lease left to consult.
 func (rs *Runs) parentlessHost(ctx context.Context, workflowID, session string) bool {
