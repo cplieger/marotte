@@ -37,10 +37,23 @@ func unreachableHarness(t *testing.T) (*harness, *fakeBackend, *providerSwitch) 
 	if _, rerr := h.answer("cb"); rerr == nil {
 		t.Fatal("answered while the provider is down")
 	}
+	// A renewal outlives its asker (Answer's contract): the last retry can start as the window ends, and one still
+	// running would land in a caller's before count or renew through the caller's next hook.
+	awaitFlight(h.v.slots["cb"])
 	if a := h.v.Answerability("cb"); a != ProviderUnreachable {
 		t.Fatalf("Answerability = %v, want %v before the reprobe", a, ProviderUnreachable)
 	}
 	return h, fb, p
+}
+
+// awaitFlight waits out the renewal in flight on s, if any.
+func awaitFlight(s *slot) {
+	s.mu.Lock()
+	f := s.flight
+	s.mu.Unlock()
+	if f != nil {
+		<-f.done
+	}
 }
 
 // A provider back before the background reprobe's next tick answers the reprobe a caller asks for.

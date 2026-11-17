@@ -6,6 +6,7 @@ package agent
 import (
 	"slices"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/go/sse/v2"
@@ -34,101 +35,107 @@ func closedStops(t *testing.T, h *Runtime) []marotte.StopReason {
 // A settle taken on the response alone ends the turn with the response's outcome while turn_end and trailing content
 // are unread. The wire says refusal, the response end_turn, and the chunk arrives behind the response.
 func TestSettle_WaitsForQueuedFramesAndTakesTheWireOutcome(t *testing.T) {
-	h, cs, _ := newTestHub()
-	ctx := t.Context()
-	const chatID marotte.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
+	synctest.Test(t, func(t *testing.T) {
+		h, cs, _ := newTestHub()
+		t.Cleanup(func() { shutdownHub(t, h) })
+		ctx := t.Context()
+		const chatID marotte.ChatID = "c1"
+		_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	gen := h.coord.turns.attachForwardNow(chatID).gen
-	epoch, _ := h.stagePromptTurn(t, chatID)
-	defer h.ReleaseTurn(chatID, epoch)
+		gen := h.coord.turns.attachForwardNow(chatID).gen
+		epoch, _ := h.stagePromptTurn(t, chatID)
+		defer h.ReleaseTurn(chatID, epoch)
 
-	queued := []marotte.Notification{
-		{Msg: newPromptTurnStartMsg(epoch), Seq: 1},
-		{Msg: newChunkMsg("the whole reply"), Seq: 2},
-		{Msg: newTurnEndMsg("refusal"), Seq: 3},
-	}
+		queued := []marotte.Notification{
+			{Msg: newPromptTurnStartMsg(epoch), Seq: 1},
+			{Msg: newChunkMsg("the whole reply"), Seq: 2},
+			{Msg: newTurnEndMsg("refusal"), Seq: 3},
+		}
 
-	before := h.bus.fanout.Position().Head
-	settled := make(chan struct{})
-	go func() {
-		defer close(settled)
-		h.SettleTurnOnResponse(ctx, chatID, epoch, 3,
-			&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
-	}()
-	waitForParkedSettle(t, h.coord.turns, chatID, epoch, 3)
+		before := h.bus.fanout.Position().Head
+		settled := make(chan struct{})
+		go func() {
+			defer close(settled)
+			h.SettleTurnOnResponse(ctx, chatID, epoch, 3,
+				&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
+		}()
+		waitForParkedSettle(t, h.coord.turns, chatID, epoch, 3)
 
-	for _, n := range queued {
-		h.coord.consumeFrame(chatID, h.originOf(chatID), gen, n)
-	}
-	<-settled
+		for _, n := range queued {
+			h.coord.consumeFrame(chatID, h.originOf(chatID), gen, n)
+		}
+		<-settled
 
-	ends := closesOf(t, entriesOfBroadcasts(t, bufferedSince(h, before)))
-	if len(ends) != 1 {
-		t.Fatalf("turn_closed count = %d, want exactly 1 complete turn", len(ends))
-	}
-	if ends[0].StopReasonRaw != string(marotte.StopReasonRefusal) {
-		t.Errorf("stop reason = %q, want the WIRE's %q: the local settle ran on the "+
-			"response while turn_end was still queued", ends[0].StopReasonRaw, marotte.StopReasonRefusal)
-	}
-	result, err := h.AwaitTurn(ctx, chatID, epoch)
-	if err != nil {
-		t.Fatalf("AwaitTurn: %v", err)
-	}
-	if !result.WireEnded {
-		t.Error("the turn reports WireEnded false, so the empty-turn recovery is armed on a locally-closed turn")
-	}
-	if result.EmittedNothing {
-		t.Error("the turn reports EmittedNothing, so the settle measured it before the reply was folded")
-	}
-	if !cs.hasText(t, chatID, "the whole reply") {
-		t.Error("the persisted turn does not carry the reply that arrived behind the response")
-	}
+		ends := closesOf(t, entriesOfBroadcasts(t, bufferedSince(h, before)))
+		if len(ends) != 1 {
+			t.Fatalf("turn_closed count = %d, want exactly 1 complete turn", len(ends))
+		}
+		if ends[0].StopReasonRaw != string(marotte.StopReasonRefusal) {
+			t.Errorf("stop reason = %q, want the WIRE's %q: the local settle ran on the "+
+				"response while turn_end was still queued", ends[0].StopReasonRaw, marotte.StopReasonRefusal)
+		}
+		result, err := h.AwaitTurn(ctx, chatID, epoch)
+		if err != nil {
+			t.Fatalf("AwaitTurn: %v", err)
+		}
+		if !result.WireEnded {
+			t.Error("the turn reports WireEnded false, so the empty-turn recovery is armed on a locally-closed turn")
+		}
+		if result.EmittedNothing {
+			t.Error("the turn reports EmittedNothing, so the settle measured it before the reply was folded")
+		}
+		if !cs.hasText(t, chatID, "the whole reply") {
+			t.Error("the persisted turn does not carry the reply that arrived behind the response")
+		}
+	})
 }
 
 // A settle whose last frame folds nothing still closes. On a caught publishTerminalEvent failure turn_completion is
 // sent before the turn-end broadcast, so a fold-bound position parked here and thinking never cleared.
 func TestSettle_ClosesWhenTheLastDeliveredFrameFoldsNothing(t *testing.T) {
-	h, cs, _ := newTestHub()
-	ctx := t.Context()
-	const chatID marotte.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
+	synctest.Test(t, func(t *testing.T) {
+		h, cs, _ := newTestHub()
+		t.Cleanup(func() { shutdownHub(t, h) })
+		ctx := t.Context()
+		const chatID marotte.ChatID = "c1"
+		_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	gen := h.coord.turns.attachForwardNow(chatID).gen
-	epoch, _ := h.stagePromptTurn(t, chatID)
-	defer h.ReleaseTurn(chatID, epoch)
+		gen := h.coord.turns.attachForwardNow(chatID).gen
+		epoch, _ := h.stagePromptTurn(t, chatID)
+		defer h.ReleaseTurn(chatID, epoch)
 
-	// No turn_end: the fault path; the trailing frame is metering.
-	queued := []marotte.Notification{
-		{Msg: newChunkMsg("half an answer"), Seq: 1},
-		{Msg: newTurnCompletionMsg(), Seq: 2},
-	}
+		// No turn_end: the fault path; the trailing frame is metering.
+		queued := []marotte.Notification{
+			{Msg: newChunkMsg("half an answer"), Seq: 1},
+			{Msg: newTurnCompletionMsg(), Seq: 2},
+		}
 
-	before := h.bus.fanout.Position().Head
-	settled := make(chan struct{})
-	go func() {
-		defer close(settled)
-		h.SettleTurnOnResponse(ctx, chatID, epoch, 2,
-			&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
-	}()
-	waitForParkedSettle(t, h.coord.turns, chatID, epoch, 2)
+		before := h.bus.fanout.Position().Head
+		settled := make(chan struct{})
+		go func() {
+			defer close(settled)
+			h.SettleTurnOnResponse(ctx, chatID, epoch, 2,
+				&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
+		}()
+		waitForParkedSettle(t, h.coord.turns, chatID, epoch, 2)
 
-	for _, n := range queued {
-		h.coord.consumeFrame(chatID, h.originOf(chatID), gen, n)
-	}
-	<-settled
+		for _, n := range queued {
+			h.coord.consumeFrame(chatID, h.originOf(chatID), gen, n)
+		}
+		<-settled
 
-	ends := payloadsOfType[marotte.TurnClosedPayload](t, bufferedSince(h, before), marotte.EventTurnClosed)
-	if len(ends) != 1 {
-		t.Fatalf("turn_closed count = %d, want 1: the settle parked behind a frame that folds nothing", len(ends))
-	}
-	result, err := h.AwaitTurn(ctx, chatID, epoch)
-	if err != nil {
-		t.Fatalf("AwaitTurn: %v", err)
-	}
-	if result.WireEnded {
-		t.Error("a turn no bracket closed reports WireEnded true")
-	}
+		ends := payloadsOfType[marotte.TurnClosedPayload](t, bufferedSince(h, before), marotte.EventTurnClosed)
+		if len(ends) != 1 {
+			t.Fatalf("turn_closed count = %d, want 1: the settle parked behind a frame that folds nothing", len(ends))
+		}
+		result, err := h.AwaitTurn(ctx, chatID, epoch)
+		if err != nil {
+			t.Fatalf("AwaitTurn: %v", err)
+		}
+		if result.WireEnded {
+			t.Error("a turn no bracket closed reports WireEnded true")
+		}
+	})
 }
 
 // A closer armed for turn N, firing after N+1 opened, closes nothing; epoch-scoped claiming keeps a late settle off
@@ -162,48 +169,51 @@ func TestSettle_ArmedForAnEarlierTurnClosesNothing(t *testing.T) {
 // A bridge dying mid-prompt closes the turn once and the parked settle defers: the death closer names the cause, and
 // Forward seals the position first.
 func TestBridgeDeath_ClosesTheTurnOnceAndTheParkedSettleDefers(t *testing.T) {
-	h, cs, br := newTestHub()
-	ctx := t.Context()
-	const chatID marotte.ChatID = "c1"
-	epoch, _ := streamingPromptTurn(t, h, chatID, "half an answer")
-	sb, _ := h.bridge.mgr.orInsertNow(chatID)
-	// A session past its door: one still opening has its door retire it.
-	sb.attach(br)
-	sb.setReady()
+	synctest.Test(t, func(t *testing.T) {
+		h, cs, br := newTestHub()
+		t.Cleanup(func() { shutdownHub(t, h) })
+		ctx := t.Context()
+		const chatID marotte.ChatID = "c1"
+		epoch, _ := streamingPromptTurn(t, h, chatID, "half an answer")
+		sb, _ := h.bridge.mgr.orInsertNow(chatID)
+		// A session past its door: one still opening has its door retire it.
+		sb.attach(br)
+		sb.setReady()
 
-	forwardDone := make(chan struct{})
-	go func() {
-		defer close(forwardDone)
-		h.coord.Forward(chatID, br)
-	}()
-	settled := make(chan struct{})
-	go func() {
-		defer close(settled)
-		// A position the dead bridge will never deliver.
-		h.SettleTurnOnResponse(ctx, chatID, epoch, 99,
-			&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
-	}()
-	waitForParkedSettle(t, h.coord.turns, chatID, epoch, 99)
+		forwardDone := make(chan struct{})
+		go func() {
+			defer close(forwardDone)
+			h.coord.Forward(chatID, br)
+		}()
+		settled := make(chan struct{})
+		go func() {
+			defer close(settled)
+			// A position the dead bridge will never deliver.
+			h.SettleTurnOnResponse(ctx, chatID, epoch, 99,
+				&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
+		}()
+		waitForParkedSettle(t, h.coord.turns, chatID, epoch, 99)
 
-	// End without removing the session: it ended on its own.
-	br.end()
-	<-forwardDone
-	<-settled
+		// End without removing the session: it ended on its own.
+		br.end()
+		<-forwardDone
+		<-settled
 
-	if got := closedStops(t, h); !slices.Equal(got, []marotte.StopReason{marotte.StopReasonInterrupted}) {
-		t.Errorf("turn_closed stops = %v, want exactly one interrupted: the parked settle "+
-			"either beat the death closer or announced a second end", got)
-	}
-	result, err := h.AwaitTurn(ctx, chatID, epoch)
-	if err != nil {
-		t.Fatalf("AwaitTurn: %v", err)
-	}
-	if closes := closesOf(t, logOf(t, cs, chatID)); len(closes) != 1 || closes[0].FailureReason != deathInterruptCause {
-		t.Errorf("turn_close entries = %+v, want one carrying the death cause: nothing durable says the agent process went away", closes)
-	}
-	if result.WireEnded {
-		t.Error("a turn no bracket closed reports WireEnded true, which arms the empty-turn recovery on a dead bridge")
-	}
+		if got := closedStops(t, h); !slices.Equal(got, []marotte.StopReason{marotte.StopReasonInterrupted}) {
+			t.Errorf("turn_closed stops = %v, want exactly one interrupted: the parked settle "+
+				"either beat the death closer or announced a second end", got)
+		}
+		result, err := h.AwaitTurn(ctx, chatID, epoch)
+		if err != nil {
+			t.Fatalf("AwaitTurn: %v", err)
+		}
+		if closes := closesOf(t, logOf(t, cs, chatID)); len(closes) != 1 || closes[0].FailureReason != deathInterruptCause {
+			t.Errorf("turn_close entries = %+v, want one carrying the death cause: nothing durable says the agent process went away", closes)
+		}
+		if result.WireEnded {
+			t.Error("a turn no bracket closed reports WireEnded true, which arms the empty-turn recovery on a dead bridge")
+		}
+	})
 }
 
 // The wait does not stop at the awaited turn's close: the empty-turn gate's later-turn read is only sound once the
@@ -245,44 +255,47 @@ func TestAwaitPosition_DoesNotStopAtTheAwaitedTurnsOwnClose(t *testing.T) {
 // before the response's position, only the later-turn clause keeps the retry from aborting it, once that turn_start
 // has folded.
 func TestSettle_ReturnsOnlyAfterTheFolderHasCaughtUp(t *testing.T) {
-	h, cs, _ := newTestHub()
-	ctx := t.Context()
-	const chatID marotte.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
+	synctest.Test(t, func(t *testing.T) {
+		h, cs, _ := newTestHub()
+		t.Cleanup(func() { shutdownHub(t, h) })
+		ctx := t.Context()
+		const chatID marotte.ChatID = "c1"
+		_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	gen := h.coord.turns.attachForwardNow(chatID).gen
-	preOpen, _ := h.stagePromptTurn(t, chatID)
-	defer h.ReleaseTurn(chatID, preOpen)
+		gen := h.coord.turns.attachForwardNow(chatID).gen
+		preOpen, _ := h.stagePromptTurn(t, chatID)
+		defer h.ReleaseTurn(chatID, preOpen)
 
-	var openedAfterAtSettle bool
-	settled := make(chan struct{})
-	go func() {
-		defer close(settled)
-		h.SettleTurnOnResponse(ctx, chatID, preOpen, 4,
-			&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
-		openedAfterAtSettle = h.coord.turnOpenedAfter(chatID, preOpen)
-	}()
-	waitForParkedSettle(t, h.coord.turns, chatID, preOpen, 4)
+		var openedAfterAtSettle bool
+		settled := make(chan struct{})
+		go func() {
+			defer close(settled)
+			h.SettleTurnOnResponse(ctx, chatID, preOpen, 4,
+				&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
+			openedAfterAtSettle = h.coord.turnOpenedAfter(chatID, preOpen)
+		}()
+		waitForParkedSettle(t, h.coord.turns, chatID, preOpen, 4)
 
-	for i, msg := range []*marotte.RPCResponse{
-		newPromptTurnStartMsg(preOpen), newTurnEndMsg("end_turn"), newTurnStartMsg(), newTurnEndMsg("end_turn"),
-	} {
-		h.coord.consumeFrame(chatID, h.originOf(chatID), gen, marotte.Notification{Msg: msg, Seq: uint64(i + 1)})
-	}
-	<-settled
+		for i, msg := range []*marotte.RPCResponse{
+			newPromptTurnStartMsg(preOpen), newTurnEndMsg("end_turn"), newTurnStartMsg(), newTurnEndMsg("end_turn"),
+		} {
+			h.coord.consumeFrame(chatID, h.originOf(chatID), gen, marotte.Notification{Msg: msg, Seq: uint64(i + 1)})
+		}
+		<-settled
 
-	if !openedAfterAtSettle {
-		t.Error("the settle returned before the folder consumed KAS's own turn_start, so " +
-			"the empty-turn gate read no-later-turn and would re-send the prompt over KAS's turn")
-	}
-	result, err := h.AwaitTurn(ctx, chatID, preOpen)
-	if err != nil {
-		t.Fatalf("AwaitTurn: %v", err)
-	}
-	if !result.WireEnded || !result.EmittedNothing {
-		t.Errorf("the empty prompt turn = {wire:%v empty:%v}, want both true — the fixture is not "+
-			"reproducing the chain the fourth clause exists for", result.WireEnded, result.EmittedNothing)
-	}
+		if !openedAfterAtSettle {
+			t.Error("the settle returned before the folder consumed KAS's own turn_start, so " +
+				"the empty-turn gate read no-later-turn and would re-send the prompt over KAS's turn")
+		}
+		result, err := h.AwaitTurn(ctx, chatID, preOpen)
+		if err != nil {
+			t.Fatalf("AwaitTurn: %v", err)
+		}
+		if !result.WireEnded || !result.EmittedNothing {
+			t.Errorf("the empty prompt turn = {wire:%v empty:%v}, want both true — the fixture is not "+
+				"reproducing the chain the fourth clause exists for", result.WireEnded, result.EmittedNothing)
+		}
+	})
 }
 
 // A chat deleted after its forward attached but before the goroutine ran forgets the lifecycle under the

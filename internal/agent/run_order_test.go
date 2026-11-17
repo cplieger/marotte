@@ -744,8 +744,9 @@ func TestRunOrder_AnEmptyTurnsRetryNeverOvertakesQueuedRows(t *testing.T) {
 // its message, whatever stood beside or behind it.
 func TestRunOrder_AChatClosedDuringAGrantedTakeLeavesNoEntry(t *testing.T) {
 	for _, shape := range []string{"beside a fold-opened turn", "with a compaction pending behind it"} {
-		t.Run(shape, func(t *testing.T) {
+		inBubble(t, shape, func(t *testing.T) {
 			h, cs, br, tab := closeTabHub(t)
+			t.Cleanup(func() { shutdownHub(t, h) })
 			br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
 			runPrompt(t, h, cs, "c1", "m-first")
 			if shape == "beside a fold-opened turn" {
@@ -764,10 +765,13 @@ func TestRunOrder_AChatClosedDuringAGrantedTakeLeavesNoEntry(t *testing.T) {
 			<-entered
 			if shape == "with a compaction pending behind it" {
 				go func() { _, _ = h.RequestCompact(context.WithoutCancel(t.Context()), "c1") }()
+				// Queued before the close begins.
+				synctest.Wait()
 			}
 			closed := make(chan int, 1)
 			go func() { closed <- postCloseTab(t, h, tab) }()
-			time.Sleep(50 * time.Millisecond)
+			// The close is waiting on the take before the take's open goes on.
+			synctest.Wait()
 			close(releaseOpen)
 
 			rec := <-answered

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/command"
@@ -155,83 +156,86 @@ func TestPromptTurn_MeteringAndModelStampAtStartTurn(t *testing.T) {
 // The recovery arbitrates on the captured result: an empty wire-ended turn closes `empty` and re-prompts on a fresh
 // session. ReleaseTurn before AwaitTurn would blind it.
 func TestPromptTurn_EmptyWireEndedTurnRecoversThroughTheRealRegistry(t *testing.T) {
-	cs := newTestChatStore()
-	gate := make(chan struct{})
-	var mu sync.Mutex
-	var minted []*fakeBridge
-	factory := func() engineSession {
-		mu.Lock()
-		defer mu.Unlock()
-		br := newFakeBridge()
-		if len(minted) == 0 {
-			// Only the first session's prompt is held, so turn_end lands mid-call.
-			br.blockOn = map[string]chan struct{}{marotte.MethodPrompt: gate}
+	synctest.Test(t, func(t *testing.T) {
+		cs := newTestChatStore()
+		gate := make(chan struct{})
+		var mu sync.Mutex
+		var minted []*fakeBridge
+		factory := func() engineSession {
+			mu.Lock()
+			defer mu.Unlock()
+			br := newFakeBridge()
+			if len(minted) == 0 {
+				// Only the first session's prompt is held, so turn_end lands mid-call.
+				br.blockOn = map[string]chan struct{}{marotte.MethodPrompt: gate}
+			}
+			minted = append(minted, br)
+			return br
 		}
-		minted = append(minted, br)
-		return br
-	}
-	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(factory, nil), cs)
-	cs.wire(h)
-	seedChat(t, cs, "c1")
+		h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(factory, nil), cs)
+		cs.wire(h)
+		t.Cleanup(func() { shutdownHub(t, h) })
+		seedChat(t, cs, "c1")
 
-	if rec := postCmd(t, h, marotte.ClientCommand{
-		Type: "prompt", ChatID: "c1",
-		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
-	}); rec.Code != http.StatusOK {
-		t.Fatalf("prompt ack = %d, body %s", rec.Code, rec.Body.String())
-	}
-	// The wire closes the turn empty while the response is pending.
-	first := func() *fakeBridge {
+		if rec := postCmd(t, h, marotte.ClientCommand{
+			Type: "prompt", ChatID: "c1",
+			Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
+		}); rec.Code != http.StatusOK {
+			t.Fatalf("prompt ack = %d, body %s", rec.Code, rec.Body.String())
+		}
+		// The wire closes the turn empty while the response is pending.
+		first := func() *fakeBridge {
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				mu.Lock()
+				var br *fakeBridge
+				if len(minted) > 0 {
+					br = minted[0]
+				}
+				mu.Unlock()
+				if br != nil {
+					return br
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("the prompt goroutine never opened a session")
+				}
+				time.Sleep(time.Millisecond)
+			}
+		}()
+		waitForCall(t, first, marotte.MethodPrompt)
+		first.deliver(first.promptTurnStartMsg())
+		first.deliver(newTurnEndMsg("end_turn"))
+		close(gate)
+
+		// The recovery re-prompts on a fresh session.
 		deadline := time.Now().Add(5 * time.Second)
 		for {
 			mu.Lock()
-			var br *fakeBridge
-			if len(minted) > 0 {
-				br = minted[0]
+			reopened := len(minted) >= 2
+			var second *fakeBridge
+			if reopened {
+				second = minted[1]
 			}
 			mu.Unlock()
-			if br != nil {
-				return br
+			if reopened && slices.Contains(second.callLog(), marotte.MethodPrompt) {
+				break
 			}
 			if time.Now().After(deadline) {
-				t.Fatal("the prompt goroutine never opened a session")
+				t.Fatal("the empty wire-ended turn was never retried: the captured result did not reach the recovery")
 			}
 			time.Sleep(time.Millisecond)
 		}
-	}()
-	waitForCall(t, first, marotte.MethodPrompt)
-	first.deliver(first.promptTurnStartMsg())
-	first.deliver(newTurnEndMsg("end_turn"))
-	close(gate)
-
-	// The recovery re-prompts on a fresh session.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		mu.Lock()
-		reopened := len(minted) >= 2
-		var second *fakeBridge
-		if reopened {
-			second = minted[1]
+		// The log records the empty close and the retry as a turn of its own.
+		entries := logOf(t, cs, "c1")
+		closes := closesOf(t, entries)
+		if len(closes) == 0 || closes[0].Outcome != marotte.TurnOutcomeEmpty {
+			t.Errorf("turn_close outcomes = %+v, want the first turn closed %q", closes, marotte.TurnOutcomeEmpty)
 		}
-		mu.Unlock()
-		if reopened && slices.Contains(second.callLog(), marotte.MethodPrompt) {
-			break
+		opens := opensOf(t, entries)
+		if len(opens) != 2 || opens[1].Source != marotte.TurnOpenNameEmptyRetry {
+			t.Errorf("turn_open sources = %+v, want [prompt empty_retry]", opens)
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("the empty wire-ended turn was never retried: the captured result did not reach the recovery")
-		}
-		time.Sleep(time.Millisecond)
-	}
-	// The log records the empty close and the retry as a turn of its own.
-	entries := logOf(t, cs, "c1")
-	closes := closesOf(t, entries)
-	if len(closes) == 0 || closes[0].Outcome != marotte.TurnOutcomeEmpty {
-		t.Errorf("turn_close outcomes = %+v, want the first turn closed %q", closes, marotte.TurnOutcomeEmpty)
-	}
-	opens := opensOf(t, entries)
-	if len(opens) != 2 || opens[1].Source != marotte.TurnOpenNameEmptyRetry {
-		t.Errorf("turn_open sources = %+v, want [prompt empty_retry]", opens)
-	}
+	})
 }
 
 // Shutdown mid-Call: the prompt unwinds, the turn finalizes, inflight drains and Shutdown returns.

@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -496,22 +495,19 @@ func newReplayedTurnEndMsg(stop string) *marotte.RPCResponse {
 	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
 }
 
-// waitForParkedSettle polls the registry until the settle is parked with no frame consumed, before the folder moves.
+// waitForParkedSettle fails unless the settle is parked on want once every other goroutine of the bubble is durably
+// blocked, before the folder moves. It must run inside a synctest bubble.
 func waitForParkedSettle(tb testing.TB, reg *turnRegistry, chatID marotte.ChatID, turnID string, want uint64) {
 	tb.Helper()
+	synctest.Wait()
 	lc := reg.testLifecycle(chatID)
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		lc.mu.Lock()
-		t := lc.turnLocked(turnID)
-		parked := t != nil && t.NeedSeq == want
-		lc.mu.Unlock()
-		if parked {
-			return
-		}
-		runtime.Gosched()
+	lc.mu.Lock()
+	t := lc.turnLocked(turnID)
+	parked := t != nil && t.NeedSeq == want
+	lc.mu.Unlock()
+	if !parked {
+		tb.Fatalf("the settle for turn %q is blocked but never recorded NeedSeq %d, so it is not parked", turnID, want)
 	}
-	tb.Fatalf("the settle for turn %q never recorded NeedSeq %d, so it is not parked", turnID, want)
 }
 
 // payloadsOfType is generic so callers read a typed field, not a map lookup that passes on a rename.
