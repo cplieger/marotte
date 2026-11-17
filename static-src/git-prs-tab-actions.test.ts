@@ -542,6 +542,10 @@ describe("the pull-request row's action state", () => {
   });
 
   it("says Re-run starts the failed jobs elsewhere", async () => {
+    const { readCapabilities } = await actions();
+    vi.mocked(readCapabilities.dispatch).mockImplementation(
+      () => succeeds(capabilities("yes", "", giteaForge.account, false)) as never,
+    );
     await shown([pr(7, 0, {}, failing)], giteaForge);
     const rerun = buttonOf(giteaRow(), "Re-run");
 
@@ -553,6 +557,30 @@ describe("the pull-request row's action state", () => {
     );
     expect(statusOf(giteaRow())).toBe("Re-run started.");
   });
+
+  // Without a usable capabilities answer the row cannot tell Gitea from Forgejo, so it promises neither.
+  for (const [name, answer] of [
+    ["could not be read", () => succeeds(null)],
+    ["answered for another account", () => succeeds(capabilities("yes", "", "acct-other", true))],
+  ] as const) {
+    it(`words Re-run for either behaviour when the capabilities ${name}`, async () => {
+      const { readCapabilities } = await actions();
+      vi.mocked(readCapabilities.dispatch).mockImplementation(answer as never);
+      await shown([pr(7, 0, {}, failing)], giteaForge);
+      const rerun = buttonOf(giteaRow(), "Re-run");
+
+      expect(rerun?.disabled).toBe(false);
+      expect(rerun?.getAttribute("data-tooltip")).toBe(
+        "Re-run CI: the failed jobs, or on Forgejo the whole run, its passed jobs included",
+      );
+      rerun?.click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(vi.mocked(confirmDialog)).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Re-run CI on PR #7?" }),
+      );
+      expect(statusOf(giteaRow())).toBe("Re-run started.");
+    });
+  }
 
   it("hides Re-run where the connection says it cannot re-run checks", async () => {
     const { readCapabilities } = await actions();

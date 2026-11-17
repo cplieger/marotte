@@ -423,11 +423,37 @@ describe("rerunControl", () => {
       reason: "",
       whole: true,
     });
-    expect(rerunControl("codeberg", null, undefined, false)).toEqual({
+    expect(rerunControl("codeberg", cap("yes"), undefined, false)).toEqual({
       offer: true,
       reason: "",
       whole: false,
     });
+  });
+
+  // Only the capabilities answer names the product, so a Gitea-family row without one cannot say either way.
+  it("leaves the whole run unknown where no capabilities answer named the product", () => {
+    for (const kind of ["gitea", "codeberg"] as const) {
+      expect(rerunControl(kind, null, undefined, undefined), kind).toEqual({
+        offer: true,
+        reason: "",
+        whole: undefined,
+      });
+    }
+    expect(rerunControl("gitea", cap("yes"), "the token lacks a permission.", undefined)).toEqual({
+      offer: true,
+      reason: "the token lacks a permission.",
+      whole: undefined,
+    });
+  });
+
+  it("knows GitHub and GitLab re-run the failed jobs before any answer", () => {
+    for (const kind of ["github", "gitlab"] as const) {
+      expect(rerunControl(kind, null, undefined, undefined), kind).toEqual({
+        offer: true,
+        reason: "",
+        whole: false,
+      });
+    }
   });
 });
 

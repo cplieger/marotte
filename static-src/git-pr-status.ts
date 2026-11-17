@@ -223,20 +223,25 @@ const QUEUE_WORDS: ReadonlyMap<string, string> = new Map([
 ]);
 
 /** Whether a row offers Re-run, and if so whether it is enabled (`reason` "")
- *  or why not, and whether a press starts the whole run rather than its failed jobs. */
-export type RerunControl = { offer: false } | { offer: true; reason: string; whole: boolean };
+ *  or why not, and whether a press starts the whole run rather than its failed jobs
+ *  (undefined: no capabilities answer has said). */
+export type RerunControl =
+  { offer: false } | { offer: true; reason: string; whole: boolean | undefined };
 
 /**
  * The Re-run control of a failing row, from the connection's `rerun_checks` capability (undefined: not answered;
- * null: the read failed), its `rerun_whole_run` and any coded refusal on its repository. GitHub decides per
- * repository, so its control stays enabled until a refusal; elsewhere anything but `yes` is disabled with the evidence.
+ * null: the read failed), its `rerun_whole_run` (undefined without a usable answer) and any coded refusal on its
+ * repository. GitHub decides per repository, so its control stays enabled until a refusal; elsewhere anything but
+ * `yes` is disabled with the evidence.
  */
 export function rerunControl(
   kind: ForgeKind,
   cap: Affordance | null | undefined,
   refusal: string | undefined,
-  whole: boolean,
+  answered: boolean | undefined,
 ): RerunControl {
+  // Only a Gitea-family connection can be Forgejo.
+  const whole = kind === "github" || kind === "gitlab" ? false : answered;
   if (refusal !== undefined) {
     return { offer: true, reason: refusal, whole };
   }

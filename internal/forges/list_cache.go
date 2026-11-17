@@ -459,7 +459,8 @@ func firstRepoPage(h *readHandle) cacheKey { return listKey(h.id, h.account, "",
 // review count, and on Gitea and Forgejo each pull request's reviews cost a request.
 var noReviews = forgeapi.WithReviews(false)
 
-// prListOptions is opts plus noReviews.
+// Clip: opts can be the caller's own slice (req.opts...), and the append must
+// not write into its spare capacity.
 func prListOptions(opts ...forgeapi.ListOption) []forgeapi.ListOption {
 	return append(slices.Clip(opts), noReviews)
 }
