@@ -91,15 +91,17 @@ import { newOpID } from "./transport.js";
 import { join as joinKey } from "@cplieger/keyenc";
 import { ICON_CLOSE, ICON_PIN_FILLED, ICON_TAB_SUBTAB } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-import { activeView, sectionFolded, setActiveView } from "./device-view.js";
+import { activeView, setActiveView } from "./device-view.js";
 import { isSliding } from "./disclosure-row.js";
 import { $, maybeEl, queryEl, setAttr, setText } from "./dom.js";
 import { historyLoadError } from "./history-note.js";
 import {
   bindSectionToggle,
+  isSectionFolded,
   paintSectionHeader,
   sectionToggle,
   type SectionHeaderView,
+  type SidebarSection,
 } from "./section-header.js";
 import { otherViewShown, showOnlyView } from "./view-swap.js";
 import { signal, effect, el } from "@cplieger/reactive";
@@ -2892,11 +2894,12 @@ function watchStripGestures(list: HTMLElement): void {
   });
 }
 
-/** Each section's row list, in `SECTION_ORDER`. */
-function sectionLists(): readonly { key: SectionKey; list: HTMLElement }[] {
+/** Each tab section, in `SECTION_ORDER`. */
+function sectionLists(): readonly (SidebarSection & { readonly key: SectionKey })[] {
+  const tab = { foldedByDefault: false, noun: "tab" } as const;
   return [
-    { key: "open", list: $.tabList },
-    { key: "pinned", list: $.pinnedList },
+    { ...tab, key: "open", list: $.tabList, emptyHides: "header" },
+    { ...tab, key: "pinned", list: $.pinnedList, emptyHides: "section" },
   ];
 }
 
@@ -2988,11 +2991,11 @@ function renderDOM(): void {
     }
   }
 
-  for (const { key, list } of lists) {
-    bindSectionToggle(list, key, (folded) => {
-      paintFold(key, list, folded);
+  for (const s of lists) {
+    bindSectionToggle(s, (folded) => {
+      paintFold(s, folded);
     });
-    paintFold(key, list, sectionFolded(key), isSliding(list));
+    paintFold(s, isSectionFolded(s), isSliding(s.list));
   }
 
   // Any re-seat of a node blurs it, so a row the frame moved (a pin, a remote reorder, Move up)
@@ -3100,16 +3103,11 @@ function seatRow(
 }
 
 /** Apply `folded` to one section: every row but the active one hidden when folded, its one Tab
- *  stop, its header and its visibility. The fold's `slideBox` calls this with the state it is
- *  showing, so a closing slide keeps the rows until it ends; `slideOwnsRows` leaves the rows'
- *  `hidden` to a running slide and paints the rest. */
-function paintFold(
-  key: SectionKey,
-  list: HTMLElement,
-  folded: boolean,
-  slideOwnsRows = false,
-): void {
-  const rows = liveRows(list);
+ *  stop and its header. The fold's `slideBox` calls this with the state it is showing, so a
+ *  closing slide keeps the rows until it ends; `slideOwnsRows` leaves the rows' `hidden` to a
+ *  running slide and paints the rest. */
+function paintFold(s: SidebarSection, folded: boolean, slideOwnsRows = false): void {
+  const rows = liveRows(s.list);
   if (!slideOwnsRows) {
     for (const node of rows) {
       node.hidden = folded && node.dataset["tabId"] !== selectedTabId();
@@ -3124,22 +3122,13 @@ function paintFold(
   for (const node of rows) {
     node.tabIndex = node === stop ? 0 : -1;
   }
-  const section = list.closest<HTMLElement>(".side-section");
-  const header = sectionToggle(list)?.parentElement ?? null;
-  // Open's section stays, because its list holds the boot skeleton; only its header hides.
-  if (key === "open") {
-    if (header !== null) {
-      header.hidden = rows.length === 0;
-    }
-  } else if (section !== null) {
-    section.hidden = rows.length === 0;
-  }
-  paintSectionHeader(list, {
-    count: rows.filter((n) => n.dataset["parentId"] === undefined).length,
-    folded: sectionFolded(key),
+  // A group's head is the row whose parent has no row here: an orphan sub-tab heads its own.
+  const ids = new Set(rows.map((n) => n.dataset["tabId"]));
+  paintSectionHeader(s, {
+    count: rows.filter((n) => !ids.has(n.dataset["parentId"])).length,
     dot: folded ? foldDot(rows) : null,
   });
-  dropBoxlessExits(list);
+  dropBoxlessExits(s.list);
 }
 
 /** Remove the departing rows `list` shows no box for (a folded row, an emptied section): their
@@ -3171,8 +3160,8 @@ function foldDot(rows: readonly HTMLElement[]): SectionHeaderView["dot"] {
 
 /** Repaint every section's fold state from what is stored; a running slide keeps its rows. */
 function paintFolds(): void {
-  for (const { key, list } of sectionLists()) {
-    paintFold(key, list, sectionFolded(key), isSliding(list));
+  for (const s of sectionLists()) {
+    paintFold(s, isSectionFolded(s), isSliding(s.list));
   }
 }
 

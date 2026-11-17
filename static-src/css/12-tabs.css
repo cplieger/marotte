@@ -1072,6 +1072,11 @@
     background: var(--c-hover);
     color: var(--c-text-primary);
   }
+
+  /* The display above outranks the UA [hidden], so a folded row would stay shown. */
+  &[hidden] {
+    display: none;
+  }
 }
 
 :is(.history-row, .history-more) {

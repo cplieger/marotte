@@ -199,7 +199,6 @@ function plantTabs(): void {
 export function plantHistorySection(): void {
   q("#history-section").hidden = false;
   const list = q("#history-list");
-  list.hidden = false;
   const row = make("button", "history-row", {
     type: "button",
     "aria-label": "Reopen Yesterday's fix",

@@ -85,7 +85,12 @@ import { LS_UI_STATE_KEY } from "./ls-keys.js";
 import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.js";
 import { ingestTabsChanged, listTabs, _resetTabsSyncForTest } from "./tabs-sync.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
-import { bindTabsSync, settleTabs, tabServer } from "./__test-helpers__/tabs-server.js";
+import {
+  bindTabsSync,
+  fakeSubject,
+  settleTabs,
+  tabServer,
+} from "./__test-helpers__/tabs-server.js";
 
 bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
 
@@ -290,6 +295,20 @@ describe("a section's header", () => {
     expect(el("pinned-list").querySelectorAll("[data-tab-id]")).toHaveLength(2);
     expect(toggle("pinned").querySelector(".side-section-count")?.textContent).toBe("1");
     expect(description(toggle("pinned"))).toBe("1 tab");
+  });
+
+  it("counts a sub-tab whose parent is not open as its own group, and shows the header for it", async () => {
+    tabServer.queueList({
+      tabs: [fakeSubject("orphan", { parent: "gone" }), fakeSubject("solo")],
+      recent: [],
+      version: 1,
+    });
+    await listTabs();
+    await paint();
+    expect(el("tab-list").querySelectorAll("[data-tab-id]")).toHaveLength(2);
+    expect(header("open").hidden).toBe(false);
+    expect(toggle("open").querySelector(".side-section-count")?.textContent).toBe("2");
+    expect(description(toggle("open"))).toBe("2 tabs");
   });
 
   it.each(["{Enter}", " "])("toggles on %s and follows the fold in aria-expanded", async (key) => {
