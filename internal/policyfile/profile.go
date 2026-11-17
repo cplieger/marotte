@@ -168,7 +168,12 @@ func HoldsGrant(ctx context.Context, path string) (bool, error) {
 	return refs.Policies.Kind == yaml.SequenceNode && len(refs.Policies.Content) > 0, nil
 }
 
-// DefaultProfile is what an unset or unrecognised setting resolves to, so a stored choice
+// DefaultProfile is what a chat's unset or unrecognised setting resolves to, so a stored choice
 // is never moved by it. Never Custom, which would remove the fs_read floor from an
 // instance that never chose to.
-const DefaultProfile = ProfileTrusted
+const DefaultProfile = ProfileDelegated
+
+// DefaultRunProfile is what a parentless run's host opens on while no known profile is saved.
+// Handing an unattended run's unsettled requests to Kiro's safety check is unattended consent,
+// which must be chosen rather than inherited (settings.KeyScheduledAutoApprove), so it never delegates.
+const DefaultRunProfile = ProfileTrusted

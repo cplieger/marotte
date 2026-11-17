@@ -588,8 +588,8 @@ func TestProfileView_CarriesTheLadderAndTheNewChatDefault(t *testing.T) {
 			t.Errorf("profile %d = %q, want %q", i, view.Profiles[i].ID, want[i].ID)
 		}
 	}
-	if view.Default != policyfile.ProfileTrusted {
-		t.Errorf("unset default = %q, want trusted", view.Default)
+	if view.Default != policyfile.ProfileDelegated {
+		t.Errorf("unset default = %q, want delegated", view.Default)
 	}
 	if rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileReadOnly}); rec.Code != http.StatusOK {
 		t.Fatalf("select: status = %d, body %s", rec.Code, rec.Body)

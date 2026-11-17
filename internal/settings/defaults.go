@@ -40,9 +40,9 @@ const (
 	KeyNotifySignIn        = "notify_sign_in"
 	KeySupervisedDefault   = "supervised_default"
 
-	// KeySecurityProfile is the security profile a new chat starts on, and the one observer passes
-	// and parentless run hosts open with (a policyfile profile id sent as policy presets). An
-	// unset or unknown value resolves to policyfile.DefaultProfile, never to Custom (no presets).
+	// KeySecurityProfile is the profile a new chat starts on, and the one observer passes and parentless
+	// run hosts open with (a policyfile profile id sent as presets). Unset or unknown, it is
+	// policyfile.DefaultProfile, or policyfile.DefaultRunProfile for a run host, never Custom (no presets).
 	KeySecurityProfile = "security_profile"
 
 	// KeyScheduledAutoApprove lets a scheduled or triggered run's tool requests be approved instead

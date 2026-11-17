@@ -503,10 +503,14 @@ describe("the Security profile section hint", () => {
     expect(securityProfileHint()).toContain("keep applying alongside the profile");
   });
 
-  it("says it is the profile new chats start on, and names Trusted as the default", () => {
+  it("says it is the profile new chats start on, and names Approve for me as the default", () => {
     const hint = securityProfileHint();
     expect(hint).toContain("New chats start on this profile");
-    expect(hint).toContain("Trusted unless you pick another");
+    expect(hint).toContain("Approve for me unless you pick another");
+  });
+
+  it("says a workflow run not started from a chat stays on Trusted until a profile is picked", () => {
+    expect(securityProfileHint()).toContain("A workflow run not started from a chat uses Trusted until you pick a profile here");
   });
 
   it("claims no reach into open chats, which keep their own profile", () => {

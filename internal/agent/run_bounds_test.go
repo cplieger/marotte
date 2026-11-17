@@ -869,7 +869,7 @@ func TestRearmRetriedRun_MintsALeaseForARunWhoseTerminalFrameReleasedIt(t *testi
 	if l.Unattended {
 		t.Error("a retried run was marked unattended; the user clicked Retry and can answer")
 	}
-	if presets, err := l.HostPresets(); err != nil || !slices.Equal(presets, hub.readSessionSettings(t.Context()).Presets) {
+	if presets, err := l.HostPresets(); err != nil || !slices.Equal(presets, hub.readSessionSettings(t.Context()).RunPresets) {
 		t.Errorf("host presets = %v, %v; want the profile's presets now, recorded so its host session can reload", presets, err)
 	}
 }

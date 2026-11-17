@@ -39,6 +39,16 @@ func securityPresets(id string) []string {
 	return p.Presets
 }
 
+// runPresets is the presets a parentless run's host opens with: the stored profile when it names one, else
+// policyfile.DefaultRunProfile, so an unknown value counts as no choice.
+func runPresets(id string) []string {
+	p, ok := policyfile.ProfileFor(id)
+	if !ok {
+		p, _ = policyfile.ProfileFor(policyfile.DefaultRunProfile)
+	}
+	return p.Presets
+}
+
 // settingsProfile is the Settings profile as a known id, the profile a chat with none of its own is pinned to: the
 // one its door sends (readSessionSettings), the default while config.json has never been readable.
 func (rt *Runtime) settingsProfile(ctx context.Context) string {
