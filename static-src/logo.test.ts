@@ -79,7 +79,10 @@ describe("the logo sprite", () => {
 
   it("is referenced from the page, so no symbol ships unused", () => {
     for (const symbol of sprite()) {
-      expect(doc.querySelector(`use[href="#${symbol.id}"]`), `#${symbol.id} is unused`).not.toBeNull();
+      expect(
+        doc.querySelector(`use[href="#${symbol.id}"]`),
+        `#${symbol.id} is unused`,
+      ).not.toBeNull();
     }
   });
 
@@ -199,7 +202,9 @@ describe("the rendered brand", () => {
       const em = Number.parseFloat(getComputedStyle(text).fontSize);
       // The symbol's viewBox is the mark's own 3:5 extent, so the box is the ink.
       expect(icon.width / icon.height).toBeCloseTo(3 / 5, 2);
-      expect(Math.abs(icon.top + icon.height / 2 - (box.top + box.height / 2))).toBeLessThanOrEqual(1);
+      expect(Math.abs(icon.top + icon.height / 2 - (box.top + box.height / 2))).toBeLessThanOrEqual(
+        1,
+      );
       expect(icon.height / em).toBeGreaterThanOrEqual(1);
       expect(icon.height / em).toBeLessThanOrEqual(1.5);
     });

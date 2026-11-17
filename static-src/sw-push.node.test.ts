@@ -26,7 +26,9 @@ function client(url: string, focused: boolean): FakeClient {
 
 const handlers = new Map<string, (event: unknown) => void>();
 let windows: FakeClient[] = [];
-const showNotification = vi.fn(async (_title: string, _options?: unknown): Promise<void> => undefined);
+const showNotification = vi.fn(
+  async (_title: string, _options?: unknown): Promise<void> => undefined,
+);
 
 beforeAll(async () => {
   vi.stubGlobal("self", {
