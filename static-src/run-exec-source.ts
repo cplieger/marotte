@@ -4,7 +4,7 @@ import { signal } from "@cplieger/reactive";
 import { BUS_CATALOG_MODELS, onBus } from "./bus.js";
 import { nodePathKey, nodePathSegment } from "./run-node-key.js";
 import { creditFigure, truncate } from "./strings.js";
-import { getCachedModels } from "./picker.js";
+import { getCachedModels } from "./model-list.js";
 import {
   pauseDetailPhrase,
   pausePendingSentence,

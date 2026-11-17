@@ -40,11 +40,11 @@ vi.mock("./store.js", async () => {
   };
 });
 
-// A mock proves the card asks through picker's retryCatalog, not a handler of its own.
+// A mock proves the card asks through model-list's retryCatalog, not a handler of its own.
 const { retried } = vi.hoisted(() => ({ retried: { calls: 0 } }));
-vi.mock("./picker.js", () => ({
+vi.mock("./model-list.js", () => ({
   getCachedModels: () => cachedModels,
-  refreshPickerIfVisible: vi.fn(),
+  watchCatalog: () => undefined,
   catalogNotice: () => notice,
   retryCatalog: () => {
     retried.calls += 1;

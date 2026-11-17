@@ -1,5 +1,5 @@
 // The pill's readout end to end: no other spec covers the wiring (`effort.test.ts` calls the resolver directly,
-// `context-ui.test.ts` stubs `./effort.js` and `./picker.js`).
+// `context-ui.test.ts` stubs `./effort.js` and `./model-list.js`).
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { userEvent } from "vitest/browser";
@@ -10,9 +10,9 @@ import { makeSession } from "./__test-helpers__/model.js";
 // Mutable module state, because the real modules are read through a live effect firing after any store write.
 const staged = vi.hoisted(() => ({ models: [] as ModelInfo[], seed: "" }));
 
-vi.mock("./picker.js", () => ({
+vi.mock("./model-list.js", () => ({
   getCachedModels: () => staged.models,
-  refreshPickerIfVisible: vi.fn(),
+  watchCatalog: () => undefined,
   catalogNotice: () => null,
   // Named anyway: Browser Mode links ESM for real, so a missing imported name fails collection.
   retryCatalog: vi.fn(),

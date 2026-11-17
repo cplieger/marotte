@@ -95,9 +95,9 @@ vi.mock("./settings.js", () => ({
   }),
 }));
 
-vi.mock("./picker.js", () => ({
+vi.mock("./model-list.js", () => ({
   getCachedModels: () => cachedModels,
-  refreshPickerIfVisible: vi.fn(),
+  watchCatalog: () => undefined,
   catalogNotice: () => notice,
   // Browser Mode links ESM for real: a missing name fails collection, not one case.
   retryCatalog: vi.fn(),

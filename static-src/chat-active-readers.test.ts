@@ -47,11 +47,6 @@ vi.mock("./decision-dock.js", async (importOriginal) => ({
   hasPendingDecision: vi.fn(() => false),
   dropDecisions: vi.fn(),
 }));
-vi.mock("./picker.js", async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  showModelPicker: vi.fn(),
-  hideModelPicker: vi.fn(),
-}));
 vi.mock("./messages.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   mountChatView: vi.fn(),

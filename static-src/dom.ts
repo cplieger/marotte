@@ -240,9 +240,6 @@ class Elements {
   get scrollBottom(): HTMLButtonElement {
     return byId("scroll-bottom");
   }
-  get modelPicker(): HTMLDivElement {
-    return byId("model-picker");
-  }
   get promptForm(): HTMLFormElement {
     return byId("prompt-form");
   }

@@ -81,7 +81,6 @@ const ENTRY: readonly Fixture[] = [
     under: ["div.message.assistant"],
   },
   { what: "a tooltip", el: "div.uip-tooltip" },
-  { what: "a model picker card", el: "button.picker-btn" },
   { what: "a transcript boundary", el: "div.boundary" },
   { what: "a file browser row", el: "div.fb-row" },
   { what: "a tab row taking the drag's slot", el: "div.tab.tab-slotted" },

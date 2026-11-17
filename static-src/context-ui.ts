@@ -3,7 +3,7 @@
 import type { Entry, Session, MeteringItem } from "./types.js";
 import { updateContextBar } from "./status.js";
 import { effortPillLabel } from "./effort.js";
-import { getCachedModels } from "./picker.js";
+import { getCachedModels } from "./model-list.js";
 import { getLastEffortFor } from "./session-context.js";
 import { compactionPoint, compactionPolicy } from "./context-indicator.js";
 import { entryRenders, foldsByLane, NO_FOLDS } from "./block-window.js";

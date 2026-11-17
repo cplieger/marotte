@@ -71,7 +71,7 @@ vi.mock("./model-switcher.js", () => ({
 vi.mock("./role-picker.js", () => ({ openModeCard: owners.openModeCard }));
 vi.mock("./context-card.js", () => ({ openContextCard: owners.openContextCard }));
 vi.mock("./settings-highlight.js", () => ({ openSetting: owners.openSetting }));
-vi.mock("./picker.js", () => ({ getCachedModels: () => owners.models }));
+vi.mock("./model-list.js", () => ({ getCachedModels: () => owners.models }));
 vi.mock("./composer-value.js", () => ({ setComposerValue: owners.setComposerValue }));
 
 const { handleTypedCommand, terminalCommandRefusal, MAROTTE_COMMANDS } =

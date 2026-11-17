@@ -6,7 +6,7 @@ import { compactChat } from "./actions/chat.js";
 import { dropTurnLocally, get, isBusy, isEmptyChat } from "./store.js";
 import { chatNotice } from "./notice-subject.js";
 import { loadSettings } from "./persist.js";
-import { getCachedModels } from "./picker.js";
+import { getCachedModels } from "./model-list.js";
 import { setComposerValue } from "./composer-value.js";
 import { tangentRefusal } from "./tangent-refusal.js";
 import type { Session } from "./types.js";

@@ -27,7 +27,7 @@ import {
   type RunDefaults,
   type RunDefaultsPicker,
 } from "./run-defaults-picker.js";
-import { getCachedModels } from "./picker.js";
+import { getCachedModels } from "./model-list.js";
 import type { LaunchRuleView } from "./launch-rule-types.js";
 import { openRunView } from "./run-view.js";
 import { loadSettings, refreshSettings } from "./persist.js";

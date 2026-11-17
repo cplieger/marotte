@@ -17,16 +17,16 @@ import { switchModel } from "./actions/chat.js";
 import { rovingFocus, type RovingFocusController } from "./legacy-ui/roving-focus.js";
 import { setLastModel, getLastEffortFor } from "./session-context.js";
 import {
-  refreshPickerIfVisible,
   getCachedModels,
   catalogNotice,
   retryCatalog,
+  watchCatalog,
   RETRY_LABEL,
-} from "./picker.js";
+} from "./model-list.js";
 import { makeExpandable, collapseAll, type Expandable } from "./pill-expand.js";
 import { bindLoadingState, transportAction, RETRY_STANDARD } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
-import { el, effect } from "@cplieger/reactive";
+import { el, effect, untracked } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
 import { errorAbout } from "./actions/subject.js";
 import { retryUnlessStill, stillOr } from "./actions/still-applying.js";
@@ -210,6 +210,22 @@ class ModelSwitchController {
         this.syncFallbackRow(shown);
       }
     });
+    // An open card repaints when the catalog lands or its read gives up. Untracked, so the
+    // render subscribes this effect to nothing but the catalog.
+    effect(() => {
+      watchCatalog();
+      if (this.expanded) {
+        untracked(() => {
+          this.renderCondensedList();
+        });
+      }
+    });
+    // Reading activeSession makes the knob per-chat. Created here rather than in a render,
+    // because an effect created inside the catalog effect's run is disposed on its next run.
+    effect(() => {
+      this.effortActive = sliderVocabulary(activeSession.value).active;
+      this.syncEffortActive();
+    });
     // Wired ONCE: re-wiring per render stacks keydown handlers. The first panel's own: the Fallback list has its.
     this.modelNav = rovingFocus(this.mainPanel, '.pill-model-item[role="option"]');
     bindLoadingState("chat.switch_model", $.switchModelBtn, { pendingClass: "switching" });
@@ -251,7 +267,7 @@ class ModelSwitchController {
     this.modelNav?.refresh();
   }
 
-  /** The listbox role goes with the OPTIONS; the copy is picker.ts's. */
+  /** The listbox role goes with the OPTIONS; the copy is model-list.ts's. */
   private syncCatalogNotice(scroll: HTMLElement): void {
     this.noticeRow?.remove();
     this.noticeRow = null;
@@ -278,8 +294,7 @@ class ModelSwitchController {
     }
   }
 
-  /** Over picker.ts's `retryCatalog`, so both surfaces ask and announce alike.
-   *  `stopPropagation` keeps the click off the pill trigger. */
+  /** `stopPropagation` keeps the click off the pill trigger. */
   private buildRetryRow(): HTMLButtonElement {
     const btn = el(
       "button",
@@ -363,20 +378,13 @@ class ModelSwitchController {
   private ensureEffortRow(list: HTMLElement): void {
     const { levels, active } = sliderVocabulary(getActive());
     this.effortActive = active;
-    if (this.effortSlider === null) {
-      // No role/aria-label: the knob carries the name, and a group around one slider
-      // announces a nesting that is not there.
-      this.effortSlider = buildEffortSlider({
-        onPick: (level) => {
-          this.previewStop(level);
-        },
-      });
-      // Reading activeSession makes the row per-chat; app-lifetime, so never disposed.
-      effect(() => {
-        this.effortActive = sliderVocabulary(activeSession.value).active;
-        this.syncEffortActive();
-      });
-    }
+    // No role/aria-label: the knob carries the name, and a group around one slider
+    // announces a nesting that is not there.
+    this.effortSlider ??= buildEffortSlider({
+      onPick: (level) => {
+        this.previewStop(level);
+      },
+    });
     if (!sameLevels(this.effortLevelsShown, levels)) {
       this.effortSlider.setLevels(levels);
       this.effortLevelsShown = [...levels];
@@ -550,7 +558,6 @@ function applyLocalModel(modelID: string, chatID?: string): void {
     // setModel replaces the session object; chat.ts's effect repaints from the new one.
     setModel(session.id, modelID);
   }
-  refreshPickerIfVisible(modelID);
 }
 
 /** The one door for a model pick from ANY surface, so an empty-chat pick
