@@ -94,7 +94,7 @@ vi.mock("./store.js", async () => {
     }),
     isBusy: vi.fn(() => false),
     upsertHeader: vi.fn(),
-    // The real predicate, transcribed: the model-picker branch keys on it, so a
+    // The real predicate, transcribed: the empty-chat branch keys on it, so a
     // stub returning a constant would send every fixture down one arm.
     isEmptyChat: (s: { turn_count: number; turn_order: unknown[] } | undefined) =>
       s === undefined || (s.turn_count === 0 && s.turn_order.length === 0),
@@ -154,7 +154,6 @@ vi.mock("./decision-dock.js", () => ({
   hasPendingDecision: vi.fn(() => false),
   dropDecisions: vi.fn(),
 }));
-vi.mock("./picker.js", () => ({ showModelPicker: vi.fn(), hideModelPicker: vi.fn() }));
 vi.mock("./messages.js", () => ({
   mountChatView: vi.fn(),
   setLoadMore: vi.fn(),

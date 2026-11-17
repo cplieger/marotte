@@ -36,16 +36,16 @@ describe("text-wrap policy", () => {
     expect(offenders, "no form-control rule sets text-wrap").toEqual([]);
   });
 
-  it("leaves `balance` alone", () => {
-    // Not a blanket blessing: these existed, all on short static text. A new one needs its own reason.
+  it("sets `balance` nowhere yet", () => {
+    // A tripwire, not a ban: a new `balance` rule needs its own reason (short static text only).
     const found: string[] = [];
     for (const { name, css } of manifestSheets()) {
       for (const rule of allRules(css)) {
         if (/text-wrap(-style)?\s*:\s*balance/.test(rule.body)) {
-          found.push(name);
+          found.push(`${name} { ${rule.selector} }`);
         }
       }
     }
-    expect(found.length).toBe(2);
+    expect(found).toEqual([]);
   });
 });

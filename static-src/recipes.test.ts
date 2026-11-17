@@ -62,7 +62,7 @@ vi.mock("./toast.js", async (importOriginal) => ({
   notice: vi.fn(() => () => undefined),
 }));
 const catalog = vi.hoisted(() => ({ models: [] as ModelInfo[] }));
-vi.mock("./picker.js", () => ({ getCachedModels: () => catalog.models }));
+vi.mock("./model-list.js", () => ({ getCachedModels: () => catalog.models }));
 // The unattended note's auto-approve read-out. Unmocked, refreshAutoApprove reaches /api/settings
 // through the actions transport (which the api-client mock does not cover), fire-and-forget, so the
 // request was still open when the window tore down and printed an unhandled AbortError.

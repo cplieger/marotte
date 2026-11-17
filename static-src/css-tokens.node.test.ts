@@ -390,6 +390,9 @@ describe("an ink is only paired with a fill it clears", () => {
     ".git-multirepo-empty-icon",
     // 1.5rem steer-row glyph button on --c-bg-secondary: 5.214 dark / 3.997 light.
     ".steer-act",
+    // The empty chat's decorative mark (aria-hidden), at 0.12 on --c-bg-primary: 1.337 dark / 1.281
+    // light. Decoration has no contrast floor (WCAG 1.4.11).
+    ".empty-chat-logo svg",
   ]);
   const TEXT_INK =
     /(?<![-\w])color:\s*var\(--c-text-(?:primary|secondary|tertiary|control|aside)\)/;

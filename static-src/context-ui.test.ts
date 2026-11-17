@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("./status.js", () => ({ updateContextBar: mocks.updateContextBar }));
 vi.mock("./effort.js", () => ({ effortPillLabel: () => "" }));
-vi.mock("./picker.js", () => ({ getCachedModels: () => [] }));
+vi.mock("./model-list.js", () => ({ getCachedModels: () => [] }));
 vi.mock("./session-context.js", () => ({ getLastEffortFor: () => "" }));
 
 import { refreshContextUI } from "./context-ui.js";

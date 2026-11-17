@@ -151,7 +151,7 @@ export const ICON_RESUME = svg(
 );
 
 /*
- * One `d`, two sizes (picker heading, model pill at 12px). A redraw keeps: filled eyes (a ring cannot survive 1.5 CSS
+ * One `d`, two sizes (the model card's rows, the model pill at 12px). A redraw keeps: filled eyes (a ring cannot survive 1.5 CSS
  * px), inner eye edges at x=10 and x=14 (a 2 CSS px gap on pixel boundaries at 12px), and a 2-unit mouth dip.
  */
 const MODEL_ROBOT_D =

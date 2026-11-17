@@ -1,6 +1,6 @@
 // App wiring: construction, injection, `applyRoute` (the switch over every route kind,
 // reaching most surfaces) and the pre-session catalog fetch, the one place that sees the
-// endpoint, the phase sink and the picker. Boot is `boot.ts`, whoami is `identity.ts`.
+// endpoint and the model list's Retry. Boot is `boot.ts`, whoami is `identity.ts`.
 // The server is the source of truth: a prompt posts a command and SSE drives rendering.
 
 import type { ServerEvent } from "./types.js";
@@ -42,7 +42,7 @@ import { ingestTabsChanged, listTabs, removePendingFor } from "./tabs-sync.js";
 import { setParkedViewExemption } from "./messages.js";
 import { onPopState } from "./router.js";
 import type { Route } from "./route-path.js";
-import { initModelPicker } from "./picker.js";
+import { initEmptyChatLogo } from "./empty-chat-logo.js";
 import { refreshRuntimeLine } from "./status.js";
 import { initShellPanel, revealShellKeys } from "./shell.js";
 import { focusComposerOnTyping } from "./composer-type-ahead.js";
@@ -89,7 +89,7 @@ import {
   closeChatTab,
   chatTabDot,
 } from "./chat.js";
-import { initModelSwitcher, pickModel } from "./model-switcher.js";
+import { initModelSwitcher } from "./model-switcher.js";
 import { collapseAll, makeExpandable, placeOpenCard } from "./pill-expand.js";
 import { initContextCard } from "./context-card.js";
 import { loadAccountUsage } from "./account-usage.js";
@@ -491,11 +491,8 @@ function setupInput(): void {
   });
 
   // The model switcher owns its button click, popover, queue and outside-click dismissal.
-  initModelSwitcher();
-  // The empty-chat model picker; only the selection callback is injected. pickModel, so a
-  // hero pick PERSISTS like a pill pick. The Retry's promise is returned for picker.ts to
-  // announce.
-  initModelPicker(pickModel, () => fetchCatalog());
+  initModelSwitcher(() => fetchCatalog());
+  initEmptyChatLogo();
   // The role picker owns the prompt-bar role pill (expand, list, selection).
   initRolePicker(() => {
     void fetchCatalog();

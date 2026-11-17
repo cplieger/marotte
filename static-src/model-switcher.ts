@@ -17,16 +17,17 @@ import { switchModel } from "./actions/chat.js";
 import { rovingFocus, type RovingFocusController } from "./legacy-ui/roving-focus.js";
 import { setLastModel, getLastEffortFor } from "./session-context.js";
 import {
-  refreshPickerIfVisible,
   getCachedModels,
   catalogNotice,
   retryCatalog,
+  watchCatalog,
   RETRY_LABEL,
-} from "./picker.js";
+} from "./model-list.js";
 import { makeExpandable, collapseAll, type Expandable } from "./pill-expand.js";
 import { bindLoadingState, transportAction, RETRY_STANDARD } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
-import { el, effect } from "@cplieger/reactive";
+import { repaintKeepingFocus } from "./focus-keep.js";
+import { el, effect, untracked } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
 import { errorAbout } from "./actions/subject.js";
 import { retryUnlessStill, stillOr } from "./actions/still-applying.js";
@@ -166,7 +167,8 @@ interface PillDraft {
 }
 
 class ModelSwitchController {
-  init(): void {
+  init(rereadCatalog: () => Promise<void>): void {
+    this.rereadCatalog = rereadCatalog;
     // Prepended because the label follows it. The `.switching` face hides this svg by
     // descendant selector, so it must not be wrapped.
     $.switchModelBtn.prepend(iconEl(ICON_MODEL));
@@ -207,12 +209,45 @@ class ModelSwitchController {
     effect(() => {
       const shown = shownSettingsSignal.value;
       if (this.expanded) {
-        this.syncFallbackRow(shown);
+        this.repaint(() => {
+          this.syncFallbackRow(shown);
+        });
       }
+    });
+    // An open card repaints when the catalog moves. Untracked, so the render subscribes this
+    // effect to nothing but the catalog.
+    effect(() => {
+      watchCatalog();
+      if (this.expanded) {
+        untracked(() => {
+          this.repaint(() => {
+            this.renderCondensedList();
+          });
+        });
+      }
+    });
+    // Reading activeSession makes the knob per-chat.
+    effect(() => {
+      this.effortActive = sliderVocabulary(activeSession.value).active;
+      this.syncEffortActive();
     });
     // Wired ONCE: re-wiring per render stacks keydown handlers. The first panel's own: the Fallback list has its.
     this.modelNav = rovingFocus(this.mainPanel, '.pill-model-item[role="option"]');
     bindLoadingState("chat.switch_model", $.switchModelBtn, { pendingClass: "switching" });
+  }
+
+  /** Runs a repaint of the open card. One that takes focus out of the card (a removed or
+   *  re-seated row) hands it to the chat's model, else the card's first control. */
+  private repaint(paint: () => void): void {
+    repaintKeepingFocus(
+      $.modelSwitchList,
+      () =>
+        this.mainPanel.querySelector<HTMLElement>('.pill-model-item.active[role="option"]') ??
+        this.mainPanel.querySelector<HTMLElement>(
+          '[role="option"], [role="slider"], button:not(:disabled)',
+        ),
+      paint,
+    );
   }
 
   private renderCondensedList(): void {
@@ -234,7 +269,7 @@ class ModelSwitchController {
 
     // Before sliderVocabulary prepends Off, so a tierless toggleable model shows no row (effort.ts effortVocabulary).
     if (effortVocabulary(session, getCachedModels(), "").levels.length > 0) {
-      this.ensureEffortRow(list);
+      this.ensureEffortRow(scroll);
     } else {
       this.removeEffortRow();
     }
@@ -251,14 +286,15 @@ class ModelSwitchController {
     this.modelNav?.refresh();
   }
 
-  /** The listbox role goes with the OPTIONS; the copy is picker.ts's. */
+  /** The listbox role goes with the OPTIONS; the copy is model-list.ts's. The row and its Retry
+   *  are kept across notices, so a focused Retry keeps focus when a read fails again. */
   private syncCatalogNotice(scroll: HTMLElement): void {
-    this.noticeRow?.remove();
-    this.noticeRow = null;
-    this.noticeRetry?.remove();
-    this.noticeRetry = null;
     const notice = catalogNotice();
     if (notice === null) {
+      this.noticeRow?.remove();
+      this.noticeRow = null;
+      this.noticeRetry?.remove();
+      this.noticeRetry = null;
       scroll.setAttribute("role", "listbox");
       scroll.setAttribute("aria-label", "Available models");
       scroll.removeAttribute("aria-busy");
@@ -267,19 +303,21 @@ class ModelSwitchController {
     scroll.removeAttribute("role");
     scroll.removeAttribute("aria-label");
     setBusy(scroll, notice.busy);
-    // Prepended: reconcile inserts each keyed row after every unkeyed sibling, so an
-    // appended notice would sort below the first model of a late catalog.
-    this.noticeRow = el("div", { className: "list-empty" }, notice.text) as HTMLDivElement;
-    scroll.prepend(this.noticeRow);
-    if (notice.retry) {
+    if (this.noticeRow === null) {
+      this.noticeRow = el("div", { className: "list-empty" }) as HTMLDivElement;
+      scroll.prepend(this.noticeRow);
+    }
+    this.noticeRow.textContent = notice.text;
+    if (!notice.retry) {
+      this.noticeRetry?.remove();
+      this.noticeRetry = null;
+    } else if (this.noticeRetry === null) {
       this.noticeRetry = this.buildRetryRow();
-      // After the notice, still ahead of every keyed row.
       this.noticeRow.after(this.noticeRetry);
     }
   }
 
-  /** Over picker.ts's `retryCatalog`, so both surfaces ask and announce alike.
-   *  `stopPropagation` keeps the click off the pill trigger. */
+  /** `stopPropagation` keeps the click off the pill trigger. */
   private buildRetryRow(): HTMLButtonElement {
     const btn = el(
       "button",
@@ -288,12 +326,15 @@ class ModelSwitchController {
     ) as HTMLButtonElement;
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      retryCatalog();
+      retryCatalog(this.rereadCatalog);
     });
     return btn;
   }
 
   private card: Expandable | null = null;
+
+  /** Set by `init`, which runs before any card, and so any Retry, exists. */
+  private rereadCatalog!: () => Promise<void>;
 
   private modelNav: RovingFocusController | null = null;
 
@@ -318,7 +359,9 @@ class ModelSwitchController {
 
   private readonly fallback = new FallbackSlot(() => {
     if (this.expanded) {
-      this.syncFallbackRow(settingsAsShown());
+      this.repaint(() => {
+        this.syncFallbackRow(settingsAsShown());
+      });
     }
   });
 
@@ -360,30 +403,24 @@ class ModelSwitchController {
   /** Ticks are rebuilt when the model's vocabulary changes: the set is per model, so
    *  a track built once would offer `xhigh` on a model without it. Effort arrives
    *  on the chat record, so there is no settings fetch. */
-  private ensureEffortRow(list: HTMLElement): void {
+  private ensureEffortRow(scroll: HTMLElement): void {
     const { levels, active } = sliderVocabulary(getActive());
     this.effortActive = active;
-    if (this.effortSlider === null) {
-      // No role/aria-label: the knob carries the name, and a group around one slider
-      // announces a nesting that is not there.
-      this.effortSlider = buildEffortSlider({
-        onPick: (level) => {
-          this.previewStop(level);
-        },
-      });
-      // Reading activeSession makes the row per-chat; app-lifetime, so never disposed.
-      effect(() => {
-        this.effortActive = sliderVocabulary(activeSession.value).active;
-        this.syncEffortActive();
-      });
-    }
+    // No role/aria-label: the knob carries the name, and a group around one slider
+    // announces a nesting that is not there.
+    this.effortSlider ??= buildEffortSlider({
+      onPick: (level) => {
+        this.previewStop(level);
+      },
+    });
     if (!sameLevels(this.effortLevelsShown, levels)) {
       this.effortSlider.setLevels(levels);
       this.effortLevelsShown = [...levels];
     }
-    // Outside the scroller, so reconcile never sees it; syncFallbackRow then puts its row last.
-    if (list.lastElementChild !== this.effortSlider.el) {
-      list.appendChild(this.effortSlider.el);
+    // Beside the scroller, so reconcile never sees it. Re-seating a node blurs it, so only a
+    // slider out of place moves.
+    if (scroll.nextElementSibling !== this.effortSlider.el) {
+      scroll.after(this.effortSlider.el);
     }
     // The effect re-runs only on the active chat's own level; a rebuild or a newly
     // resolved tier is not a signal read, so re-apply the mark here.
@@ -534,8 +571,9 @@ class ModelSwitchController {
 
 const controller = new ModelSwitchController();
 
-export function initModelSwitcher(): void {
-  controller.init();
+/** `rereadCatalog` is the read the card's Retry runs; its promise settles once the read has. */
+export function initModelSwitcher(rereadCatalog: () => Promise<void>): void {
+  controller.init(rereadCatalog);
 }
 
 /** Open the model pill's card. */
@@ -550,7 +588,6 @@ function applyLocalModel(modelID: string, chatID?: string): void {
     // setModel replaces the session object; chat.ts's effect repaints from the new one.
     setModel(session.id, modelID);
   }
-  refreshPickerIfVisible(modelID);
 }
 
 /** The one door for a model pick from ANY surface, so an empty-chat pick
