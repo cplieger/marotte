@@ -217,8 +217,10 @@ sw.addEventListener("push", ((event: PushEvent) => {
       try {
         await sw.registration.showNotification(title, {
           body,
-          icon: "/favicon.svg",
-          badge: "/icon-192.png",
+          // PNG: Chromium draws no SVG notification icon (https://issues.chromium.org/issues/41169211).
+          icon: "/icon-192.png",
+          // Android paints the badge from its alpha channel alone, so it is the bare white mark.
+          badge: "/badge-96.png",
           tag: pushTargetTag(parsePushTarget({ chatId: chatID, subject })),
           // A same-tag replacement is silent by default, and here a replacement always means the
           // chat moved to something else worth a glance.

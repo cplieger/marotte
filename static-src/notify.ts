@@ -308,7 +308,8 @@ function raise(notice: NotificationPayload): boolean {
   try {
     const n = new Notification(notice.title, {
       body: notice.body,
-      icon: "/favicon.svg",
+      // PNG for the same reason as sw.ts's notification.
+      icon: "/icon-192.png",
       tag,
     });
     n.addEventListener("click", () => {

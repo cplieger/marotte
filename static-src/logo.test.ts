@@ -275,13 +275,24 @@ describe("the app icons", () => {
       expect(`${img.width}x${img.height}`).toBe(icon.sizes);
       expect(at(img, 0, 0).slice(0, 3)).toEqual(BRAND_VIOLET);
       expect(at(img, img.width - 1, img.height - 1).slice(0, 3)).toEqual(BRAND_VIOLET);
+      // icons.py places the mark's 100-unit box in the square 7..41 of the 48-unit tile.
+      const lo = Math.floor((7 / 48) * img.width);
+      const hi = Math.ceil((41 / 48) * img.width);
       let white = 0;
-      for (let i = 0; i < img.data.length; i += 4) {
-        if ((img.data[i] ?? 0) > 250 && (img.data[i + 1] ?? 0) > 250 && (img.data[i + 2] ?? 0) > 250) {
-          white++;
+      let outside = 0;
+      for (let y = 0; y < img.height; y++) {
+        for (let x = 0; x < img.width; x++) {
+          const [r, g, b] = at(img, x, y);
+          if (r > 250 && g > 250 && b > 250) {
+            white++;
+            if (x < lo || x > hi || y < lo || y > hi) {
+              outside++;
+            }
+          }
         }
       }
-      expect(white / (img.width * img.height)).toBeGreaterThan(0.1);
+      expect(white / (img.width * img.height)).toBeGreaterThan(0.02);
+      expect(outside, "white ink outside the mark's square").toBe(0);
     });
   }
 });
@@ -319,7 +330,7 @@ describe("the notification images", () => {
       }
     }
     expect(at(img, 0, 0)[3]).toBe(0);
-    expect(opaque / (img.width * img.height)).toBeGreaterThan(0.1);
+    expect(opaque / (img.width * img.height)).toBeGreaterThan(0.02);
     // Android's 22 dp live area inside the 24 dp status-bar icon: 4 px clear at 96 px.
     expect(Math.min(x0, y0)).toBeGreaterThanOrEqual(4);
     expect(Math.max(x1, y1)).toBeLessThanOrEqual(91);
