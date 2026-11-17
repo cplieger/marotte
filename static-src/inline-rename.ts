@@ -1,7 +1,7 @@
 // The inline name field the file browser's rows and the editor's file name share.
 import { el } from "@cplieger/reactive";
 
-export interface InlineRenameSpec {
+interface InlineRenameSpec {
   /** The element the field takes the place of. */
   readonly target: Element;
   readonly original: string;

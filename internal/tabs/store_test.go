@@ -505,8 +505,8 @@ func TestRetarget_RefusesARefAnotherTabHolds(t *testing.T) {
 	mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindWeb, Ref: "/w/c.md"})
 	_, before := s.List()
 
-	if _, err := s.Retarget(t.Context(), a.ID, "/w/b.md"); !errors.Is(err, ErrRefTaken) {
-		t.Errorf("Retarget onto another editor's ref = %v, want ErrRefTaken", err)
+	if _, err := s.Retarget(t.Context(), a.ID, "/w/b.md"); !errors.Is(err, errRefTaken) {
+		t.Errorf("Retarget onto another editor's ref = %v, want errRefTaken", err)
 	}
 	if _, err := s.Retarget(t.Context(), a.ID, ""); !errors.Is(err, ErrBadRef) {
 		t.Errorf("Retarget to an empty ref = %v, want ErrBadRef", err)

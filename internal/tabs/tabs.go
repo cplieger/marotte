@@ -84,8 +84,8 @@ var (
 	// ErrCycle means Reparent was asked to hang a tab under itself or under one
 	// of its own descendants.
 	ErrCycle = errors.New("a tab cannot be its own ancestor")
-	// ErrRefTaken means Retarget was asked for a (kind, ref) another open tab holds.
-	ErrRefTaken = errors.New("another tab holds that ref")
+	// errRefTaken means Retarget was asked for a (kind, ref) another open tab holds.
+	errRefTaken = errors.New("another tab holds that ref")
 )
 
 // file is the on-disk document: the tabs, the Recently closed list and the version they carry. No

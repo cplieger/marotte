@@ -243,7 +243,7 @@ func (s *Store) Reparent(ctx context.Context, id, parent string) (uint64, error)
 
 // Retarget moves one tab to another ref of its own kind, keeping its id, position, pin and
 // parent. An unchanged ref or an id not open changes nothing (a retarget racing a close). Returns
-// ErrBadRef for a ref its kind cannot hold and ErrRefTaken when another tab of the kind holds ref;
+// ErrBadRef for a ref its kind cannot hold and an error when another tab of the kind holds ref;
 // nothing is applied on error.
 func (s *Store) Retarget(ctx context.Context, id, ref string) (uint64, error) {
 	return s.mutate(ctx, func(st *state, _ int64) (bool, error) {
@@ -256,7 +256,7 @@ func (s *Store) Retarget(ctx context.Context, id, ref string) (uint64, error) {
 			return false, err
 		}
 		if indexOfSubject(st.tabs, kind, ref) >= 0 {
-			return false, fmt.Errorf("%w: %s %q", ErrRefTaken, kind, ref)
+			return false, fmt.Errorf("%w: %s %q", errRefTaken, kind, ref)
 		}
 		st.tabs[i].Ref = ref
 		return true, nil
