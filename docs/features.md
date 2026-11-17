@@ -116,13 +116,15 @@ These settings apply only when the engine restarts, and their rows say so: **Kno
 
 marotte works with GitHub, GitLab, Codeberg, and Gitea or Forgejo. You can stage, commit, diff and switch branches, and list, create, merge and close pull requests. A new pull request's description starts as the list of the branch's commits, which you can edit before you open it.
 
+A pull request whose checks failed offers **Re-run** where the forge can re-run them. GitHub, GitLab and Gitea re-run the failed jobs. Forgejo, Codeberg included, re-runs the whole run, its passed jobs included, and the button's tooltip, its confirmation and the notice after it say so. Forgejo before 17 cannot re-run checks. When the forge refuses a pull request action because the token lacks a permission, the notice says so and names the permission to add when the forge does, as GitHub and GitLab do.
+
 An account connects by signing in through your browser on GitHub or GitLab, or with an access token on any of them. marotte keeps the credential in its own store, uses it for the forge's API, and answers git over HTTPS with it through its own credential helper, so no forge command-line tool is needed. SSH remotes are not covered. A forge on a private or loopback address, such as one on your own network, needs **Allow private addresses** under **Connection options** when you connect it.
 
 A gitlab.com sign-in token lasts two hours. marotte renews it with the refresh token GitLab issues with it, so the account stays connected. If GitLab issued no refresh token or refuses a renewal, the account shows **Reconnect** once the token expires.
 
 marotte checks each connected account in the background about once a minute, whether or not a page is open. A network failure, a rate limit or a forge outage does not disconnect the account. Sources shows a note under it, and the note goes once a later check succeeds.
 
-When the forge rejects the token, the account shows **Reconnect**, and only a new sign-in brings it back. When the forge refuses the account instead, for example for a missing permission or an IP allowlist, the account shows the forge's reason and **Check**. Press **Check** once you have fixed it on the forge.
+When the forge rejects the token, the account shows **Reconnect**, and only a new sign-in brings it back. When the forge refuses the account instead, for example for a missing permission or an IP allowlist, the account shows the forge's reason and **Check**. For a missing permission, the reason names the permission to add when the forge does. Press **Check** once you have fixed it on the forge.
 
 In both cases marotte stops giving git that account's credential, so git uses your other credential helpers or asks you. Both states survive a restart, and the **Pull requests** tab lists the account with what to do. After a restart a refused account shows a general reason in place of the forge's, and **Check** asks the forge again.
 
