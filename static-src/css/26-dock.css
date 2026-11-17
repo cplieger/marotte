@@ -987,6 +987,9 @@
      the column reserves its target's height, so the shared expander fits the row. */
   --steer-act-size: var(--ctl-h-sm);
 
+  /* The message's line height, read by the state column too: their two lines share one strut. */
+  --steer-lh: 1.35;
+
   /* state | message | actions. minmax(0, 1fr) on the middle track is what lets
      the clamp below actually clamp: an auto track would size to the text and
      push the actions off the row. */
@@ -1038,17 +1041,21 @@
 
 /* --- State column ------------------------------------------------------- */
 
+/* ONE LINE BOX at the message's font size and line height, not a flex row: the smaller label then
+   sits on the same strut as `.steer-text`'s first line, so when the grid centres the two boxes their
+   baselines meet. Two centred boxes of different font sizes put the larger one's baseline low by
+   half the difference in (ascent - descent), whatever their line heights. */
 .steer-state {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
+  display: block;
+  line-height: var(--steer-lh);
+  white-space: nowrap;
   color: var(--c-accent);
   transition: color var(--dur-micro) var(--ease-standard);
 }
 
 .steer-state-icon {
   display: inline-flex;
-  flex: none;
+  vertical-align: middle;
 }
 
 /* STILL, deliberately: a breathing opacity trough would put this glyph under WCAG
@@ -1082,13 +1089,17 @@
 
 /* The WORD, not only the glyph. "Sent" is the fact the stack exists to state:
    the message has left, it is not a draft, and it is waiting. Uppercase and
-   tracked out so it reads as a status rather than as part of the message. */
+   tracked out so it reads as a status rather than as part of the message.
+   `line-height: 1` keeps its inline box inside the strut: at `normal` it grows the
+   line box past the message's and moves the shared baseline off it. The gap is the
+   label's own margin, so a hidden label takes it along. */
 .steer-state-label {
+  margin-inline-start: 0.3rem;
   font-size: var(--fs-xs);
   font-weight: 600;
+  line-height: 1;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-  white-space: nowrap;
 }
 
 /* Below the pill row's container width the state word is the first thing to go:
@@ -1105,15 +1116,11 @@
     grid-template-columns: fit-content(35%) minmax(0, 1fr) auto;
   }
 
-  /* Zero minimums down the chain, so the track's cap, not the label's
-     unwrapped width, sizes the column and the sender ellipsises. */
-  .steer-state,
-  .steer-state-label {
+  /* A zero minimum, so the track's cap, not the label's unwrapped width, sizes
+     the column; the sender ellipsises at the column's edge while staying inline,
+     on the line it shares with the message. */
+  .steer-state {
     min-inline-size: 0;
-  }
-
-  .steer-state-sender {
-    display: block;
     overflow: hidden;
     text-overflow: ellipsis;
   }
@@ -1134,7 +1141,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--c-text-primary);
-  line-height: 1.35;
+  line-height: var(--steer-lh);
   transition: color var(--dur-micro) var(--ease-standard);
 }
 
