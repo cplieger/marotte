@@ -1,10 +1,9 @@
-// The app's one loading mark, the `.spinner` ring (15-input.css). A site varies its size and ink through the
-// ring's custom properties, never with a ring of its own.
+// The markup for the `.spinner` ring (15-input.css owns its drawing and how a site tunes it).
 
 import { el } from "@cplieger/reactive";
 import { bindLoadingState } from "./actions/index.js";
 
-/** A ring for a face its caller paints and removes; `modifier` is a class that only sets the ring's properties. */
+/** A ring for a face its caller paints and removes; `modifier` is space-separated classes added beside `spinner`. */
 export function spinnerEl(modifier?: string): HTMLSpanElement {
   const className = modifier === undefined ? "spinner" : `spinner ${modifier}`;
   return el("span", { className, "aria-hidden": "true" });

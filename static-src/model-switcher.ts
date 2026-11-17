@@ -170,8 +170,8 @@ interface PillDraft {
 class ModelSwitchController {
   init(rereadCatalog: () => Promise<void>): void {
     this.rereadCatalog = rereadCatalog;
-    // Prepended because the label follows it. The `.switching` face hides this svg by
-    // descendant selector, so it must not be wrapped.
+    // Prepended because the label follows it, and never wrapped: the busy face hides only the
+    // button's own `> svg` (15-input.css).
     $.switchModelBtn.prepend(iconEl(ICON_MODEL));
     const expandContent = $.modelSwitchList;
     expandContent.append(this.mainPanel);

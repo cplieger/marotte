@@ -341,7 +341,7 @@ export function initPRsTab(): void {
 
   const refreshBtn = maybeEl<HTMLButtonElement>("git-refresh-prs-btn");
   if (refreshBtn !== null) {
-    refreshBtn.innerHTML = ICON_REFRESH;
+    refreshBtn.replaceChildren(iconEl(ICON_REFRESH));
     const status = el("span", { className: "page-toolbar-error", role: "status" });
     refreshBtn.before(status);
     refreshBtn.addEventListener("click", () => {

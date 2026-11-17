@@ -162,7 +162,7 @@ describe("a delegate whose chat holds no live turn", () => {
     expect(subagentStatusFor("in_progress", false)).toBe("done");
     expect(wordOf(card)).toBe("cancelled");
     expect(iconOf(card).classList.contains("is-warn")).toBe(true);
-    expect(iconOf(card).classList.contains("subagent-spinner")).toBe(false);
+    expect(iconOf(card).classList.contains("spinner-work")).toBe(false);
   });
 
   it("still paints RUNNING while the chat's own turn is live", () => {
@@ -173,7 +173,7 @@ describe("a delegate whose chat holds no live turn", () => {
     expect(delegateStatusFor("in_progress", true)).toBe("in_progress");
     expect(subagentStatusFor("in_progress", true)).toBe("working");
     expect(wordOf(card)).toBe("running");
-    expect(iconOf(card).classList.contains("subagent-spinner")).toBe(true);
+    expect(iconOf(card).classList.contains("spinner-work")).toBe(true);
   });
 
   it("settles its cards in the SAME pass as the reconcile that clears the latch", () => {

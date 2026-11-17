@@ -39,8 +39,8 @@ describe("the tree pane", () => {
     const nodes = [step("a"), step("b")];
     tree.render(nodes, "a");
 
-    // A real CSS animation on the row, standing in for the `vk-spin-rotate` ring the
-    // stylesheet puts on `.ev-state::before` of a running row.
+    // A real CSS animation on the row, standing in for the `vk-spin-rotate` turn of a
+    // running row's `.ev-state > .spinner`.
     const style = document.createElement("style");
     style.textContent =
       "@keyframes reseat-spin { to { rotate: 360deg } } .ev-row { animation: reseat-spin 600ms linear infinite }";

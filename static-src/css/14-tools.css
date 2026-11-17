@@ -872,12 +872,6 @@ a.subagent-header {
   flex-shrink: 0;
 }
 
-/* `.spinner` (15-input.css) drawn as the run card's running mark: an accent ring with a gap. */
-.subagent-spinner {
-  --spinner-arc: transparent;
-  --spinner-track: var(--c-accent);
-}
-
 .subagent-name {
   color: var(--c-accent);
   font-weight: var(--fw-medium);

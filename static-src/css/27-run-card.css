@@ -357,8 +357,8 @@
 
 /* THE MARK SLOT RENDERS BOTH AN SVG AND A BARE CHARACTER, because this vocabulary
    holds both: `ok` / `fail` / `warn` are solid road-sign SVGs from the shared
-   outcome set, `input` and `skipped` keep a character, and the three in-flight
-   states are the ::before ring below. Either way outcome is a shape and not only a
+   outcome set, `input` and `skipped` keep a character, and the in-flight
+   states are the rings below. Either way outcome is a shape and not only a
    tint. A grid box centres both kinds, blockifies the SVG, and holds a fixed size
    so every row's name starts on one x whatever mark it carries; `font-size` and
    `line-height` stay for the two character states. */
@@ -396,54 +396,24 @@
   font-weight: var(--fw-semibold);
 }
 
-/* Running and waiting have no badge character, so the RING is the glyph — and the
-   two differ by MOTION, which is the axis the tab dot and the tool card already
-   use: a spinning gap means work is happening, a still ring means the step is open
-   and nothing is moving. `paused` used to render the spinner, which claimed
-   progress that was not there. */
-/* `--dot-size` and `box-sizing`, which together make this ring the size of the
-   settled mark that shares the slot — the rule the exec tree and the run bar state
-   for the same column. It was the furthest off of the three: a hand-picked 0.75rem
-   plus a 2px border the pseudo-element's content-box default put OUTSIDE it rendered
-   16px, filling the whole 1rem slot at exactly twice its own settled disc. The
-   `margin: 0 auto` that used to sit here went with that overflow; the slot is
-   `place-items: center`, so it centres what fits. Pinned by
-   `state-column-size.test.ts`, which measures the ring against the disc. */
-.run-step[data-status="running"] .run-step-glyph::before,
+/* Running and waiting have no badge character, so a RING is the glyph, and the two
+   differ by MOTION, the axis the tab dot and the tool card use: the running step's
+   `.spinner` (`paintStateMark`) means work is happening, this still ring means the
+   step is open and nothing is moving. `--dot-size` plus `border-box` make it the
+   settled mark's size (`state-column-size.test.ts`); the slot is `place-items:
+   center`, so it centres what fits. */
 .run-step[data-status="waiting"] .run-step-glyph::before {
   content: "";
   display: block;
   box-sizing: border-box;
   inline-size: var(--dot-size);
   block-size: var(--dot-size);
-  border: 0.125rem solid var(--c-accent);
+  border: 0.125rem solid var(--c-blue);
   border-radius: 50%;
 }
 
-/* Still host, turning disc (00-header.css "A RING THAT SPINS WHILE WORK RUNS"): the
-   slot holds the ring's shape at `--dot-size`, so the disc below may outgrow it. */
-.run-step[data-status="running"] .run-step-glyph {
-  clip-path: circle(calc(var(--dot-size) / 2));
-  mask: radial-gradient(
-    circle,
-    transparent calc(var(--dot-size) / 2 - 0.125rem),
-    #000 calc(var(--dot-size) / 2 - 0.125rem)
-  );
-}
-
-/* The border above is neutralised rather than dropped: the still `waiting` ring
-   shares that rule and DRAWS with it, and it keeps this box the column's
-   `--dot-size`. */
-.run-step[data-status="running"] .run-step-glyph::before {
-  border-color: transparent;
-  background: conic-gradient(from -45deg, transparent 0deg 90deg, var(--c-accent) 90deg 360deg)
-    border-box;
-  scale: 1.5;
-  animation: vk-spin-rotate var(--spin-dur) linear infinite;
-}
-
-.run-step[data-status="waiting"] .run-step-glyph::before {
-  border-color: var(--c-blue);
+.run-step-glyph > .spinner {
+  --spinner-size: var(--dot-size);
 }
 
 /* Shrinkable, or the row overflows and `.run-step`'s clip eats `.run-step-dur`:

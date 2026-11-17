@@ -49,8 +49,8 @@ describe("the spinner period", () => {
     }
 
     expect(offenders, "every vk-spin rule takes its period from --spin-dur").toEqual([]);
-    // `.spinner::before` and the run card's and exec view's running marks; a sweep that matched nothing would pass.
-    expect(consumers, "the sweep found the spinner rules").toBeGreaterThanOrEqual(3);
+    // `.spinner::before`; a sweep that matched nothing would pass.
+    expect(consumers, "the sweep found the spinner rule").toBeGreaterThanOrEqual(1);
   });
 
   it("declares that token, so the animation actually runs", () => {

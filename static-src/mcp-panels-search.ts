@@ -124,7 +124,7 @@ export function initSearchPanel(): void {
   searchUnsub?.();
   debouncedSearch = debouncedDispatch(searchRegistry, { wait: DEBOUNCE_MS });
 
-  // Re-initialised on every open, so the previous binding goes. `pendingClass` covers the typed path and the click.
+  // Re-initialised on every open, so the previous binding goes; the one action binding covers the typed path and the click.
   searchBtnUnbind?.();
   searchBtnUnbind = bindLoadingSpinner("mcp.search_registry", btn);
 

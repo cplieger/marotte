@@ -3,6 +3,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { outcomeIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { paintStateMark } from "./exec-view/status.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 const host = document.createElement("div");
@@ -43,6 +44,8 @@ interface Column {
    *  so there is no second layer to draw a ring on and the reserved column is the mark's own
    *  box. */
   readonly markIsPseudo: boolean;
+  /** The state whose ring is the `.spinner` child `paintStateMark` writes, not a pseudo-element. */
+  readonly spinning?: "running";
 }
 
 function el(tag: string, cls: string, attrs: Record<string, string> = {}): HTMLElement {
@@ -72,6 +75,7 @@ const COLUMNS: readonly Column[] = [
     },
     inFlight: ["running", "waiting", "unknown", "pending"],
     markIsPseudo: true,
+    spinning: "running",
   },
   {
     name: "the run card",
@@ -89,6 +93,7 @@ const COLUMNS: readonly Column[] = [
     },
     inFlight: ["running", "waiting"],
     markIsPseudo: true,
+    spinning: "running",
   },
   {
     name: "the run bar",
@@ -130,9 +135,30 @@ function paintedDisc(col: Column): number {
   return (path.getBBox().width / units) * mark.getBoundingClientRect().width;
 }
 
+/** The `.spinner` a spinning slot holds, as its production writer paints it. */
+function spinnerIn(col: Column, slot: HTMLElement): HTMLElement {
+  paintStateMark(slot, "running");
+  const ring = slot.querySelector<HTMLElement>(":scope > .spinner");
+  expect(ring, `${col.name}: running holds the spinner`).not.toBeNull();
+  expect(getComputedStyle(slot, "::before").content, `${col.name}: and no second ring`).toBe(
+    "none",
+  );
+  if (ring === null) {
+    throw new Error("unreachable");
+  }
+  return ring;
+}
+
 /** The outer diameter of an in-flight ring, and the box-sizing that decides it. */
 function paintedRing(col: Column, state: string): { outer: number; boxSizing: string } {
   const slot = col.mount(state);
+  if (state === col.spinning) {
+    const ring = spinnerIn(col, slot);
+    return {
+      outer: ring.getBoundingClientRect().width,
+      boxSizing: getComputedStyle(ring).boxSizing,
+    };
+  }
   const ring = col.markIsPseudo ? getComputedStyle(slot, "::before") : getComputedStyle(slot);
   if (col.markIsPseudo) {
     expect(ring.content, `${col.name}: ${state} draws a ring`).not.toBe("none");
@@ -173,7 +199,7 @@ describe("a state column's mark", () => {
       // above is what holds that box to one size.
       const slot = col.mount("running");
       const slotWidth = slot.getBoundingClientRect().width;
-      const outer = Number.parseFloat(getComputedStyle(slot, "::before").width);
+      const outer = spinnerIn(col, slot).getBoundingClientRect().width;
       expect(slotWidth, `${col.name}: the slot has a reserved size`).toBeGreaterThan(0);
       expect(outer, `${col.name}: the ring leaves room inside its slot`).toBeLessThan(slotWidth);
     },

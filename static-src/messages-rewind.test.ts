@@ -454,6 +454,26 @@ describe("a rewind in flight", () => {
       expect(disc(ring), "the turning disc, its arc, track and timing").toEqual(disc(reference));
       expect(disc(ring)[2]).toBe("vk-spin-rotate");
 
+      // The touch tier grows the button glyph past the bare `.spinner`, so this is where the ring's own sizing shows.
+      const root = document.documentElement;
+      const tier = root.getAttribute("data-pointer");
+      root.setAttribute("data-pointer", "coarse");
+      try {
+        const resting = rewindButtons()[1]?.firstElementChild?.getBoundingClientRect();
+        const grown = ring.getBoundingClientRect();
+        const bare = reference.getBoundingClientRect();
+        expect([grown.width, grown.height], "the ring grows with the touch glyph").toEqual([
+          resting?.width,
+          resting?.height,
+        ]);
+        expect(grown.width, "past the bare ring's size").toBeGreaterThan(bare.width);
+      } finally {
+        if (tier === null) {
+          root.removeAttribute("data-pointer");
+        } else {
+          root.setAttribute("data-pointer", tier);
+        }
+      }
       answer({ ok: true, status: 200 });
     } finally {
       reference.remove();

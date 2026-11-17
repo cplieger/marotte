@@ -383,9 +383,9 @@ class ToolsManager {
       }
     });
     f.searchBtn.addEventListener("click", searchNow);
-    // Both faces come from the registry rather than the markup, so each glyph keeps ONE drawing.
+    // The magnifier comes from the registry rather than the markup, so the glyph keeps ONE drawing.
     f.searchBtn.replaceChildren(iconEl(findGlyph("search")));
-    bindLoadingSpinner("tools.search", f.searchBtn, { pendingClass: "is-busy" });
+    bindLoadingSpinner("tools.search", f.searchBtn);
     f.sort.addEventListener("change", () => {
       this.paintSearch();
     });

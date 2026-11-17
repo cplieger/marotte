@@ -1069,11 +1069,9 @@
   height: 0.85rem;
 }
 
-/* `.tool-spinner`'s ink (14-tools.css), at the steer glyph's size. */
+/* `.tool-spinner` at the steer glyph's size. */
 .steer-spinner {
   --spinner-size: 0.85rem;
-  --vk-ring-band: 2px;
-  --spinner-arc: var(--c-accent);
 }
 
 /* The WORD, not only the glyph. "Sent" is the fact the stack exists to state:

@@ -15,6 +15,7 @@ import { refreshConfigStanding, standingBadge } from "./config-standing.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { showToast } from "./toast.js";
 import { ICON_EDIT_UI, ICON_TRASH_UI, ICON_PLUS_UI, ICON_REFRESH } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import { spinnerEl } from "./spinner.js";
 import {
   type Server,
@@ -89,7 +90,7 @@ function buildSectionScaffold(): void {
     "data-tooltip": "Connect integration",
     "aria-label": "Connect integration",
   }) as HTMLButtonElement;
-  btn.innerHTML = ICON_PLUS_UI;
+  btn.replaceChildren(iconEl(ICON_PLUS_UI));
   btn.addEventListener("click", () => {
     openAddModal();
   });
@@ -1005,7 +1006,7 @@ function renderEditBtn(s: Server, cleanups: (() => void)[]): HTMLButtonElement {
     "data-tooltip": "Edit",
     "aria-label": `Edit ${s.name}`,
   }) as HTMLButtonElement;
-  btn.innerHTML = ICON_EDIT_UI;
+  btn.replaceChildren(iconEl(ICON_EDIT_UI));
   // Visibility is the row effect's: a locked row has no edit.
   btn.addEventListener("click", () => {
     void openEditModal(s.id);
@@ -1021,7 +1022,7 @@ function renderDeleteBtn(s: Server, cleanups: (() => void)[]): HTMLButtonElement
     "data-tooltip": "Remove",
     "aria-label": `Remove ${s.name}`,
   }) as HTMLButtonElement;
-  btn.innerHTML = ICON_TRASH_UI;
+  btn.replaceChildren(iconEl(ICON_TRASH_UI));
   cleanups.push(bindLoadingState("mcp.delete_server", btn));
   btn.addEventListener("click", () => {
     void (async () => {
@@ -1055,7 +1056,7 @@ function renderReconnectBtn(label: string, serverName: () => string): HTMLButton
     "data-tooltip": "Reconnect",
     "aria-label": `Reconnect ${label}`,
   }) as HTMLButtonElement;
-  btn.innerHTML = ICON_REFRESH;
+  btn.replaceChildren(iconEl(ICON_REFRESH));
   btn.addEventListener("click", () => {
     if (btn.disabled) {
       return;
@@ -1074,7 +1075,7 @@ function renderReconnectBtn(label: string, serverName: () => string): HTMLButton
       )
       .finally(() => {
         setControlBusy(btn, false);
-        btn.innerHTML = ICON_REFRESH;
+        btn.replaceChildren(iconEl(ICON_REFRESH));
       });
   });
   return btn;

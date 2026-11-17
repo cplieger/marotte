@@ -34,10 +34,14 @@ describe("STATE_MARK is total, and every state carries exactly one channel", () 
     expect(Object.keys(STATE_MARK).sort()).toEqual(Object.keys(STATE_WORD).sort());
   });
 
-  it("gives the four in-flight states no mark, because CSS draws their ring", () => {
-    for (const state of ["pending", "running", "waiting", "unknown"] as const) {
+  it("gives the three still in-flight states no mark, because CSS draws their ring", () => {
+    for (const state of ["pending", "waiting", "unknown"] as const) {
       expect(STATE_MARK[state]).toEqual({ kind: "none" });
     }
+  });
+
+  it("gives running the loading spinner, the one state whose ring turns", () => {
+    expect(STATE_MARK.running).toEqual({ kind: "spinner" });
   });
 
   it("keeps a character for exactly the two states that earn one", () => {
@@ -118,11 +122,24 @@ describe("paintStateMark writes one mark, whatever it is called with", () => {
     expect(el.childNodes).toHaveLength(1);
   });
 
-  it("empties the slot for a ring state", () => {
+  it("empties the slot for a still-ring state", () => {
+    const el = slot();
+    paintStateMark(el, "fail");
+    paintStateMark(el, "waiting");
+    expect(el.childNodes).toHaveLength(0);
+  });
+
+  it("writes one hidden spinner for running, and keeps that element across a repaint", () => {
     const el = slot();
     paintStateMark(el, "fail");
     paintStateMark(el, "running");
-    expect(el.childNodes).toHaveLength(0);
+    expect(el.childNodes).toHaveLength(1);
+    const ring = el.firstElementChild;
+    expect(ring?.classList.contains("spinner")).toBe(true);
+    expect(ring?.getAttribute("aria-hidden")).toBe("true");
+    // A new element would restart the turn mid-lap.
+    paintStateMark(el, "running");
+    expect(el.firstElementChild).toBe(ring);
   });
 
   it("leaves exactly one child across a repeat, a change, and a change back", () => {

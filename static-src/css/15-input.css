@@ -2221,6 +2221,12 @@
   --spinner-size: 0.875rem;
 }
 
+/* The mark of running work (a subagent, a run step, an exec node): an accent ring with a gap. */
+.spinner-work {
+  --spinner-arc: transparent;
+  --spinner-track: var(--c-accent);
+}
+
 /* `bindLoadingSpinner`'s dormant ring (spinner.ts): shown only while its control is busy, in the glyph's place. */
 :not([aria-busy="true"]) > .spinner-on-busy {
   display: none;

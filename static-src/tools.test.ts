@@ -127,9 +127,7 @@ function mountToolsDOM(): void {
   add("div", "tools-list").className = "list-container";
   add("div", "tool-modal");
   add("input", "tool-search").className = "tool-form-input";
-  // Mirrors index.html's classes: the button's two glyph faces are picked by
-  // `.tool-search-go`, so a bare fixture button would show both at once.
-  add("button", "tool-search-btn").className = "action-pill tool-search-go";
+  add("button", "tool-search-btn").className = "action-pill";
   // The caveat is seeded with a stale claim so the repaint assertions prove an overwrite.
   const note = add("p", "tool-shell-note");
   note.textContent =

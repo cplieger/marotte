@@ -53,9 +53,7 @@
  *  multiple of 90deg, measured as an 8% rim-area wobble on a 12px ring at DPR 1. Its host holds the ring's shape
  *  (`clip-path: circle()` for the rim, a radial mask for the hole) and never moves; its `::before` is the arc's conic
  *  disc `from -45deg` (a `0deg 90deg` sector is the top quarter), scaled past the clip and turned under it by
- *  `vk-spin-rotate` on the compositor. `.spinner` (15-input.css) is the one loading ring; the run card and exec view
- *  draw their status column's running state the same way at `--dot-size`. A ring whose box keeps a border names
- *  `border-box` in its `background` shorthand, or the gradient tiles inside the border. */
+ *  `vk-spin-rotate` on the compositor. `.spinner` (15-input.css) is that ring. */
 
 /* Beat synchronisation is a shared phase ORIGIN (`--beat-phase`, an unregistered
  *  plain custom property read once as a delay), never a registered property

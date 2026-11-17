@@ -423,69 +423,30 @@
   color: var(--c-yellow);
 }
 
-/* Running and waiting carry no character, so the RING is the glyph and the two
-   differ by MOTION — the axis the tab dot, the tool card and the run card all use.
-   A still ring is a node that is open with nothing moving; spinning is work. */
-.ev-row[data-state="running"] > .ev-row-main > .ev-state::before,
+/* Running and waiting carry no character, so a RING is the glyph and the two differ
+   by MOTION, the axis the tab dot, the tool card and the run card all use: the
+   running node's `.spinner` (`paintStateMark`) is work, a still ring is a node that
+   is open with nothing moving. */
 .ev-row[data-state="waiting"] > .ev-row-main > .ev-state::before,
 .ev-row[data-state="unknown"] > .ev-row-main > .ev-state::before,
-.ev-dock-row[data-state="running"] > .ev-state::before,
 .ev-dock-row[data-state="waiting"] > .ev-state::before,
 .ev-dock-row[data-state="unknown"] > .ev-state::before {
   content: "";
   display: block;
 
-  /* `--dot-size`, so this column is ONE size: the two in-flight rings, the
-     pending ring below and the three settled marks (`icons.ts` `outcomeIcon`, now
-     drawn at the tab dot's footprint) all measure 8px.
-
-     `box-sizing` is what makes that sentence TRUE, and its absence is why the
-     sentence was false for as long as it has been written here: the reset's `*`
-     does not reach a pseudo-element, so the default is content-box and the 2px
-     border landed OUTSIDE `--dot-size`. Measured before it was stated: the settled
-     disc 8px, this ring 12px, the pending ring below 11px — the column at three
-     sizes, which is the exact defect the paragraph claims to have fixed by moving
-     off a hand-picked 11px. Source text alone cannot see it, so
-     `state-column-size.test.ts` compares the RENDERED ring against the RENDERED
-     disc instead.
-
-     The BAND is what still separates a ring from the hollow one below: 2px here
-     against the 0.0938rem the pending ring declares, which Chromium snaps to 1px
-     because a border width is an integer — so the rendered separation is heavy
-     ring against hairline, wider than the authored numbers suggest. Band width is
-     the same channel `12-tabs.css` relies on for its reduced-motion donut, so it
-     is a separation this app already reads rather than one invented here; motion
-     then carries `running` off `waiting`. */
+  /* `--dot-size` with `border-box` (a pseudo-element misses the reset's `*`, so it
+     would default to content-box and put the border outside), so every mark in this
+     column measures 8px (`state-column-size.test.ts`). The 2px band against the
+     pending ring's hairline is what separates a still ring from a hollow one. */
   box-sizing: border-box;
   inline-size: var(--dot-size);
   block-size: var(--dot-size);
-  border: 0.125rem solid var(--c-accent);
+  border: 0.125rem solid;
   border-radius: 50%;
 }
 
-/* Still host, turning disc (00-header.css "A RING THAT SPINS WHILE WORK RUNS"): the
-   slot holds the ring's shape at `--dot-size`, so the disc below may outgrow it. A
-   running slot holds no mark of its own (`STATE_MARK`), so the clip hides nothing. */
-.ev-row[data-state="running"] > .ev-row-main > .ev-state,
-.ev-dock-row[data-state="running"] > .ev-state {
-  clip-path: circle(calc(var(--dot-size) / 2));
-  mask: radial-gradient(
-    circle,
-    transparent calc(var(--dot-size) / 2 - 0.125rem),
-    #000 calc(var(--dot-size) / 2 - 0.125rem)
-  );
-}
-
-/* The border above is neutralised rather than dropped: the still `waiting` and
-   `unknown` rings share that rule and DRAW with it, and it keeps this box the
-   column's `--dot-size`. */
-.ev-row[data-state="running"] > .ev-row-main > .ev-state::before,
-.ev-dock-row[data-state="running"] > .ev-state::before {
-  border-color: transparent;
-  background: conic-gradient(from -45deg, transparent 0deg 90deg, var(--c-accent) 90deg 360deg)
-    border-box;
-  scale: 1.5;
-  animation: vk-spin-rotate var(--spin-dur) linear infinite;
+.ev-state > .spinner {
+  --spinner-size: var(--dot-size);
 }
 
 .ev-row[data-state="waiting"] > .ev-row-main > .ev-state::before,
@@ -528,6 +489,10 @@
    into the slot itself and stay. After the ring rules above, which it ties. */
 .ev-row:not([data-kind="step"], [data-kind="watch"]) > .ev-row-main > .ev-state::before {
   content: none;
+}
+
+.ev-row:not([data-kind="step"], [data-kind="watch"]) > .ev-row-main > .ev-state > :where(.spinner) {
+  display: none;
 }
 
 /* The KIND glyph, which is what tells a loop from a branch without reading. */

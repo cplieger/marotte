@@ -946,7 +946,7 @@ function updateCompactRow(li: HTMLElement, entry: RunEntryView): void {
   }
   compactShown.set(li, shown);
   li.querySelector(".steer-state-icon")?.replaceChildren(
-    live ? spinnerEl("steer-spinner") : iconEl(ICON_COMPACT),
+    live ? spinnerEl("tool-spinner steer-spinner") : iconEl(ICON_COMPACT),
   );
   li.querySelector(".steer-actions")?.replaceChildren(
     ...(live
