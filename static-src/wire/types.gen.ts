@@ -2978,8 +2978,8 @@ export interface QueuedPrompt {
 }
 
 /**
- * RecentClose is one chat whose last tab closed inside the History window, a row of the
- * sidebar's History section. Field order is fieldalignment's.
+ * RecentClose is one closed chat the tab store holds until tabs.RecentHold; the sidebar's History
+ * section shows the ones inside the History window. Field order is fieldalignment's.
  */
 export interface RecentClose {
   ref: string;
