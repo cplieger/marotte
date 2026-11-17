@@ -802,11 +802,12 @@ class StreamFrames(unittest.TestCase):
         )
         return json.loads(node(script))
 
-    def test_counts_no_keepalive_and_no_handshake(self):
+    def test_counts_no_keepalive_and_no_hub_frame(self):
         records = [
             {'event': 'sse:hello'},
             {'event': 'heartbeat', 'keepalive': True},
             {'event': 'message', 'type': 'chat'},
+            {'event': 'sse:reset'},
             {'event': 'sse:keepalive', 'keepalive': True},
         ]
         self.assertEqual(self.count(records), 1)
