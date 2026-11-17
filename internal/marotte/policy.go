@@ -42,7 +42,7 @@ type PolicyRuleCore struct {
 type PolicyView struct {
 	// Profile is the Settings profile new chats start on; Profiles below is the ladder
 	// it comes from and ProfileSaved whether it is stored. Split apart here only
-	// because their alignments differ — read them together.
+	// for fieldalignment's field order; read them together.
 	Profile        string       `json:"profile"`
 	Rules          []PolicyRule `json:"rules"`
 	WritableScopes []string     `json:"writable_scopes"`
@@ -61,8 +61,8 @@ type PolicyView struct {
 	// fell back to the files.
 	LoadErrors []PolicyErrorItem `json:"load_errors"`
 	Available  bool              `json:"available"`
-	// ProfileSaved is false while config.json names no profile: Profile is then the
-	// default, and a parentless run opens on another one until a profile is saved.
+	// ProfileSaved is false while config.json names no known profile, so Profile is the
+	// default (policyfile.DefaultRunProfile owns what a parentless run opens on then).
 	ProfileSaved bool `json:"profile_saved"`
 }
 

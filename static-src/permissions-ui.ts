@@ -301,8 +301,7 @@ class NativePolicyController {
   /** Never local constants: the ladder decides what one click grants, and policyfile owns it. */
   private profiles: SecurityProfile[] = [];
   private activeProfile = "";
-  /** False while config.json names no profile: activeProfile is then the default, which a
-   *  parentless run does not open on until it is saved. */
+  /** PolicyView.profile_saved. */
   private profileSaved = false;
   /** A transient line under the picker: the outcome of a selection, or a note that Custom is
    *  empty. Carried across the refetch a selection ends in, because that refetch repaints this
@@ -478,7 +477,7 @@ class NativePolicyController {
         });
         // A click on the checked radio fires no change, and the unsaved default needs it to save.
         input.addEventListener("click", () => {
-          if (!this.profileSaved && p.id === this.activeProfile) {
+          if (p.id === this.activeProfile) {
             void this.selectProfile(p.id);
           }
         });

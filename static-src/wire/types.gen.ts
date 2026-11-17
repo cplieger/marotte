@@ -2900,7 +2900,7 @@ export interface PolicyView {
   /**
    * Profile is the Settings profile new chats start on; Profiles below is the ladder
    * it comes from and ProfileSaved whether it is stored. Split apart here only
-   * because their alignments differ — read them together.
+   * for fieldalignment's field order; read them together.
    */
   profile: string;
   rules: PolicyRule[];
@@ -2925,8 +2925,8 @@ export interface PolicyView {
   load_errors: PolicyErrorItem[];
   available: boolean;
   /**
-   * ProfileSaved is false while config.json names no profile: Profile is then the
-   * default, and a parentless run opens on another one until a profile is saved.
+   * ProfileSaved is false while config.json names no known profile, so Profile is the
+   * default (policyfile.DefaultRunProfile owns what a parentless run opens on then).
    */
   profile_saved: boolean;
 }
