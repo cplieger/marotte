@@ -196,7 +196,7 @@ func handlePRDetail(w http.ResponseWriter, r *http.Request, core forgeapi.Core, 
 		httpreply.BadRequest(w, "invalid PR number")
 		return
 	}
-	pr, err := core.ReadPR(r.Context(), ref, forgeapi.PRRef{Number: number})
+	pr, err := core.ReadPR(r.Context(), ref, forgeapi.PRRef{Number: number}, noReviews)
 	if err != nil {
 		writeOpsError(w, r, err)
 		return

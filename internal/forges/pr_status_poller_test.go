@@ -671,8 +671,6 @@ func TestProviderCheckVerdicts_MatchTheStatedScope(t *testing.T) {
 				"/api/v1/repos/alice/app/pulls/5":              pull(5),
 				"/api/v1/repos/alice/app/commits/head4/status": status(4, four),
 				"/api/v1/repos/alice/app/commits/head5/status": status(5, five),
-				"/api/v1/repos/alice/app/pulls/4/reviews":      "[]",
-				"/api/v1/repos/alice/app/pulls/5/reviews":      "[]",
 			}
 		}
 		wire := &pathWire{bodies: map[string]string{
@@ -684,6 +682,15 @@ func TestProviderCheckVerdicts_MatchTheStatedScope(t *testing.T) {
 		if got := sortedBodies(sent); !slices.Equal(got, want) {
 			t.Errorf("Gitea notices = %q and verdicts %v, want %q: each tracked row's read folds its head's statuses (the forge saw %q)",
 				got, held, want, wire.requests())
+		}
+		var reviews []string
+		for _, req := range wire.requests() {
+			if strings.HasSuffix(req, "/reviews") {
+				reviews = append(reviews, req)
+			}
+		}
+		if len(reviews) != 0 {
+			t.Errorf("the poller read reviews %q, want none: no PR wire type carries a review count", reviews)
 		}
 	})
 }

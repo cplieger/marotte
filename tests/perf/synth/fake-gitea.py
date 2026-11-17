@@ -3,8 +3,8 @@
 
 Enough for marotte's forge inventory and the git panel's Pull requests view: /version,
 /settings/api, /user, /user/repos, /users/<o>/repos, /repos/<o>/<r>, /repos/<o>/<r>/pulls,
-/repos/<o>/<r>/pulls/<n>/reviews, /repos/<o>/<r>/issues, /repos/issues/search,
-/repos/<o>/<r>/commits/<sha>/status and /repos/<o>/<r>/actions/runs, in the shapes of github.com/cplieger/forgeapi/v3's gitea/wire.go.
+/repos/<o>/<r>/issues, /repos/issues/search, /repos/<o>/<r>/commits/<sha>/status and
+/repos/<o>/<r>/actions/runs, in the shapes of github.com/cplieger/forgeapi/v3's gitea/wire.go.
 Every request is logged as one JSON line (path, status, bytes) to --log. With --churn FILE, while
 FILE holds {"every_ms": I, "count": N}, every I ms the N least recently updated pull requests get
 a new head sha and updated_at.
@@ -165,8 +165,6 @@ class H(BaseHTTPRequestHandler):
                     if str(w['number']) == rest[1]:
                         return self.reply(200, w)
                 return self.reply(404, {'message': 'pull not found'})
-            if len(rest) == 3 and rest[0] == 'pulls' and rest[2] == 'reviews':
-                return self.reply(200, [], 0)
             if rest == ['issues']:
                 return self.reply(200, [], 0)
             if len(rest) == 3 and rest[0] == 'commits' and rest[2] == 'status':

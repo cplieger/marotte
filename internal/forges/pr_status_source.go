@@ -129,7 +129,7 @@ func readerOf(core forgeapi.Core, family forgeapi.Family) func(context.Context, 
 		if err != nil {
 			return PR{}, err
 		}
-		got, err := core.ReadPR(ctx, ref, forgeapi.PRRef{Number: number})
+		got, err := core.ReadPR(ctx, ref, forgeapi.PRRef{Number: number}, noReviews)
 		if err != nil {
 			return PR{}, err
 		}

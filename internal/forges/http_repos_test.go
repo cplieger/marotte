@@ -35,6 +35,7 @@ type pagedCore struct {
 	refs       []string
 	prReads    []forgeapi.PRRef
 	prSets     []forgeapi.ListSettings
+	readSets   []forgeapi.ReadSettings
 	mu         sync.Mutex
 }
 
@@ -88,11 +89,12 @@ func (c *pagedCore) CommitStatus(_ context.Context, repo forgeapi.RepoRef, ref s
 	return c.checks, c.checksErr
 }
 
-func (c *pagedCore) ReadPR(_ context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error) {
+func (c *pagedCore) ReadPR(_ context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, opts ...forgeapi.ReadOption) (forgeapi.PullRequest, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.asked = append(c.asked, repo)
 	c.prReads = append(c.prReads, pr)
+	c.readSets = append(c.readSets, forgeapi.ResolveRead(opts...))
 	return c.read, c.readErr
 }
 
@@ -448,6 +450,19 @@ func TestListRoute_ReadsNoReviews(t *testing.T) {
 		if !set.ReviewsSet || set.Reviews {
 			t.Errorf("ListPRs call %d: reviews set %v, read %v; want WithReviews(false)", i, set.ReviewsSet, set.Reviews)
 		}
+	}
+}
+
+func TestPRDetailRoute_ReadsNoReviews(t *testing.T) {
+	core := &pagedCore{read: seedPR(seedHead)}
+	mux := repoRoutes(recordManager(t, core))
+	if rec := getRoute(t, mux, githubRepoPath("v1.6f2f72", "prs/15")); rec.Code != http.StatusOK {
+		t.Fatalf("GET prs/15 = %d %s, want 200", rec.Code, rec.Body)
+	}
+	core.mu.Lock()
+	defer core.mu.Unlock()
+	if len(core.readSets) != 1 || core.readSets[0].Reviews {
+		t.Errorf("ReadPR settings = %+v, want one read with WithReviews(false)", core.readSets)
 	}
 }
 
