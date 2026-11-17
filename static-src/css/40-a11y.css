@@ -43,8 +43,7 @@
 }
 
 /* The transcript scroller holds focus (tabindex -1) only so a tap, a scroll key or a script can park it
- * there; it is not a control, so it never rings, whatever focused it. `:focus`, because the UA's own
- * `outline: auto` follows `:focus-visible` in one engine and `:focus` in another. */
+ * there; it is not a control, so it never rings, whatever focused it. */
 [id="messages-wrap"]:focus {
   outline: none;
 }

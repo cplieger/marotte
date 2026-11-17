@@ -162,6 +162,36 @@ describe("a dialog's focus return", () => {
     });
     expect(outlineOf(rewind)).toBe(RING);
   });
+
+  it("draws no ring on the opener when Escape closes a confirm a click opened", async () => {
+    const rewind = mountRewindButton();
+    await userEvent.click(rewind);
+    openConfirm();
+
+    await userEvent.keyboard("{Escape}");
+
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(rewind);
+    });
+    expect(outlineOf(rewind)).toBe("none");
+  });
+
+  it("rings the opener when a click closes a confirm the keyboard opened", async () => {
+    const rewind = mountRewindButton();
+    rewind.focus();
+    await userEvent.keyboard("{Enter}");
+    const cancel = openConfirm().querySelector<HTMLButtonElement>(".uip-ask-cancel");
+    if (cancel === null) {
+      throw new Error("no Cancel");
+    }
+
+    await userEvent.click(cancel);
+
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(rewind);
+    });
+    expect(outlineOf(rewind)).toBe(RING);
+  });
 });
 
 describe("a dialog opened by keyboard", () => {

@@ -3,7 +3,7 @@
 // only what differs and then checks the pass, so a pass made stale by that
 // code restarts before its next effect.
 
-import { focusOptions, quietPlatformFocus } from "./scripted-focus.js";
+import { type Press, focusOptions, matchPlatformFocus } from "./scripted-focus.js";
 
 /** The inline style properties realization writes. */
 export type StyleProp =
@@ -37,10 +37,10 @@ export interface Fx {
   append(parent: Node, child: Node): void;
   /** Skipped when detached. */
   remove(node: ChildNode): void;
-  /** Skipped when `el` is focused or detached. Rings only when the keyboard led to it (`focusOptions`). */
+  /** Skipped when `el` is focused or detached. No ring after a pointer press (`focusOptions`). */
   focus(el: HTMLElement): void;
-  /** `quietPlatformFocus`: after `showModal` or a close, whose focus the platform places. */
-  quietFocus(): void;
+  /** `matchPlatformFocus`: after `showModal` or a close, whose focus the platform places. */
+  matchFocus(press: Press): void;
   /** Skipped unless `el` is focused. */
   blur(el: HTMLElement): void;
   click(el: HTMLElement): void;
@@ -173,8 +173,8 @@ export function fxAt(pass: Pass): Fx {
         pass.check();
       }
     },
-    quietFocus() {
-      quietPlatformFocus();
+    matchFocus(press) {
+      matchPlatformFocus(press);
       pass.check();
     },
     blur(el) {

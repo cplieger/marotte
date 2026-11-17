@@ -1,5 +1,5 @@
 // A confirm opened from a control returns focus to that control at close, even where the click gave the control no
-// focus (WebKit's buttons), so the dialog's restore never lands on the transcript scroller and rings it.
+// focus (WebKit's buttons), so the dialog's restore lands on the opener, not on the transcript scroller.
 import { describe, it, expect, afterEach } from "vitest";
 import { userEvent } from "vitest/browser";
 
@@ -138,5 +138,19 @@ describe("a confirm's focus", () => {
     await expect(answer).resolves.toBe(false);
 
     expect(document.activeElement).toBe(other);
+  });
+
+  it("resolves false when a later confirm preempts it, before that one is answered", async () => {
+    const first = confirm({ title: "Delete notes.md?" });
+    const second = confirm({ title: "Close this busy tab?" });
+
+    await expect(first).resolves.toBe(false);
+
+    const dialog = document.querySelector<HTMLDialogElement>("dialog.uip-ask[open]");
+    expect(dialog?.querySelector(".uip-ask-title")?.textContent, "the second still asks").toBe(
+      "Close this busy tab?",
+    );
+    dialog?.querySelector<HTMLButtonElement>(".uip-ask-cancel")?.click();
+    await expect(second).resolves.toBe(false);
   });
 });

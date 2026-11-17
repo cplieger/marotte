@@ -8,6 +8,7 @@ import { sectionFolded, setSectionFolded } from "./device-view.js";
 import { isSliding, slideBox } from "./disclosure-row.js";
 import { $, maybeEl, setText } from "./dom.js";
 import { iconEl } from "./icon-el.js";
+import { type Press, focusAs, lastPress } from "./legacy-ui/scripted-focus.js";
 import { bindContextPress } from "./context-hold.js";
 import { ICON_TRASH } from "./icons.js";
 import { deleteClosedChat } from "./chat-delete.js";
@@ -125,6 +126,8 @@ export function initHistorySection(): void {
       Math.max(0, turnAt - Date.now()),
     );
   };
+  /** The press that asked for each delete in flight: its row's focus moves take that press's ring. */
+  const deletePress = new Map<string, Press | null>();
 
   const noteFocus = (): Mark | null => {
     const f = document.activeElement;
@@ -144,8 +147,9 @@ export function initHistorySection(): void {
 
   /** Put focus back after a repaint when it was at `mark` and is now lost: on the same control, re-seated or
    *  not, else the nearest row after, before, More, the header, the Open section's first row, History's entry,
-   *  the composer or the active tab's row. Focus anywhere shown is left alone. */
-  const restoreFocus = (mark: Mark | null): void => {
+   *  the composer or the active tab's row, with the ring of `press` (`focusAs`). Focus anywhere shown is left
+   *  alone. */
+  const restoreFocus = (mark: Mark | null, press?: Press | null): void => {
     const now = document.activeElement;
     if (mark === null || (now !== document.body && isShown(now))) {
       return;
@@ -168,16 +172,16 @@ export function initHistorySection(): void {
     ].find((r) => !r.classList.contains("exiting") && isShown(r));
     for (const to of [...near, $.historyMore, toggle, openRow]) {
       if (isShown(to)) {
-        to.focus();
+        focusAs(to, press);
         if (document.activeElement === to) {
           return;
         }
       }
     }
-    if (!focusHistoryEntry()) {
+    if (!focusHistoryEntry(press)) {
       $.promptInput.focus();
       if (document.activeElement !== $.promptInput) {
-        focusTabRow(getActiveTabId());
+        focusTabRow(getActiveTabId(), press);
       }
     }
   };
@@ -223,6 +227,7 @@ export function initHistorySection(): void {
     row.remove.setAttribute("aria-busy", "true");
     // A click that moves no focus (confirm.ts owns the WebKit case) can leave it outside the section: the row stands for it.
     const mark = noteFocus() ?? { at: "row", ref, order };
+    deletePress.set(ref, lastPress());
     try {
       if (await deleteClosedChat(ref, row.label)) {
         // History refreshes when it shows, so the chat leaves it too.
@@ -231,7 +236,8 @@ export function initHistorySection(): void {
     } finally {
       busy.delete(ref);
       row.remove.removeAttribute("aria-busy");
-      restoreFocus(mark);
+      restoreFocus(mark, deletePress.get(ref));
+      deletePress.delete(ref);
     }
   }
 
@@ -369,7 +375,7 @@ export function initHistorySection(): void {
     if (!isSliding(section)) {
       list.hidden = folded;
     }
-    restoreFocus(mark);
+    restoreFocus(mark, mark !== null && "ref" in mark ? deletePress.get(mark.ref) : undefined);
   });
 
   toggle.addEventListener("click", () => {

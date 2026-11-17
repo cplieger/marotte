@@ -255,6 +255,7 @@ const webkitDevices = [
 const pointerEngineFiles = [
   "context-menu.pointer.test.ts",
   "focus-ring-scripted.pointer.test.ts",
+  "history-section-focus.pointer.test.ts",
   "messages-rewind-focus.pointer.test.ts",
 ];
 

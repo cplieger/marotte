@@ -1,24 +1,25 @@
-// scripted-focus.ts — INTERNAL: a focus the library or the app moves draws a ring only when the keyboard led to it.
-// Chromium and Firefox keep a focus scripted after a pointer press off `:focus-visible`; WebKit matches it,
-// for a script's `focus()` and for the focus `showModal()` and a dialog's close place, so the option is passed
-// explicitly (`focusVisible`, HTML "focusing steps"; Firefox 104, Safari 18.4, Chrome 145; an engine that
-// ignores it is one whose own heuristic already gives no ring here).
+// Chromium and Firefox keep a focus scripted after a pointer press off `:focus-visible`; WebKit matches it, for a
+// script's `focus()` and for the focus `showModal()` and a dialog's close place, so the option is passed explicitly.
+// https://html.spec.whatwg.org/multipage/interaction.html#focusing-steps (`focusVisible`); support:
+// https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/focus#browser_compatibility (Chrome 145, Firefox 104,
+// Safari 18.4). Chrome 132-144 ignore it, and their own heuristic already gives no ring after a pointer press.
 
-/** The last press was a pointer's (mouse, pen or touch), not a key's. */
-let pointerLed = false;
+/** What the last press was: a pointer's (mouse, pen or touch), a key's, or none yet. */
+export type Press = "pointer" | "key";
+let last: Press | null = null;
 
 const doc = (globalThis as { readonly document?: Document }).document;
 doc?.addEventListener(
   "pointerdown",
   () => {
-    pointerLed = true;
+    last = "pointer";
   },
   { capture: true, passive: true },
 );
 doc?.addEventListener(
   "keydown",
   () => {
-    pointerLed = false;
+    last = "key";
   },
   { capture: true, passive: true },
 );
@@ -28,23 +29,41 @@ const TEXT_ENTRY =
   "textarea, [contenteditable]:not([contenteditable='false']), input:not([type='button'], [type='submit'], " +
   "[type='reset'], [type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file'], [type='image'])";
 
-/** The options for a scripted `el.focus()`: no ring after a pointer press, the engine's heuristic otherwise. */
-export function focusOptions(el: Element): FocusOptions {
-  return pointerLed && !el.matches(TEXT_ENTRY) ? { focusVisible: false } : {};
+export function lastPress(): Press | null {
+  return last;
 }
 
-/** Take the ring off the focused element when a platform step placed it there after a pointer press. A focused
- *  element's `focus()` is a no-op, so it is blurred and focused again with the option. */
-export function quietPlatformFocus(): void {
+/** The options for a scripted `el.focus()`: no ring after a pointer press, the engine's heuristic otherwise. */
+export function focusOptions(el: Element): FocusOptions {
+  return last === "pointer" && !el.matches(TEXT_ENTRY) ? { focusVisible: false } : {};
+}
+
+/** Give the focused control the ring of `press`, the press that opened what put focus there: none for a pointer's,
+ *  the ring for a key's, whichever input closed it. A focused element's `focus()` is a no-op, so it is blurred and
+ *  focused again with the option. */
+export function matchPlatformFocus(press: Press): void {
   const el = document.activeElement;
+  const ring = press === "key";
   if (
-    pointerLed &&
     el instanceof HTMLElement &&
-    el.matches(":focus-visible") &&
-    !el.matches(TEXT_ENTRY)
+    el !== document.body &&
+    !el.matches(TEXT_ENTRY) &&
+    el.matches(":focus-visible") !== ring
   ) {
     el.blur();
-    el.focus({ focusVisible: false, preventScroll: true });
+    el.focus({ focusVisible: ring, preventScroll: true });
+  }
+}
+
+/** Focus `el` with the ring of `press` (`matchPlatformFocus`), or the engine's heuristic when `press` is unset. */
+export function focusAs(el: HTMLElement, press?: Press | null): void {
+  if (press === undefined || press === null) {
+    el.focus();
+    return;
+  }
+  el.focus(el.matches(TEXT_ENTRY) ? {} : { focusVisible: press === "key" });
+  if (document.activeElement === el) {
+    matchPlatformFocus(press);
   }
 }
 

@@ -119,6 +119,7 @@ import { viewportBox, viewportMoved } from "./viewport-frame.js";
 import { showContextMenu } from "./context-menu.js";
 import { bindContextPress } from "./context-hold.js";
 import { isContextPressRelease } from "./legacy-ui/context-press.js";
+import { type Press, focusAs } from "./legacy-ui/scripted-focus.js";
 import type { ContextMenuItem } from "./context-menu.js";
 import { downloadChatExport } from "./chat-export.js";
 import { MAX_CHAT_NAME_UNITS, downloadKiroSession, renameChat } from "./actions/chat.js";
@@ -2719,14 +2720,15 @@ function paintStripNow(): void {
 }
 
 /** Focus a tab's row when it is drawn and not folded away, drawing a queued render first, since a
- *  row adopted from a reply is drawn one frame later. Answers whether the row took focus. */
-export function focusTabRow(id: string): boolean {
+ *  row adopted from a reply is drawn one frame later, with the ring of `press` (`focusAs`). Answers whether the
+ *  row took focus. */
+export function focusTabRow(id: string, press?: Press | null): boolean {
   paintStripNow();
   const node = elementOf(id);
   if (node === null || node.hidden || node.classList.contains("exiting")) {
     return false;
   }
-  node.focus();
+  focusAs(node, press);
   return document.activeElement === node;
 }
 
@@ -2762,13 +2764,16 @@ function syncHistoryRow(on: boolean): void {
 }
 
 /** Focus More, else, when no closed chat draws it or its section is folded, the shown History
- *  page's pill. False when neither is in sight, so the caller lands focus elsewhere. */
-export function focusHistoryEntry(): boolean {
+ *  page's pill, with the ring of `press` (`focusAs`). False when neither is in sight, so the caller
+ *  lands focus elsewhere. */
+export function focusHistoryEntry(press?: Press | null): boolean {
   const pill = queryEl<HTMLElement>(HISTORY_VIEW)?.querySelector<HTMLElement>(
     '[data-history-tab][aria-selected="true"]',
   );
   const to = [$.historyMore, pill].find((e) => e != null && e.getClientRects().length > 0);
-  to?.focus();
+  if (to != null) {
+    focusAs(to, press);
+  }
   return to !== undefined;
 }
 

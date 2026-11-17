@@ -109,6 +109,8 @@ let questionSeq = 0;
 /** The one live question across both shapes; only it is unsettled. */
 let current: Question | null = null;
 const slots: Record<Shape, Slot | null> = { boolean: null, input: null };
+/** The `asksClosed` checks waiting, run again when a question goes live. */
+const asked = new Set<() => void>();
 
 /** Replace the live question, settling the outgoing one exactly once. */
 function replaceCurrent(
@@ -433,6 +435,9 @@ export function ask(message: string, opts?: AskOptions): Promise<boolean | strin
       reject,
     };
     replaceCurrent(q);
+    for (const check of [...asked]) {
+      check();
+    }
     mine.question = q;
     mine.engine.open(q.id);
     other?.engine.close();
@@ -441,20 +446,22 @@ export function ask(message: string, opts?: AskOptions): Promise<boolean | strin
   });
 }
 
-/** Resolves once no ask dialog is open, its fade-out included: until then the page outside is inert and refuses
- *  focus. */
+/** Resolves once no ask dialog is open, its fade-out included (until then the page outside is inert and refuses
+ *  focus), or once another question is live: its dialog holds the page until its own answer. */
 export function asksClosed(): Promise<void> {
   const dialogs = [slots.boolean, slots.input].flatMap((s) => (s === null ? [] : [s.refs.dialog]));
   return new Promise((resolve) => {
     const check = (): void => {
-      if (dialogs.some((d) => d.open)) {
+      if (current === null && dialogs.some((d) => d.open)) {
         return;
       }
+      asked.delete(check);
       for (const d of dialogs) {
         d.removeEventListener("close", check);
       }
       resolve();
     };
+    asked.add(check);
     for (const d of dialogs) {
       d.addEventListener("close", check);
     }
@@ -474,5 +481,8 @@ export function _resetForTest(): void {
       slot.refs.dialog.remove();
       slots[shape] = null;
     }
+  }
+  for (const check of [...asked]) {
+    check();
   }
 }

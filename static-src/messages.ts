@@ -40,7 +40,7 @@ import {
   swapTranscript,
 } from "./transcript-cover.js";
 import { $ } from "./dom.js";
-import { focusOptions } from "./legacy-ui/scripted-focus.js";
+import { focusAs, lastPress } from "./legacy-ui/scripted-focus.js";
 import {
   followTargetChanged,
   getScrollEl,
@@ -1661,6 +1661,7 @@ async function handleRewindClick(target: EntryPrompt): Promise<void> {
   if (refuseSecondRewind(session.id)) {
     return;
   }
+  const opened = lastPress();
   const proceed = await confirmDialog(rewindConfirmation(target, turns.slice(at)));
   if (!proceed) {
     return;
@@ -1675,7 +1676,7 @@ async function handleRewindClick(target: EntryPrompt): Promise<void> {
     const back = paintRewinds(session.id, target.id);
     // Disabling the focused button dropped focus to <body>; give it back while the button is still mounted.
     if (back?.isConnected === true && document.activeElement === document.body) {
-      back.focus(focusOptions(back));
+      focusAs(back, opened);
     }
   }
   if (outcome.status !== "success" || getPaintedId() !== session.id) {

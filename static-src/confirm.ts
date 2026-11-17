@@ -10,7 +10,7 @@ const CONTROL = "button, summary, a[href], [role='button'], [role='menuitem']";
 let activated: HTMLElement | null = null;
 
 // WebKit focuses no button on a click (MDN `<button>` "Clicking and focus"), so a dialog opened from one restores
-// focus at close to whatever held it before: the transcript scroller, which then paints its focus ring.
+// focus at close to whatever held it before, such as the transcript scroller.
 (globalThis as { readonly document?: Document }).document?.addEventListener(
   "click",
   (e) => {
