@@ -159,11 +159,7 @@ func (e *Engine) recheck(ctx context.Context, chatID marotte.ChatID, r *rule.Rul
 			return false
 		}
 		q := &r.Status.Queue[i]
-		s, err := snapshot(q, q.PrevFire, now, false, waiting)
-		if err != nil {
-			return false
-		}
-		res, err := safeEval(r.Spec.Condition, &s)
+		res, err := judge(r, q, q.PrevFire, now, botState{waiting: waiting})
 		if err == nil && res.Value == rule.True {
 			still = true
 			return false
@@ -184,8 +180,11 @@ func (e *Engine) recheck(ctx context.Context, chatID marotte.ChatID, r *rule.Rul
 }
 
 // send renders ev and hands it to the Bot's chat, then marks it queued under the run entry holding its prompt; the
-// turn-open tap counts it sent (settle).
+// turn-open tap counts it sent (settle). A drain sends nothing.
 func (e *Engine) send(ctx context.Context, chatID marotte.ChatID, r *rule.Rule, ev *rule.QueuedEvent, now time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	logArgs := eventArgs(chatID, r.ID, kindOf(&r.Spec, ev.Trigger), ev.EventID)
 	text, err := rule.Render(r.Spec, ev)
 	if err != nil {

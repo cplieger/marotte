@@ -13,7 +13,7 @@ import { openFile } from "./editor-openers.js";
 import { paintStatus } from "./fundamentals/work-status.js";
 import { releaseMarkdownIn, renderMarkdownInto } from "./markdown.js";
 import { paintIfChanged, sigChanged } from "./paint-sig.js";
-import { initSegmentedBar } from "./segmented-bar.js";
+import { initSegmentedBar, segmentId } from "./segmented-bar.js";
 import { editorDocSkeleton } from "./skeleton.js";
 import { get, isBusy, watchBusy } from "./store.js";
 import { openChatRefs, openSpecRefs, parentChatRef, setTabParent, tabIdFor } from "./tabs.js";
@@ -971,7 +971,7 @@ function paint(ref: string): void {
   const active = st.doc ?? segments[0]?.file ?? "";
   page.paintBar?.(active);
   page.pane.setAttribute("role", "tabpanel");
-  page.pane.setAttribute("aria-labelledby", `${SPEC_ID_PREFIX}-tab-${active}`);
+  page.pane.setAttribute("aria-labelledby", segmentId(SPEC_ID_PREFIX, active));
 
   const seg = segments.find((s) => s.file === active);
   const paneParts = [

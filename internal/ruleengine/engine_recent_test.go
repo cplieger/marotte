@@ -30,24 +30,24 @@ func TestEngine_ASlotTheRuleAlreadyEvaluatedFiresNothing(t *testing.T) {
 	})
 }
 
-// A rule remembers the last 100 event ids it evaluated, newest last.
+// A rule remembers the last 100 event ids its triggers evaluated, newest last.
 func TestEngine_RemembersTheLast100EventIDs(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := newHarness(t)
-		r := weekly(h)
+		r := armedRule("r1", specOf("Tidy", nil, everyT("t1", 5, "")), h.at(0))
 		for i := range 100 {
-			r.Status.Recent = append(r.Status.Recent, "manual:old-"+strconv.Itoa(i))
+			r.Status.Recent = append(r.Status.Recent, "every:t1:old-"+strconv.Itoa(i))
 		}
 		h.seedBot("b1", r)
 		h.scan()
 		h.start()
-		h.runNow("op-1")
+		h.advance(5 * time.Minute)
 		got := h.rule("b1", "r1").Status.Recent
 		if len(got) != 100 {
 			t.Fatalf("recent holds %d ids %v, want 100", len(got), got)
 		}
-		if got[0] != "manual:old-1" || got[99] != "manual:op-1" {
-			t.Errorf("recent runs from %q to %q, want manual:old-1 to manual:op-1", got[0], got[99])
+		if want := dueID("t1", h.at(5*time.Minute)); got[0] != "every:t1:old-1" || got[99] != want {
+			t.Errorf("recent runs from %q to %q, want every:t1:old-1 to %s", got[0], got[99], want)
 		}
 	})
 }

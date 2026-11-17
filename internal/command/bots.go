@@ -96,9 +96,7 @@ type botRoles struct {
 	writes *keylock.Set[marotte.ChatID]
 	// rules is the rule engine, nil until composition wires it (Dispatcher.SetRuleEngine).
 	rules RuleEngine
-	// replays answers a bot_save's op_id again, keyed by chat and op; written under the Bot's writes lock.
-	replays *opLedger[rulesReplay]
-	paths   bot.Paths
+	paths bot.Paths
 }
 
 // botSave is a validated bot_save payload.
@@ -117,13 +115,14 @@ type botSave struct {
 	start    bool
 }
 
-// cmdBotSave writes a Bot's setup, its rules included, in one record write and applies what the save changed: a
-// renamed started Bot's KAS sessions, a reload mark when the role's text moved, the rule engine's reindex, and on a
-// draft's start the memory file and the kickoff prompt. A replayed op_id answers its first save's ids. The model switch, the supervised switch and the save's own write each move spec_version when they change
-// the Bot's view, so the answered version is above every one published during the save. A stale base_version, or a
-// model pick the switch refuses, saves nothing. A supervised switch refused after a model pick that changed the
-// record answers bot_supervised naming the field and keeps that pick with spec_version bumped. bot_supervised,
-// whatever its status, leaves the base stale, and so does a refused model pick whose stop already landed.
+// cmdBotSave writes a Bot's setup, rules included, in one record write and applies what the save changed: a renamed
+// started Bot's KAS sessions, a reload mark when the role's text moved, the rule engine's reindex, and on a draft's
+// start the memory file and kickoff prompt. A retried op_id answers its first save's ids until spec_version moves.
+// The model switch, the supervised switch and the save's write each move spec_version when they change the Bot's
+// view, so the answered version is above every one published during the save. A stale base_version, or a model pick
+// the switch refuses, saves nothing. A supervised switch refused after a model pick that changed the record answers
+// bot_supervised naming the field and keeps that pick with spec_version bumped; bot_supervised, whatever its status,
+// leaves the base stale, as does a refused model pick whose stop already landed.
 func cmdBotSave(ctx context.Context, roles *botRoles, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
@@ -142,7 +141,7 @@ func cmdBotSave(ctx context.Context, roles *botRoles, cmd *marotte.ClientCommand
 	}
 	out := map[string]any{"chat": w.header, "spec_version": w.version}
 	if s.rules != nil {
-		out["rule_ids"], out["trigger_ids"] = w.replay.ruleIDs, w.replay.triggerIDs
+		out["rule_ids"], out["trigger_ids"] = w.answer.RuleIDs, w.answer.TriggerIDs
 	}
 	if w.changes.has(fieldStarted) {
 		if msg := startBot(ctx, roles, cmd.ChatID, w.rec); msg != "" {
@@ -164,9 +163,8 @@ func lockedBotSave(ctx context.Context, roles *botRoles, chatID marotte.ChatID, 
 	if !ok || cur.Bot == nil {
 		return botWrite{}, StatusErrorReason(http.StatusConflict, reasonBotNotFound, errBotNotFound)
 	}
-	key := replayKey(chatID, s)
-	if r, seen := roles.replays.peek(key); seen {
-		return botWrite{rec: cur, header: cur.Header(), version: r.version, replay: r}, nil
+	if a := savedAnswer(cur.Bot, s); a != nil {
+		return botWrite{rec: cur, header: cur.Header(), version: a.Version, answer: *a}, nil
 	}
 	if err := planBotRules(cur, s); err != nil {
 		return botWrite{}, err
@@ -186,10 +184,6 @@ func lockedBotSave(ctx context.Context, roles *botRoles, chatID marotte.ChatID, 
 	w, err := writeBotSave(ctx, roles.chats, chatID, &read, s)
 	if err != nil {
 		return botWrite{}, err
-	}
-	if s.rules != nil {
-		w.replay = rulesReplay{ruleIDs: s.plan.ruleIDs, triggerIDs: s.plan.triggerIDs, version: w.version}
-		roles.replays.put(key, w.replay)
 	}
 	applyBotSave(ctx, roles, chatID, &w)
 	return w, nil
@@ -339,7 +333,7 @@ type botWrite struct {
 	rec     *marotte.Chat
 	chain   []string
 	changes botChanges
-	replay  rulesReplay
+	answer  marotte.BotSaveAnswer
 	header  marotte.ChatHeader
 	version int
 	// rulesWritten says the write changed a rule's spec or status, which the rule engine reads again.
@@ -355,27 +349,7 @@ func writeBotSave(
 	var w botWrite
 	var refused error
 	write := marotte.BotWriter(func(c *marotte.Chat, _ bool) bool {
-		if s == nil {
-			return false
-		}
-		was := *c.Bot
-		b := was
-		named := setUserName(c, s.name)
-		b.Goal, b.Memory, b.Steering = s.goal, s.memory, s.steering
-		now := time.Now()
-		if s.start && b.StartedAt == 0 {
-			b.StartedAt = now.UnixMilli()
-		}
-		switch {
-		case s.rules != nil:
-			applyRules(&b, &was, &s.plan, now)
-			w.rulesWritten = true
-		case !rulesArmed(&was) && rulesArmed(&b):
-			w.rulesWritten = armBot(&b, now)
-		}
-		c.Bot = &b
-		return named || w.rulesWritten || b.Goal != was.Goal || b.Memory != was.Memory || b.Steering != was.Steering ||
-			b.StartedAt != was.StartedAt
+		return s != nil && putBotSave(c, s, &w)
 	})
 	if _, err := chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists || c.Bot == nil {
@@ -383,6 +357,9 @@ func writeBotSave(
 			return false
 		}
 		wrote := write(c, exists)
+		if wrote && s != nil && s.rules != nil {
+			w.answer = recordAnswer(c, s)
+		}
 		now := c.BotView()
 		w.changes = diffBotViews(read, &now)
 		w.version = c.Bot.SpecVersion
@@ -395,6 +372,29 @@ func writeBotSave(
 		return w, StatusError(http.StatusInternalServerError, err)
 	}
 	return w, refused
+}
+
+// putBotSave writes s onto c's Bot block and reports whether it changed it, setting w.rulesWritten when it wrote a
+// rule.
+func putBotSave(c *marotte.Chat, s *botSave, w *botWrite) bool {
+	was := *c.Bot
+	b := was
+	named := setUserName(c, s.name)
+	b.Goal, b.Memory, b.Steering = s.goal, s.memory, s.steering
+	now := time.Now()
+	if s.start && b.StartedAt == 0 {
+		b.StartedAt = now.UnixMilli()
+	}
+	switch {
+	case s.rules != nil:
+		applyRules(&b, &was, &s.plan, now)
+		w.rulesWritten = true
+	case !rulesArmed(&was) && rulesArmed(&b):
+		w.rulesWritten = armBot(&b, now)
+	}
+	c.Bot = &b
+	return named || w.rulesWritten || b.Goal != was.Goal || b.Memory != was.Memory || b.Steering != was.Steering ||
+		b.StartedAt != was.StartedAt
 }
 
 // startBot makes a just-started Bot's memory file and sends its kickoff, answering the kickoff's refusal as text (a

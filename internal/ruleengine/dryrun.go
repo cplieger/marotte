@@ -45,7 +45,7 @@ func Test(d *DryRun) (marotte.RuleTestAnswer, error) {
 	}
 	ev := rule.QueuedEvent{Stage: rule.StageFired, Trigger: d.Trigger, EventID: "test", Data: d.Data, Depth: 1}
 	busy := d.Live || chatBusy(d.Chat)
-	s, err := snapshot(&ev, lastFireAt(&tested), d.Now, busy, d.Waiting)
+	s, err := snapshot(&ev, lastFireAt(&tested), d.Now, botState{busy: busy, waiting: d.Waiting})
 	if err != nil {
 		return marotte.RuleTestAnswer{}, err
 	}

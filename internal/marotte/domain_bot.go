@@ -38,6 +38,8 @@ func (c *Chat) IsStartedBot() bool {
 // Bot is the block that makes a chat a Bot: a chat whose record carries it is one, for good, and every setting
 // marotte keeps about the Bot lives here, in the chat's own chat.json. Field order is fieldalignment's.
 type Bot struct {
+	// LastSave is the answer of the last bot_save that sent rules, nil when it sent no op_id.
+	LastSave *BotSaveAnswer `json:"last_save,omitempty"`
 	// Goal is what the Bot keeps working toward.
 	Goal string `json:"goal"`
 	// Steering is the user's custom steering for the Bot, markdown.
@@ -55,6 +57,15 @@ type Bot struct {
 	RulesVersion int  `json:"rules_version,omitempty"`
 	Memory       bool `json:"memory"`
 	Paused       bool `json:"paused,omitempty"`
+}
+
+// BotSaveAnswer is what a bot_save with rules and an op_id answered, stored with the Bot so a retry of that op_id
+// answers it again, across a restart, while SpecVersion is still Version.
+type BotSaveAnswer struct {
+	OpID       string     `json:"op_id"`
+	RuleIDs    []string   `json:"rule_ids"`
+	TriggerIDs [][]string `json:"trigger_ids"`
+	Version    int        `json:"version"`
 }
 
 // BotView is a Bot as a save states it: the model and effort its next turn runs on, so a pick parked behind a turn

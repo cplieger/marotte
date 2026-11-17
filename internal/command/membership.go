@@ -209,7 +209,7 @@ type Membership struct {
 	// ops is the create ledger, op_id -> chat id, so a retry resolves to the chat
 	// its first attempt made. Here rather than in the handlers because resolving
 	// an op and reserving a tab slot must happen in the same critical section.
-	ops *opLedger[marotte.ChatID]
+	ops *createLedger
 	// sessions is the fresh session-chain read AdmitRunPurge decides on. Nil spares
 	// every run that names a parent session.
 	sessions sessionClaims
@@ -274,7 +274,7 @@ func newMembership(deps *membershipDeps) *Membership {
 		runs:              deps.Runs,
 		sessions:          deps.Sessions,
 		supervisedDefault: deps.SupervisedDefault,
-		ops:               newOpLedger[marotte.ChatID](),
+		ops:               newCreateLedger(),
 		purgingRuns:       map[string]struct{}{},
 		purgingSessions:   map[string]int{},
 		recentWake:        make(chan struct{}, 1),

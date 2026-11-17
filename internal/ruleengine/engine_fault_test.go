@@ -115,8 +115,8 @@ func TestEngine_ATimeTriggerNeverStacksBesideRunNow(t *testing.T) {
 	})
 }
 
-// A Run now press while another waits stores, logs and counts nothing, and answers queued each time it is retried.
-func TestEngine_APressBesideAWaitingOneStoresNothing(t *testing.T) {
+// A Run now press while another waits fires nothing, logs no fire, and answers queued each time it is retried.
+func TestEngine_APressBesideAWaitingOneFiresNothing(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := newHarness(t)
 		h.seedBot("b1", weekly(h))
@@ -128,8 +128,8 @@ func TestEngine_APressBesideAWaitingOneStoresNothing(t *testing.T) {
 				t.Errorf("%s answered %+v, want queued", op, ans)
 			}
 		}
-		if got := h.rule("b1", "r1").Status.Recent; !slices.Equal(got, []string{"manual:op-1"}) {
-			t.Errorf("recent %v, want the first press alone", got)
+		if q := h.rule("b1", "r1").Status.Queue; !slices.Equal(eventIDs(q), []string{"manual:op-1"}) {
+			t.Errorf("queue %v, want the first press alone", eventIDs(q))
 		}
 		if got := h.logs.lines(slog.LevelInfo, "rule fired"); got != 1 {
 			t.Errorf("%d fired lines, want 1", got)
@@ -263,6 +263,68 @@ func TestEngine_AWriteOwedBySendLandsAfterTheFault(t *testing.T) {
 		r := h.rule("b1", "r1")
 		if len(r.Status.Queue) != 0 || len(r.Status.Sent) != 0 || r.Status.Dropped != 1 {
 			t.Errorf("queue %v sent %v dropped %d, want it dropped and counted, nothing sent", eventIDs(r.Status.Queue), r.Status.Sent, r.Status.Dropped)
+		}
+	})
+}
+
+// A drain that lands between taking the boot's held row back and the settle's write never loses the row: the write
+// lands anyway, and the next process sends the event once and drops nothing.
+func TestEngine_AnOwedWriteSurvivesADrainAtItsRetry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(t)
+		seedQueued(h)
+		var faulted, drained atomic.Bool
+		var afterFault atomic.Int64
+		h.restart(func() {
+			h.notes.afterUnqueue = func() {
+				if !faulted.Swap(true) {
+					h.fs.failing.Store(true)
+				}
+			}
+			// The first write after the fault is the settle's, which faults; the second is its retry.
+			h.fs.beforeMutate = func() {
+				if faulted.Load() && afterFault.Add(1) == 2 && !drained.Swap(true) {
+					h.fs.failing.Store(false)
+					h.cancel()
+				}
+			}
+		})
+		h.wantSent("during the fault", 0)
+		h.advance(time.Minute)
+		if !drained.Load() {
+			t.Fatal("the owed write was never retried")
+		}
+		h.wantSent("before the next process", 0)
+		h.restart()
+		h.advance(time.Minute)
+		h.wantSent("after the next process starts", 1)
+		r := h.rule("b1", "r1")
+		if len(r.Status.Queue) != 0 || len(r.Status.Sent) != 1 || r.Status.Dropped != 0 {
+			t.Errorf("queue %v sent %v dropped %d, want the event delivered once and nothing dropped",
+				eventIDs(r.Status.Queue), r.Status.Sent, r.Status.Dropped)
+		}
+	})
+}
+
+func TestEngine_ARowTakenBackSurvivesADrainBeforeTheSettlesWrite(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(t)
+		seedQueued(h)
+		h.restart(func() { h.notes.afterUnqueue = func() { h.cancel() } })
+		if got := h.notes.unqueuedRows(); !slices.Equal(got, []string{"m-1"}) {
+			t.Fatalf("unqueued %v, want the held row m-1", got)
+		}
+		h.wantSent("before the next process", 0)
+		h.restart()
+		h.advance(time.Minute)
+		got := h.wantSent("after the next process starts", 1)
+		if eventIDOf(got[0]) != dueID("t1", h.at(5*time.Minute)) {
+			t.Errorf("resent %q, want the 5 min event", eventIDOf(got[0]))
+		}
+		r := h.rule("b1", "r1")
+		if len(r.Status.Queue) != 0 || len(r.Status.Sent) != 1 || r.Status.Dropped != 0 {
+			t.Errorf("queue %v sent %v dropped %d, want the event delivered once and nothing dropped",
+				eventIDs(r.Status.Queue), r.Status.Sent, r.Status.Dropped)
 		}
 	})
 }

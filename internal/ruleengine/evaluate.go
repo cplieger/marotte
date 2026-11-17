@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/cplieger/marotte/internal/command"
@@ -21,8 +20,11 @@ var evalCond = rule.Eval
 // recentIDs is how many evaluated event ids a rule keeps, so a source reporting an event twice fires it once.
 const recentIDs = 100
 
-// evalPanicked starts the failure of an evaluation that panicked.
-const evalPanicked = "the evaluation panicked"
+// The failures of an evaluation that panicked and of an event that does not decode.
+const (
+	evalPanicked  = "the evaluation panicked"
+	errUnreadable = "the event could not be read"
+)
 
 // The skip mark's sentences; the reason after them is Eval's.
 const (
@@ -100,13 +102,28 @@ func (e *Engine) record(chatID marotte.ChatID, evs []evaluation) {
 	}
 }
 
+// botState is the Bot's state an evaluation reads.
+type botState struct {
+	busy, waiting bool
+}
+
 // snapshot is what an evaluation of ev reads at now, with lastFire as the rule's last fire.
-func snapshot(ev *rule.QueuedEvent, lastFire int64, now time.Time, busy, waiting bool) (rule.Snapshot, error) {
+func snapshot(ev *rule.QueuedEvent, lastFire int64, now time.Time, st botState) (rule.Snapshot, error) {
 	data, err := rule.DecodeEvent(ev.Data)
 	if err != nil {
 		return rule.Snapshot{}, err
 	}
-	return rule.Snapshot{Now: now, Trigger: ev.Trigger, Event: data, LastFire: lastFire, BotBusy: busy, BotWaiting: waiting}, nil
+	return rule.Snapshot{Now: now, Trigger: ev.Trigger, Event: data, LastFire: lastFire, BotBusy: st.busy, BotWaiting: st.waiting}, nil
+}
+
+// judge evaluates r's condition over ev; an event whose stored data does not decode fails as a panic does, so it is
+// dropped with the rule's failure rather than held for ever.
+func judge(r *rule.Rule, ev *rule.QueuedEvent, lastFire int64, now time.Time, st botState) (rule.Result, error) {
+	s, err := snapshot(ev, lastFire, now, st)
+	if err != nil {
+		return rule.Result{}, fmt.Errorf("%s: %w", errUnreadable, err)
+	}
+	return safeEval(r.Spec.Condition, &s)
 }
 
 func lastFireAt(r *rule.Rule) int64 {
@@ -133,11 +150,10 @@ func safeEval(c *rule.Cond, s *rule.Snapshot) (res rule.Result, err error) {
 	return evalCond(c, s), nil
 }
 
-// evaluate runs r's condition over ev and fires it into the queue or marks the skip; an evaluation that panics marks
-// the rule's failure. kept is false for a fired event Enqueue refuses, which changes nothing; a kept outcome is
-// remembered in Recent.
-func evaluate(r *rule.Rule, ev *rule.QueuedEvent, s *rule.Snapshot, now time.Time) (out evaluation, kept bool) {
-	res, err := safeEval(r.Spec.Condition, s)
+// evaluate runs r's condition over ev and fires it into the queue or marks the skip; a failed evaluation marks the
+// rule's failure. kept is false for a fired event Enqueue refuses, which changes nothing.
+func evaluate(r *rule.Rule, ev *rule.QueuedEvent, st botState, now time.Time) (out evaluation, kept bool) {
+	res, err := judge(r, ev, lastFireAt(r), now, st)
 	out = evaluation{rule: r.ID, kind: kindOf(&r.Spec, ev.Trigger), event: ev.EventID, reason: res.Reason, failed: err}
 	switch {
 	case err != nil:
@@ -152,8 +168,6 @@ func evaluate(r *rule.Rule, ev *rule.QueuedEvent, s *rule.Snapshot, now time.Tim
 		out.fired = true
 		r.Status.LastFire = mark(r, ev, "", now)
 	}
-	r.Status.Recent = append(r.Status.Recent, ev.EventID)
-	r.Status.Recent = r.Status.Recent[max(0, len(r.Status.Recent)-recentIDs):]
 	return out, true
 }
 
@@ -171,10 +185,10 @@ func (e *Engine) evaluateDue(ctx context.Context, chatID marotte.ChatID, c *maro
 		if !rulesArmed(c.Bot) {
 			return false
 		}
-		busy := live || chatBusy(c)
+		st := botState{busy: live || chatBusy(c), waiting: waiting}
 		moved := false
 		for i := range c.Bot.Rules {
-			evs, m := evaluateRule(&c.Bot.Rules[i], c.LastTurnEndedAt, live, busy, waiting, now)
+			evs, m := evaluateRule(&c.Bot.Rules[i], c.LastTurnEndedAt, live, st, now)
 			done = append(done, evs...)
 			moved = moved || m
 		}
@@ -208,7 +222,7 @@ func anyDue(c *marotte.Chat, live bool, now time.Time) bool {
 
 // evaluateRule evaluates each of r's armed time triggers due at now, moving its anchor whatever the outcome, and
 // reports whether it moved any: a slot already in Recent evaluates nothing but its anchor still moves.
-func evaluateRule(r *rule.Rule, lastTurnEndedAt int64, live, busy, waiting bool, now time.Time) (out []evaluation, moved bool) {
+func evaluateRule(r *rule.Rule, lastTurnEndedAt int64, live bool, bs botState, now time.Time) (out []evaluation, moved bool) {
 	if !r.Spec.Enabled {
 		return nil, false
 	}
@@ -228,11 +242,9 @@ func evaluateRule(r *rule.Rule, lastTurnEndedAt int64, live, busy, waiting bool,
 		if slices.Contains(r.Status.Recent, ev.EventID) {
 			continue
 		}
-		s, err := snapshot(&ev, lastFireAt(r), now, busy, waiting)
-		if err != nil {
-			continue
-		}
-		if done, kept := evaluate(r, &ev, &s, now); kept {
+		if done, kept := evaluate(r, &ev, bs, now); kept {
+			r.Status.Recent = append(r.Status.Recent, ev.EventID)
+			r.Status.Recent = r.Status.Recent[max(0, len(r.Status.Recent)-recentIDs):]
 			out = append(out, done)
 		}
 	}
@@ -240,7 +252,8 @@ func evaluateRule(r *rule.Rule, lastTurnEndedAt int64, live, busy, waiting bool,
 }
 
 // RunNow evaluates ruleID's manual event manual:<opID> now, in the caller, and wakes the loop to deliver it. A
-// replayed opID evaluates nothing and answers what the first press did.
+// replayed opID evaluates nothing and answers what the first press answered, stored with the rule in the press's
+// own write.
 func (e *Engine) RunNow(ctx context.Context, chatID marotte.ChatID, ruleID, opID string) (command.RunNowAnswer, error) {
 	p := runNowPress{
 		rule: ruleID, op: opID, now: time.Now(),
@@ -253,9 +266,6 @@ func (e *Engine) RunNow(ctx context.Context, chatID marotte.ChatID, ruleID, opID
 		return command.RunNowAnswer{}, command.StatusError(http.StatusNotFound, errRuleGone)
 	}
 	e.record(chatID, p.done)
-	if len(p.done) == 1 && p.done[0].failed != nil {
-		p.failed = p.done[0].failed
-	}
 	if p.failed != nil {
 		return command.RunNowAnswer{}, command.StatusError(http.StatusInternalServerError, p.failed)
 	}
@@ -276,7 +286,7 @@ type runNowPress struct {
 }
 
 func (p *runNowPress) apply(c *marotte.Chat, exists bool) bool {
-	p.done, p.found = nil, false
+	p.done, p.found, p.ans, p.failed = nil, false, command.RunNowAnswer{}, nil
 	if !exists || c.Bot == nil {
 		return false
 	}
@@ -287,50 +297,48 @@ func (p *runNowPress) apply(c *marotte.Chat, exists bool) bool {
 	p.found = true
 	r := &c.Bot.Rules[i]
 	ev := rule.ManualEvent(r.Spec, p.op, p.now)
-	if slices.Contains(r.Status.Recent, ev.EventID) {
-		p.ans, p.failed = replayed(r, ev.EventID)
+	if first, ok := rule.PressOf(&r.Status, ev.EventID); ok {
+		p.ans, p.failed = answerOf(first)
 		return false
 	}
 	busy := p.live || chatBusy(c)
-	s, err := snapshot(&ev, lastFireAt(r), p.now, busy, p.waiting)
-	if err != nil {
-		return false
+	eval, kept := evaluate(r, &ev, botState{busy: busy, waiting: p.waiting}, p.now)
+	if kept {
+		p.done = []evaluation{eval}
 	}
-	ev.Answered = string(command.RunNowFired)
-	if busy {
-		ev.Answered = string(command.RunNowQueued)
-	}
-	eval, kept := evaluate(r, &ev, &s, p.now)
-	if !kept {
-		p.ans = command.RunNowAnswer{Outcome: command.RunNowQueued}
-		return false
-	}
-	p.done = []evaluation{eval}
-	switch {
-	case eval.failed != nil:
-	case !eval.fired:
-		p.ans = command.RunNowAnswer{Outcome: command.RunNowSkipped, Reason: eval.reason}
-	default:
-		p.ans = command.RunNowAnswer{Outcome: command.RunNowOutcome(ev.Answered)}
-	}
+	p.ans, p.failed = answerOf(rule.RecordPress(&r.Status, pressOf(ev.EventID, &eval, kept, busy)))
 	c.Bot.RulesVersion++
 	return true
 }
 
-// replayed is what a Run now press already evaluated answered: skipped, its evaluation's failure, its first answer
-// while its event waits, or fired once the event left the queue.
-func replayed(r *rule.Rule, eventID string) (command.RunNowAnswer, error) {
-	if s := r.Status.LastSkip; s != nil && s.EventID == eventID {
-		return command.RunNowAnswer{Outcome: command.RunNowSkipped, Reason: strings.TrimPrefix(s.Reason, skippedPrefix)}, nil
+// pressOf is the answer a press decided as eval: queued when its Bot is busy or Enqueue refused it beside a waiting
+// press.
+func pressOf(eventID string, eval *evaluation, kept, busy bool) rule.Press {
+	switch {
+	case eval.failed != nil:
+		return rule.Press{EventID: eventID, Outcome: rule.PressFailed, Reason: eval.failed.Error()}
+	case !kept || (eval.fired && busy):
+		return rule.Press{EventID: eventID, Outcome: rule.PressQueued}
+	case eval.fired:
+		return rule.Press{EventID: eventID, Outcome: rule.PressFired}
+	default:
+		return rule.Press{EventID: eventID, Outcome: rule.PressSkipped, Reason: eval.reason}
 	}
-	if f := r.Status.LastFailure; f != nil && f.EventID == eventID && strings.HasPrefix(f.Reason, failedPrefix+evalPanicked) &&
-		(r.Status.LastFire == nil || r.Status.LastFire.EventID != eventID) {
-		return command.RunNowAnswer{}, errors.New(strings.TrimPrefix(f.Reason, failedPrefix))
+}
+
+// answerOf is Run now's answer for a stored press, the error of one that failed.
+func answerOf(p rule.Press) (command.RunNowAnswer, error) {
+	switch p.Outcome {
+	case rule.PressFired:
+		return command.RunNowAnswer{Outcome: command.RunNowFired}, nil
+	case rule.PressQueued:
+		return command.RunNowAnswer{Outcome: command.RunNowQueued}, nil
+	case rule.PressSkipped:
+		return command.RunNowAnswer{Outcome: command.RunNowSkipped, Reason: p.Reason}, nil
+	case rule.PressFailed:
+		return command.RunNowAnswer{}, errors.New(p.Reason)
 	}
-	if i := slices.IndexFunc(r.Status.Queue, func(q rule.QueuedEvent) bool { return q.EventID == eventID }); i >= 0 {
-		return command.RunNowAnswer{Outcome: command.RunNowOutcome(r.Status.Queue[i].Answered)}, nil
-	}
-	return command.RunNowAnswer{Outcome: command.RunNowFired}, nil
+	return command.RunNowAnswer{}, fmt.Errorf("a stored press has no outcome %q", p.Outcome)
 }
 
 // nextDue is the earliest due time of chatID's armed time triggers, zero for none; an idle trigger has none while

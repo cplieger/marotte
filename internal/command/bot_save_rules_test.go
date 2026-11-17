@@ -290,6 +290,71 @@ func TestCmdBotSave_AReplayedOpIDAnswersTheSameIDsAndSavesOnce(t *testing.T) {
 	}
 }
 
+func TestCmdBotSave_AReplayAfterARestartAnswersTheFirstSave(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedBot(t, store, "c-bot", "Watcher", &marotte.Bot{Goal: "Watch.", StartedAt: 1})
+	before, _ := newRuleRoles(t, store)
+	p := &marotte.BotSaveCommand{
+		Name: "Watcher", Goal: "Watch.", OpID: "op-1",
+		Rules: []marotte.BotRuleSave{ruleSave(t, "", everyRule("One", "", 30))},
+	}
+	first := saveBot(t, before, "c-bot", p)
+
+	after, _ := newRuleRoles(t, store)
+	again := saveBot(t, after, "c-bot", p)
+
+	if a, b := stringsOf(t, first["rule_ids"]), stringsOf(t, again["rule_ids"]); !slices.Equal(a, b) {
+		t.Errorf("replayed rule_ids %v, want the first answer's %v", b, a)
+	}
+	a, b := triggerIDsOf(t, first["trigger_ids"]), triggerIDsOf(t, again["trigger_ids"])
+	if !slices.EqualFunc(a, b, slices.Equal[[]string]) {
+		t.Errorf("replayed trigger_ids %v, want the first answer's %v", b, a)
+	}
+	if c := botOf(t, store, "c-bot"); len(c.Bot.Rules) != 1 || c.Bot.SpecVersion != 1 || again["spec_version"] != 1 {
+		t.Errorf("after the replay %d rules, version %d answered %v; want one rule saved once at version 1",
+			len(c.Bot.Rules), c.Bot.SpecVersion, again["spec_version"])
+	}
+}
+
+func TestCmdBotSave_AnEarlierSavesReplayAfterALaterSaveAnswersChanged(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedBot(t, store, "c-bot", "Watcher", &marotte.Bot{Goal: "Watch.", StartedAt: 1})
+	roles, _ := newRuleRoles(t, store)
+	p := &marotte.BotSaveCommand{
+		Name: "Watcher", Goal: "Watch.", OpID: "op-1",
+		Rules: []marotte.BotRuleSave{ruleSave(t, "", everyRule("One", "", 30))},
+	}
+	saveBot(t, roles, "c-bot", p)
+	saveBot(t, roles, "c-bot", &marotte.BotSaveCommand{
+		Name: "Watcher", Goal: "Watch.", BaseVersion: 1, OpID: "op-2",
+		Rules: []marotte.BotRuleSave{ruleSave(t, "", everyRule("Two", "", 60))},
+	})
+
+	_, err := cmdBotSave(t.Context(), roles, botSaveReq(t, "c-bot", p))
+
+	if statusOf(err) != http.StatusConflict || reasonOf(err) != reasonBotChanged {
+		t.Errorf("op-1 again = %d %q, want 409 %q: its rule ids are no longer the Bot's", statusOf(err), reasonOf(err), reasonBotChanged)
+	}
+}
+
+func TestCmdBotSave_AReplayAfterAnotherEditAnswersChanged(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedBot(t, store, "c-bot", "Watcher", &marotte.Bot{Goal: "Watch.", StartedAt: 1})
+	roles, _ := newRuleRoles(t, store)
+	p := &marotte.BotSaveCommand{
+		Name: "Watcher", Goal: "Watch.", OpID: "op-1",
+		Rules: []marotte.BotRuleSave{ruleSave(t, "", everyRule("One", "", 30))},
+	}
+	saveBot(t, roles, "c-bot", p)
+	saveBot(t, roles, "c-bot", &marotte.BotSaveCommand{Name: "Watcher", Goal: "Watch closely.", BaseVersion: 1})
+
+	_, err := cmdBotSave(t.Context(), roles, botSaveReq(t, "c-bot", p))
+
+	if statusOf(err) != http.StatusConflict || reasonOf(err) != reasonBotChanged {
+		t.Errorf("op-1 again = %d %q, want 409 %q: the goal moved since", statusOf(err), reasonOf(err), reasonBotChanged)
+	}
+}
+
 func TestCmdBotSave_AStaleBaseSavesNoRule(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedBot(t, store, "c-bot", "Watcher", &marotte.Bot{Goal: "Watch.", StartedAt: 1, SpecVersion: 3, Rules: []rule.Rule{storedRule("kept", 1, 2)}})

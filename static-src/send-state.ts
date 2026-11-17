@@ -7,15 +7,16 @@ import type { SendState } from "./prompt-input.js";
 import type { ConnectionStatus } from "./types.js";
 
 const sseStatus = signal<ConnectionStatus>("connecting");
-/** The reason a send cannot succeed right now, or "" when none is known. */
-const sendBlocked = signal("");
+/** Why a send cannot succeed right now, and whether the next send can clear it; null when none is known. */
+const sendBlocked = signal<{ reason: string; retry: boolean } | null>(null);
 
 const sendState = computed<SendState>(() => {
   if (sseStatus.value === "disconnected") {
-    return { kind: "error", reason: "Disconnected from the server. Reconnecting…" };
+    return { kind: "error", reason: "Disconnected from the server. Reconnecting…", retry: true };
   }
-  if (sendBlocked.value !== "") {
-    return { kind: "error", reason: sendBlocked.value };
+  const blocked = sendBlocked.value;
+  if (blocked !== null) {
+    return { kind: "error", ...blocked };
   }
   const session = activeSession.value;
   if (session === undefined) {
@@ -40,8 +41,8 @@ effect(() => {
   const id = activeSession.value?.id ?? "";
   if (id !== sendBlockedActiveID) {
     sendBlockedActiveID = id;
-    if (sendBlocked.peek() !== "") {
-      sendBlocked.value = "";
+    if (sendBlocked.peek() !== null) {
+      sendBlocked.value = null;
     }
   }
 });
@@ -52,7 +53,7 @@ export function setSSEStatus(s: ConnectionStatus): void {
   }
   sseStatus.value = s;
   if (s === "connected") {
-    sendBlocked.value = "";
+    sendBlocked.value = null;
   }
 }
 
@@ -61,19 +62,18 @@ export function setSSEStatus(s: ConnectionStatus): void {
  *  a send is allowed, because the next prompt retries it. Anything that is merely a FAILED
  *  ATTEMPT goes to failure-notice.ts. */
 export function setAgentDown(reason: string): void {
-  sendBlocked.value = reason;
+  sendBlocked.value = { reason, retry: true };
 }
 
-/** Report that the server refused a send it cannot deliver right now: the prompt admission
- *  answered 409 reason:"starting". The caller (submit.ts) owns the copy; this renders it on the
- *  send button's error face. */
-export function reportSendRefused(reason: string): void {
-  sendBlocked.value = reason;
+/** Put a refusal sentence on the send button's error face. The caller owns the words and says
+ *  whether sending again can clear the refusal. */
+export function reportSendRefused(reason: string, opts: { retry: boolean }): void {
+  sendBlocked.value = { reason, retry: opts.retry };
 }
 
 /** Clear the send-blocked state. Called on every send attempt and at every turn end, so a session
  *  that has since opened — or an admission slot that has since freed — leaves no residue on the
  *  button. */
 export function clearAgentDown(): void {
-  sendBlocked.value = "";
+  sendBlocked.value = null;
 }

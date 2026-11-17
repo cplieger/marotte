@@ -98,9 +98,12 @@ function modeOf(verb: SendVerb): InterruptMode {
   return verb === "prompt" ? interruptDefault.peek() : verb;
 }
 
-/** Appended to every error tooltip. A fixed suffix rather than a test against the reason's
+/** Appended to a retryable error's tooltip. A fixed suffix rather than a test against the reason's
  *  wording, which is upstream prose. */
 const RETRY_HINT = "Send again to retry.";
+
+/** The error face's word where no send can clear the refusal. */
+const NOT_SENT_LABEL = "Not sent";
 
 /** Sends the text naming what it does beside a running turn; a send that answers later returns its
  *  result, and the composer holds the text, read-only, until then. */
@@ -109,8 +112,9 @@ type Cancel = () => void;
 type EditLast = () => void;
 type Staged = ReadonlySignal<boolean>;
 
+/** `retry` says whether sending again can clear the error. */
 export type SendState =
-  { kind: "idle" } | { kind: "streaming" } | { kind: "error"; reason: string };
+  { kind: "idle" } | { kind: "streaming" } | { kind: "error"; reason: string; retry: boolean };
 
 type SendKind = SendState["kind"];
 
@@ -128,16 +132,25 @@ const STATE_LABEL: Record<SendKind, string> = {
   error: "Retry",
 };
 
-const DEFAULT_TOOLTIP: Record<SendKind, string> = {
+const DEFAULT_TOOLTIP: Record<Exclude<SendKind, "error">, string> = {
   idle: "Send",
   streaming: "Cancel this turn",
-  // Unreachable: send-state only builds an error with a reason of its own.
-  error: RETRY_HINT,
 };
 
-/** Doubles as the dedupe key: two errors differing only in reason are different states. */
+/** Doubles as the dedupe key: two errors differing only in reason or retry are different states. */
 function reasonOf(s: SendState): string {
-  return s.kind === "error" ? s.reason : "";
+  return s.kind === "error" ? `${s.reason}\u0000${String(s.retry)}` : "";
+}
+
+/** The visible word and the tooltip of `s`'s face. */
+function faceOf(s: SendState): { label: string; tooltip: string } {
+  if (s.kind !== "error") {
+    return { label: STATE_LABEL[s.kind], tooltip: DEFAULT_TOOLTIP[s.kind] };
+  }
+  const reason = /[.!?…]$/.test(s.reason) ? s.reason : `${s.reason}.`;
+  return s.retry
+    ? { label: STATE_LABEL.error, tooltip: `${reason} ${RETRY_HINT}` }
+    : { label: NOT_SENT_LABEL, tooltip: reason };
 }
 
 /** Two actions, not a toggle: the listening face names what a press does ("Stop dictation"), so it carries no
@@ -590,8 +603,9 @@ class PromptInputController {
       return;
     }
     clearDictate($.sendBtn);
+    const face = faceOf(this.state);
     $.sendBtn.replaceChildren(
-      el("span", { className: "send-btn-label" }, STATE_LABEL[k]),
+      el("span", { className: "send-btn-label" }, face.label),
       held ? spinnerEl("spinner-sm") : iconEl(STATE_ICON[k]),
     );
     if (held) {
@@ -599,9 +613,13 @@ class PromptInputController {
     } else {
       $.sendBtn.removeAttribute("aria-busy");
     }
-    const tooltip = reason !== "" ? `${reason} ${RETRY_HINT}` : DEFAULT_TOOLTIP[k];
+    const { label, tooltip } = face;
     $.sendBtn.setAttribute("data-tooltip", k === "streaming" ? `${tooltip} (Esc)` : tooltip);
-    $.sendBtn.setAttribute("aria-label", tooltip);
+    // The visible word stays inside the accessible name (WCAG 2.5.3).
+    $.sendBtn.setAttribute(
+      "aria-label",
+      tooltip.toLowerCase().includes(label.toLowerCase()) ? tooltip : `${label}. ${tooltip}`,
+    );
     $.sendBtn.classList.toggle("streaming", k === "streaming");
     $.sendBtn.classList.toggle("failed", k === "error");
 

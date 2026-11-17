@@ -86,6 +86,7 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.BotSummary](),
 	// GET /api/bots/{id} and /memory. No `Payload` suffix, so the SSE-binding test exempts them.
 	wiregen.TypeRef[marotte.Bot](),
+	wiregen.TypeRef[marotte.BotSaveAnswer](),
 	wiregen.TypeRef[marotte.BotMemoryStat](),
 	wiregen.TypeRef[marotte.BotSetup](),
 	wiregen.TypeRef[marotte.BotMemoryText](),
@@ -105,6 +106,7 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[rule.ByLeaf](),
 	wiregen.TypeRef[rule.Status](),
 	wiregen.TypeRef[rule.Mark](),
+	wiregen.TypeRef[rule.Press](),
 	wiregen.TypeRef[rule.QueuedEvent](),
 	wiregen.TypeRef[rule.TriggerState](),
 	wiregen.TypeRef[rule.DayCount](),
@@ -474,6 +476,7 @@ var wireEnums = []wiregen.EnumRef{
 	wiregen.StringEnum[rule.CondOp](),
 	wiregen.StringEnum[rule.LeafKind](),
 	wiregen.StringEnum[rule.FieldOp](),
+	wiregen.StringEnum[rule.PressOutcome](),
 	// The composer's placeholder and the chat-options menu's radio branch on it.
 	wiregen.StringEnum[marotte.InterruptMode](),
 	// The dock and the composer draw the run order from these, and branch on each.

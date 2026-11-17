@@ -12,6 +12,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rule"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
@@ -125,7 +126,7 @@ func TestOpenTab_EveryReopenOfAClosedBotRearmsWithNothingFiredForTheClosedTime(t
 		for _, paused := range []bool{false, true} {
 			t.Run(door.name+map[bool]string{false: " of a running Bot", true: " of a paused Bot"}[paused], func(t *testing.T) {
 				store := testsupport.NewInMemoryChatStore()
-				st, err := tabs.NewStore(t.TempDir())
+				st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 				if err != nil {
 					t.Fatalf("Setup: open tab store: %v", err)
 				}

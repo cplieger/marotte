@@ -26,16 +26,16 @@ export type SubmitResult = "sent" | "steered" | "queued" | "held" | "failed";
 
 /** The send-error face for 409 "starting": holder-neutral (a rewind holder is not "starting"). The
  *  next Send retries and clears it. */
-const STARTING_FACE = "The chat is busy right now. Send again to retry";
+const STARTING_FACE = "The chat is busy right now.";
 
 /** The 409 reason:"chat_not_found" face: the chat was deleted underneath the send. */
-const GONE_FACE = "This chat no longer exists, so the message was not sent";
+const GONE_FACE = "This chat no longer exists, so the message was not sent.";
 
 /** The 409 reason:"chat_closed" face: the chat was closed, so the send did not run. */
-const CLOSED_FACE = "This chat was closed, so the message was not sent";
+const CLOSED_FACE = "This chat was closed, so the message was not sent.";
 
 /** The 409 reason:"full" face: the queue holds as many messages as it takes. */
-const FULL_FACE = "The queue is full. Send again once a queued message has gone";
+const FULL_FACE = "The queue is full; it takes a message once a queued one has gone.";
 
 /** Each chat's last failed TYPED attempt, so a retry of the same text reuses its message id:
  *  `hasMessage` reads the id (`turn_open`'s `prompt.id`) to tell a taken send from a refused one,
@@ -223,7 +223,7 @@ async function post(send: Send): Promise<SubmitResult> {
   if (typeof result === "object") {
     // A Bot not created yet, or closed, takes no message: the text goes back.
     recordFailure(send);
-    reportSendRefused(result.words);
+    reportSendRefused(result.words, { retry: false });
     return "failed";
   }
   switch (result) {
@@ -239,23 +239,23 @@ async function post(send: Send): Promise<SubmitResult> {
       return "held";
     case "full":
       recordFailure(send);
-      reportSendRefused(FULL_FACE);
+      reportSendRefused(FULL_FACE, { retry: true });
       return "failed";
     case "starting":
       // Nothing can land now, and the refusal appended nothing, so the text goes back.
       recordFailure(send);
-      reportSendRefused(STARTING_FACE);
+      reportSendRefused(STARTING_FACE, { retry: true });
       return "failed";
     case "gone":
       // The chat is tombstoned, so there is no record to prompt: the text goes back and the face
       // says what happened.
       recordFailure(send);
-      reportSendRefused(GONE_FACE);
+      reportSendRefused(GONE_FACE, { retry: false });
       return "failed";
     case "closed":
       // The send did not run, so the text goes back.
       recordFailure(send);
-      reportSendRefused(CLOSED_FACE);
+      reportSendRefused(CLOSED_FACE, { retry: false });
       return "failed";
     case "failed":
       recordFailure(send);

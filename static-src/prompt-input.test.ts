@@ -583,7 +583,7 @@ describe("Escape mid-turn", () => {
   });
 
   it("follows the button, so the Retry face does not cancel", () => {
-    setSendState({ kind: "error", reason: "The bridge exited." });
+    setSendState({ kind: "error", reason: "The bridge exited.", retry: true });
     expect(reachesDocument(escape())).toBe(true);
     expect(cancelled).not.toHaveBeenCalled();
   });
@@ -664,7 +664,7 @@ describe("the send button's state", () => {
 
   it("stays enabled after a failure, with the textarea still enabled", () => {
     expect.assertions(2);
-    setSendState({ kind: "error", reason: "The bridge exited." });
+    setSendState({ kind: "error", reason: "The bridge exited.", retry: true });
     expect(sendBtn().disabled).toBe(false);
     expect(input().disabled).toBe(false);
   });
@@ -683,7 +683,7 @@ describe("the send button's state", () => {
   it.each([
     [{ kind: "idle" } as const, "Send"],
     [{ kind: "streaming" } as const, "Cancel"],
-    [{ kind: "error", reason: "The bridge exited." } as const, "Retry"],
+    [{ kind: "error", reason: "The bridge exited.", retry: true } as const, "Retry"],
   ])("labels the %o face with its word before the glyph", (state, word) => {
     setSendState(state);
     const [first, second] = sendBtn().children;
@@ -691,6 +691,47 @@ describe("the send button's state", () => {
     expect(first?.textContent).toBe(word);
     expect(second?.tagName.toLowerCase()).toBe("svg");
     expect(sendBtn().getAttribute("aria-label")?.toLowerCase()).toContain(word.toLowerCase());
+  });
+
+  it("offers a retry for a refusal the next send can clear", () => {
+    setSendState({ kind: "error", reason: "The chat is busy right now.", retry: true });
+    expect(sendBtn().querySelector(".send-btn-label")?.textContent).toBe("Retry");
+    expect(sendBtn().getAttribute("data-tooltip")).toBe(
+      "The chat is busy right now. Send again to retry.",
+    );
+    expect(sendBtn().getAttribute("aria-label")).toBe(
+      "The chat is busy right now. Send again to retry.",
+    );
+  });
+
+  it("promises no retry for a refusal that no send can clear", () => {
+    const reason = "This chat was closed, so the message was not sent.";
+    setSendState({ kind: "error", reason, retry: false });
+    expect(sendBtn().querySelector(".send-btn-label")?.textContent).toBe("Not sent");
+    expect(sendBtn().getAttribute("data-tooltip")).toBe(reason);
+    expect(sendBtn().getAttribute("aria-label")).toBe(reason);
+    expect(sendBtn().getAttribute("aria-label")).not.toMatch(/retry/i);
+  });
+
+  it("names the Not sent word when the reason leaves it out", () => {
+    setSendState({ kind: "error", reason: "This Bot has not been created yet.", retry: false });
+    expect(sendBtn().getAttribute("aria-label")).toBe(
+      "Not sent. This Bot has not been created yet.",
+    );
+  });
+
+  it.each([
+    [true, "This Bot has not been created yet. Send again to retry."],
+    [false, "This Bot has not been created yet."],
+  ])("ends a reason with a full stop before anything joins it (retry %s)", (retry, tooltip) => {
+    setSendState({ kind: "error", reason: "This Bot has not been created yet", retry });
+    expect(sendBtn().getAttribute("data-tooltip")).toBe(tooltip);
+  });
+
+  it("repaints when only the retry verdict changes", () => {
+    setSendState({ kind: "error", reason: "The bridge exited.", retry: true });
+    setSendState({ kind: "error", reason: "The bridge exited.", retry: false });
+    expect(sendBtn().querySelector(".send-btn-label")?.textContent).toBe("Not sent");
   });
 });
 
@@ -764,7 +805,7 @@ describe("the mid-turn Send", () => {
 
   it("is hidden on the error face", () => {
     type("hello");
-    setSendState({ kind: "error", reason: "The bridge exited." });
+    setSendState({ kind: "error", reason: "The bridge exited.", retry: true });
     expect(midTurn().hidden).toBe(true);
   });
 

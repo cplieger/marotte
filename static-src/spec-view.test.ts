@@ -1036,6 +1036,25 @@ describe("header", () => {
     expect(pane?.getAttribute("aria-labelledby")).toBe(shown?.id);
   });
 
+  it("labels the pane with a shown document whose name has a space", async () => {
+    openParented();
+    m.replies = [reply(spec([prose("my notes.md", "other"), prose("design.md", "design")]))];
+    view.showSpec(DIR);
+    await settle();
+    body()
+      .querySelector<HTMLButtonElement>(`[data-spec-doc="${CSS.escape("my notes.md")}"]`)
+      ?.click();
+    await settle();
+    // aria-labelledby is an ID reference list, split on whitespace (WAI-ARIA 1.2 "ID Reference List").
+    const refs = (body().querySelector(".spec-pane")?.getAttribute("aria-labelledby") ?? "").split(
+      /\s+/,
+    );
+    expect(refs).toHaveLength(1);
+    const label = document.getElementById(refs[0] ?? "");
+    expect(label?.getAttribute("data-spec-doc")).toBe("my notes.md");
+    expect(label?.getAttribute("aria-selected")).toBe("true");
+  });
+
   it("renders a segment for a document whose name would break an attribute selector", async () => {
     // A segment's id is a filename off the directory listing, and a `"` in one is legal on every
     // filesystem this runs on.

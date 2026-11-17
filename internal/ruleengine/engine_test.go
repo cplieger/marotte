@@ -2,6 +2,7 @@ package ruleengine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -237,6 +238,32 @@ func TestEngine_ReevaluatesAnEventThatWaited(t *testing.T) {
 			h.endTurn("b1")
 			h.wantSent("delivered as it fired", 1)
 		})
+	})
+}
+
+// A waiting event whose stored data no longer decodes is dropped with the rule's failure at its recheck, never sent
+// or held.
+func TestEngine_DropsAWaitingEventThatCannotBeRead(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(t)
+		r := weekly(h)
+		r.Status.Queue = []rule.QueuedEvent{{
+			Stage: rule.StageFired, Trigger: "t1", EventID: "every:t1:1", Depth: 1,
+			Data: json.RawMessage(`{"fields":{"x":{"nested":1}}}`), SeenAt: h.at(-time.Minute), FiredAt: h.at(-time.Minute),
+		}}
+		h.seedBot("b1", r)
+		h.scan()
+		h.start()
+		h.advance(time.Minute)
+		h.wantSent("an unreadable event", 0)
+		got := h.rule("b1", "r1").Status
+		if len(got.Queue) != 0 || got.LastFailure == nil || got.LastFailure.EventID != "every:t1:1" ||
+			!strings.HasPrefix(got.LastFailure.Reason, "Could not deliver: the event could not be read: ") {
+			t.Errorf("queue %v last failure %+v, want the event dropped with its failure", eventIDs(got.Queue), got.LastFailure)
+		}
+		if n := h.logs.lines(slog.LevelError, "rule evaluation failed"); n != 1 {
+			t.Errorf("%d ERROR lines, want 1", n)
+		}
 	})
 }
 

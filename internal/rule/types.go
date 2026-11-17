@@ -249,9 +249,11 @@ type Status struct {
 	Triggers    map[string]TriggerState `json:"triggers,omitempty"`
 	// Sent is the rule's delivery times (unix ms) in the last hour, for its 1-minute gap and the Bot ceiling.
 	Sent []int64 `json:"sent,omitempty"`
-	// Recent is the last event ids the rule evaluated, newest last.
-	Recent []string      `json:"recent,omitempty"`
-	Queue  []QueuedEvent `json:"queue,omitempty"`
+	// Recent is the last event ids the rule's triggers evaluated, newest last.
+	Recent []string `json:"recent,omitempty"`
+	// Presses are the first answers of the rule's last Run now presses, oldest first (RecordPress).
+	Presses []Press       `json:"presses,omitempty"`
+	Queue   []QueuedEvent `json:"queue,omitempty"`
 	// Dropped counts events a cap, a replacement, a pause or a close dropped since the last delivery.
 	Dropped int `json:"dropped,omitempty"`
 }
@@ -264,6 +266,26 @@ type Mark struct {
 	Reason  string `json:"reason,omitempty"`
 	At      int64  `json:"at"`
 }
+
+// Press is a Run now press's first answer, stored when the press was decided, which a retry of its op_id answers again.
+type Press struct {
+	EventID string       `json:"event_id"`
+	Outcome PressOutcome `json:"outcome"`
+	// Reason is a skip's reason without "Skipped: ", or a failure's error.
+	Reason string `json:"reason,omitempty"`
+}
+
+// PressOutcome is what a Run now press did.
+type PressOutcome string
+
+// The press outcomes.
+const (
+	PressFired   PressOutcome = "fired"
+	PressQueued  PressOutcome = "queued"
+	PressSkipped PressOutcome = "skipped"
+	// PressFailed is an evaluation that failed; Reason is its error.
+	PressFailed PressOutcome = "failed"
+)
 
 // The stages of a QueuedEvent.
 const (
@@ -278,8 +300,6 @@ type QueuedEvent struct {
 	EventID string `json:"event_id"`
 	// MessageID is the prompt Notify queued behind a turn, set with Queued.
 	MessageID string `json:"message_id,omitempty"`
-	// Answered is a Run now press's first answer, fired or queued, which a replay of its op_id answers again.
-	Answered string `json:"answered,omitempty"`
 	// Data is the event as NewEvent bounds it, read back by DecodeEvent: at most 12 KiB with a webhook's
 	// condition copy.
 	Data    json.RawMessage `json:"data"`

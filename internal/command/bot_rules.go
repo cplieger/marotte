@@ -408,19 +408,28 @@ func keptStatus(old *rule.Rule, spec *rule.Spec, armed bool, now int64) rule.Sta
 	return st
 }
 
-// rulesReplay is what a bot_save's op_id answers again.
-type rulesReplay struct {
-	ruleIDs    []string
-	triggerIDs [][]string
-	version    int
+// savedAnswer is b's stored answer when s retries the op_id of b's last rules save and no write has moved
+// spec_version since; nil otherwise, and s is saved as sent.
+func savedAnswer(b *marotte.Bot, s *botSave) *marotte.BotSaveAnswer {
+	a := b.LastSave
+	if s.rules == nil || s.rules.op == "" || a == nil || a.OpID != s.rules.op || a.Version != b.SpecVersion {
+		return nil
+	}
+	return a
 }
 
-// replayKey is s's key in botRoles.replays; "" for a save with no rules or no op_id, which records nothing.
-func replayKey(chatID marotte.ChatID, s *botSave) string {
-	if s.rules == nil || s.rules.op == "" {
-		return ""
+// recordAnswer stores what the rules save s answers on c's Bot, after BotWriter moved spec_version, and answers it.
+func recordAnswer(c *marotte.Chat, s *botSave) marotte.BotSaveAnswer {
+	a := marotte.BotSaveAnswer{
+		OpID: s.rules.op, RuleIDs: s.plan.ruleIDs, TriggerIDs: s.plan.triggerIDs, Version: c.Bot.SpecVersion,
 	}
-	return string(chatID) + "\x00" + s.rules.op
+	b := *c.Bot
+	b.LastSave = nil
+	if a.OpID != "" {
+		b.LastSave = &a
+	}
+	c.Bot = &b
+	return a
 }
 
 // planBotRules checks s's rules against cur's and keeps the plan in s, refusing every bad field in one 400.

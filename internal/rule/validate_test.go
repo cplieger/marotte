@@ -580,11 +580,15 @@ func TestValidateBot_BoundsTheWorstCaseSize(t *testing.T) {
 		return out
 	}
 	t.Run("twenty one-trigger rules at the default cap fit", func(t *testing.T) {
-		// 20 × (10 × 12 + 12 + 22 + 29) KiB + 12 KiB = 3,672 KiB, under 4 MiB with these specs.
+		// 20 × (10 × 12 + 12 + 22 + 12.5 + 29) KiB + 12 KiB = 3,922 KiB, under 4 MiB with these specs.
 		wantNone(t, ValidateBot(sent(oneTrigger(repeat(20, 10)...)...)))
 	})
+	t.Run("twenty at cap 11 do not once each rule's press answers count", func(t *testing.T) {
+		// 20 × (132 + 75.5) KiB + 12 KiB = 4,162 KiB; without the 12.5 KiB of press answers, 3,912 KiB.
+		wantOnly(t, ValidateBot(sent(oneTrigger(repeat(20, 11)...)...)), "rules[0].triggers[0].limits.hold_cap")
+	})
 	t.Run("twenty at cap 12 do not, named at the largest cap", func(t *testing.T) {
-		// 20 × (144 + 63) KiB + 12 KiB = 4,152 KiB.
+		// 20 × (144 + 75.5) KiB + 12 KiB = 4,402 KiB.
 		caps := repeat(20, 12)
 		caps[7] = 13
 		e := wantOnly(t, ValidateBot(sent(oneTrigger(caps...)...)), "rules[7].triggers[0].limits.hold_cap")
@@ -601,7 +605,7 @@ func TestValidateBot_BoundsTheWorstCaseSize(t *testing.T) {
 		wantOnly(t, ValidateBot(specs), "rules[1].triggers[0].limits.hold_cap")
 	})
 	t.Run("a rule with several event triggers counts each cap", func(t *testing.T) {
-		// Each rule: 7 × (288 + 29) + (300 + 29) + 12 + 22 = 2,582 KiB; two rules and the Bot's 12 KiB pass 4 MiB.
+		// Each rule: 7 × (288 + 29) + (300 + 29) + 12 + 22 + 12.5 = 2,594.5 KiB; two rules and the Bot's 12 KiB pass 4 MiB.
 		rule := func() Spec {
 			var ts []Trigger
 			for i := range 8 {
@@ -617,7 +621,7 @@ func TestValidateBot_BoundsTheWorstCaseSize(t *testing.T) {
 		wantNone(t, ValidateBot(sent(rule())))
 	})
 	t.Run("time triggers alone can pass the bound", func(t *testing.T) {
-		// 20 × (8 × (12 + 29) + 12 + 22) KiB + 12 KiB = 7,252 KiB, with no hold cap to lower.
+		// 20 × (8 × (12 + 29) + 12 + 22 + 12.5) KiB + 12 KiB = 7,502 KiB, with no hold cap to lower.
 		specs := make([]Spec, MaxRules)
 		for i := range specs {
 			var ts []Trigger

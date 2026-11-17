@@ -929,7 +929,7 @@ describe("where focus goes when dictation ends (rule 9)", () => {
     ["a chat switch", () => setActive("c2"), "hello", []],
     [
       "the error face",
-      () => setSendState({ kind: "error", reason: "The agent is starting." }),
+      () => setSendState({ kind: "error", reason: "The agent is starting.", retry: true }),
       "hello",
       [],
     ],
@@ -1253,7 +1253,7 @@ describe("the error face (rule 9)", () => {
   it("keeps Retry on an empty box, and stops dictation when the chat cannot take a send", async () => {
     await startFrom(sendBtn());
     speech.last().hear(["hold on", false]);
-    setSendState({ kind: "error", reason: "The agent is starting." });
+    setSendState({ kind: "error", reason: "The agent is starting.", retry: true });
     expect(dictation.listening.value).toBe(false);
     expect(sendBtn().getAttribute("aria-pressed")).toBeNull();
     expect(sendBtn().querySelector(".send-btn-label")?.textContent).toBe("Retry");

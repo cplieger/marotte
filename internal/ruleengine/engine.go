@@ -409,9 +409,10 @@ func (e *Engine) write(ctx context.Context, chatID marotte.ChatID, apply func(c 
 }
 
 // writeAfterSend is write for an outcome owed by an act already done on the chat (a prompt handed to it, a row taken
-// back): on a fault it is kept and retried as it is, before the loop runs again. done, when set, runs once it lands.
+// back): a drain does not cancel it, and on a fault it is kept and retried as it is, before the loop runs again.
+// done, when set, runs once it lands.
 func (e *Engine) writeAfterSend(ctx context.Context, chatID marotte.ChatID, apply func(c *marotte.Chat) bool, done func()) (*marotte.Chat, error) {
-	after, err := e.write(ctx, chatID, apply)
+	after, err := e.write(context.WithoutCancel(ctx), chatID, apply)
 	switch {
 	case errors.Is(err, errStopped):
 		e.pending = append(e.pending, pendingWrite{chat: chatID, apply: apply, done: done})
@@ -425,7 +426,7 @@ func (e *Engine) writeAfterSend(ctx context.Context, chatID marotte.ChatID, appl
 func (e *Engine) retryPending(ctx context.Context) bool {
 	for len(e.pending) > 0 {
 		p := e.pending[0]
-		if _, err := e.write(ctx, p.chat, p.apply); err != nil {
+		if _, err := e.write(context.WithoutCancel(ctx), p.chat, p.apply); err != nil {
 			return false
 		}
 		e.pending = e.pending[1:]

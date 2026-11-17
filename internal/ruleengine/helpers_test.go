@@ -207,7 +207,8 @@ var errWriteFault = errors.New("no space left on device")
 // and dieAfter(n) lets n more writes through and then refuses the rest of the process's life, as a crash does. gets
 // counts the record reads; afterGet, when set, runs once a read has answered.
 type faultStore struct {
-	afterGet func(chatID marotte.ChatID)
+	afterGet     func(chatID marotte.ChatID)
+	beforeMutate func()
 	*chat.Store
 	failing atomic.Bool
 	gone    atomic.Bool
@@ -225,6 +226,9 @@ func (s *faultStore) Get(ctx context.Context, chatID marotte.ChatID) (*marotte.C
 }
 
 func (s *faultStore) Mutate(ctx context.Context, chatID marotte.ChatID, f func(c *marotte.Chat, exists bool) bool) (string, error) {
+	if s.beforeMutate != nil {
+		s.beforeMutate()
+	}
 	if s.gone.Load() || s.failing.Load() {
 		return "", errWriteFault
 	}

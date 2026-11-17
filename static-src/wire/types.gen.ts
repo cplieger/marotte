@@ -66,6 +66,8 @@ export type NoticeOutcome = "shown" | "declined";
 
 export type PlanStatus = "pending" | "in_progress" | "completed";
 
+export type PressOutcome = "fired" | "queued" | "skipped" | "failed";
+
 export type PreviewHintSource = "meta" | "viewport";
 
 export type PreviewPreset = "phone" | "tablet" | "desktop";
@@ -322,6 +324,8 @@ export interface Attachment {
  * marotte keeps about the Bot lives here, in the chat's own chat.json. Field order is fieldalignment's.
  */
 export interface Bot {
+  /** LastSave is the answer of the last bot_save that sent rules, nil when it sent no op_id. */
+  last_save?: BotSaveAnswer;
   /** Goal is what the Bot keeps working toward. */
   goal: string;
   /** Steering is the user's custom steering for the Bot, markdown. */
@@ -364,6 +368,17 @@ export interface BotMemoryText {
   text: string;
   bytes: number;
   updated_at: number;
+}
+
+/**
+ * BotSaveAnswer is what a bot_save with rules and an op_id answered, stored with the Bot so a retry of that op_id
+ * answers it again, across a restart, while SpecVersion is still Version.
+ */
+export interface BotSaveAnswer {
+  op_id: string;
+  rule_ids: string[];
+  trigger_ids: string[][];
+  version: number;
 }
 
 /** BotSetup is GET /api/bots/{id}: what the Bot's setup shows, read from its record. Field order is fieldalignment's. */
@@ -3060,6 +3075,14 @@ export interface PollResult {
   forge_id?: string;
 }
 
+/** Press is a Run now press's first answer, stored when the press was decided, which a retry of its op_id answers again. */
+export interface Press {
+  event_id: string;
+  outcome: PressOutcome;
+  /** Reason is a skip's reason without "Skipped: ", or a failure's error. */
+  reason?: string;
+}
+
 /**
  * PreviewGrant is a capability to read one folder through /preview/. URL is the
  * entry page and is used verbatim as the iframe src; TabURL is the same page on
@@ -3553,8 +3576,6 @@ export interface RuleQueuedEvent {
   event_id: string;
   /** MessageID is the prompt Notify queued behind a turn, set with Queued. */
   message_id?: string;
-  /** Answered is a Run now press's first answer, fired or queued, which a replay of its op_id answers again. */
-  answered?: string;
   /**
    * Data is the event as NewEvent bounds it, read back by DecodeEvent: at most 12 KiB with a webhook's
    * condition copy.
@@ -3591,8 +3612,10 @@ export interface RuleStatus {
   triggers?: { [key: string]: TriggerState };
   /** Sent is the rule's delivery times (unix ms) in the last hour, for its 1-minute gap and the Bot ceiling. */
   sent?: number[];
-  /** Recent is the last event ids the rule evaluated, newest last. */
+  /** Recent is the last event ids the rule's triggers evaluated, newest last. */
   recent?: string[];
+  /** Presses are the first answers of the rule's last Run now presses, oldest first (RecordPress). */
+  presses?: Press[];
   queue?: RuleQueuedEvent[];
   /** Dropped counts events a cap, a replacement, a pause or a close dropped since the last delivery. */
   dropped?: number;

@@ -3,7 +3,7 @@
 import { computed, subscribe } from "@cplieger/reactive";
 import type { GitTab } from "./route-path.js";
 import { setGitTab, subTabOf } from "./tabs.js";
-import { initSegmentedBar } from "./segmented-bar.js";
+import { initSegmentedBar, segmentId } from "./segmented-bar.js";
 import { setPageSubtitle } from "./page-title.js";
 import { maybeEl, queryAll } from "./dom.js";
 
@@ -63,7 +63,7 @@ export function initGitTabs(): void {
       panel.classList.toggle("hidden", panelTab !== tab);
       panel.setAttribute("role", "tabpanel");
       panel.id = `git-panel-${panelTab}`;
-      panel.setAttribute("aria-labelledby", `git-tab-${panelTab}`);
+      panel.setAttribute("aria-labelledby", segmentId("git", panelTab));
     }
     setPageSubtitle("git", GIT_TAB_LABELS[tab]);
   });

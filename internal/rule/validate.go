@@ -503,13 +503,15 @@ const (
 	eventBytes = 12 * kib
 	// ruleMarkBytes is one rule's marks and recent event ids.
 	ruleMarkBytes = 22 * kib
+	// pressesBytes is one rule's stored press answers, each a cut reason beside its event id: 12.5 KiB.
+	pressesBytes = maxPresses * (maxStringBytes + 256)
 	// triggerStateBytes is one trigger's 16 KiB cursor, 12 KiB last event and 1 KiB of counts.
 	triggerStateBytes = 29 * kib
 )
 
-// ValidateBot checks what binds a Bot's rules together, specs in the order sent with nil for a rule that did not
-// decode: at most MaxRules, and the decoded rules' worst-case size at most maxBotBytes, refused at the largest hold
-// cap when lowering one can help.
+// ValidateBot checks what binds a Bot's rules together, specs in the order sent with nil for a rule the size check
+// skips: at most MaxRules, and the other rules' worst-case size at most maxBotBytes, refused at the largest hold cap
+// when lowering one can help.
 func ValidateBot(specs []*Spec) []FieldError {
 	var errs errList
 	if len(specs) > MaxRules {
@@ -540,7 +542,7 @@ func worstCase(specs []*Spec) (size int, largest string) {
 			return maxBotBytes + 1, ""
 		}
 		// A rule's one waiting Run now event belongs to no trigger, so no hold cap counts it.
-		size += len(enc) + eventBytes + ruleMarkBytes
+		size += len(enc) + eventBytes + ruleMarkBytes + pressesBytes
 		for j, t := range spec.Triggers {
 			size += triggerStateBytes
 			if kinds[t.Kind].time || t.Limits == nil {

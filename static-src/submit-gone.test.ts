@@ -121,6 +121,7 @@ describe("submitPrompt on a 409 chat_not_found refusal", () => {
     await submitPrompt("c1", "hello");
     expect(mockReportSendRefused).toHaveBeenCalledTimes(1);
     expect(String(mockReportSendRefused.mock.calls[0]?.[0])).toMatch(/no longer exists/);
+    expect(mockReportSendRefused.mock.calls[0]?.[1]).toEqual({ retry: false });
   });
 
   it("hands the text and the attachments back, because nothing was persisted", async () => {
@@ -153,7 +154,8 @@ describe("submitPrompt on a 409 chat_closed refusal", () => {
     await submitPrompt("c1", "hello");
     expect(mockReportSendRefused).toHaveBeenCalledTimes(1);
     expect(mockReportSendRefused).toHaveBeenCalledWith(
-      "This chat was closed, so the message was not sent",
+      "This chat was closed, so the message was not sent.",
+      { retry: false },
     );
   });
 
@@ -170,7 +172,9 @@ describe("submitPrompt on a Bot's refusal", () => {
       mockSendPromptTo.mockResolvedValue({ refused, words: "This Bot cannot take it" });
       resetStore("c1");
       expect(await submitPrompt("c1", "hello")).toBe("failed");
-      expect(mockReportSendRefused).toHaveBeenCalledWith("This Bot cannot take it");
+      expect(mockReportSendRefused).toHaveBeenCalledWith("This Bot cannot take it", {
+        retry: false,
+      });
       expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "hello");
     });
   }

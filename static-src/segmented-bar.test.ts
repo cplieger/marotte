@@ -4,7 +4,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { initSegmentedBar, setSegmentHidden } from "./segmented-bar.js";
+import { initSegmentedBar, segmentId, setSegmentHidden } from "./segmented-bar.js";
 
 type Tab = "one" | "two" | "three";
 const TABS: readonly { id: Tab; label: string }[] = [
@@ -160,6 +160,29 @@ describe("initSegmentedBar", () => {
 
     seg(bar, "one").click();
     expect(onSelect).toHaveBeenCalledWith("one");
+  });
+});
+
+describe("segmentId", () => {
+  it("leaves a plain id as it is", () => {
+    expect(segmentId("git", "changes")).toBe("git-tab-changes");
+  });
+
+  it.each(["my notes.md", "a\tb", 'we"re.md'])("gives %j one valid id", (id) => {
+    expect(segmentId("spec", id)).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
+  it("never gives two names one id", () => {
+    const names = ["x y", "x_20_y", "x_y", "x-y", "xy", "x.y"];
+    expect(new Set(names.map((n) => segmentId("spec", n))).size).toBe(names.length);
+  });
+
+  it("names the button the bar wrote", () => {
+    const bar = buildBar("600px");
+    wire(bar);
+    for (const { id } of TABS) {
+      expect(document.getElementById(segmentId("test", id)), id).toBe(seg(bar, id));
+    }
   });
 });
 
