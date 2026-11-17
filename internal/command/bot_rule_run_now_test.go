@@ -159,8 +159,8 @@ func TestCmdBotRuleRunNow_WithNoEngineIsUnavailable(t *testing.T) {
 	}
 }
 
-// The starter rule is design's check-in, preselected on a new draft: a goal and Create bot give a Bot that checks
-// in every two hours after its last reply.
+// The starter rule is a check-in, preselected on a new draft: a goal and Create bot give a Bot that checks in every
+// two hours after its last reply.
 func TestCmdCreateChat_ABotStartsWithTheStarterRuleUnarmed(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, _, _ := newTabbedMembership(t, store)

@@ -1,6 +1,7 @@
 package ruleengine
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -235,6 +236,63 @@ func TestEngine_ReevaluatesAnEventThatWaited(t *testing.T) {
 			h.advance(20 * time.Second)
 			h.endTurn("b1")
 			h.wantSent("delivered as it fired", 1)
+		})
+	})
+}
+
+// The recheck of an event that waited reads the rule's last run from before the event fired: its own fire is not a
+// run, and a run before it still is.
+func TestEngine_ARecheckReadsTheRulesLastRunBeforeItsEvent(t *testing.T) {
+	cooldown := leafCond(rule.Leaf{Kind: rule.LeafRuleLastRan, Rule: &rule.LastRanLeaf{Minutes: 180}})
+	t.Run("a time trigger's event", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			h := newHarness(t)
+			h.seedBot("b1", armedRule("r1", specOf("Tidy", cooldown, everyT("t1", 15, "")), h.at(0)))
+			h.turns.setLive("b1", true)
+			h.scan()
+			h.start()
+			h.advance(20 * time.Minute)
+			h.endTurn("b1")
+			got := h.wantSent("after the turn", 1)
+			if id := eventIDOf(got[0]); id != dueID("t1", h.at(15*time.Minute)) {
+				t.Errorf("event %q, want the 15 min slot", id)
+			}
+			if s := h.rule("b1", "r1").Status.LastSkip; s != nil {
+				t.Errorf("last skip %+v, want none", s)
+			}
+		})
+	})
+	t.Run("a Run now press", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			h := newHarness(t)
+			h.seedBot("b1", armedRule("r1", specOf("Tidy", cooldown, everyT("t1", rule.MaxEveryMinutes, "")), h.at(0)))
+			h.turns.setLive("b1", true)
+			h.scan()
+			h.start()
+			if ans := h.runNow("op-1"); ans.Outcome != command.RunNowQueued {
+				t.Errorf("Run now answered %+v, want queued", ans)
+			}
+			h.advance(time.Minute)
+			h.endTurn("b1")
+			got := h.wantSent("after the turn", 1)
+			if id := eventIDOf(got[0]); id != "manual:op-1" {
+				t.Errorf("event %q, want the press", id)
+			}
+		})
+	})
+	t.Run("a run before the event", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			h := newHarness(t)
+			ranRecently := leafCond(rule.Leaf{Kind: rule.LeafRuleLastRan, Not: true, Rule: &rule.LastRanLeaf{Minutes: 180}})
+			r := armedRule("r1", specOf("Tidy", ranRecently, everyT("t1", 5, "")), h.at(0))
+			r.Status.LastFire = &rule.Mark{Trigger: "t1", EventID: "earlier", At: h.at(-170 * time.Minute)}
+			h.seedBot("b1", r)
+			h.turns.setLive("b1", true)
+			h.scan()
+			h.start()
+			h.advance(6 * time.Minute)
+			h.endTurn("b1")
+			h.wantSent("after the turn", 1)
 		})
 	})
 }
@@ -602,6 +660,71 @@ func TestEngine_ReindexFollowsTheRecord(t *testing.T) {
 	}
 }
 
+// A turn's end reads a record only for a chat the engine knows as a Bot with rules, however it came to know it.
+func TestEngine_AnotherChatsTurnEndReadsNoRecord(t *testing.T) {
+	t.Run("a regular chat beside a Bot", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			h := newHarness(t)
+			h.seedBot("b1", weekly(h))
+			h.mutate("c1", func(c *marotte.Chat) { c.Name = "c1" })
+			h.scan()
+			h.start()
+			h.advance(time.Minute)
+			before := h.fs.gets.Load()
+			h.endTurn("c1")
+			if got := h.fs.gets.Load(); got != before {
+				t.Errorf("%d record reads for a chat's turn end, want none", got-before)
+			}
+			h.endTurn("b1")
+			if got := h.fs.gets.Load(); got == before {
+				t.Errorf("no record read for a Bot's turn end")
+			}
+		})
+	})
+	t.Run("a Bot whose rules were all removed", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			h := newHarness(t)
+			h.seedBot("b1", weekly(h))
+			h.scan()
+			h.start()
+			h.mutate("b1", func(c *marotte.Chat) { c.Bot.Rules = nil })
+			h.eng.Reindex("b1")
+			synctest.Wait()
+			before := h.fs.gets.Load()
+			h.endTurn("b1")
+			if got := h.fs.gets.Load(); got != before {
+				t.Errorf("%d record reads for a forgotten Bot's turn end, want none", got-before)
+			}
+		})
+	})
+	t.Run("a Bot given rules while a pass forgets it", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			h := newHarness(t)
+			h.seedBot("b1")
+			var once atomic.Bool
+			h.fs.afterGet = func(id marotte.ChatID) {
+				if id != "b1" || once.Swap(true) {
+					return
+				}
+				if _, err := h.store.Mutate(context.Background(), id, func(c *marotte.Chat, _ bool) bool {
+					c.Bot.Rules = []rule.Rule{weekly(h)}
+					return true
+				}); err == nil {
+					h.eng.Reindex(id)
+				}
+			}
+			h.scan()
+			h.start()
+			h.advance(time.Minute)
+			before := h.fs.gets.Load()
+			h.endTurn("b1")
+			if got := h.fs.gets.Load(); got == before {
+				t.Errorf("no record read for the Bot's turn end")
+			}
+		})
+	})
+}
+
 // A drain stops the loop and leaves what waits on disk for the next process.
 func TestEngine_ADrainLeavesTheQueueOnDisk(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -685,6 +808,12 @@ func TestEngine_DropsAnEventWhoseEvaluationPanics(t *testing.T) {
 			if r := h.rule("b1", "r1"); len(r.Status.Queue) != 0 || r.Status.LastFailure == nil ||
 				r.Status.LastFailure.EventID != "manual:op-1" {
 				t.Errorf("queue %v last failure %+v, want the press dropped with its failure", eventIDs(r.Status.Queue), r.Status.LastFailure)
+			}
+			if _, err := h.eng.RunNow(t.Context(), "b1", "r1", "op-1"); err == nil {
+				t.Errorf("the replayed press answered no error, want what its first press answered")
+			}
+			if got := h.logs.lines(slog.LevelError, "rule evaluation failed"); got != 1 {
+				t.Errorf("%d ERROR lines, want 1: a replay evaluates nothing", got)
 			}
 		})
 	})

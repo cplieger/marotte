@@ -2,6 +2,7 @@ package ruleengine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -19,6 +20,9 @@ var evalCond = rule.Eval
 
 // recentIDs is how many evaluated event ids a rule keeps, so a source reporting an event twice fires it once.
 const recentIDs = 100
+
+// evalPanicked starts the failure of an evaluation that panicked.
+const evalPanicked = "the evaluation panicked"
 
 // The skip mark's sentences; the reason after them is Eval's.
 const (
@@ -49,7 +53,7 @@ func rulesArmed(b *marotte.Bot) bool {
 }
 
 // chatBusy reports c's run list holding a live or pending entry, which a delivery would queue behind, or a rule's
-// prompt handed to the chat and not yet counted sent, so a Bot holds at most one queued event (§8.4 step 5).
+// prompt handed to the chat and not yet counted sent, so a Bot holds at most one queued event.
 func chatBusy(c *marotte.Chat) bool {
 	return slices.ContainsFunc(c.Run, func(e marotte.RunEntry) bool {
 		return e.State.Live() || e.State == marotte.RunPending
@@ -96,17 +100,20 @@ func (e *Engine) record(chatID marotte.ChatID, evs []evaluation) {
 	}
 }
 
-// snapshot is what an evaluation of ev on r reads at now.
-func snapshot(r *rule.Rule, ev *rule.QueuedEvent, now time.Time, busy, waiting bool) (rule.Snapshot, error) {
+// snapshot is what an evaluation of ev reads at now, with lastFire as the rule's last fire.
+func snapshot(ev *rule.QueuedEvent, lastFire int64, now time.Time, busy, waiting bool) (rule.Snapshot, error) {
 	data, err := rule.DecodeEvent(ev.Data)
 	if err != nil {
 		return rule.Snapshot{}, err
 	}
-	s := rule.Snapshot{Now: now, Trigger: ev.Trigger, Event: data, BotBusy: busy, BotWaiting: waiting}
-	if r.Status.LastFire != nil {
-		s.LastFire = r.Status.LastFire.At
+	return rule.Snapshot{Now: now, Trigger: ev.Trigger, Event: data, LastFire: lastFire, BotBusy: busy, BotWaiting: waiting}, nil
+}
+
+func lastFireAt(r *rule.Rule) int64 {
+	if r.Status.LastFire == nil {
+		return 0
 	}
-	return s, nil
+	return r.Status.LastFire.At
 }
 
 func mark(r *rule.Rule, ev *rule.QueuedEvent, reason string, now time.Time) *rule.Mark {
@@ -120,34 +127,34 @@ func mark(r *rule.Rule, ev *rule.QueuedEvent, reason string, now time.Time) *rul
 func safeEval(c *rule.Cond, s *rule.Snapshot) (res rule.Result, err error) {
 	defer func() {
 		if p := recover(); p != nil {
-			err = fmt.Errorf("the evaluation panicked: %v", p)
+			err = fmt.Errorf("%s: %v", evalPanicked, p)
 		}
 	}()
 	return evalCond(c, s), nil
 }
 
-// evaluate runs r's condition over ev, which it remembers in Recent, and fires it into the queue or marks the skip;
-// an evaluation that panics marks the rule's failure. It answers whether the event joined the queue.
-func evaluate(r *rule.Rule, ev *rule.QueuedEvent, s *rule.Snapshot, now time.Time) (evaluation, bool) {
+// evaluate runs r's condition over ev and fires it into the queue or marks the skip; an evaluation that panics marks
+// the rule's failure. kept is false for a fired event Enqueue refuses, which changes nothing; a kept outcome is
+// remembered in Recent.
+func evaluate(r *rule.Rule, ev *rule.QueuedEvent, s *rule.Snapshot, now time.Time) (out evaluation, kept bool) {
 	res, err := safeEval(r.Spec.Condition, s)
-	r.Status.Recent = append(r.Status.Recent, ev.EventID)
-	r.Status.Recent = r.Status.Recent[max(0, len(r.Status.Recent)-recentIDs):]
-	out := evaluation{rule: r.ID, kind: kindOf(&r.Spec, ev.Trigger), event: ev.EventID, reason: res.Reason, failed: err}
-	if err != nil {
+	out = evaluation{rule: r.ID, kind: kindOf(&r.Spec, ev.Trigger), event: ev.EventID, reason: res.Reason, failed: err}
+	switch {
+	case err != nil:
 		r.Status.LastFailure = mark(r, ev, failedPrefix+err.Error(), now)
-		return out, false
-	}
-	if res.Value != rule.True {
+	case res.Value != rule.True:
 		r.Status.LastSkip = mark(r, ev, skippedPrefix+res.Reason, now)
-		return out, false
-	}
-	out.fired = true
-	ev.Stage, ev.FiredAt = rule.StageFired, now.UnixMilli()
-	added := rule.Enqueue(&r.Status, &r.Spec, ev)
-	if added {
+	default:
+		ev.Stage, ev.FiredAt, ev.PrevFire = rule.StageFired, now.UnixMilli(), lastFireAt(r)
+		if !rule.Enqueue(&r.Status, &r.Spec, ev) {
+			return out, false
+		}
+		out.fired = true
 		r.Status.LastFire = mark(r, ev, "", now)
 	}
-	return out, added
+	r.Status.Recent = append(r.Status.Recent, ev.EventID)
+	r.Status.Recent = r.Status.Recent[max(0, len(r.Status.Recent)-recentIDs):]
+	return out, true
 }
 
 // evaluateDue evaluates every armed time trigger of c whose slot is due at now, in one write, and answers the record
@@ -221,12 +228,13 @@ func evaluateRule(r *rule.Rule, lastTurnEndedAt int64, live, busy, waiting bool,
 		if slices.Contains(r.Status.Recent, ev.EventID) {
 			continue
 		}
-		s, err := snapshot(r, &ev, now, busy, waiting)
+		s, err := snapshot(&ev, lastFireAt(r), now, busy, waiting)
 		if err != nil {
 			continue
 		}
-		done, _ := evaluate(r, &ev, &s, now)
-		out = append(out, done)
+		if done, kept := evaluate(r, &ev, &s, now); kept {
+			out = append(out, done)
+		}
 	}
 	return out, moved
 }
@@ -246,7 +254,10 @@ func (e *Engine) RunNow(ctx context.Context, chatID marotte.ChatID, ruleID, opID
 	}
 	e.record(chatID, p.done)
 	if len(p.done) == 1 && p.done[0].failed != nil {
-		return command.RunNowAnswer{}, command.StatusError(http.StatusInternalServerError, p.done[0].failed)
+		p.failed = p.done[0].failed
+	}
+	if p.failed != nil {
+		return command.RunNowAnswer{}, command.StatusError(http.StatusInternalServerError, p.failed)
 	}
 	e.Reindex(chatID)
 	return p.ans, nil
@@ -254,7 +265,9 @@ func (e *Engine) RunNow(ctx context.Context, chatID marotte.ChatID, ruleID, opID
 
 // runNowPress is one Run now press's write and what it found.
 type runNowPress struct {
-	now           time.Time
+	now time.Time
+	// failed is the press's evaluation failure, or a replayed press's.
+	failed        error
 	ans           command.RunNowAnswer
 	rule, op      string
 	done          []evaluation
@@ -275,38 +288,49 @@ func (p *runNowPress) apply(c *marotte.Chat, exists bool) bool {
 	r := &c.Bot.Rules[i]
 	ev := rule.ManualEvent(r.Spec, p.op, p.now)
 	if slices.Contains(r.Status.Recent, ev.EventID) {
-		p.ans = replayed(r, ev.EventID)
+		p.ans, p.failed = replayed(r, ev.EventID)
 		return false
 	}
 	busy := p.live || chatBusy(c)
-	s, err := snapshot(r, &ev, p.now, busy, p.waiting)
+	s, err := snapshot(&ev, lastFireAt(r), p.now, busy, p.waiting)
 	if err != nil {
 		return false
 	}
-	eval, added := evaluate(r, &ev, &s, p.now)
+	ev.Answered = string(command.RunNowFired)
+	if busy {
+		ev.Answered = string(command.RunNowQueued)
+	}
+	eval, kept := evaluate(r, &ev, &s, p.now)
+	if !kept {
+		p.ans = command.RunNowAnswer{Outcome: command.RunNowQueued}
+		return false
+	}
 	p.done = []evaluation{eval}
 	switch {
 	case eval.failed != nil:
 	case !eval.fired:
 		p.ans = command.RunNowAnswer{Outcome: command.RunNowSkipped, Reason: eval.reason}
-	case added && !busy:
-		p.ans = command.RunNowAnswer{Outcome: command.RunNowFired}
 	default:
-		p.ans = command.RunNowAnswer{Outcome: command.RunNowQueued}
+		p.ans = command.RunNowAnswer{Outcome: command.RunNowOutcome(ev.Answered)}
 	}
 	c.Bot.RulesVersion++
 	return true
 }
 
-// replayed is what a Run now press already evaluated did: skipped, still waiting, or fired.
-func replayed(r *rule.Rule, eventID string) command.RunNowAnswer {
+// replayed is what a Run now press already evaluated answered: skipped, its evaluation's failure, its first answer
+// while its event waits, or fired once the event left the queue.
+func replayed(r *rule.Rule, eventID string) (command.RunNowAnswer, error) {
 	if s := r.Status.LastSkip; s != nil && s.EventID == eventID {
-		return command.RunNowAnswer{Outcome: command.RunNowSkipped, Reason: strings.TrimPrefix(s.Reason, skippedPrefix)}
+		return command.RunNowAnswer{Outcome: command.RunNowSkipped, Reason: strings.TrimPrefix(s.Reason, skippedPrefix)}, nil
 	}
-	if slices.ContainsFunc(r.Status.Queue, func(q rule.QueuedEvent) bool { return q.EventID == eventID }) {
-		return command.RunNowAnswer{Outcome: command.RunNowQueued}
+	if f := r.Status.LastFailure; f != nil && f.EventID == eventID && strings.HasPrefix(f.Reason, failedPrefix+evalPanicked) &&
+		(r.Status.LastFire == nil || r.Status.LastFire.EventID != eventID) {
+		return command.RunNowAnswer{}, errors.New(strings.TrimPrefix(f.Reason, failedPrefix))
 	}
-	return command.RunNowAnswer{Outcome: command.RunNowFired}
+	if i := slices.IndexFunc(r.Status.Queue, func(q rule.QueuedEvent) bool { return q.EventID == eventID }); i >= 0 {
+		return command.RunNowAnswer{Outcome: command.RunNowOutcome(r.Status.Queue[i].Answered)}, nil
+	}
+	return command.RunNowAnswer{Outcome: command.RunNowFired}, nil
 }
 
 // nextDue is the earliest due time of chatID's armed time triggers, zero for none; an idle trigger has none while

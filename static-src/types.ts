@@ -137,6 +137,7 @@ export type {
 export type { PermissionNeededPayload as PermissionNeeded } from "./wire/types.gen.js";
 
 import type {
+  BotSummary,
   Caller,
   Entry,
   EntryCompaction,
@@ -283,8 +284,7 @@ export type ConnectionStatus = "connecting" | "connected" | "disconnected";
  *  entry at once (`pendingSteerRow`, rendered "Sending", no controls), which `steer_queued`
  *  confirms: by id (`steer-<messageID>`), else by exact text against the OLDEST pending entry,
  *  always onto the existing row. A row leaves on its settling `steer` entry or a `removed` frame;
- *  an undeliverable one stays `unsent`. Always the USER's words (agent notices arrive as
- *  `agent_notice`). */
+ *  an undeliverable one stays `unsent`. Always the USER's words (agent notices: `agent_notice`). */
 export interface PendingSteer {
   /** The row's key, and the id every lifecycle event names it by. For a user row it is
    *  `steer-<messageID>`, derived from this device's POST, and it never changes: a
@@ -379,6 +379,8 @@ export interface Session {
    *  statement, so a header read REPLACES it (absent CLEARS). Read by `tabStatusFor` and the boot
    *  snapshot's provisional row. */
   last_turn_outcome?: TurnOutcome;
+  /** `ChatHeader.bot`: the Bot's summary, absent on a regular chat. A header read REPLACES it. */
+  bot?: BotSummary;
   /** `ChatHeader.updated_at`, epoch millis, bumped by every `Mutate`: LAST ACTIVITY, good enough for
    *  the dot tooltip's "finished ~2h ago". Replaced by every header read. */
   updated_at?: number;

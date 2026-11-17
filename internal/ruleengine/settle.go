@@ -52,11 +52,25 @@ func (e *Engine) settle(ctx context.Context, chatID marotte.ChatID, c *marotte.C
 		e.settled[chatID] = true
 		return c, nil
 	}
-	after, err := e.write(ctx, chatID, applyVerdicts(plan.verdicts, now))
+	apply, done := applyVerdicts(plan.verdicts, now), func() { e.settledBy(chatID, &plan, now) }
+	var after *marotte.Chat
+	var err error
+	if len(plan.resend) > 0 {
+		// The rows are already off the run list, so a fault must keep this write owed: a retried classify would
+		// read the event as discarded.
+		after, err = e.writeAfterSend(ctx, chatID, apply, done)
+	} else if after, err = e.write(ctx, chatID, apply); err == nil {
+		done()
+	}
 	if err != nil {
 		e.restoreOpened(chatID, taps)
 		return nil, err
 	}
+	return after, nil
+}
+
+// settledBy logs and counts what the settle's write recorded, and starts each relaunched event's retry wait.
+func (e *Engine) settledBy(chatID marotte.ChatID, plan *settlePlan, now time.Time) {
 	for k, v := range plan.verdicts {
 		args := []any{keyChatID, chatID, keyRuleID, k.rule, keyEventID, k.event}
 		switch v {
@@ -78,7 +92,6 @@ func (e *Engine) settle(ctx context.Context, chatID marotte.ChatID, c *marotte.C
 		}
 	}
 	e.settled[chatID] = true
-	return after, nil
 }
 
 // settlePlan is what the settle decided from the record alone, and what it must still read or do.

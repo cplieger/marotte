@@ -816,8 +816,9 @@ export const switchModel = defineAction<
 // The server answers where the message went (`as`) and the run order after it (`run`), at the take's
 // turn open or at once when it queued. Returns "sent" (it started), "steered", "queued", or a 409's
 // class: "prompt_only" (prompt-only text it would steer), "full" (the queue is
-// at its cap), "gone" (chat_not_found), "closed" (chat_closed), "starting" (starting, or any other
-// 409); null otherwise. `error: false`: transport.send already toasts.
+// at its cap), "gone" (chat_not_found), "closed" (chat_closed), a `SendRefused` (a Bot's
+// bot_draft or bot_closed), "starting" (starting, or any other 409); null otherwise.
+// `error: false`: transport.send already toasts.
 
 interface SendPromptArgs {
   chatID: string;
@@ -833,8 +834,22 @@ interface SendPromptArgs {
   interruptMode?: InterruptMode;
 }
 
+/** A 409 a Bot's state answers, in the server's sentence: not created yet, or closed. */
+export interface SendRefused {
+  readonly refused: "bot_draft" | "bot_closed";
+  readonly words: string;
+}
+
 export type SendPromptAnswer =
-  "sent" | "steered" | "queued" | "prompt_only" | "full" | "starting" | "gone" | "closed";
+  | "sent"
+  | "steered"
+  | "queued"
+  | "prompt_only"
+  | "full"
+  | "starting"
+  | "gone"
+  | "closed"
+  | SendRefused;
 
 /** The answer's `as`: where the server put the message. */
 function placedAs(body: unknown): "sent" | "steered" | "queued" {
@@ -888,6 +903,11 @@ export const sendPrompt = defineAction<SendPromptArgs, SendPromptAnswer>({
         case "chat_closed":
           // The chat was closed, so the send never runs; the text stays as its draft.
           return "closed";
+        case "bot_draft":
+        case "bot_closed": {
+          const words = r.error ?? "This Bot cannot take a message now";
+          return { refused: r.reason, words: words.charAt(0).toUpperCase() + words.slice(1) };
+        }
         case "starting":
         default:
           return "starting";

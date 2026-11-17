@@ -610,10 +610,10 @@ tests:
             exp_annotations:
               summary: "marotte's Bot rules are stopped: it cannot save a Bot"
               description: >
-                marotte could not write a Bot's record for 5 minutes, so its
-                rules evaluate and send nothing. Nothing is lost: they resume
-                on the first write that works. Check the config volume's free
-                space and permissions. The log line names the Bot.
+                marotte could not write a Bot's record for 5 minutes, so every
+                Bot's rules evaluate and send nothing. Nothing is lost: they
+                resume on the first write that works. Check the config volume's
+                free space and permissions.
       - eval_time: 12m
         alertname: MarotteRuleEngineWriteFailing
         exp_alerts: []
@@ -634,21 +634,21 @@ tests:
         exp_alerts:
           - exp_labels: {severity: warning, job: marotte, instance: "a:9847"}
             exp_annotations:
-              summary: "A marotte Bot rule could not send its prompt"
+              summary: "marotte gave up on a Bot rule's prompt"
               description: >
-                A Bot rule fired, but marotte gave up sending its prompt after
-                10 tries. The rule's card on the Bot's setup says why. Check
-                that the agent engine is up and the Bot is open.
+                marotte gave up on a Bot rule's prompt: 10 tries failed, or the
+                rule could not be evaluated or rendered, or its text was refused.
+                The rule's card says why. Check that the agent engine is up.
       - eval_time: 30m
         alertname: MarotteRuleDeliveryFailing
         exp_alerts:
           - exp_labels: {severity: warning, job: marotte, instance: "a:9847"}
             exp_annotations:
-              summary: "A marotte Bot rule could not send its prompt"
+              summary: "marotte gave up on a Bot rule's prompt"
               description: >
-                A Bot rule fired, but marotte gave up sending its prompt after
-                10 tries. The rule's card on the Bot's setup says why. Check
-                that the agent engine is up and the Bot is open.
+                marotte gave up on a Bot rule's prompt: 10 tries failed, or the
+                rule could not be evaluated or rendered, or its text was refused.
+                The rule's card says why. Check that the agent engine is up.
       - eval_time: 40m
         alertname: MarotteRuleDeliveryFailing
         exp_alerts: []

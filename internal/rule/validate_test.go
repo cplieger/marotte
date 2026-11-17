@@ -549,8 +549,18 @@ func TestValidateBot_RefusesMoreThanTwentyRules(t *testing.T) {
 	for i := range specs {
 		specs[i] = validSpec()
 	}
-	wantOnly(t, ValidateBot(specs), "rules")
-	wantNone(t, ValidateBot(specs[:MaxRules]))
+	wantOnly(t, ValidateBot(sent(specs...)), "rules")
+	wantNone(t, ValidateBot(sent(specs[:MaxRules]...)))
+	wantOnly(t, ValidateBot(append(sent(specs[:MaxRules]...), nil)), "rules")
+}
+
+// sent is specs as a save sends them, every one decoded.
+func sent(specs ...Spec) []*Spec {
+	out := make([]*Spec, len(specs))
+	for i := range specs {
+		out[i] = &specs[i]
+	}
+	return out
 }
 
 func TestValidateBot_BoundsTheWorstCaseSize(t *testing.T) {
@@ -571,19 +581,24 @@ func TestValidateBot_BoundsTheWorstCaseSize(t *testing.T) {
 	}
 	t.Run("twenty one-trigger rules at the default cap fit", func(t *testing.T) {
 		// 20 × (10 × 12 + 12 + 22 + 29) KiB + 12 KiB = 3,672 KiB, under 4 MiB with these specs.
-		wantNone(t, ValidateBot(oneTrigger(repeat(20, 10)...)))
+		wantNone(t, ValidateBot(sent(oneTrigger(repeat(20, 10)...)...)))
 	})
 	t.Run("twenty at cap 12 do not, named at the largest cap", func(t *testing.T) {
 		// 20 × (144 + 63) KiB + 12 KiB = 4,152 KiB.
 		caps := repeat(20, 12)
 		caps[7] = 13
-		e := wantOnly(t, ValidateBot(oneTrigger(caps...)), "rules[7].triggers[0].limits.hold_cap")
+		e := wantOnly(t, ValidateBot(sent(oneTrigger(caps...)...)), "rules[7].triggers[0].limits.hold_cap")
 		if e.Error != sentenceBotTooLarge {
 			t.Errorf("error %q, want %q", e.Error, sentenceBotTooLarge)
 		}
 	})
 	t.Run("a tie names the first", func(t *testing.T) {
-		wantOnly(t, ValidateBot(oneTrigger(repeat(20, 12)...)), "rules[0].triggers[0].limits.hold_cap")
+		wantOnly(t, ValidateBot(sent(oneTrigger(repeat(20, 12)...)...)), "rules[0].triggers[0].limits.hold_cap")
+	})
+	t.Run("a rule that did not decode keeps every later rule's index", func(t *testing.T) {
+		specs := sent(oneTrigger(repeat(20, 13)...)...)
+		specs[0] = nil
+		wantOnly(t, ValidateBot(specs), "rules[1].triggers[0].limits.hold_cap")
 	})
 	t.Run("a rule with several event triggers counts each cap", func(t *testing.T) {
 		// Each rule: 7 × (288 + 29) + (300 + 29) + 12 + 22 = 2,582 KiB; two rules and the Bot's 12 KiB pass 4 MiB.
@@ -598,8 +613,8 @@ func TestValidateBot_BoundsTheWorstCaseSize(t *testing.T) {
 			}
 			return eventSpec(ts...)
 		}
-		wantOnly(t, ValidateBot([]Spec{rule(), rule()}), "rules[0].triggers[5].limits.hold_cap")
-		wantNone(t, ValidateBot([]Spec{rule()}))
+		wantOnly(t, ValidateBot(sent(rule(), rule())), "rules[0].triggers[5].limits.hold_cap")
+		wantNone(t, ValidateBot(sent(rule())))
 	})
 	t.Run("time triggers alone can pass the bound", func(t *testing.T) {
 		// 20 × (8 × (12 + 29) + 12 + 22) KiB + 12 KiB = 7,252 KiB, with no hold cap to lower.
@@ -611,7 +626,7 @@ func TestValidateBot_BoundsTheWorstCaseSize(t *testing.T) {
 			}
 			specs[i] = eventSpec(ts...)
 		}
-		e := wantOnly(t, ValidateBot(specs), "rules")
+		e := wantOnly(t, ValidateBot(sent(specs...)), "rules")
 		if e.Error == sentenceBotTooLarge {
 			t.Errorf("the refusal points at a hold cap no rule has: %q", e.Error)
 		}

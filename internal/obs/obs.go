@@ -97,9 +97,11 @@ var ruleEvaluationOutcomes = []string{RuleFired, RuleSkipped}
 const (
 	RuleDeliveryDelivered = "delivered"
 	RuleDeliveryRetry     = "retry"
-	// RuleDeliveryFailed is a prompt dropped after its last try, or one the door refused as no retry can pass.
+	// RuleDeliveryFailed is a prompt dropped after its last try, one the door refused as no retry can pass, or an
+	// event whose evaluation panicked or whose prompt did not render.
 	RuleDeliveryFailed = "failed"
-	// RuleDeliveryDropped is a prompt dropped for a Bot closed or deleted under it.
+	// RuleDeliveryDropped is a prompt dropped for a Bot closed or deleted under it, or a queued prompt the user
+	// discarded before its turn.
 	RuleDeliveryDropped = "dropped"
 )
 

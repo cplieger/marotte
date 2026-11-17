@@ -83,7 +83,7 @@ func TestEval_NoConditionFires(t *testing.T) {
 	}
 }
 
-// The expected columns are Kleene's tables (design §5.3), written out rather than computed.
+// The expected columns are Kleene's tables, written out rather than computed.
 func TestEval_GroupsCombineByKleenesRules(t *testing.T) {
 	cases := []struct {
 		a, b     Truth

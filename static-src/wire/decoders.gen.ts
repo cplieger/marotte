@@ -10,7 +10,7 @@ const BOT_ENGINE_STATES = ["write_failing"] as const;
 const BOT_STATES = ["draft", "active", "paused", "closed"] as const;
 const CATALOG_REASONS = ["rpc", "decode"] as const;
 const CATALOG_STATES = ["ready", "empty", "unavailable"] as const;
-const COND_OPS = ["not", "all", "any"] as const;
+const COND_OPS = ["all", "any"] as const;
 const CONTENT_KINDS = ["text", "binary", "not_utf8", "too_large"] as const;
 const CONTEXT_RESET_CAUSES = ["session_missing", "load_failed", "empty_retry"] as const;
 const DECISION_KINDS = ["permission", "elicitation", "user_input"] as const;
@@ -4213,8 +4213,16 @@ export const decodeRuleQueuedEvent: Decoder<RuleQueuedEvent> = (v) => {
     if ($v !== undefined && $v !== null) out.message_id = reqStr(o, "message_id", "$.rule_queued_event");
   }
   {
+    const $v = own(o, "answered");
+    if ($v !== undefined && $v !== null) out.answered = reqStr(o, "answered", "$.rule_queued_event");
+  }
+  {
     const $v = own(o, "fired_at");
     if ($v !== undefined && $v !== null) out.fired_at = reqNum(o, "fired_at", "$.rule_queued_event");
+  }
+  {
+    const $v = own(o, "prev_fire");
+    if ($v !== undefined && $v !== null) out.prev_fire = reqNum(o, "prev_fire", "$.rule_queued_event");
   }
   {
     const $v = own(o, "queued");

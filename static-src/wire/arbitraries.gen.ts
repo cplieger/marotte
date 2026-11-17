@@ -10,7 +10,7 @@ export const arbBotEngineState: fc.Arbitrary<BotEngineState> = fc.constantFrom("
 export const arbBotState: fc.Arbitrary<BotState> = fc.constantFrom("draft", "active", "paused", "closed");
 export const arbCatalogReason: fc.Arbitrary<CatalogReason> = fc.constantFrom("rpc", "decode");
 export const arbCatalogState: fc.Arbitrary<CatalogState> = fc.constantFrom("ready", "empty", "unavailable");
-export const arbCondOp: fc.Arbitrary<CondOp> = fc.constantFrom("not", "all", "any");
+export const arbCondOp: fc.Arbitrary<CondOp> = fc.constantFrom("all", "any");
 export const arbContentKind: fc.Arbitrary<ContentKind> = fc.constantFrom("text", "binary", "not_utf8", "too_large");
 export const arbContextResetCause: fc.Arbitrary<ContextResetCause> = fc.constantFrom("session_missing", "load_failed", "empty_retry");
 export const arbDecisionKind: fc.Arbitrary<DecisionKind> = fc.constantFrom("permission", "elicitation", "user_input");
@@ -2636,9 +2636,11 @@ const arbModel = fc.letrec<{
       trigger: fc.string(),
       event_id: fc.string(),
       message_id: fc.string(),
+      answered: fc.string(),
       data: fc.jsonValue(),
       seen_at: fc.double({ noNaN: true, noDefaultInfinity: true }),
       fired_at: fc.double({ noNaN: true, noDefaultInfinity: true }),
+      prev_fire: fc.double({ noNaN: true, noDefaultInfinity: true }),
       depth: fc.double({ noNaN: true, noDefaultInfinity: true }),
       tries: fc.double({ noNaN: true, noDefaultInfinity: true }),
       queued: fc.boolean(),

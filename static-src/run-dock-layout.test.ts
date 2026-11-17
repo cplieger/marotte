@@ -109,7 +109,6 @@ function mountPage(byId: (id: string) => HTMLElement, controls: HTMLElement): Ex
   return view;
 }
 
-/** The panel opens through a height transition; measure the open state, not a frame of it. */
 /** Until `region` plays no animation: a slide cancelled for the one replacing it rejects its
  *  `finished` (an AbortError), and the replacement is what the wait follows. */
 async function animationsDone(region: Element): Promise<void> {
@@ -123,6 +122,7 @@ async function animationsDone(region: Element): Promise<void> {
   throw new Error("the region's animations never settled");
 }
 
+/** The panel opens through a height transition; measure the open state, not a frame of it. */
 async function settled(region: Element): Promise<void> {
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   await animationsDone(region);

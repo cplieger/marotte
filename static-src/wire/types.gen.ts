@@ -12,7 +12,7 @@ export type CatalogReason = "rpc" | "decode";
 
 export type CatalogState = "ready" | "empty" | "unavailable";
 
-export type CondOp = "not" | "all" | "any";
+export type CondOp = "all" | "any";
 
 export type ContentKind = "text" | "binary" | "not_utf8" | "too_large";
 
@@ -3553,6 +3553,8 @@ export interface RuleQueuedEvent {
   event_id: string;
   /** MessageID is the prompt Notify queued behind a turn, set with Queued. */
   message_id?: string;
+  /** Answered is a Run now press's first answer, fired or queued, which a replay of its op_id answers again. */
+  answered?: string;
   /**
    * Data is the event as NewEvent bounds it, read back by DecodeEvent: at most 12 KiB with a webhook's
    * condition copy.
@@ -3560,6 +3562,11 @@ export interface RuleQueuedEvent {
   data: unknown;
   seen_at: number;
   fired_at?: number;
+  /**
+   * PrevFire is the rule's LastFire.At (unix ms) when this event fired, 0 for none: its recheck reads it, since
+   * LastFire may by then be this event's own fire or a later one.
+   */
+  prev_fire?: number;
   depth: number;
   tries: number;
   /** Queued marks a fired event whose prompt waits on the chat's run order; it stays until its turn opens. */

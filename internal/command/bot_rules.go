@@ -151,7 +151,7 @@ func planRules(s *rulesSave, stored []rule.Rule) (rulePlan, []fieldError) {
 	}
 	seen := map[string]bool{}
 	needsOp := false
-	specs := make([]rule.Spec, 0, len(s.rules))
+	specs := make([]*rule.Spec, len(s.rules))
 	for i := range s.rules {
 		r := &s.rules[i]
 		at := fmt.Sprintf("rules[%d].", i)
@@ -178,7 +178,7 @@ func planRules(s *rulesSave, stored []rule.Rule) (rulePlan, []fieldError) {
 		for _, e := range ValidateRuleSpec(r.spec, ctx) {
 			refuse(at, e)
 		}
-		specs = append(specs, r.spec)
+		specs[i] = &r.spec
 	}
 	for _, e := range rule.ValidateBot(specs) {
 		refuse("", e)

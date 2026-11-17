@@ -163,3 +163,15 @@ describe("submitPrompt on a 409 chat_closed refusal", () => {
     expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "hello");
   });
 });
+
+describe("submitPrompt on a Bot's refusal", () => {
+  for (const refused of ["bot_draft", "bot_closed"] as const) {
+    it(`says ${refused} in the server's words and hands the text back`, async () => {
+      mockSendPromptTo.mockResolvedValue({ refused, words: "This Bot cannot take it" });
+      resetStore("c1");
+      expect(await submitPrompt("c1", "hello")).toBe("failed");
+      expect(mockReportSendRefused).toHaveBeenCalledWith("This Bot cannot take it");
+      expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "hello");
+    });
+  }
+});

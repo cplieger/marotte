@@ -106,6 +106,27 @@ func TestCmdBotSave_RefusesMoreThanTwentyRulesAtRules(t *testing.T) {
 	}
 }
 
+// A save past 20 rules is refused at rules even when one of them does not decode, beside that rule's own error.
+func TestCmdBotSave_CountsTheRulesAsSentBesideAnInvalidOne(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedBot(t, store, "c-bot", "Watcher", &marotte.Bot{Goal: "Watch.", StartedAt: 1})
+	roles, _ := newRuleRoles(t, store)
+	rules := make([]marotte.BotRuleSave, rule.MaxRules+1)
+	rules[0] = marotte.BotRuleSave{Spec: json.RawMessage(`{"name":"X","prompt":"p","enabled":true,"triggers":[{"kind":"every","every":{"minutes":60}}],"bogus":1}`)}
+	for i := 1; i < len(rules); i++ {
+		rules[i] = ruleSave(t, "", everyRule("Rule", "", 60))
+	}
+
+	_, err := cmdBotSave(t.Context(), roles, botSaveReq(t, "c-bot",
+		&marotte.BotSaveCommand{Name: "Watcher", Goal: "Watch.", OpID: "op-1", Rules: rules}))
+
+	got := fieldsOf(err)
+	slices.Sort(got)
+	if want := []string{"rules", "rules[0].bogus"}; statusOf(err) != http.StatusBadRequest || !slices.Equal(got, want) {
+		t.Errorf("bot_save = %d at %v, want 400 at %v", statusOf(err), got, want)
+	}
+}
+
 func TestCmdBotSave_ANewRuleNeedsAnOpID(t *testing.T) {
 	for name, op := range map[string]string{"none": "", "not an identifier": "op 1"} {
 		t.Run(name, func(t *testing.T) {

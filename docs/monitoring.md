@@ -43,7 +43,7 @@ Labels carry fixed values only, with one exception. `rule_id` is the random id m
 | `marotte_trigger_poll_failures` | gauge | `rule_id` | Consecutive polls in which an enabled event rule's read of its repository failed. A good read resets it to 0, and a rate limit leaves it as it is |
 | `marotte_trigger_catch_up_gaps` | gauge | `rule_id` | Time ranges an enabled event rule could not read back and nobody has dismissed on its row. It counts the gaps saved in the rule's state, so a restart keeps them |
 | `marotte_rule_evaluations_total` | counter | `trigger`, `outcome` | Evaluations of a Bot's rules. `trigger` is the trigger kind, `every` or `at`, or `manual` for a **Run now** press. `outcome` is `fired` or `skipped` |
-| `marotte_rule_deliveries_total` | counter | `outcome` | Tries at sending a Bot rule's prompt, by `delivered` (the prompt's turn opened), `retry` (the chat refused the prompt or its turn failed to start, so it goes again later), `failed` (given up after 10 tries, or refused in a way no retry fixes) or `dropped` (the Bot was closed or deleted first, or the queued prompt was removed before its turn) |
+| `marotte_rule_deliveries_total` | counter | `outcome` | Tries at sending a Bot rule's prompt, by `delivered` (the prompt's turn opened), `retry` (the chat refused the prompt or its turn failed to start, so it goes again later), `failed` (given up after 10 tries, refused in a way no retry fixes, or the rule could not be evaluated or rendered) or `dropped` (the Bot was closed or deleted first, or the queued prompt was removed before its turn) |
 | `marotte_rule_queue_events` | gauge | none | Events waiting in the queues of every Bot's rules |
 | `marotte_rule_engine_write_failing` | gauge | none | 1 while marotte cannot write a Bot's record, so every Bot's rules are stopped, else 0 |
 
@@ -90,7 +90,7 @@ Load [`alerts/promql.yaml`](../alerts/promql.yaml) into Prometheus, Mimir or vma
 | `MarotteTriggerPollFailing` | An event rule's read of its repository failed 3 or more polls in a row | warning |
 | `MarotteTriggerCatchUpGap` | An event rule could not read back over a time range, so events in it may never launch. It fires until you dismiss the gap on the rule's row | warning |
 | `MarotteRuleEngineWriteFailing` | marotte could not write a Bot's record for 5 minutes, so every Bot's rules are stopped until a write works | critical |
-| `MarotteRuleDeliveryFailing` | A Bot rule fired in the last 30 minutes but marotte gave up sending its prompt after 10 tries | warning |
+| `MarotteRuleDeliveryFailing` | marotte gave up on a Bot rule's prompt in the last 30 minutes: 10 tries failed, or the rule could not be evaluated or rendered, or its text was refused | warning |
 
 Thresholds and the `severity` labels are starting points. Keep the scrape job name `marotte`, which `MarotteDown` reads, or change the rule to your job name.
 

@@ -555,6 +555,7 @@ describe("server-hit navigation", () => {
   let onHotkey: (e: KeyboardEvent) => void;
   let openAt: typeof ModFindInChat.openChatFindAt;
   let closeFind: () => void;
+  let renderCeilingMs: number;
   let chatSearch: typeof ModChatSearch;
   let store: typeof ModStore;
   let storeLoad: typeof ModStoreLoad;
@@ -582,6 +583,7 @@ describe("server-hit navigation", () => {
     onHotkey = mod.handleFindHotkey;
     openAt = mod.openChatFindAt;
     closeFind = mod.closeChatFind;
+    renderCeilingMs = mod.RENDER_WAIT_CEILING_MS;
     chatSearch = await import("./chat-search.js");
     store = await import("./store.js");
     storeLoad = await import("./store-load.js");
@@ -610,10 +612,7 @@ describe("server-hit navigation", () => {
     return document.getElementById("chat-find-count")?.textContent ?? "";
   }
 
-  /** `RENDER_WAIT_CEILING_MS` in find-in-chat.ts. */
-  const RENDER_CEILING_MS = 64;
-
-  /** A case about what a rendered miss says needs its frame to beat that ceiling, which a loaded
+  /** A case about what a rendered miss says needs its frame to beat the render ceiling, which a loaded
    *  host can delay past; with the ceiling never armed, the frame lands however late it is. */
   function frameAlwaysDelivered(): void {
     const real = globalThis.setTimeout;
@@ -621,7 +620,7 @@ describe("server-hit navigation", () => {
       handler: TimerHandler,
       ms?: number,
       ...args: unknown[]
-    ) => (ms === RENDER_CEILING_MS ? 0 : real(handler, ms, ...args))) as typeof setTimeout);
+    ) => (ms === renderCeilingMs ? 0 : real(handler, ms, ...args))) as typeof setTimeout);
   }
 
   function noteText(): string {

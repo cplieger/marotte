@@ -115,6 +115,120 @@ func TestEngine_ATimeTriggerNeverStacksBesideRunNow(t *testing.T) {
 	})
 }
 
+// A Run now press while another waits stores, logs and counts nothing, and answers queued each time it is retried.
+func TestEngine_APressBesideAWaitingOneStoresNothing(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(t)
+		h.seedBot("b1", weekly(h))
+		h.turns.setLive("b1", true)
+		h.scan()
+		h.start()
+		for _, op := range []string{"op-1", "op-2", "op-2"} {
+			if ans := h.runNow(op); ans.Outcome != command.RunNowQueued {
+				t.Errorf("%s answered %+v, want queued", op, ans)
+			}
+		}
+		if got := h.rule("b1", "r1").Status.Recent; !slices.Equal(got, []string{"manual:op-1"}) {
+			t.Errorf("recent %v, want the first press alone", got)
+		}
+		if got := h.logs.lines(slog.LevelInfo, "rule fired"); got != 1 {
+			t.Errorf("%d fired lines, want 1", got)
+		}
+	})
+}
+
+// A replayed Run now press answers what its first press answered while its event still waits for delivery.
+func TestEngine_AReplayedPressAnswersItsFirstAnswer(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		live bool
+		want command.RunNowOutcome
+	}{
+		{name: "fired on a free Bot", want: command.RunNowFired},
+		{name: "queued on a working Bot", live: true, want: command.RunNowQueued},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				h := newHarness(t)
+				h.seedBot("b1", weekly(h))
+				h.turns.setLive("b1", c.live)
+				h.refused.Store(true)
+				h.scan()
+				h.start()
+				for _, label := range []string{"the press", "its replay"} {
+					if ans := h.runNow("op-1"); ans.Outcome != c.want {
+						t.Errorf("%s answered %+v, want %s", label, ans, c.want)
+					}
+				}
+				h.wantSent("while the runtime refuses", 0)
+			})
+		})
+	}
+}
+
+// A row the settle took back off the run list is never lost to a write fault at the settle's own write: once writes
+// land, the event goes again once and nothing is dropped.
+func TestEngine_ARowTakenBackSurvivesAFaultAtTheSettlesWrite(t *testing.T) {
+	failOnce := func(h *harness) func() {
+		var faulted atomic.Bool
+		return func() {
+			if !faulted.Swap(true) {
+				h.fs.failing.Store(true)
+			}
+		}
+	}
+	wantDeliveredOnce := func(t *testing.T, h *harness) {
+		t.Helper()
+		r := h.rule("b1", "r1")
+		if len(r.Status.Queue) != 0 || len(r.Status.Sent) != 1 || r.Status.Dropped != 0 {
+			t.Errorf("queue %v sent %v dropped %d, want the event delivered once and nothing dropped",
+				eventIDs(r.Status.Queue), r.Status.Sent, r.Status.Dropped)
+		}
+	}
+	t.Run("the boot's held row", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			h := newHarness(t)
+			seedQueued(h)
+			h.restart(func() { h.notes.afterUnqueue = failOnce(h) })
+			if got := h.notes.unqueuedRows(); !slices.Equal(got, []string{"m-1"}) {
+				t.Errorf("unqueued %v, want the held row m-1", got)
+			}
+			h.wantSent("during the fault", 0)
+			h.advance(30 * time.Second)
+			h.fs.failing.Store(false)
+			h.advance(time.Minute)
+			got := h.wantSent("after the fault", 1)
+			if eventIDOf(got[0]) != dueID("t1", h.at(5*time.Minute)) {
+				t.Errorf("resent %q, want the 5 min event", eventIDOf(got[0]))
+			}
+			wantDeliveredOnce(t, h)
+		})
+	})
+	t.Run("a failed launch's row", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			h := newHarness(t)
+			h.seedBot("b1", armedRule("r1", specOf("Tidy", nil, everyT("t1", 5, "")), h.at(0)))
+			h.notes.place = launchFailsFirst
+			h.notes.afterUnqueue = failOnce(h)
+			h.scan()
+			h.start()
+			h.advance(5*time.Minute + 30*time.Second)
+			if got := h.notes.unqueuedRows(); !slices.Equal(got, []string{"m-1"}) {
+				t.Errorf("unqueued %v, want the failed row m-1", got)
+			}
+			h.fs.failing.Store(false)
+			h.advance(15 * time.Second)
+			h.wantSent("inside the retry wait", 1)
+			h.advance(time.Minute)
+			h.wantSent("after the retry wait", 2)
+			wantDeliveredOnce(t, h)
+			if n := h.logs.lines(slog.LevelWarn, "rule delivery retry"); n != 1 {
+				t.Errorf("%d retry lines, want the relaunch logged once its write landed", n)
+			}
+		})
+	})
+}
+
 // The write a send owes is kept through a write fault and lands before the loop runs again: a prompt that queued
 // while writes failed is marked queued once they land, so the user's discard of its row drops it, never sends it again.
 func TestEngine_AWriteOwedBySendLandsAfterTheFault(t *testing.T) {

@@ -37,7 +37,7 @@ const (
 	phraseUnknown = "unknown"
 )
 
-// kindOrder is the catalogue's order of the built kinds, the editor's (design §13.2).
+// kindOrder is the catalogue's order of the built kinds, the editor's.
 var kindOrder = []TriggerKind{KindEvery, KindAt}
 
 // sampleAt is the instant every catalogue sample is stamped with.
@@ -104,7 +104,7 @@ type leafDef struct {
 	params  []Param
 }
 
-// leafOrder is the catalogue's order of the state items, design §13.3's table.
+// leafOrder is the catalogue's order of the state items, the editor's.
 var leafOrder = []LeafKind{LeafBotBusy, LeafBotWaiting, leafTimeWindow, leafEventField, LeafRuleLastRan}
 
 var leafDefs = map[LeafKind]leafDef{

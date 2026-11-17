@@ -1,9 +1,9 @@
 package rule
 
 // Enqueue adds ev to the rule's queue under its trigger's bounds and answers whether it was added: a Run now press
-// while another waits adds nothing; a time trigger's event replaces its waiting one (design §7.2); an event
-// trigger's keeps the newest only or drops its oldest at HoldCap (§8.3). A dropped event counts in Dropped. An event
-// already in the chat (Queued) is no longer waiting, so nothing drops or counts it.
+// while another waits adds nothing; a time trigger's event replaces its waiting one; an event trigger's keeps the
+// newest only or drops its oldest at HoldCap. A dropped event counts in Dropped. An event already in the chat
+// (Queued) is no longer waiting, so nothing drops or counts it.
 func Enqueue(st *Status, spec *Spec, ev *QueuedEvent) bool {
 	waiting := func(q *QueuedEvent) bool { return !q.Queued && q.Trigger == ev.Trigger }
 	n := 0

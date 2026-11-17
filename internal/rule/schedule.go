@@ -6,7 +6,7 @@ import "time"
 // any valid trigger has a slot within two months.
 const maxScanDays = 62
 
-// NextDue answers a time trigger's next evaluation in now's zone, the server's (design §7.5); lastTurnEndedAt is
+// NextDue answers a time trigger's next evaluation in now's zone, the server's; lastTurnEndedAt is
 // Chat.LastTurnEndedAt and live says the Bot has a live turn. A due time already passed reads as now. A kind with no
 // schedule, and an idle trigger while live (the turn's end moves it), answer the zero time.
 func NextDue(t Trigger, st *TriggerState, lastTurnEndedAt int64, live bool, now time.Time) time.Time {
@@ -28,7 +28,7 @@ func DueAt(t Trigger, st *TriggerState, lastTurnEndedAt int64, loc *time.Locatio
 }
 
 // DueSlot answers the slot an evaluation at now is for, when one is due: an every trigger's anchor plus its
-// interval, an at trigger's newest slot after its anchor (one evaluation for every missed slot, design §7.4).
+// interval, an at trigger's newest slot after its anchor: one evaluation, of the newest missed slot.
 func DueSlot(t Trigger, st *TriggerState, lastTurnEndedAt int64, live bool, now time.Time) (Slot, bool) {
 	due, ok, _ := nextTime(t, st, lastTurnEndedAt, live, now.Location())
 	if !ok || due.After(now) {
@@ -47,7 +47,7 @@ func DueSlot(t Trigger, st *TriggerState, lastTurnEndedAt int64, live bool, now 
 }
 
 // Evaluated moves the trigger's anchor for an evaluation at now, fire or skip: to the evaluation's instant, never
-// to the due time it was for (design §7.2).
+// to the due time it was for.
 func Evaluated(st *TriggerState, now time.Time) {
 	st.LastAt = now.UnixMilli()
 }
@@ -118,7 +118,7 @@ func slotDay(a *AtTrigger, day time.Time) bool {
 
 // wallTime is the instant of minutes after midnight on day's date. A missing spring-forward time normalises as
 // time.Date does; a repeated fall-back time is its first instant, since time.Date may answer the second and a slot
-// fires once, at the first (design §7.3).
+// fires once, at the first.
 func wallTime(day time.Time, minutes int) time.Time {
 	t := time.Date(day.Year(), day.Month(), day.Day(), minutes/60, minutes%60, 0, 0, day.Location())
 	_, before := t.Add(-3 * time.Hour).Zone()

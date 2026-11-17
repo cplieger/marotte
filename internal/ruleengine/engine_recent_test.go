@@ -30,7 +30,7 @@ func TestEngine_ASlotTheRuleAlreadyEvaluatedFiresNothing(t *testing.T) {
 	})
 }
 
-// A rule remembers the last 100 event ids it evaluated, newest last (design §3.3).
+// A rule remembers the last 100 event ids it evaluated, newest last.
 func TestEngine_RemembersTheLast100EventIDs(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := newHarness(t)

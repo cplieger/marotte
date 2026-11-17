@@ -68,10 +68,11 @@ type openedPrompt struct {
 	rule, event string
 }
 
-// pendingWrite is an outcome write owed for a prompt already handed to the chat: a write fault retries it as it
-// was, since sending the prompt again would deliver it twice.
+// pendingWrite is an outcome write owed for an act already done on the chat: a write fault retries it as it was,
+// since acting again would deliver the prompt twice or read a row taken back as discarded. done runs once it lands.
 type pendingWrite struct {
 	apply func(c *marotte.Chat) bool
+	done  func()
 	chat  marotte.ChatID
 }
 
@@ -82,12 +83,14 @@ var (
 )
 
 // Engine is the rule engine. Its taps and commands may be called from any goroutine; Run owns the loop. mu guards
-// dirty, opened, ceiling and failingSince; Run's goroutine alone reads and writes every other field.
+// dirty, known, opened, ceiling and failingSince; Run's goroutine alone reads and writes every other field.
 type Engine struct {
-	deps    Deps
-	log     *slog.Logger
-	wake    chan struct{}
-	dirty   map[marotte.ChatID]bool
+	deps  Deps
+	log   *slog.Logger
+	wake  chan struct{}
+	dirty map[marotte.ChatID]bool
+	// known is every chat indexed or reindexed and not yet forgotten, so the turn-end tap skips any other.
+	known   map[marotte.ChatID]bool
 	opened  map[marotte.ChatID][]openedPrompt
 	ceiling map[marotte.ChatID]time.Time
 	index   map[marotte.ChatID]bool
@@ -112,7 +115,7 @@ func New(deps Deps) *Engine {
 	}
 	return &Engine{
 		deps: deps, log: log, wake: make(chan struct{}, 1),
-		dirty: map[marotte.ChatID]bool{}, opened: map[marotte.ChatID][]openedPrompt{},
+		dirty: map[marotte.ChatID]bool{}, known: map[marotte.ChatID]bool{}, opened: map[marotte.ChatID][]openedPrompt{},
 		ceiling: map[marotte.ChatID]time.Time{},
 		index:   map[marotte.ChatID]bool{}, due: map[marotte.ChatID]time.Time{}, settled: map[marotte.ChatID]bool{},
 		retryAt: map[marotte.ChatID]map[string]time.Time{}, waiting: map[marotte.ChatID]int{},
@@ -140,9 +143,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-wake:
-			if !timer.Stop() {
-				<-timer.C
-			}
+			timer.Stop()
 		case <-timer.C:
 		}
 	}
@@ -151,7 +152,7 @@ func (e *Engine) Run(ctx context.Context) error {
 // Reindex reads chatID again on the loop's next pass.
 func (e *Engine) Reindex(chatID marotte.ChatID) {
 	e.mu.Lock()
-	e.dirty[chatID] = true
+	e.dirty[chatID], e.known[chatID] = true, true
 	e.mu.Unlock()
 	e.signal()
 }
@@ -169,7 +170,18 @@ func (e *Engine) TurnOpened(chatID marotte.ChatID, _ string, caller *marotte.Cal
 }
 
 // TurnClosed is the turn-end tap, called once the turn's close and LastTurnEndedAt are on disk: the Bot may be free.
-func (e *Engine) TurnClosed(chatID marotte.ChatID, _ string, _ *marotte.Caller) { e.Reindex(chatID) }
+// A chat the engine does not know as a Bot costs one map lookup.
+func (e *Engine) TurnClosed(chatID marotte.ChatID, _ string, _ *marotte.Caller) {
+	e.mu.Lock()
+	known := e.known[chatID]
+	if known {
+		e.dirty[chatID] = true
+	}
+	e.mu.Unlock()
+	if known {
+		e.signal()
+	}
+}
 
 // Status answers what the engine holds in memory about chatID.
 func (e *Engine) Status(chatID marotte.ChatID) Status {
@@ -190,6 +202,9 @@ func (e *Engine) takeDirty() map[marotte.ChatID]bool {
 	defer e.mu.Unlock()
 	d := e.dirty
 	e.dirty = map[marotte.ChatID]bool{}
+	for id := range d {
+		e.known[id] = true
+	}
 	return d
 }
 
@@ -231,9 +246,11 @@ func (e *Engine) open() bool {
 		if !complete {
 			return false
 		}
+		e.mu.Lock()
 		for _, id := range ids {
-			e.index[id] = true
+			e.index[id], e.known[id] = true, true
 		}
+		e.mu.Unlock()
 		e.indexed = true
 	}
 	if !e.ready {
@@ -300,6 +317,7 @@ func (e *Engine) forget(chatID marotte.ChatID) {
 	delete(e.retryAt, chatID)
 	delete(e.waiting, chatID)
 	e.mu.Lock()
+	delete(e.known, chatID)
 	delete(e.ceiling, chatID)
 	delete(e.opened, chatID)
 	e.mu.Unlock()
@@ -390,14 +408,17 @@ func (e *Engine) write(ctx context.Context, chatID marotte.ChatID, apply func(c 
 	return nil, fmt.Errorf("%w: %w", errStopped, err)
 }
 
-// writeAfterSend is write for an outcome owed by a prompt already handed to the chat: on a fault it is kept and
-// retried as it is, before the loop runs again.
-func (e *Engine) writeAfterSend(ctx context.Context, chatID marotte.ChatID, apply func(c *marotte.Chat) bool) error {
-	_, err := e.write(ctx, chatID, apply)
-	if errors.Is(err, errStopped) {
-		e.pending = append(e.pending, pendingWrite{chat: chatID, apply: apply})
+// writeAfterSend is write for an outcome owed by an act already done on the chat (a prompt handed to it, a row taken
+// back): on a fault it is kept and retried as it is, before the loop runs again. done, when set, runs once it lands.
+func (e *Engine) writeAfterSend(ctx context.Context, chatID marotte.ChatID, apply func(c *marotte.Chat) bool, done func()) (*marotte.Chat, error) {
+	after, err := e.write(ctx, chatID, apply)
+	switch {
+	case errors.Is(err, errStopped):
+		e.pending = append(e.pending, pendingWrite{chat: chatID, apply: apply, done: done})
+	case err == nil && done != nil:
+		done()
 	}
-	return err
+	return after, err
 }
 
 // retryPending retries the outcome writes a fault left owed, in order, and reports whether all landed.
@@ -408,6 +429,9 @@ func (e *Engine) retryPending(ctx context.Context) bool {
 			return false
 		}
 		e.pending = e.pending[1:]
+		if p.done != nil {
+			p.done()
+		}
 	}
 	return true
 }

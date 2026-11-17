@@ -586,6 +586,7 @@ async function readChatList(signal?: AbortSignal): Promise<boolean> {
       // spread IS a replace here: nothing carries over because nothing is there. `updated_at` needs
       // no guard — it is required on the wire.
       ...(h.last_turn_outcome !== undefined && { last_turn_outcome: h.last_turn_outcome }),
+      ...(h.bot !== undefined && { bot: h.bot }),
       updated_at: h.updated_at,
     };
     next.push(session);

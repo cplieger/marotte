@@ -159,7 +159,7 @@ func (e *Engine) recheck(ctx context.Context, chatID marotte.ChatID, r *rule.Rul
 			return false
 		}
 		q := &r.Status.Queue[i]
-		s, err := snapshot(r, q, now, false, waiting)
+		s, err := snapshot(q, q.PrevFire, now, false, waiting)
 		if err != nil {
 			return false
 		}
@@ -199,7 +199,7 @@ func (e *Engine) send(ctx context.Context, chatID marotte.ChatID, r *rule.Rule, 
 	if err != nil {
 		return e.refused(ctx, chatID, r, ev, err, now)
 	}
-	return e.writeAfterSend(ctx, chatID, onEvent(r.ID, ev.EventID, func(r *rule.Rule, i int) bool {
+	_, err = e.writeAfterSend(ctx, chatID, onEvent(r.ID, ev.EventID, func(r *rule.Rule, i int) bool {
 		if i < 0 {
 			return false
 		}
@@ -207,7 +207,8 @@ func (e *Engine) send(ctx context.Context, chatID marotte.ChatID, r *rule.Rule, 
 		q.Queued, q.MessageID = true, messageID
 		r.Status.LastFailure = nil
 		return true
-	}))
+	}), nil)
+	return err
 }
 
 // dropWith drops an event no try can deliver, with reason as the rule's failure.

@@ -28,7 +28,7 @@ func renderSpec() Spec {
 	}
 }
 
-// rendered is a delivered text taken apart by the layout §6.2 gives it.
+// rendered is a delivered text taken apart into its first line, prompt and event block.
 type rendered struct {
 	first, prompt string
 	block         string

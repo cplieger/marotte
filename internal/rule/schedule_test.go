@@ -279,8 +279,8 @@ func TestEvaluated_AnchorsAtTheEvaluationInstantAndKeepsTheRest(t *testing.T) {
 	}
 }
 
-// TestSchedule_ASkipMovesTheAnchorAsAFireDoes walks design §7.2's table, "every 3 h, if not in overage", armed at
-// 09:00. The overage leaf ships later, so "this Bot is not working" stands in for the condition.
+// TestSchedule_ASkipMovesTheAnchorAsAFireDoes walks "every 3 h, if this Bot is not working", armed at 09:00,
+// through a fire, a skip and a fire.
 func TestSchedule_ASkipMovesTheAnchorAsAFireDoes(t *testing.T) {
 	trig := everyTrigger("t1", 180)
 	cond := not(busy())

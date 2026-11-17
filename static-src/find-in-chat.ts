@@ -788,7 +788,7 @@ function selectUnit(unit: HTMLElement): boolean {
 }
 
 /** Four 60Hz frames: a busy frame keeps its re-walk, and the fallback is no felt stall. */
-const RENDER_WAIT_CEILING_MS = 64;
+export const RENDER_WAIT_CEILING_MS = 64;
 
 /** One rendered frame or the ceiling; `true` when a frame was delivered, which makes a following miss conclusive. */
 function nextRender(): Promise<boolean> {

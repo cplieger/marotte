@@ -278,13 +278,18 @@ type QueuedEvent struct {
 	EventID string `json:"event_id"`
 	// MessageID is the prompt Notify queued behind a turn, set with Queued.
 	MessageID string `json:"message_id,omitempty"`
+	// Answered is a Run now press's first answer, fired or queued, which a replay of its op_id answers again.
+	Answered string `json:"answered,omitempty"`
 	// Data is the event as NewEvent bounds it, read back by DecodeEvent: at most 12 KiB with a webhook's
 	// condition copy.
 	Data    json.RawMessage `json:"data"`
 	SeenAt  int64           `json:"seen_at"`
 	FiredAt int64           `json:"fired_at,omitempty"`
-	Depth   int             `json:"depth"`
-	Tries   int             `json:"tries"`
+	// PrevFire is the rule's LastFire.At (unix ms) when this event fired, 0 for none: its recheck reads it, since
+	// LastFire may by then be this event's own fire or a later one.
+	PrevFire int64 `json:"prev_fire,omitempty"`
+	Depth    int   `json:"depth"`
+	Tries    int   `json:"tries"`
 	// Queued marks a fired event whose prompt waits on the chat's run order; it stays until its turn opens.
 	Queued bool `json:"queued,omitempty"`
 }

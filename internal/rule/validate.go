@@ -21,8 +21,8 @@ const (
 )
 
 // opNotGroup is the NOT group the condition model has none of, refused with the sentence that points at each
-// item's own negative.
-const opNotGroup CondOp = "not"
+// item's own negative. It stays untyped so the wire codegen leaves it out of CondOp's values.
+const opNotGroup = "not"
 
 type addFunc func(path, msg string)
 
@@ -507,9 +507,10 @@ const (
 	triggerStateBytes = 29 * kib
 )
 
-// ValidateBot checks what binds a Bot's rules together: at most MaxRules, and their worst-case size at most
-// maxBotBytes, refused at the largest hold cap when lowering one can help.
-func ValidateBot(specs []Spec) []FieldError {
+// ValidateBot checks what binds a Bot's rules together, specs in the order sent with nil for a rule that did not
+// decode: at most MaxRules, and the decoded rules' worst-case size at most maxBotBytes, refused at the largest hold
+// cap when lowering one can help.
+func ValidateBot(specs []*Spec) []FieldError {
 	var errs errList
 	if len(specs) > MaxRules {
 		errs.add("rules", fmt.Sprintf("A Bot has at most %d rules", MaxRules))
@@ -526,18 +527,21 @@ func ValidateBot(specs []Spec) []FieldError {
 }
 
 // worstCase answers the Bot's worst-case encoded size and the path of its largest hold cap, the first on a tie.
-func worstCase(specs []Spec) (size int, largest string) {
+func worstCase(specs []*Spec) (size int, largest string) {
 	// The one event the Bot may hold queued on its chat, which no cap drops.
 	size = eventBytes
 	most := 0
-	for i := range specs {
-		enc, err := json.Marshal(&specs[i])
+	for i, spec := range specs {
+		if spec == nil {
+			continue
+		}
+		enc, err := json.Marshal(spec)
 		if err != nil {
 			return maxBotBytes + 1, ""
 		}
 		// A rule's one waiting Run now event belongs to no trigger, so no hold cap counts it.
 		size += len(enc) + eventBytes + ruleMarkBytes
-		for j, t := range specs[i].Triggers {
+		for j, t := range spec.Triggers {
 			size += triggerStateBytes
 			if kinds[t.Kind].time || t.Limits == nil {
 				size += eventBytes

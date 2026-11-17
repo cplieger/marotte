@@ -28,6 +28,10 @@ import { maybeEl, queryEl } from "./dom.js";
 /** Tree depth, read by css/32-spec.css to indent a row, its note and its detail. */
 const DEPTH_PROP = "--depth";
 
+/** The segmented bar's id prefix, and the one pane every segment shows its document in. */
+const SPEC_ID_PREFIX = "spec";
+const SPEC_PANE_ID = "spec-panel";
+
 /** The server's prompt cap: `maxPromptBytes` in internal/command/validate.go (512 KiB, enforced
  *  over the text's bytes). A deliberate duplicate, because the constant is unexported and this
  *  check only decides whether Run is offered; the server still answers 413 either way. */
@@ -735,6 +739,11 @@ export function applyResult(ref: string, id: string, result: SendPromptResult): 
     return;
   }
   st.failure = "";
+  if (typeof result === "object") {
+    st.failure = result.words;
+    paint(ref);
+    return;
+  }
   switch (result) {
     // Accepted: the server started it, or queued it behind what runs, which sends it in order.
     case "sent":
@@ -873,7 +882,7 @@ function pageFor(ref: string, st: SpecPageState): PageEls {
   }
   const head = el("div", { className: "spec-head" });
   const barHost = el("div", { className: "spec-bar-host" });
-  const pane = el("div", { className: "spec-pane" });
+  const pane = el("div", { id: SPEC_PANE_ID, className: "spec-pane" });
   // The dock's own classes and roles, byte-for-byte the two hosts in static/index.html:
   // `css/26-dock.css` owns every rule and the module owns the `hidden` class, which it lands at the
   // end of the leaving phase.
@@ -912,7 +921,7 @@ function paint(ref: string): void {
     st.failure,
     chat === ""
       ? openChatRefs()
-          .map((id) => `${id}=${get(id)?.name ?? ""}`)
+          .map((id) => `${id}=${get(id)?.name ?? ""}=${get(id)?.bot?.state ?? ""}`)
           .join(",")
       : "",
   ];
@@ -922,6 +931,8 @@ function paint(ref: string): void {
     page.barHost.replaceChildren();
     page.barKey = "";
     page.paintBar = null;
+    page.pane.removeAttribute("role");
+    page.pane.removeAttribute("aria-labelledby");
     const parts = [String(st.gone)];
     if (sigChanged(page.pane, parts)) {
       replacePane(page.pane, [
@@ -944,7 +955,8 @@ function paint(ref: string): void {
     page.barHost.replaceChildren(bar);
     page.paintBar = initSegmentedBar(bar, {
       attr: "data-spec-doc",
-      idPrefix: "spec",
+      idPrefix: SPEC_ID_PREFIX,
+      sharedPanel: SPEC_PANE_ID,
       tabs: segments.map((s) => ({ id: s.file, label: s.label })),
       onSelect: (file) => {
         if (st.doc === file) {
@@ -958,6 +970,8 @@ function paint(ref: string): void {
   paintDots(page.barHost, segments, st, thinking);
   const active = st.doc ?? segments[0]?.file ?? "";
   page.paintBar?.(active);
+  page.pane.setAttribute("role", "tabpanel");
+  page.pane.setAttribute("aria-labelledby", `${SPEC_ID_PREFIX}-tab-${active}`);
 
   const seg = segments.find((s) => s.file === active);
   const paneParts = [
@@ -1080,7 +1094,7 @@ function runInPicker(ref: string, disabled: boolean): HTMLElement {
     "aria-label": "Chat to run tasks in",
     disabled,
   }) as HTMLSelectElement;
-  const chats = openChatRefs();
+  const chats = openChatRefs().filter((id) => get(id)?.bot?.state !== "draft");
   for (const id of chats) {
     select.appendChild(el("option", { value: id }, get(id)?.name ?? "Chat"));
   }
@@ -1124,6 +1138,7 @@ function progressBar(p: {
   const bar = el("div", {
     className: "spec-progressbar",
     role: "progressbar",
+    "aria-label": "Tasks done",
     "aria-valuenow": String(p.completed),
     "aria-valuemin": "0",
     "aria-valuemax": String(p.total),

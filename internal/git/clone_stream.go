@@ -89,12 +89,6 @@ func stallWatchdog(stall time.Duration, activity, done <-chan struct{}, cancel c
 		case <-done:
 			return
 		case <-activity:
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
 			timer.Reset(stall)
 		case <-timer.C:
 			cancel(errCloneStalled)

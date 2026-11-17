@@ -52,17 +52,19 @@ var errProcessGone = errors.New("the process is gone")
 // Chat.Run as a notify-door row, onto its sender's waiting row when one is there (marotte.Caller.SameSender), and
 // answers that row's id; a row that opens its turn leaves the list, opens the chat's turn in the log with the rule's
 // caller on its prompt, tells the engine's turn-open tap and leaves the Bot busy until the test closes it. place,
-// when set, scripts each call (opensTurn by default); after runs once the call is answered.
+// when set, scripts each call (opensTurn by default); after runs once the call is answered, afterUnqueue once an
+// Unqueue took its row.
 type fakeNotifier struct {
-	place    func(n int) (placement, error)
-	after    func()
-	gone     func() bool
-	store    *chat.Store
-	eng      *Engine
-	turns    *turnState
-	calls    []sent
-	unqueued []string
-	mu       sync.Mutex
+	place        func(n int) (placement, error)
+	after        func()
+	afterUnqueue func()
+	gone         func() bool
+	store        *chat.Store
+	eng          *Engine
+	turns        *turnState
+	calls        []sent
+	unqueued     []string
+	mu           sync.Mutex
 }
 
 func (f *fakeNotifier) Notify(ctx context.Context, chatID marotte.ChatID, text string, from *marotte.Caller,
@@ -145,6 +147,9 @@ func (f *fakeNotifier) Unqueue(ctx context.Context, chatID marotte.ChatID, messa
 		c.Run = slices.DeleteFunc(c.Run, func(e marotte.RunEntry) bool { return e.ID == messageID })
 		return len(c.Run) != n
 	})
+	if err == nil && f.afterUnqueue != nil {
+		f.afterUnqueue()
+	}
 	return err
 }
 
@@ -199,12 +204,24 @@ func (s *turnState) isWaiting(id marotte.ChatID) bool {
 var errWriteFault = errors.New("no space left on device")
 
 // faultStore is the real store with its writes made to fail on demand: failing refuses every write until cleared,
-// and dieAfter(n) lets n more writes through and then refuses the rest of the process's life, as a crash does.
+// and dieAfter(n) lets n more writes through and then refuses the rest of the process's life, as a crash does. gets
+// counts the record reads; afterGet, when set, runs once a read has answered.
 type faultStore struct {
+	afterGet func(chatID marotte.ChatID)
 	*chat.Store
 	failing atomic.Bool
 	gone    atomic.Bool
 	left    atomic.Int64
+	gets    atomic.Int64
+}
+
+func (s *faultStore) Get(ctx context.Context, chatID marotte.ChatID) (*marotte.Chat, bool) {
+	s.gets.Add(1)
+	c, ok := s.Store.Get(ctx, chatID)
+	if s.afterGet != nil {
+		s.afterGet(chatID)
+	}
+	return c, ok
 }
 
 func (s *faultStore) Mutate(ctx context.Context, chatID marotte.ChatID, f func(c *marotte.Chat, exists bool) bool) (string, error) {

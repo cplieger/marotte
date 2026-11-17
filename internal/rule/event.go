@@ -28,7 +28,7 @@ type storedEvent struct {
 	Cut    []string       `json:"cut,omitempty"`
 }
 
-// NewEvent bounds a source's event fields into a QueuedEvent's Data (design §6.2). Each string, a list's included,
+// NewEvent bounds a source's event fields into a QueuedEvent's Data. Each string, a list's included,
 // is cut to maxStringBytes as the block writes it, counting the "…"; then the largest fields beside baseFields are
 // dropped until the block fits maxBlockBytes. A value must be a string, a bool, an int, an int64, a finite float64
 // or a []string.

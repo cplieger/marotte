@@ -16,6 +16,9 @@ interface SegmentedBarOpts<T extends string> {
   /** Prefix for the ids this writes: `<prefix>-tab-<id>` on a segment and `<prefix>-panel-<id>`
    *  in its `aria-controls`. The page's panel pass owns the other half of that pairing. */
   readonly idPrefix: string;
+  /** The id of the one panel every segment shows its content in, for a page with no panel per
+   *  segment: each segment's `aria-controls` names it. */
+  readonly sharedPanel?: string;
   /** Every segment, in bar order. */
   readonly tabs: readonly SegmentedTab<T>[];
   readonly onSelect: (tab: T) => void;
@@ -26,7 +29,7 @@ export function initSegmentedBar<T extends string>(
   bar: HTMLElement,
   opts: SegmentedBarOpts<T>,
 ): (active: T) => void {
-  const { attr, idPrefix, tabs, onSelect } = opts;
+  const { attr, idPrefix, sharedPanel, tabs, onSelect } = opts;
   // `CSS.escape` because an id is the CALLER's text, not this module's: every bar before the spec
   // page's fed a closed set of literals, and that page's segments are the filenames a spec
   // directory holds, so a name carrying a quote (legal on every filesystem this runs on) made the
@@ -47,7 +50,7 @@ export function initSegmentedBar<T extends string>(
     btn.setAttribute("role", "tab");
     btn.id = `${idPrefix}-tab-${id}`;
     btn.setAttribute("aria-label", label);
-    btn.setAttribute("aria-controls", `${idPrefix}-panel-${id}`);
+    btn.setAttribute("aria-controls", sharedPanel ?? `${idPrefix}-panel-${id}`);
     btn.addEventListener("click", () => {
       onSelect(id);
     });

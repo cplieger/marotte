@@ -220,6 +220,12 @@ async function post(send: Send): Promise<SubmitResult> {
       ? { interruptMode: send.interrupt }
       : {}),
   });
+  if (typeof result === "object") {
+    // A Bot not created yet, or closed, takes no message: the text goes back.
+    recordFailure(send);
+    reportSendRefused(result.words);
+    return "failed";
+  }
   switch (result) {
     case "sent":
     case "steered":
