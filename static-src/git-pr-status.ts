@@ -255,17 +255,39 @@ export function rerunControl(
   };
 }
 
+/** A refused PR action, as the action layer hands it over: a scope refusal keeps
+ *  the server's body as its cause, which names what the token lacks. */
+interface Refusal {
+  readonly code?: string | undefined;
+  readonly message: string;
+  readonly cause?: unknown;
+}
+
+/** The server's words for a refusal, led by what to do when the token lacks a
+ *  permission, naming the permission when the forge did. */
+export function refusalWords(err: Refusal): string {
+  if (err.code !== "scope_insufficient") {
+    return err.message;
+  }
+  const needs =
+    typeof err.cause === "object" && err.cause !== null
+      ? (err.cause as Record<string, unknown>)["needs"]
+      : undefined;
+  const named = typeof needs === "string" && needs !== "" ? `: ${needs}` : "";
+  return `the token is missing a permission this needs${named}. Add it to the token on the forge. ${err.message}`;
+}
+
 /** The reason a re-run refusal leaves on its repository's Re-run, or undefined
  *  for a refusal of the one press: only these two codes say every later press
  *  is refused too. */
-export function rerunRefusal(code: string | undefined, message: string): string | undefined {
-  switch (code) {
+export function rerunRefusal(err: Refusal): string | undefined {
+  switch (err.code) {
     case "capability_unsupported":
-      return message === ""
+      return err.message === ""
         ? "this forge cannot re-run checks for this repository."
-        : `this forge cannot re-run checks for this repository (${message}).`;
+        : `this forge cannot re-run checks for this repository (${err.message}).`;
     case "scope_insufficient":
-      return `the token is missing a permission this needs. Add it to the token on the forge. ${message}`;
+      return refusalWords(err);
     default:
       return undefined;
   }

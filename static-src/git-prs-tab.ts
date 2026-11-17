@@ -48,13 +48,14 @@ import {
   movedRepository,
   queueText,
   rerunControl,
+  refusalWords,
   rerunRefusal,
   canArmAutoMerge,
   capitalise,
 } from "./git-pr-status.js";
 import type { MergeVerdict, Moved, RerunControl } from "./git-pr-status.js";
 import { registerCleanup } from "./actions/index.js";
-import type { ActionOutcome } from "./actions/index.js";
+import type { ActionErrorLike, ActionOutcome } from "./actions/index.js";
 import {
   applyInventoryEntry,
   applyInventoryList,
@@ -723,7 +724,8 @@ function inventoryErrorText(e: InventoryEntry): string {
     return RECONNECT_WORDS;
   }
   if (err?.code === "scope_insufficient") {
-    return "the token is missing a permission this list needs. Add it to the token on the forge.";
+    const named = err.needs === undefined || err.needs === "" ? "" : `: ${err.needs}`;
+    return `the token is missing a permission this list needs${named}. Add it to the token on the forge.`;
   }
   switch (err?.kind) {
     case "rate_limited":
@@ -1386,8 +1388,14 @@ interface PressOutcome {
 /** A cancelled dispatch says nothing. */
 function refused(o: ActionOutcome<unknown>, lead: string): PressOutcome {
   return o.status === "error"
-    ? { ok: false, text: `${lead}. ${o.error.message}` }
+    ? { ok: false, text: `${lead}. ${refusalSentence(o.error)}` }
     : { ok: true, text: "" };
+}
+
+/** The refusal's words, as the sentence after a lead: the server's own text keeps its case. */
+function refusalSentence(err: ActionErrorLike): string {
+  const words = refusalWords(err);
+  return err.code === "scope_insufficient" ? capitalise(words) : words;
 }
 
 /** Offers the re-point when the refusal names where the repository (`key`, a groupKey) moved. */
@@ -1850,8 +1858,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
           if (o.status === "success") {
             return { ok: true, text: "Re-run started." };
           }
-          const refusal =
-            o.status === "error" ? rerunRefusal(o.error.code, o.error.message) : undefined;
+          const refusal = o.status === "error" ? rerunRefusal(o.error) : undefined;
           if (refusal === undefined) {
             return refusedOn(groupKey(g), id, o, "Could not re-run checks", RERUN_LABEL);
           }
@@ -2151,7 +2158,7 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
           draft: draftInput.checked,
         }).outcome;
         if (o.status !== "success") {
-          const why = o.status === "error" ? o.error.message : "it was cancelled";
+          const why = o.status === "error" ? refusalSentence(o.error) : "it was cancelled";
           setStatus(`Could not open the pull request. ${why}`, "err");
           throw new Error(why);
         }

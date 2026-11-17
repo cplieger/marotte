@@ -8,6 +8,7 @@ import {
   movedRepository,
   rerunControl,
   rerunRefusal,
+  refusalWords,
   queueText,
   canArmAutoMerge,
 } from "./git-pr-status.js";
@@ -392,26 +393,60 @@ describe("rerunControl", () => {
   });
 });
 
+describe("refusalWords", () => {
+  it("says what to do about a missing permission, naming it when the forge did", () => {
+    expect(
+      refusalWords({
+        code: "scope_insufficient",
+        message: "Resource not accessible",
+        cause: { needs: "contents=write" },
+      }),
+    ).toBe(
+      "the token is missing a permission this needs: contents=write. Add it to the token on the forge. Resource not accessible",
+    );
+    expect(
+      refusalWords({ code: "scope_insufficient", message: "denied", cause: { needs: 7 } }),
+    ).toBe(
+      "the token is missing a permission this needs. Add it to the token on the forge. denied",
+    );
+  });
+
+  it("keeps the server's words for any other refusal", () => {
+    expect(refusalWords({ code: "conflict", message: "Base branch was modified" })).toBe(
+      "Base branch was modified",
+    );
+  });
+});
+
 describe("rerunRefusal", () => {
   it("names what the instance lacks for an unsupported capability", () => {
-    expect(rerunRefusal("capability_unsupported", "swagger declares no rerun verb")).toBe(
-      "this forge cannot re-run checks for this repository (swagger declares no rerun verb).",
-    );
-    expect(rerunRefusal("capability_unsupported", "")).toBe(
+    expect(
+      rerunRefusal({ code: "capability_unsupported", message: "swagger declares no rerun verb" }),
+    ).toBe("this forge cannot re-run checks for this repository (swagger declares no rerun verb).");
+    expect(rerunRefusal({ code: "capability_unsupported", message: "" })).toBe(
       "this forge cannot re-run checks for this repository.",
     );
   });
 
   it("names the missing permission for an insufficient scope", () => {
-    expect(rerunRefusal("scope_insufficient", "needs the workflow scope")).toBe(
+    expect(rerunRefusal({ code: "scope_insufficient", message: "needs the workflow scope" })).toBe(
       "the token is missing a permission this needs. Add it to the token on the forge. needs the workflow scope",
+    );
+    expect(
+      rerunRefusal({
+        code: "scope_insufficient",
+        message: "Resource not accessible",
+        cause: { needs: "actions=write" },
+      }),
+    ).toBe(
+      "the token is missing a permission this needs: actions=write. Add it to the token on the forge. Resource not accessible",
     );
   });
 
   // Only these two codes say every later press is refused too.
   it("is no refusal for any other code", () => {
     for (const code of [undefined, "", "rate_limited", "head_moved", "not_supported"]) {
-      expect(rerunRefusal(code, "nope"), String(code)).toBeUndefined();
+      expect(rerunRefusal({ code, message: "nope" }), String(code)).toBeUndefined();
     }
   });
 });

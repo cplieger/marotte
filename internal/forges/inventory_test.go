@@ -255,6 +255,14 @@ func TestInventory_FailedScopeKeepsItsRowsAndCarriesTheError(t *testing.T) {
 	}
 }
 
+func TestInventoryError_NamesTheMissingPermission(t *testing.T) {
+	got := inventoryError(&forgeapi.Error{Kind: forgeapi.KindForbidden, Code: forgeapi.CodeScopeInsufficient, Needs: "pull_requests=read"})
+	want := InventoryError{Code: forgeapi.CodeScopeInsufficient, Kind: "forbidden", Needs: "pull_requests=read"}
+	if *got != want {
+		t.Errorf("inventoryError = %+v, want %+v", *got, want)
+	}
+}
+
 func TestInventory_NoticesComeFromTheAuthoredRowsOnly(t *testing.T) {
 	authored := func(check forgeapi.CheckState) map[forgeapi.Cursor]forgeapi.Page[forgeapi.PullRequest] {
 		first := page(prIn(forgeapi.FamilyGitHub, "bob/app", 9, check))

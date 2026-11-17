@@ -1997,6 +1997,10 @@ export const decodeForgeError: Decoder<ForgeError> = (v) => {
     if ($v !== undefined && $v !== null) out.kind = reqStr(o, "kind", "$.forge_error");
   }
   {
+    const $v = own(o, "needs");
+    if ($v !== undefined && $v !== null) out.needs = reqStr(o, "needs", "$.forge_error");
+  }
+  {
     const $v = own(o, "retry_at");
     if ($v !== undefined && $v !== null) out.retry_at = reqNum(o, "retry_at", "$.forge_error");
   }
@@ -2181,6 +2185,10 @@ export const decodeInventoryError: Decoder<InventoryError> = (v) => {
   {
     const $v = own(o, "diag_id");
     if ($v !== undefined && $v !== null) out.diag_id = reqStr(o, "diag_id", "$.inventory_error");
+  }
+  {
+    const $v = own(o, "needs");
+    if ($v !== undefined && $v !== null) out.needs = reqStr(o, "needs", "$.inventory_error");
   }
   {
     const $v = own(o, "retry_after_s");

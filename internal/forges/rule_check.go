@@ -66,6 +66,12 @@ func checkRefusal(host, repo string, err error, affordances bool) error {
 		return &launchrule.ForgeCheckError{Text: host + " is limiting requests; try again later", Unavailable: true}
 	case fe.Retryable || fe.Kind == forgeapi.KindTransient:
 		return &launchrule.ForgeCheckError{Text: host + " did not answer; try again", Unavailable: true}
+	case fe.Code == forgeapi.CodeScopeInsufficient:
+		missing := "a permission this rule needs"
+		if fe.Needs != "" {
+			missing += ": " + fe.Needs
+		}
+		return &launchrule.ForgeCheckError{Text: host + ": the token is missing " + missing + ". Add it to the token on the forge"}
 	case affordances && (fe.Kind == forgeapi.KindNotFound || fe.Kind == forgeapi.KindForbidden ||
 		fe.Code == forgeapi.CodeRepoOrPRNotVisible):
 		return &launchrule.ForgeCheckError{Text: host + " can't read " + repo}

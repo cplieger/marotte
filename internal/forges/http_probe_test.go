@@ -38,7 +38,7 @@ func TestProbeRoute_AScopeRefusalRefusesTheRow(t *testing.T) {
 	isolateGit(t)
 	core := &whoamiCore{err: &forgeapi.Error{
 		Op: "Whoami", Code: forgeapi.CodeScopeInsufficient, Kind: forgeapi.KindForbidden, Status: http.StatusForbidden,
-		Message: "[User: Read] Access denied",
+		Message: "[User: Read] Access denied", Needs: "read:user",
 	}}
 	got := postProbe(t, repoRoutes(recordManager(t, core)))
 
@@ -50,6 +50,9 @@ func TestProbeRoute_AScopeRefusalRefusesTheRow(t *testing.T) {
 	}
 	if !strings.Contains(got.Forge.Error.Message, "[User: Read]") {
 		t.Errorf("row message %q, want the sentence naming what the token lacks", got.Forge.Error.Message)
+	}
+	if got.Forge.Error.Needs != "read:user" {
+		t.Errorf("row needs = %q, want read:user, the permission the forge named", got.Forge.Error.Needs)
 	}
 }
 

@@ -135,6 +135,23 @@ func TestErrorEnvelope_CarriesCodeDiagIDRetryAfterSuccessorCapability(t *testing
 	})
 }
 
+func TestErrorEnvelope_NamesTheMissingPermission(t *testing.T) {
+	w, body := writeError(t, &forgeapi.Error{
+		Op: "MergePR", Kind: forgeapi.KindForbidden, Code: forgeapi.CodeScopeInsufficient, Status: 403,
+		Message: "Resource not accessible by personal access token", Needs: "contents=write",
+	})
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", w.Code)
+	}
+	if got := body["needs"]; got != "contents=write" {
+		t.Errorf("needs = %v, want the permission the forge named", got)
+	}
+	_, body = writeError(t, &forgeapi.Error{Kind: forgeapi.KindForbidden, Status: 403})
+	if _, ok := body["needs"]; ok {
+		t.Errorf("needs present on a refusal that names none: %v", body)
+	}
+}
+
 func TestErrorEnvelope_BoundsUpstreamText(t *testing.T) {
 	msg := strings.Repeat("x", 5000) + "\x1b[31m\u202e" + strings.Repeat("y", 100)
 	_, body := writeError(t, &forgeapi.Error{Kind: forgeapi.KindUpstream, Code: "", Message: msg})

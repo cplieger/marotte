@@ -669,6 +669,31 @@ describe("the pull-request row's action state", () => {
     expect(statusOf(row(7))).toBe("");
   });
 
+  it("names the permission a refused merge's token lacks", async () => {
+    const { mergePR } = await actions();
+    vi.mocked(mergePR.dispatch).mockImplementationOnce(
+      () =>
+        handle(
+          Promise.resolve({
+            status: "error",
+            error: {
+              message: "Resource not accessible",
+              code: "scope_insufficient",
+              status: 403,
+              cause: { needs: "contents=write" },
+            },
+          }),
+        ) as never,
+    );
+    await shown([pr(7, 0, {}, { merge_blocked: "none" })]);
+
+    buttonOf(row(7), "Merge")?.click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(statusOf(row(7))).toBe(
+      "Could not merge. The token is missing a permission this needs: contents=write. Add it to the token on the forge. Resource not accessible",
+    );
+  });
+
   it("shows a refused merge's reason in its row, and clears it at the next press", async () => {
     const { mergePR } = await actions();
     vi.mocked(mergePR.dispatch).mockImplementationOnce(

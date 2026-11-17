@@ -91,6 +91,37 @@ func TestSaveRefusesUnreadableRepo(t *testing.T) {
 			t.Errorf("refusal = %+v, want the forge's sentence", fe)
 		}
 	})
+	for name, tc := range map[string]struct {
+		core *ruleCheckCore
+		want string
+	}{
+		"a token missing a named permission on the repository read": {
+			core: &ruleCheckCore{affErr: &forgeapi.Error{
+				Op: "RepoAffordances", Kind: forgeapi.KindForbidden, Code: forgeapi.CodeScopeInsufficient, Status: 403, Needs: "metadata=read",
+			}},
+			want: "github.com: the token is missing a permission this rule needs: metadata=read. Add it to the token on the forge",
+		},
+		"a token missing a named permission on the list read": {
+			core: &ruleCheckCore{
+				aff: forgeapi.RepoAffordances{HasIssues: forgeapi.SupportYes},
+				listErr: &forgeapi.Error{
+					Op: "ListRuns", Kind: forgeapi.KindForbidden, Code: forgeapi.CodeScopeInsufficient, Status: 403, Needs: "actions=read",
+				},
+			},
+			want: "github.com: the token is missing a permission this rule needs: actions=read. Add it to the token on the forge",
+		},
+		"a token missing an unnamed permission": {
+			core: &ruleCheckCore{affErr: &forgeapi.Error{Op: "RepoAffordances", Kind: forgeapi.KindForbidden, Code: forgeapi.CodeScopeInsufficient}},
+			want: "github.com: the token is missing a permission this rule needs. Add it to the token on the forge",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fe := refusal(t, recordManager(t, tc.core).CheckEventRule(t.Context(), eventSpec(launchrule.KindRunConcluded)))
+			if fe.Unavailable || fe.Text != tc.want {
+				t.Errorf("refusal = %+v, want %q", fe, tc.want)
+			}
+		})
+	}
 	t.Run("a Gitea that lists runs undated", func(t *testing.T) {
 		core := &ruleCheckCore{listErr: &forgeapi.Error{Op: "ListRuns", Kind: forgeapi.KindUpstream, Code: forgeapi.CodeRunUndated}}
 		fe := refusal(t, recordManager(t, core).CheckEventRule(t.Context(), eventSpec(launchrule.KindRunConcluded)))

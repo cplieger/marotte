@@ -40,6 +40,9 @@ type ForgeError struct {
 	Message string `json:"message"`
 	Code    string `json:"code,omitempty"`
 	Kind    string `json:"kind,omitempty"`
+	// Needs is the permission the forge said the credential lacks, as the
+	// forge spells it; absent when it named none.
+	Needs string `json:"needs,omitempty"`
 	// RetryAt is when the forge's rate limit lets a request through again, in
 	// Unix milliseconds; absent when the forge named no wait.
 	RetryAt int64 `json:"retry_at,omitempty"`
@@ -296,6 +299,7 @@ type InventoryError struct {
 	Code        string `json:"code"`
 	Kind        string `json:"kind"`
 	DiagID      string `json:"diag_id,omitempty"`
+	Needs       string `json:"needs,omitempty"`
 	RetryAfterS int64  `json:"retry_after_s,omitempty"`
 }
 

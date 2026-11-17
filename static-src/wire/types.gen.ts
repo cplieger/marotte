@@ -1819,6 +1819,11 @@ export interface ForgeError {
   code?: string;
   kind?: string;
   /**
+   * Needs is the permission the forge said the credential lacks, as the
+   * forge spells it; absent when it named none.
+   */
+  needs?: string;
+  /**
    * RetryAt is when the forge's rate limit lets a request through again, in
    * Unix milliseconds; absent when the forge named no wait.
    */
@@ -2037,6 +2042,7 @@ export interface InventoryError {
   code: string;
   kind: string;
   diag_id?: string;
+  needs?: string;
   retry_after_s?: number;
 }
 
