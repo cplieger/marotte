@@ -4,11 +4,11 @@ This page lists the upstream issues that affect marotte and is updated when one 
 
 ## Agent engine
 
-### Chats in Plan, Autonomous, a spec mode or an agent wait for each other
+### Chats in a spec mode wait for each other
 
-Chats in Default and Default v2 run their replies side by side. A reply in Plan, Autonomous, a spec mode or an agent waits while any other such reply runs, in any chat. The waiting chat says which chat it waits for, and the wait can last minutes. A workflow step woken by a message can join the same wait.
+A reply in Spec, Quick Spec or Bug Fix waits while any other such reply runs, in any chat. The waiting chat says which chat it waits for, and the wait can last minutes. A workflow step that runs in one of those modes can join the same wait. Chats in every other mode, Plan, Autonomous and agents included, run their replies side by side from kiro-cli 3.4.0.
 
-Reported as [kirodotdev/Kiro#11995](https://github.com/kirodotdev/Kiro/issues/11995), closed once kiro-cli 2.37.0 let Default v2 replies run side by side. The other modes still wait. marotte has no workaround. Use Default or Default v2 for chats you want to run side by side.
+Reported as [kirodotdev/Kiro#11995](https://github.com/kirodotdev/Kiro/issues/11995), closed once kiro-cli 2.37.0 let Default v2 replies run side by side. From kiro-cli 3.4.0 only the spec modes still wait. marotte has no workaround. Use another mode for chats you want to run side by side.
 
 ### The agent stalls during a file search
 
@@ -21,12 +21,6 @@ Reported as [kirodotdev/Kiro#12489](https://github.com/kirodotdev/Kiro/issues/12
 When kiro-cli's own automatic compaction fails, the reply can stay open with nothing more arriving. marotte turns kiro-cli's automatic compaction off in every chat and compacts at the end of a reply instead, so a chat no longer meets this. A workflow step, which kiro-cli still compacts by itself, can. marotte marks a step that shows no activity for an hour and notifies you, and stops the run instead when no chat started it.
 
 Reported in the Kiro Crew tracker as [kirodotdev/KiroCrew#3583](https://github.com/kirodotdev/KiroCrew/issues/3583), closed after Kiro Crew added a time limit in its own client. kiro-cli itself still leaves the reply open. After a failed compaction, marotte ends a reply that shows no new activity for 60 seconds and marks it interrupted.
-
-### Context use reads the figure from before a compaction
-
-After a compaction, kiro-cli keeps reporting the context use from before it until the model's next reply measures it again. A chat at 96% before `/compact` can still read 96% at about 30% real use. A client that compacts or warns at a context limit then acts on a figure that is no longer true.
-
-Reported as [kirodotdev/Kiro#12392](https://github.com/kirodotdev/Kiro/issues/12392), open. After a compaction, marotte clears the chat's context use and ignores the figure kiro-cli repeats until the model's next reply measures it. The **Compact at** point and the 95% stop act only on a figure a model reply measured. marotte therefore does not stop a turn on the old figure.
 
 ### Replies slow down when many chats and workflow steps run at once
 
@@ -46,7 +40,7 @@ Reported as [kirodotdev/Kiro#12269](https://github.com/kirodotdev/Kiro/issues/12
 
 When kiro-cli gets a stop signal, such as the SIGTERM that `docker stop` and `systemctl stop` send, it kills its agent engine about half a second later. The engine allows itself 4 seconds to shut down. A SessionEnd hook that takes longer than that half second is killed before it finishes, and each session's lease file is left behind in `~/.kiro/session-leases/`. While that file is there, kiro-cli can refuse changes to the session for up to 135 seconds.
 
-Reported as [kirodotdev/Kiro#12446](https://github.com/kirodotdev/Kiro/issues/12446), open. marotte stops kiro-cli by closing its input first, which lets the engine run its own shutdown, SessionEnd hooks included. kiro-cli gives the engine about 5.5 seconds to finish after its input closes, and marotte waits up to 6 seconds for kiro-cli to exit. Only a kiro-cli still running after that wait gets a stop signal, and one still running 2 seconds after the signal is killed. marotte's own restarts and stops therefore do not meet this.
+Reported as [kirodotdev/Kiro#12446](https://github.com/kirodotdev/Kiro/issues/12446), open. marotte stops kiro-cli by closing its input first, which lets the engine run its own shutdown, SessionEnd hooks included. From kiro-cli 3.4.0 the engine gives that shutdown 4.5 seconds after its input closes. It runs the SessionEnd hooks late in it, after it has stopped every chat's work, and sets no time aside for them, so a slow hook can still be cut off. marotte waits up to 6 seconds for kiro-cli to exit. Only a kiro-cli still running after that wait gets a stop signal, and one still running 2 seconds after the signal is killed. A hook that finishes inside the engine's shutdown is therefore never cut off by marotte's own restarts and stops.
 
 A `docker stop` of the container sends its stop signal to marotte, not to kiro-cli, so marotte stops kiro-cli in the same order. marotte limits its whole shutdown to 9 seconds, inside Docker's default stop timeout of 10 seconds. A shorter stop timeout can kill the container before the engine has shut down. The next time marotte starts, it removes the lease files its own engine left behind before it starts the engine.
 
@@ -185,6 +179,12 @@ When you stop a reply while the agent runs a command, kiro-cli ends the reply. T
 Reported as [kirodotdev/Kiro#11819](https://github.com/kirodotdev/Kiro/issues/11819), open. When you stop a reply, marotte also stops the commands that reply started.
 
 ## Fixed upstream, workaround still in marotte
+
+### Context use reads the figure from before a compaction
+
+Before kiro-cli 3.4.0, after a compaction kiro-cli kept reporting the context use from before it until the model's next reply measured it again. A chat at 96% before `/compact` could still read 96% at about 30% real use. From kiro-cli 3.4.0 a manual compaction, `/compact` or the one marotte runs at the end of a reply, reports an estimate of the compacted context when it completes. A compaction that completes after a new message has already reached the chat still leaves the figure from before it.
+
+Reported as [kirodotdev/Kiro#12392](https://github.com/kirodotdev/Kiro/issues/12392), closed as fixed in kiro-cli 3.4.0. After a compaction, marotte still clears the chat's context use and ignores the figures kiro-cli sends, its estimate included, until the model's next reply measures it. The **Compact at** point and the 95% stop act only on a figure a model reply measured. marotte therefore does not stop a turn on an old or estimated figure.
 
 ### A message sent just after a stop can run out of view
 
