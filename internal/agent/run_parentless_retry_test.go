@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/chat"
@@ -274,5 +275,36 @@ func TestRunHostedBy_AnUnlistableRunsDirectoryIsAnError(t *testing.T) {
 
 	if _, err := h.runs.RunHostedBy(t.Context(), "sess_any"); err == nil {
 		t.Error("RunHostedBy over an unlistable runs/ = nil error, want the listing failure")
+	}
+}
+
+// A host record that exists but cannot be read is an error for RunHostedBy and proves nothing for parentlessHost:
+// answering "hosts nothing" would let a chat bind the host session the record names once it reads again.
+func TestRunHostedBy_AnUnreadableHostRecordIsAnError(t *testing.T) {
+	for name, plant := range map[string]func(path string) error{
+		"a directory": func(path string) error { return os.Mkdir(path, 0o700) },
+		"an oversized file": func(path string) error {
+			return os.WriteFile(path, []byte(strings.Repeat("s", maxHostFileBytes+44)), 0o600)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, _, br := newTestHub(WithConfigDir(t.TempDir()))
+			t.Cleanup(func() { shutdownHub(t, h) })
+			host := launchFailedParentless(t, h, br)
+			path := filepath.Join(h.runs.log.root, "wf_1", hostFileName)
+			if err := os.Remove(path); err != nil {
+				t.Fatalf("Setup: %s", err)
+			}
+			if err := plant(path); err != nil {
+				t.Fatalf("Setup: %s", err)
+			}
+
+			if wf, err := h.runs.RunHostedBy(t.Context(), host); err == nil {
+				t.Errorf("RunHostedBy(host) over an unreadable record = %q, nil, want the read failure", wf)
+			}
+			if h.runs.parentlessHost(t.Context(), "wf_1", host) {
+				t.Error("parentlessHost over an unreadable record = true, want false")
+			}
+		})
 	}
 }

@@ -2,6 +2,9 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"path/filepath"
 
@@ -34,17 +37,24 @@ func (r *runLog) recordHost(ctx context.Context, workflowID, session string) err
 	return err
 }
 
-// hostSession is the host session recorded for workflowID, "" when none is recorded or the record cannot be read.
-func (r *runLog) hostSession(ctx context.Context, workflowID string) string {
+// hostSession is the host session recorded for workflowID, "" when none is recorded. A record that exists but cannot
+// be read is an error: answering "" for it would let a chat bind the session (RunHostedBy).
+func (r *runLog) hostSession(ctx context.Context, workflowID string) (string, error) {
 	dir, err := r.dir(workflowID)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	data, err := filesafe.ReadBounded(ctx, filepath.Join(dir, hostFileName), maxHostFileBytes)
-	if err != nil || !ids.ValidSessionID(string(data)) {
-		return ""
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
 	}
-	return string(data)
+	if err != nil {
+		return "", fmt.Errorf("read run %s host record: %w", workflowID, err)
+	}
+	if !ids.ValidSessionID(string(data)) {
+		return "", nil
+	}
+	return string(data), nil
 }
 
 // recordHost records session as the host marotte opened for workflowID's parentless launch (parentlessHost).
@@ -58,15 +68,19 @@ func (rs *Runs) recordHost(ctx context.Context, workflowID, session string) {
 	}
 }
 
-// hostedBy is the run whose recorded host is session, "" for none. A record that cannot be read names no session, as
-// it does for parentlessHost.
+// hostedBy is the run whose recorded host is session, "" for none. A record that cannot be read is an error, never
+// "hosts nothing".
 func (r *runLog) hostedBy(ctx context.Context, session string) (string, error) {
 	runs, err := r.recorded()
 	if err != nil {
 		return "", err
 	}
 	for _, id := range runs {
-		if r.hostSession(ctx, id) == session {
+		host, err := r.hostSession(ctx, id)
+		if err != nil {
+			return "", err
+		}
+		if host == session {
 			return id, nil
 		}
 	}
@@ -84,9 +98,18 @@ func (rs *Runs) RunHostedBy(ctx context.Context, sessionID string) (string, erro
 
 // parentlessHost reports whether session is the host session marotte opened for workflowID's parentless launch, which
 // no chat launched and no chat can bind (RunHostedBy): an owner scan that could not read every chat hides no launcher
-// of it. This record, not the lease,
-// is the signal: a parentless run always names a parent session (its host), and observeComplete releases its lease on
-// the terminal frame, so a failed run usually has no lease left to consult.
+// of it. This record, not the lease, is the signal: a parentless run always names a parent session (its host), and
+// observeComplete releases its lease on the terminal frame, so a failed run usually has no lease left to consult. A
+// record that cannot be read proves nothing, so the caller keeps its incomplete-scan refusal.
 func (rs *Runs) parentlessHost(ctx context.Context, workflowID, session string) bool {
-	return rs.log != nil && ids.ValidSessionID(session) && rs.log.hostSession(ctx, workflowID) == session
+	if rs.log == nil || !ids.ValidSessionID(session) {
+		return false
+	}
+	host, err := rs.log.hostSession(ctx, workflowID)
+	if err != nil {
+		slog.Warn("a run's host record could not be read, so an unreadable chat file still blocks it",
+			"workflow_id", workflowID, "error", err)
+		return false
+	}
+	return host == session
 }

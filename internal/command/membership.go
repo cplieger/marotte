@@ -1405,9 +1405,10 @@ func (m *Membership) refuseClaimedSession(ctx context.Context, sessionID string,
 
 // parentedRuns is the run owner's answer for a claimed session, read before mu.
 type parentedRuns struct {
-	err       error
+	err error
+	// hostedErr is the failure to read whether the session hosts a run.
 	hostedErr error
-	// hosted is the parentless run the session hosts, and hostedErr the failure to read the run records.
+	// hosted is the parentless run the session hosts.
 	hosted    string
 	live, all []string
 }
@@ -1428,8 +1429,6 @@ func (m *Membership) sessionRuns(ctx context.Context, sessionID string) parented
 // trust that no chat owns it, whatever an owner scan could not read.
 func refuseRunHost(sessionID string, runs *parentedRuns) error {
 	switch {
-	case sessionID == "":
-		return nil
 	case runs.hostedErr != nil:
 		slog.Warn("could not read whether a session hosts a run, so it was not bound", "acp_session", sessionID, keyError, runs.hostedErr)
 		return StatusError(http.StatusServiceUnavailable, fmt.Errorf("%w: %w", errChatUnread, runs.hostedErr))
@@ -1443,9 +1442,6 @@ func refuseRunHost(sessionID string, runs *parentedRuns) error {
 // refuseRunParent refuses binding a session that launched a live run or one an open run tab shows: the new chat
 // would own that run, and its purge would delete it. Caller holds mu.
 func (m *Membership) refuseRunParent(sessionID string, runs *parentedRuns) error {
-	if sessionID == "" {
-		return nil
-	}
 	if runs.err != nil {
 		slog.Warn("could not read the runs a session launched, so it was not bound", "acp_session", sessionID, keyError, runs.err)
 		return StatusError(http.StatusServiceUnavailable, fmt.Errorf("%w: %w", errChatUnread, runs.err))
