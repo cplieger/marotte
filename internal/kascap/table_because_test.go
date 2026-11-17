@@ -901,13 +901,15 @@ experiment, so this variable is the one client lever: _meta.kiro.settings.unifie
 which the bundle's experiment-gate helper names as its settingKey, has no reader.`,
 	"env.KIRO_FEATURE_UNIVERSAL_BACKGROUND_TOOL_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
-The universal_background_tool experiment (default off). On, the job_list and
-job_cancel tools mount and KAS serves _kiro/job/cancel and _kiro/job/output and can
-send _kiro/job/update, none of which marotte renders or calls, but no tool call
-becomes a job: the job runtime's beginCall is called only by the backgrounding shell
-tool's job handoff, and nothing constructs that tool. Revisit when the tool belt
-constructs it or the experiment defaults on. The session setting of the same name
-is recorded unclaimed, so the ramp decides there too.`,
+The universal_background_tool experiment (default off). On, the session runs jobs:
+the tool belt builds the job shell tool in place of execute_bash and
+selectCommandHost answers "agent", so KAS hosts that session's commands and
+marotte's terminal/* handlers, process-group teardown and environment shaping do not
+apply. The job_list and job_cancel tools mount, KAS serves _kiro/job/cancel and
+_kiro/job/output and can send _kiro/job/update and a job-end-wake turn, none of which
+marotte renders or calls. Revisit when the experiment defaults on or marotte adopts
+session jobs. The session setting of the same name is recorded unclaimed, so the
+ramp decides there too.`,
 	"env.KIRO_FEATURE_USER_AGENT_REFACTORING_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 Backend user-agent shape; not pinned by decision.`,

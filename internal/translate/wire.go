@@ -127,7 +127,8 @@ type acpTrustClassifier struct {
 const classifierAsksPerson = "prompt"
 
 // agentInitiatedReason is KAS's engine-turn cause from its closed set. job-end-wake (kiro-cli 3.4.0) wakes a
-// session with jobs on, which marotte does not enable, so it maps to no constant; an unknown value is kept as sent.
+// session with jobs on, an arm marotte withholds and leaves to the experiment, so it maps to no constant; an
+// unknown value is kept as sent.
 type agentInitiatedReason string
 
 const (

@@ -550,8 +550,8 @@ func (t *Translator) HandleUsageUpdate(ctx context.Context, chatID marotte.ChatI
 // persistUsage writes the context percentage, and optionally the window size (size <= 0 leaves it),
 // into the chat's usage. The percentage gate is a MATERIAL delta: each Mutate rewrites the whole chat
 // file and KAS emits the percentage several times per response. Only a live reading (a model
-// response's own) reaches the compactor or replaces the figure a compaction cleared: KAS's published
-// figure stays the context before a compaction until its next live reading (Usage.ContextCompacted).
+// response's own) reaches the compactor or replaces the figure a compaction cleared, since a figure
+// KAS publishes after one is not a model reading (Usage.ContextCompacted).
 func (t *Translator) persistUsage(ctx context.Context, chatID marotte.ChatID, pct float64, size int, live bool) {
 	if live {
 		t.usage.ObserveContextUsage(ctx, chatID, pct)
