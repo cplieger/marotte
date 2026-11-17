@@ -213,13 +213,11 @@
   pointer-events: none;
 }
 
-/* Grey in both themes: --c-text-primary has zero chroma. The wash is `opacity` on the
- * group, never a translucent colour, because the mark's eye overlaps its body and each
- * shape would composite its own alpha, painting the overlap darker. */
+/* Grey in both themes: --c-text-primary has zero chroma. 3:5 is the #vk-logo symbol's
+ * viewBox. */
 .empty-chat-logo svg {
-  inline-size: min(36cqmin, 15rem);
-  block-size: auto;
-  aspect-ratio: 1;
+  block-size: min(26cqmin, 10.75rem);
+  aspect-ratio: 3 / 5;
   color: var(--c-text-primary);
   opacity: 0.12;
 }

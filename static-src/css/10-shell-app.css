@@ -98,6 +98,8 @@ body.sidebar-resizing {
   flex-shrink: 0;
 }
 
+/* The colour and its hover live here, not on the name, so the mark (currentColor) and the
+   name are always one ink. */
 .logo {
   display: flex;
   align-items: center;
@@ -106,6 +108,7 @@ body.sidebar-resizing {
   cursor: default;
   -webkit-user-select: none;
   user-select: none;
+  transition: color var(--dur-enter) var(--ease-enter);
 }
 
 /* The app's name, and deliberately NOT a heading any more. The page's title is
@@ -117,7 +120,6 @@ body.sidebar-resizing {
   font-size: var(--fs-lg);
   font-weight: var(--fw-semibold);
   margin: 0;
-  transition: color var(--dur-enter) var(--ease-enter);
 }
 
 .logo-subtitle {
@@ -127,16 +129,17 @@ body.sidebar-resizing {
   margin-left: 0.15em;
 }
 
-.logo:hover .logo-name {
+.logo:hover {
   /* Lighter purple in dark mode, darker purple in light mode — never
    white/black, so it stays branded. */
   color: color-mix(in srgb, var(--c-accent) 70%, var(--c-text-primary));
 }
 
+/* 3:5 is the #vk-logo symbol's viewBox. */
 .logo-icon {
   flex-shrink: 0;
-  transform-origin: center;
-  transition: transform var(--dur-enter) var(--ease-enter);
+  block-size: calc(var(--fs-lg) * 1.3);
+  aspect-ratio: 3 / 5;
 }
 
 .sidebar-header-actions {
