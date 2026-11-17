@@ -22,13 +22,12 @@ import { initModelSwitcher } from "./model-switcher.js";
 import { collapseAll } from "./pill-expand.js";
 import type { Entry, Session, TurnState } from "./types.js";
 
-const shipped = import.meta.glob<string>(["../static/index.html", "../static/favicon.svg"], {
+const shipped = import.meta.glob<string>(["../static/index.html"], {
   query: "?raw",
   import: "default",
   eager: true,
 });
 const INDEX_HTML = shipped["../static/index.html"] ?? "";
-const FAVICON = shipped["../static/favicon.svg"] ?? "";
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -100,22 +99,7 @@ describe("the shipped empty-chat markup", () => {
 
     const mark = wrap?.querySelector("#empty-chat-logo svg");
     expect(mark?.getAttribute("aria-hidden")).toBe("true");
-    expect(mark?.querySelector("use")?.getAttribute("href")).toBe("#vk-logo-mark");
-  });
-
-  it("takes the mark from the favicon's artwork, without its tile", () => {
-    const doc = new DOMParser().parseFromString(INDEX_HTML, "text/html");
-    const mark = doc.getElementById("vk-logo-mark");
-    expect(mark, "index.html defines no tile-free mark").not.toBeNull();
-    expect(mark?.querySelector("rect")).toBeNull();
-    for (const shape of mark?.querySelectorAll("path, circle") ?? []) {
-      expect(shape.getAttribute("fill")).toBe("currentColor");
-    }
-
-    const favicon = new DOMParser().parseFromString(FAVICON, "image/svg+xml");
-    const faviconPath = favicon.querySelector("g path")?.getAttribute("d");
-    expect(faviconPath).toBeTruthy();
-    expect(mark?.querySelector("path")?.getAttribute("d")).toBe(faviconPath);
+    expect(mark?.querySelector("use")?.getAttribute("href")).toBe("#vk-logo");
   });
 });
 
