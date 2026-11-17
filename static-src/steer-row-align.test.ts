@@ -1,7 +1,7 @@
-// Every holding-area row (steer, queued, paused, compaction, resume) puts its state glyph, its state
-// label and the first line of its message on one line: the label and the text share a baseline, and
-// the glyph sits on that line's centre. The label is a smaller font than the text, so two boxes merely
-// centred on each other leave the text's baseline low of the label's.
+// Every holding-area row (steer, queued, paused, compaction, resume): beside a one-line message the
+// state label shares the message's baseline and the glyph sits on that line's x-height middle; beside
+// a longer message the state stays centred on the whole block. The label is a smaller font than the
+// text, so two boxes merely centred on each other leave the text's baseline low of the label's.
 
 import { describe, it, expect, afterEach } from "vitest";
 import { page as browser } from "vitest/browser";
@@ -32,8 +32,9 @@ const ATTACHED = "pasted-2026-11-17T11-09-47.png";
 // A fraction of a pixel: box-centring alone leaves them about 0.4 px apart in this suite's fonts
 // (about 1 px in a system UI font), and a shared strut puts them at 0.
 const BASELINE_PX = 0.25;
-// The glyph is a box, centred by `vertical-align: middle` on the line's x-height middle, not its box.
-const ICON_PX = 1;
+// `vertical-align: middle` centres the glyph on the baseline plus half the x-height (CSS 2.2
+// §10.8.1), a point whose distance from the line box's centre depends on the font.
+const ICON_PX = 0.5;
 
 let style: HTMLStyleElement | null = null;
 
@@ -70,10 +71,17 @@ const queued = (id: string, text: string, attach = false): RunEntryView =>
   );
 
 /** Every row kind the holding area draws, across three stacks: a running turn's, a paused queue's and
- *  a compaction's in flight. */
-const STACKS: readonly { name: string; steers: PendingSteer[]; run: RunView }[] = [
+ *  a compaction's in flight. `phoneBaselines` is how many one-line rows keep their label at 390 px
+ *  (the sender row's); the other stacks hide it there. */
+const STACKS: readonly {
+  name: string;
+  steers: PendingSteer[];
+  run: RunView;
+  phoneBaselines?: number;
+}[] = [
   {
     name: "behind a running turn",
+    phoneBaselines: 1,
     steers: [
       { id: "steer-1", text: ONE_LINE, origin: "user" },
       { id: "steer-2", text: LONG, origin: "user" },
@@ -129,6 +137,16 @@ function baseline(el: HTMLElement): number {
   return y;
 }
 
+/** The y of an element's first line's baseline less half its x-height: a 1ex inline-block on it. */
+function xMiddle(el: HTMLElement): number {
+  const probe = document.createElement("span");
+  probe.style.cssText = "display:inline-block;inline-size:0;block-size:1ex;vertical-align:baseline";
+  el.prepend(probe);
+  const r = probe.getBoundingClientRect();
+  probe.remove();
+  return r.bottom - r.height / 2;
+}
+
 const centre = (r: DOMRect): number => r.top + r.height / 2;
 
 describe("a holding-area row's state and message", () => {
@@ -141,6 +159,7 @@ describe("a holding-area row's state and message", () => {
         const chat = await mountPane(h, 0, false, sourceOf(stack.steers, stack.run));
         const rows = [...chat.area.querySelectorAll<HTMLElement>(".steer-stack > .steer-row")];
         expect(rows.length, "rows drawn").toBeGreaterThan(0);
+        let baselines = 0;
         for (const row of rows) {
           const what = `${row.dataset["kind"] ?? "steer"} row "${row.dataset["tooltip"] ?? ""}"`;
           const text = row.querySelector<HTMLElement>(".steer-text")!;
@@ -157,14 +176,15 @@ describe("a holding-area row's state and message", () => {
           ).toBeLessThanOrEqual(tr.left + 0.5);
           if (lines === 1) {
             if (shown(label)) {
+              baselines += 1;
               expect(
                 Math.abs(baseline(label) - baseline(text)),
                 `${what}: baselines`,
               ).toBeLessThanOrEqual(BASELINE_PX);
             }
             expect(
-              Math.abs(centre(glyph!.getBoundingClientRect()) - centre(tr)),
-              `${what}: glyph on the line`,
+              Math.abs(centre(glyph!.getBoundingClientRect()) - xMiddle(text)),
+              `${what}: glyph on the line's x-height middle`,
             ).toBeLessThanOrEqual(ICON_PX);
           } else {
             // A longer message keeps the state centred on the whole message (26-dock.css `.steer-row`).
@@ -174,6 +194,11 @@ describe("a holding-area row's state and message", () => {
               `${what}: state on the message's centre`,
             ).toBeLessThanOrEqual(1);
           }
+        }
+        if (w === 1440) {
+          expect(baselines, "baseline checks").toBeGreaterThan(0);
+        } else if (stack.phoneBaselines !== undefined) {
+          expect(baselines, "baseline checks").toBe(stack.phoneBaselines);
         }
       });
     }

@@ -1042,9 +1042,10 @@
 /* --- State column ------------------------------------------------------- */
 
 /* ONE LINE BOX at the message's font size and line height, not a flex row: the smaller label then
-   sits on the same strut as `.steer-text`'s first line, so when the grid centres the two boxes their
-   baselines meet. Two centred boxes of different font sizes put the larger one's baseline low by
-   half the difference in (ascent - descent), whatever their line heights. */
+   sits on the same strut as `.steer-text`'s line, so beside a one-line message the centred boxes
+   share a baseline. Beside a longer message the state stays centred on the whole block
+   (`.steer-row`'s `align-items: center`). Two centred boxes of different font sizes put the larger
+   one's baseline low by half the difference in (ascent - descent), whatever their line heights. */
 .steer-state {
   display: block;
   line-height: var(--steer-lh);
