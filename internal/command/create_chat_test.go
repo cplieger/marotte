@@ -130,7 +130,7 @@ func TestCmdCreateChat_OpMintedPerAttemptMakesTwoChats(t *testing.T) {
 // TestCmdCreateChat_NoOpIDMintsEveryTime is the other side of the same rule, and
 // it is deliberate rather than a gap: with no correlation id there is no key to
 // record a chat under, so every attempt is a new gesture. It is also the shape two
-// separate clicks on New chat take, which the design states rather than guards.
+// separate clicks on New chat take, which is accepted rather than guarded against.
 func TestCmdCreateChat_NoOpIDMintsEveryTime(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	host := newTestHost(t, store)

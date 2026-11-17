@@ -58,7 +58,7 @@ func heldCleanClose(t *testing.T) (h *Runtime, cs *testChatStore, br *fakeBridge
 	return h, cs, br, turnID
 }
 
-// One row per head and event the design names: each states the answer, the order the header lists after it and the
+// One row per head and event: each states the answer, the order the header lists after it and the
 // session calls kiro-cli received.
 func TestRunOrder_Table(t *testing.T) {
 	inBubble(t, "a prompt during a clean close's hold queues behind the turn end's compaction, unsteered", func(t *testing.T) {

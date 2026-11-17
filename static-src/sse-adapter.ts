@@ -327,7 +327,7 @@ function salvageUndecodable(data: string, err: unknown): void {
   console.warn(`sse: ${type} did not decode (${why}), turn ${turnID} named no chat and no run`);
 }
 
-/** The refetch a moved subject earns (the design's action column), as a promise the revalidation
+/** The refetch a moved subject earns, as a promise the revalidation
  *  awaits. `pending` and `status` reach the client only through the connect hook, so their
  *  action is a fresh hello — the caller runs that LAST, after every other refetch has settled,
  *  which is why this returns `false` for them instead of reconnecting itself. */
