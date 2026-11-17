@@ -949,7 +949,7 @@ export function reinsertSession(session: Session, atIndex?: number): void {
 }
 
 // Position is `seq` and nothing re-anchors, re-indexes or reorders: a value that does not fit is a
-// HOLE, and the repair is the one range read of section 6.4 rather than a local fix-up.
+// HOLE, and the repair is the one range read rather than a local fix-up.
 
 /** The range read a hole needs, injected because this module never fetches: `store-load.ts` owns
  *  the read and this module owns the detection. */

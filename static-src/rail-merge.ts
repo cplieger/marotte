@@ -124,11 +124,10 @@ function fillBadTimestamps(rows: TurnSummary[], bad: readonly number[]): void {
 }
 
 /** Merge the resident window into the fetched index, BY `n`: that is the POSITION the turn map
- *  renders, and the appender assigns it at open and stores it (section 8.10), so both sides name
- *  a turn by the same number and no turn can take two slots. Resident wins per field with no
- *  exemption, because it sees the turn running now and a window never holds part of a turn
- *  (section 6.3); a `held` turn that is not drawn holds no slot, whatever the index fetched before
- *  a later wake took its last drawn row. */
+ *  renders, and the appender assigns it at open and stores it, so both sides name a turn by the
+ *  same number and no turn can take two slots. Resident wins per field with no exemption, because
+ *  it sees the turn running now and a window never holds part of a turn; a `held` turn that is not
+ *  drawn holds no slot, whatever the index fetched before a later wake took its last drawn row. */
 export function mergeTurnSets(
   resident: readonly Turn[],
   indexed: readonly TurnSummary[],

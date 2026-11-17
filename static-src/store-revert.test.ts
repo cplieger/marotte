@@ -18,7 +18,7 @@ import type * as ApiClient from "./api-client.js";
 const { mockApiGetTyped } = vi.hoisted(() => ({ mockApiGetTyped: vi.fn() }));
 
 // Spread `importOriginal`: a whole-module factory drops every other export this module's graph
-// reaches, which is the collection failure section 1.2 bans.
+// reaches, which fails the file's collection.
 vi.mock("./api-client.js", async (importOriginal) => {
   const actual = await importOriginal<typeof ApiClient>();
   const { orErrorOver } = await import("./__test-helpers__/api-result.js");
@@ -117,8 +117,8 @@ describe("the revert handler", () => {
   });
 
   it("writes the surviving high-water on the no-survivor frame PAIR, 1 and not 0", () => {
-    // The carrier's `turn_opened` arrives first (section 2.2 step 3 mints it at the surviving
-    // high-water plus one), then the revert naming turn 1 of 7.
+    // The carrier's `turn_opened` arrives first (the carrier mints it at the surviving high-water
+    // plus one), then the revert naming turn 1 of 7.
     seed(1, 7);
     openTurn(CHAT, {
       id: "t-c",

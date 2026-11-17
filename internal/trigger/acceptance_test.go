@@ -13,8 +13,8 @@ import (
 	"github.com/cplieger/marotte/internal/launchrule"
 )
 
-// Two trigger acceptance cases end to end: a real store and Confirmer, the Runner polling a fake forge, and the
-// launcher starting runs on a fake engine.
+// Trigger acceptance cases end to end: a real store and Confirmer, the Runner polling a fake forge, and the launcher
+// starting runs on a fake engine.
 
 const weeklyRun = 41414016210
 
