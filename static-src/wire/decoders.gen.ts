@@ -292,6 +292,7 @@ export const decodeCapabilities: Decoder<Capabilities> = (v) => {
     connection: own(o, "connection") === null ? {} : decodeRecord(own(o, "connection"), decodeAffordance, "$.capabilities.connection"),
     grant: own(o, "grant") === null ? {} : decodeRecord(own(o, "grant"), decodeAffordance, "$.capabilities.grant"),
     account: reqStr(o, "account", "$.capabilities"),
+    rerun_whole_run: reqBool(o, "rerun_whole_run", "$.capabilities"),
   };
   return out;
 };

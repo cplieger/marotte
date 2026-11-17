@@ -343,53 +343,91 @@ describe("rerunControl", () => {
 
   it("is enabled where the connection says it can re-run checks", () => {
     for (const kind of ["github", "gitlab", "gitea", "codeberg"] as const) {
-      expect(rerunControl(kind, cap("yes"), undefined), kind).toEqual({ offer: true, reason: "" });
+      expect(rerunControl(kind, cap("yes"), undefined, false), kind).toEqual({
+        offer: true,
+        reason: "",
+        whole: false,
+      });
     }
   });
 
   it("is not offered where the connection says it cannot", () => {
     for (const kind of ["github", "gitlab", "gitea", "codeberg"] as const) {
-      expect(rerunControl(kind, cap("no"), undefined), kind).toEqual({ offer: false });
+      expect(rerunControl(kind, cap("no"), undefined, false), kind).toEqual({ offer: false });
     }
   });
 
   // GitHub decides re-runs per repository and no connection read can say, so the control stays enabled.
   it("stays enabled on GitHub when the capability is unknown or not read yet", () => {
-    expect(rerunControl("github", cap("unknown"), undefined)).toEqual({ offer: true, reason: "" });
-    expect(rerunControl("github", undefined, undefined)).toEqual({ offer: true, reason: "" });
+    expect(rerunControl("github", cap("unknown"), undefined, false)).toEqual({
+      offer: true,
+      reason: "",
+      whole: false,
+    });
+    expect(rerunControl("github", undefined, undefined, false)).toEqual({
+      offer: true,
+      reason: "",
+      whole: false,
+    });
   });
 
   // Elsewhere the server refuses a re-run on an unknown capability, so the control says so before the press.
   it("is disabled with the evidence where another family reads unknown", () => {
     expect(
-      rerunControl("gitea", cap("unknown", "no swagger document on this instance"), undefined),
+      rerunControl(
+        "gitea",
+        cap("unknown", "no swagger document on this instance"),
+        undefined,
+        false,
+      ),
     ).toEqual({
       offer: true,
       reason:
         "the forge could not establish that it can re-run checks (no swagger document on this instance).",
+      whole: false,
     });
-    expect(rerunControl("gitlab", cap("maybe"), undefined)).toEqual({
+    expect(rerunControl("gitlab", cap("maybe"), undefined, false)).toEqual({
       offer: true,
       reason: "the forge could not establish that it can re-run checks.",
+      whole: false,
     });
   });
 
   it("waits for the capability before offering it on another family", () => {
-    expect(rerunControl("gitlab", undefined, undefined)).toEqual({ offer: false });
+    expect(rerunControl("gitlab", undefined, undefined, false)).toEqual({ offer: false });
   });
 
   // A failed read is no verdict: the press is offered, and a refusal disables it.
   it("is enabled when the capability could not be read", () => {
-    expect(rerunControl("gitea", null, undefined)).toEqual({ offer: true, reason: "" });
+    expect(rerunControl("gitea", null, undefined, false)).toEqual({
+      offer: true,
+      reason: "",
+      whole: false,
+    });
   });
 
   it("is disabled with the refusal's reason, whatever the capability says", () => {
     for (const kind of ["github", "gitlab"] as const) {
-      expect(rerunControl(kind, cap("yes"), "the token lacks a permission."), kind).toEqual({
+      expect(rerunControl(kind, cap("yes"), "the token lacks a permission.", false), kind).toEqual({
         offer: true,
         reason: "the token lacks a permission.",
+        whole: false,
       });
     }
+  });
+
+  // Forgejo has no failed-jobs route, so its re-run starts the whole finished run.
+  it("says when the press re-runs the whole run", () => {
+    expect(rerunControl("gitea", cap("yes"), undefined, true)).toEqual({
+      offer: true,
+      reason: "",
+      whole: true,
+    });
+    expect(rerunControl("codeberg", null, undefined, false)).toEqual({
+      offer: true,
+      reason: "",
+      whole: false,
+    });
   });
 });
 

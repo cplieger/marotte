@@ -223,27 +223,28 @@ const QUEUE_WORDS: ReadonlyMap<string, string> = new Map([
 ]);
 
 /** Whether a row offers Re-run, and if so whether it is enabled (`reason` "")
- *  or why not. */
-export type RerunControl = { offer: false } | { offer: true; reason: string };
+ *  or why not, and whether a press starts the whole run rather than its failed jobs. */
+export type RerunControl = { offer: false } | { offer: true; reason: string; whole: boolean };
 
 /**
  * The Re-run control of a failing row, from the connection's `rerun_checks` capability (undefined: not answered;
- * null: the read failed) and any coded refusal on its repository. GitHub decides per repository, so its control stays
- * enabled until a refusal; elsewhere anything but `yes` is disabled with the evidence.
+ * null: the read failed), its `rerun_whole_run` and any coded refusal on its repository. GitHub decides per
+ * repository, so its control stays enabled until a refusal; elsewhere anything but `yes` is disabled with the evidence.
  */
 export function rerunControl(
   kind: ForgeKind,
   cap: Affordance | null | undefined,
   refusal: string | undefined,
+  whole: boolean,
 ): RerunControl {
   if (refusal !== undefined) {
-    return { offer: true, reason: refusal };
+    return { offer: true, reason: refusal, whole };
   }
   if (cap?.support === "no") {
     return { offer: false };
   }
   if (kind === "github" || cap === null || cap?.support === "yes") {
-    return { offer: true, reason: "" };
+    return { offer: true, reason: "", whole };
   }
   if (cap === undefined) {
     return { offer: false };
@@ -252,6 +253,7 @@ export function rerunControl(
   return {
     offer: true,
     reason: `the forge could not establish that it can re-run checks${detail}.`,
+    whole,
   };
 }
 

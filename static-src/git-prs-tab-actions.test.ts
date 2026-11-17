@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type * as ModPRs from "./git-prs-tab.js";
+import { confirm as confirmDialog } from "./confirm.js";
 import { prIdentity } from "./push-subject.js";
 import type { Forge } from "./__test-helpers__/git-prs-tab-harness.js";
 import {
@@ -337,6 +338,12 @@ describe("the pull-request row's action state", () => {
     );
   }
 
+  function giteaRow(): HTMLElement | null {
+    return mount().querySelector<HTMLElement>(
+      `[data-pr="${CSS.escape(prIdentity(giteaForge.id, repos[0]?.repo_id ?? "", 7))}"]`,
+    );
+  }
+
   /** Read with any spinner beside it. */
   function buttonOf(r: HTMLElement | null, label: string): HTMLButtonElement | undefined {
     return [...(r?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
@@ -511,6 +518,40 @@ describe("the pull-request row's action state", () => {
     expect(noteOf(r, "rerun")).toBe(
       "Cannot re-run checks: the forge could not establish that it can re-run checks (no swagger document on this instance).",
     );
+  });
+
+  // forgeapi: Forgejo 17 and later re-run the whole finished run, its passed jobs included.
+  it("says Re-run starts the whole run where the instance re-runs whole runs", async () => {
+    const { readCapabilities } = await actions();
+    vi.mocked(readCapabilities.dispatch).mockImplementation(
+      () =>
+        succeeds(capabilities("yes", "swagger declares rerun", giteaForge.account, true)) as never,
+    );
+    await shown([pr(7, 0, {}, failing)], giteaForge);
+    const rerun = buttonOf(giteaRow(), "Re-run");
+
+    expect(rerun?.getAttribute("data-tooltip")).toBe(
+      "Re-run the whole CI run, its passed jobs included",
+    );
+    rerun?.click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.mocked(confirmDialog)).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Re-run the whole CI run on PR #7?" }),
+    );
+    expect(statusOf(giteaRow())).toBe("Re-run of the whole run started.");
+  });
+
+  it("says Re-run starts the failed jobs elsewhere", async () => {
+    await shown([pr(7, 0, {}, failing)], giteaForge);
+    const rerun = buttonOf(giteaRow(), "Re-run");
+
+    expect(rerun?.getAttribute("data-tooltip")).toBe("Re-run the failed CI jobs");
+    rerun?.click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.mocked(confirmDialog)).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Re-run failed checks on PR #7?" }),
+    );
+    expect(statusOf(giteaRow())).toBe("Re-run started.");
   });
 
   it("hides Re-run where the connection says it cannot re-run checks", async () => {

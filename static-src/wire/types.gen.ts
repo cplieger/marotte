@@ -353,6 +353,12 @@ export interface Capabilities {
   grant: { [key: string]: Affordance };
   /** Account is the sign-in the answer was read through. */
   account: string;
+  /**
+   * RerunWholeRun is whether this instance's re-run starts the whole finished
+   * run, its passed jobs included, rather than its failed jobs: forgeapi's
+   * Forgejo departure on RerunFailedChecks.
+   */
+  rerun_whole_run: boolean;
 }
 
 /**

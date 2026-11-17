@@ -402,6 +402,7 @@ describe("readCapabilities", () => {
       },
       grant: { read_merge_state: { support: "yes", source: "probe", detail: "" } },
       account: "a1",
+      rerun_whole_run: true,
     };
     mockFetch.mockResolvedValue(new Response(JSON.stringify(caps), { status: 200 }));
     expect(await readCapabilities.dispatch({ forge_id: "gh1" })).toEqual(caps);
@@ -411,7 +412,12 @@ describe("readCapabilities", () => {
 
   // An ask after the connection changed must reach the server, not join the read issued before the change.
   it("sends each ask, one in flight or not", async () => {
-    const body = JSON.stringify({ connection: {}, grant: {}, account: "a1" });
+    const body = JSON.stringify({
+      connection: {},
+      grant: {},
+      account: "a1",
+      rerun_whole_run: false,
+    });
     mockFetch.mockImplementation(() => Promise.resolve(new Response(body, { status: 200 })));
     await Promise.all([
       readCapabilities.dispatch({ forge_id: "gh1" }),

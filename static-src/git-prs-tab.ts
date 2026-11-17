@@ -1175,6 +1175,8 @@ function appendSummary(li: HTMLElement, pr: PR, number: string): void {
 
 /** Null when its read failed; absent until it answers. Kept until the connection's account or status changes. */
 const rerunCaps = new Map<string, Affordance | null>();
+/** The connections whose re-run starts the whole run, as their capabilities answered. */
+const rerunWhole = new Set<string>();
 const capsAsked = new Set<string>();
 /** Per connection, bumped when its account or status changes: a capabilities answer applies only to its own ask. */
 const capsIssue = new Map<string, number>();
@@ -1222,12 +1224,11 @@ function askCapabilities(groups: readonly RepoGroup[]): void {
       }
       capsAsked.delete(id);
       // The route carries every capability forgeapi names, so an absent key is an answer that did not arrive.
-      rerunCaps.set(
-        id,
-        caps !== null && caps.account === usableAccount(id)
-          ? (caps.connection["rerun_checks"] ?? null)
-          : null,
-      );
+      const usable = caps !== null && caps.account === usableAccount(id) ? caps : null;
+      rerunCaps.set(id, usable === null ? null : (usable.connection["rerun_checks"] ?? null));
+      if (usable?.rerun_whole_run === true) {
+        rerunWhole.add(id);
+      }
       paint();
     });
   }
@@ -1283,6 +1284,7 @@ function followForgeRows(
 
 function forgetConnection(id: string): void {
   rerunCaps.delete(id);
+  rerunWhole.delete(id);
   capsAsked.delete(id);
   capsIssue.set(id, (capsIssue.get(id) ?? 0) + 1);
   for (const key of [...rerunRefused.keys()]) {
@@ -1339,6 +1341,7 @@ function rowView(g: RepoGroup, pr: PR): RowView {
             g.forge_kind,
             rerunCaps.get(g.forge_id),
             rerunRefused.get(join(g.forge_id, g.repo_id)),
+            rerunWhole.has(g.forge_id),
           )
         : { offer: false },
     outcome: follow ?? (stands ? o.text : ""),
@@ -1356,7 +1359,7 @@ function rowSig(g: RepoGroup, pr: PR): string[] {
     g.forge_kind,
     g.forge_id,
     String(closing.has(rowId(g, pr))),
-    v.rerun.offer ? `offer:${v.rerun.reason}` : "",
+    v.rerun.offer ? `offer:${String(v.rerun.whole)}:${v.rerun.reason}` : "",
     v.outcome,
     String(v.failed),
     [...v.busy].sort().join(","),
@@ -1836,9 +1839,13 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
 
   // A failed check here is most often flaky, so a retry beats a context switch.
   if (v.rerun.offer) {
+    const whole = v.rerun.whole;
     const rerun = rowButton(RERUN_LABEL, v.busy);
     if (v.rerun.reason === "") {
-      rerun.setAttribute("data-tooltip", "Re-run the failed CI jobs");
+      rerun.setAttribute(
+        "data-tooltip",
+        whole ? "Re-run the whole CI run, its passed jobs included" : "Re-run the failed CI jobs",
+      );
     } else {
       rerun.disabled = true;
       appendNote(li, rerun, "rerun", rerunNote(v.rerun));
@@ -1846,7 +1853,9 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
     rerun.addEventListener("click", () => {
       void (async () => {
         const ok = await confirmDialog({
-          title: `Re-run failed checks on PR #${pr.number}?`,
+          title: whole
+            ? `Re-run the whole CI run on PR #${pr.number}?`
+            : `Re-run failed checks on PR #${pr.number}?`,
           confirmLabel: "Re-run",
         });
         if (!ok) {
@@ -1856,7 +1865,10 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
           // The same pin as the merge: the chip is pr.head_sha's folded state, so the re-run must name that commit.
           const o = await rerunChecks.dispatch({ ...prRef, head_sha: pr.head_sha ?? "" }).outcome;
           if (o.status === "success") {
-            return { ok: true, text: "Re-run started." };
+            return {
+              ok: true,
+              text: whole ? "Re-run of the whole run started." : "Re-run started.",
+            };
           }
           const refusal = o.status === "error" ? rerunRefusal(o.error) : undefined;
           if (refusal === undefined) {

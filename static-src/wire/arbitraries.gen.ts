@@ -504,8 +504,9 @@ const arbModel = fc.letrec<{
       connection: fc.dictionary(fc.string(), tie("Affordance"), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
       grant: fc.dictionary(fc.string(), tie("Affordance"), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
       account: fc.string(),
+      rerun_whole_run: fc.boolean(),
     },
-    { requiredKeys: ["connection", "grant", "account"] },
+    { requiredKeys: ["connection", "grant", "account", "rerun_whole_run"] },
   ),
   CatalogInfo: fc.record(
     {
