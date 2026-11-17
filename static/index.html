@@ -342,32 +342,30 @@
                than a composer feature because a workflow-run tab has no
                composer and still has to be able to ask. -->
           <div id="decision-dock" class="decision-dock hidden" role="group" aria-label="Waiting for your decision"></div>
-          <!-- The live workflow runs this chat launched, one line each. A SIBLING
-               of .prompt-box like the two regions around it, sharing the band's
-               measure, and BETWEEN them because the ordering rule is by scope:
-               the dock blocks the turn, the run bar spans turns, the steer stack
-               is scoped to the current turn, the box is what comes next. A run
-               outlives the turn that started it (run_workflow returns as soon as
-               the run is created), so this is the surface that persists across
-               turns and across a reload while the invocation card scrolls away.
-               Same mechanical property as the dock (see 26-dock.css): the bar
-               GROWS upward and #messages-wrap shrinks by exactly this region's
-               height, so nothing is covered. -->
-          <!-- The host is the rows' container, so a container query can change the list's own columns.
-               The fold row sits above the list, outside its scroll clip. -->
-          <div class="run-bar-host">
-            <div id="run-bar-fold" class="run-bar-fold" hidden></div>
-            <ul id="run-bar" class="run-bar hidden" aria-label="Workflow runs from this chat"></ul>
+          <!-- The holding area: the run bar, then the waiting messages, under one
+               cap (holding-area.ts, 26-dock.css), so however many there are the
+               composer stays on screen. -->
+          <div id="holding-area" class="holding-area">
+            <!-- The live workflow runs this chat launched, one line each. Between
+                 the dock and the steer stack because the ordering rule is by scope:
+                 the dock blocks the turn, the run bar spans turns, the steer stack
+                 is scoped to the current turn, the box is what comes next. A run
+                 outlives the turn that started it (run_workflow returns as soon as
+                 the run is created), so this is the surface that persists across
+                 turns and across a reload while the invocation card scrolls away. -->
+            <!-- The host is the rows' container, so a container query can change the list's own columns. -->
+            <div class="run-bar-host">
+              <div id="run-bar-fold" class="run-bar-fold" hidden></div>
+              <ul id="run-bar" class="run-bar hidden" aria-label="Workflow runs from this chat"></ul>
+            </div>
+            <!-- Messages waiting for the running turn or behind it, oldest at the
+                 top: a new one appears at the bottom and pushes the older ones up.
+                 Beside .prompt-box rather than inside it, because these are
+                 messages already SENT. Below the run bar on purpose: a run spans
+                 turns, so it outranks a record of what has already gone in THIS
+                 turn. -->
+            <ul id="steer-stack" class="steer-stack hidden" aria-label="Messages sent to the running turn"></ul>
           </div>
-          <!-- Mid-turn messages KAS is holding, oldest at the top: a new one
-               appears at the bottom and pushes the older ones up. A SIBLING of
-               .prompt-box for the same reason the dock is one — these are
-               messages already SENT, so they belong beside the box rather than
-               inside it, and the bar grows upward to expose them. Below the dock
-               and the run bar on purpose: a permission ask blocks the turn and a
-               run spans turns, so both outrank a record of what has already gone
-               in THIS turn. -->
-          <ul id="steer-stack" class="steer-stack hidden" aria-label="Messages sent to the running turn"></ul>
           <!-- The `/` menu, above the box it completes into (slash-menu.ts). -->
           <ul id="slash-menu" class="slash-menu" role="listbox" aria-label="Commands" hidden></ul>
           <div id="prompt-box" class="prompt-box">
@@ -1780,7 +1778,9 @@
         <div class="run-bottom-bar bottom-bar">
           <div id="run-exec-dock" class="ev-dock-host"></div>
           <div id="run-dock" class="decision-dock hidden" role="group" aria-label="Waiting for your decision"></div>
-          <ul id="run-steer-stack" class="steer-stack hidden" aria-label="Messages sent to the selected step"></ul>
+          <div id="run-holding-area" class="holding-area">
+            <ul id="run-steer-stack" class="steer-stack hidden" aria-label="Messages sent to the selected step"></ul>
+          </div>
           <!-- method="dialog" for the reason #prompt-form carries it: a stray submit does nothing. -->
           <form id="run-composer" class="run-composer" method="dialog">
             <div class="prompt-box run-composer-box">

@@ -236,10 +236,21 @@
    above the card's floors (a one-row answer box, the button row); with them aside it does. While
    the card is up they step aside; the card's own box takes the typing (`decision-dock.ts`
    `focusAnswerIfAside`) and the composer's draft waits in its hidden box. The tray drops the gap
-   it kept above them, a queued steer below it takes that gap, and the answer box opens at one row. */
+   it kept above them, a queued steer below it takes that gap, and the answer box opens at one row. A
+   holding area left with no steer to show steps aside whole. */
 @media (height <= 30rem) {
-  [id="prompt-form"]:has(> .decision-dock > .dock-user-input)
-    > :is(.run-bar-host, [id="prompt-box"]),
+  [id="prompt-form"]:has(> .decision-dock > .dock-user-input) {
+    & .run-bar-host,
+    & > [id="prompt-box"] {
+      display: none;
+    }
+  }
+
+  :where([id="prompt-form"]:has(> .decision-dock > .dock-user-input))
+    > .holding-area:has(.steer-stack.hidden) {
+    display: none;
+  }
+
   .run-bottom-bar:has(> .decision-dock > .dock-user-input) > [id="run-composer"] {
     display: none;
   }
@@ -247,7 +258,7 @@
   :is([id="prompt-form"], .run-bottom-bar) > .decision-dock:has(> .dock-user-input) {
     margin-block-end: 0;
 
-    & ~ .steer-stack {
+    & ~ .holding-area {
       margin-block-start: var(--stack-gap);
     }
   }
@@ -287,11 +298,11 @@
 }
 
 /* ONE ALLOCATION OF THE BAR WHILE A QUESTION WAITS. Floors, in order: the card's controls (its tallest
-   option, the answer box, Send and Skip), two lines of its question, one queued steer, the composer at
-   one line. Above them the bar gives the steer rows past the first, then the question past its floor,
-   then the draft: flex shrink is weight times size, so the weights sit three orders apart. Where the
-   ceiling cannot hold every floor, `decision-dock.ts` `paintFloor` lowers the steer row's, then the
-   question's second line, and writes the tray's (`--dock-floor`: a flex column cannot see a floor
+   option, the answer box, Send and Skip), two lines of its question, the holding area down to its first
+   waiting message, the composer at one line. Above them the bar gives the rest of the area, then the
+   question past its floor, then the draft: flex shrink is weight times size, so the weights sit three
+   orders apart. `decision-dock.ts` `paintFloor` measures the area's floor (`holdFloor`) and, where the
+   ceiling cannot hold every floor, lowers it, then the question's second line, and writes the tray's (`--dock-floor`: a flex column cannot see a floor
    nested in a scroller). Not while the tray animates: it would hold the tray off its pinned height. */
 :is([id="prompt-form"], .run-bottom-bar)
   > .decision-dock:has(> .dock-user-input):not([data-dock-phase]) {
@@ -300,11 +311,11 @@
 }
 
 :is([id="prompt-form"], .run-bottom-bar):where(:has(> .decision-dock > .dock-user-input)) {
-  /* One steer row: its action button (`--steer-act-size`) and the row's padding and border. */
-  & > .steer-stack {
+  /* Until `paintFloor` measures it: one steer row, its action button (`--steer-act-size`) and the row's
+     padding and border. */
+  & > .holding-area {
     flex-shrink: 1000000;
-    min-block-size: var(--steer-floor, calc(max(1lh, var(--hit-floor)) + 2 * var(--sp-2) + 2px));
-    overflow: hidden auto;
+    min-block-size: var(--hold-floor, calc(max(1lh, var(--hit-floor)) + 2 * var(--sp-2) + 2px));
   }
 
   /* One draft line and the pill row (each `--composer-rest-h`, 15-input.css), the box's two
@@ -330,12 +341,15 @@
 /* WHAT STEPS ASIDE WHEN THE FLOORS OUTGROW THE BAND, keyed on state (the band flags, `dock-ask.ts`;
    `[data-typing]`, `decision-dock.ts`), never on `:focus`: a pressed button takes focus at pointerdown,
    and a bar reflowing then moves it from under the pointer before the click. Under a soft keyboard on
-   a short band: the run strip, and a composer while the card's answer box holds the typing. On a
-   tight band the steer stack, the "more waiting" row and a composer not holding the typing too: there
-   the card's floors and one line of a composer fill the band. A composer holding the typing stays:
-   the question that arrived is not what it sends to, so the cursor stays. */
+   a short band: the run strip (the whole holding area when no steer shows), and a composer while the
+   card's answer box holds the typing. On a tight band the holding area, the "more waiting" row and a
+   composer not holding the typing too: there the card's floors and one line of a composer fill the
+   band. A composer holding the typing stays: the question that arrived is not what it sends to. */
 :where(:root[data-keyboard][data-short-band]) {
-  & [id="prompt-form"]:where(:has(> .decision-dock > .dock-user-input)) > .run-bar-host,
+  & [id="prompt-form"]:where(:has(> .decision-dock > .dock-user-input)) .run-bar-host,
+  &
+    [id="prompt-form"]:where(:has(> .decision-dock > .dock-user-input))
+    > .holding-area:has(.steer-stack.hidden),
   &
     .bottom-bar[data-typing="card"]:where(:has(> .decision-dock > .dock-user-input))
     > :is(.prompt-box, .run-composer) {
@@ -344,7 +358,7 @@
 }
 
 .bottom-bar:where(:has(> .decision-dock > .dock-user-input)) {
-  & > .steer-stack,
+  & > .holding-area,
   & > .decision-dock > .dock-depth,
   &:not([data-typing="composer"]) > :is(.prompt-box, .run-composer) {
     :where(:root[data-tight-band]) & {
@@ -818,6 +832,56 @@
 }
 
 /* ==========================================================================
+   The holding area — the run bar, then the steer and queued rows
+
+   The one box between the dock and the composer that sizes itself: its lists
+   take their content height and it caps them together, so the composer and a
+   few transcript lines stay on screen however many runs and messages wait. Past
+   the cap it scrolls as one list, in order. The bar grows upward by its height
+   and the transcript's flex row shrinks by as much, so nothing is covered.
+   ========================================================================== */
+
+.holding-area {
+  /* The cap's share of the pane's visible height (`--hold-pane-h`, `holding-area.ts`). A phone on its
+     side shows a 338px pane: 0.4 leaves three transcript lines beside a full area and the composer,
+     0.5 two. */
+  --hold-share: 0.4;
+
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: var(--stack-gap);
+  min-block-size: 0;
+  max-block-size: calc(var(--hold-share) * var(--hold-pane-h, 100dvh));
+  margin-block-end: var(--stack-gap);
+  overflow: hidden auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+
+  /* The scrollbar sits in the bar's inline padding (at least `--sp-4`), so the rows keep the
+     composer's edges whether or not the area scrolls. */
+  scrollbar-gutter: stable;
+  margin-inline-end: calc(-1 * var(--hold-gutter, 0px));
+
+  & > * {
+    flex: none;
+  }
+
+  &:not(:has(.steer-row, .run-bar:not(.hidden))) {
+    display: none;
+  }
+}
+
+/* A fling rests on a row's start. Touch only: a wheel's small steps would snap back. */
+:where(:root[data-pointer="coarse"]) .holding-area {
+  scroll-snap-type: y proximity;
+
+  & :is(.run-bar-fold, .run-bar > li, .steer-stack > li) {
+    scroll-snap-align: start;
+  }
+}
+
+/* ==========================================================================
    The steer stack — messages already sent into the running turn
    ==========================================================================
 
@@ -861,9 +925,60 @@
      three regions share one column and their edges line up. */
   max-width: var(--content-max-w);
   width: 100%;
-  margin: 0 auto var(--stack-gap);
+  margin: 0 auto;
   padding: 0;
   list-style: none;
+}
+
+/* Folded rows leave the layout (`pending-steers.ts` `applyFold`). A row leaving `display: none` replays
+   its `@starting-style` rise, which is the reveal when the stack opens. */
+.steer-stack > [data-folded] {
+  display: none;
+}
+
+/* The fold row (`stack-fold.ts`): `.steer-row`'s card around one full-row button, as tall as a row with
+   controls, so the stack keeps one card shape and one rhythm. */
+.steer-fold {
+  border: 1px solid var(--c-border);
+  border-radius: var(--stack-r);
+  background: var(--c-bg-secondary);
+  font-size: var(--fs-sm);
+}
+
+.steer-fold-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  inline-size: 100%;
+  min-block-size: calc(var(--row-tap-sm) + 2 * var(--sp-2));
+  padding: var(--sp-2) var(--sp-3);
+  border: 0;
+  border-radius: calc(var(--stack-r) - 1px);
+  background: transparent;
+  color: var(--c-text-control);
+  font-size: inherit;
+  line-height: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
+
+  @media (any-hover: hover) {
+    &:hover {
+      background: var(--c-hover);
+      color: var(--c-text-primary);
+    }
+  }
+
+  &:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-offset-inset);
+  }
+
+  &[aria-expanded="true"] > .disclosure-chevron {
+    --chev-turn: 0deg;
+  }
 }
 
 .steer-row {
@@ -1023,6 +1138,40 @@
   transition: color var(--dur-micro) var(--ease-standard);
 }
 
+/* A row's attached files, leading its text: `max-inline-size` keeps a long name to the
+   column, where it ellipsises; the tooltip names every file. */
+.steer-attach {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  max-inline-size: 100%;
+  margin-inline-end: var(--sp-1);
+  vertical-align: bottom;
+  color: var(--c-text-secondary);
+
+  & svg {
+    width: 0.85rem;
+    height: 0.85rem;
+  }
+}
+
+.steer-attach-icon {
+  display: inline-flex;
+  flex: none;
+}
+
+.steer-attach-name {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--c-text-primary);
+}
+
+.steer-attach-more {
+  flex: none;
+}
+
 /* --- Actions column ----------------------------------------------------- */
 
 /* PRESENT IN BOTH STATES, AND EMPTY WHILE SENDING, because this column sets the
@@ -1102,30 +1251,18 @@
    their subject is a STEP — that is the line between the two vocabularies.
    ========================================================================== */
 
-/* ONE BOX FOR EVERY RUN COUNT, the bottom stack's card, drawn by the host. Its content is a
-   column: the fold row (from `HEADER_AT` (2) runs) pinned on top, and the list below it as the
-   scroller. With no fold row the list is flush to the box's padding edge; with one, a row
-   scrolled under the cap is clipped at the list's top edge, under the fold row, in the middle
-   of the box.
-   The host is also the rows' container, so a container query can change the list's own
-   columns; the measure is .steer-stack's, .prompt-box's and .decision-dock's, so all four
-   band regions share one column.
-
-   THE CAP IS THE BOX'S, so the transcript and the composer are always on screen however
-   many runs are live: `--run-cap` bounds the fold row, its gap and the list together (the
-   box's padding and 1px borders come on top, as they always have), and the list shrinks and
-   scrolls past it. Measured against the visual viewport, keyboard up or down
-   (`--dock-viewport-h`, `dock-ask.ts`). */
+/* ONE BOX FOR EVERY RUN COUNT, the bottom stack's card, drawn by the host: the fold row (from
+   `HEADER_AT` (2) runs) on top, the list below it. It takes its content height; the holding
+   area caps it with the steer stack. The host is also the rows' container, so a container query
+   can change the list's own columns; the measure is .steer-stack's, .prompt-box's and
+   .decision-dock's, so all four band regions share one column. */
 .run-bar-host {
-  --run-cap: min(calc(0.25 * var(--dock-viewport-h, 100dvh)), 16rem);
-
   container: run-dock / inline-size;
   display: flex;
   flex-direction: column;
-  max-block-size: calc(var(--run-cap) + 2 * var(--stack-in) + 2px);
   max-width: var(--content-max-w);
   width: 100%;
-  margin: 0 auto var(--stack-gap);
+  margin: 0 auto;
   padding: var(--stack-in);
   border: 1px solid var(--c-border);
   border-radius: var(--stack-r);
@@ -1133,10 +1270,9 @@
 
   /* The narrow layout's distance from a pill edge to its ink: above and below the fold text, and
      below a row's bar. Equal on those lines, so the box's top and bottom gaps and the fold-to-row
-     and row-to-row gaps match. A row's title keeps the `--sp-1` it always had above its cap, so
-     seven rows still fit under the phone cap; only a first row with no fold row above it takes
-     the air. The -1.5px and -0.5px below are the line box's
-     leading above a cap and below a descender. */
+     and row-to-row gaps match. A row's title keeps the `--sp-1` it always had above its cap; only
+     a first row with no fold row above it takes the air. The -1.5px and -0.5px below are the
+     line box's leading above a cap and below a descender. */
   --run-air: 0.5rem;
 
   /* The gap between runs, and under an open fold row. */
@@ -1151,46 +1287,15 @@
 }
 
 /* Touch takes the two-line rows below at every width: a row is 44px under a finger, and one
-   padded line leaves that height empty. The list, not the box, carries the cap there (below),
-   so a fold row an engine draws a pixel taller never cuts the last run. */
+   padded line leaves that height empty. */
 :where(:root[data-pointer="coarse"]) .run-bar-host {
   --run-stack: 1;
   --run-row-h: 2.875rem;
-
-  max-block-size: none;
 }
 
-/* The list ends on a whole run: the room the box's cap leaves under the fold row, rounded down to
-   a number of rows, and never under one row, so a short visual viewport (keyboard up) keeps one
-   run in view, scrollable. A fling that stops near a row's start settles on that start, so a
-   scrolled list shows whole runs too. Touch only: a wheel's small steps would snap back. */
 :where(:root[data-pointer="coarse"]) .run-bar {
-  --run-room: var(--run-cap);
-
-  max-block-size: max(
-    var(--run-row-h),
-    calc(
-      round(down, var(--run-room) + var(--run-row-gap), var(--run-row-h) + var(--run-row-gap)) -
-        var(--run-row-gap)
-    )
-  );
-  scroll-snap-type: y proximity;
-
-  .run-bar-fold:not([hidden]) + & {
-    --run-room: calc(var(--run-cap) - var(--run-fold-h) - var(--run-row-gap));
-  }
-
-  /* The batch button is taller than the bare fold row. */
-  .run-bar-fold:has(> .run-bar-all:not([hidden])) + & {
-    --run-room: calc(var(--run-cap) - max(var(--run-fold-h), var(--btn-h)) - var(--run-row-gap));
-  }
-
-  & > li {
-    scroll-snap-align: start;
-  }
-
-  /* A token height, never the sum of a `normal` line box, which differs by engine and font: the
-     cap counts rows by it. The title's line takes what the second line leaves. */
+  /* A token height, never the sum of a `normal` line box, which differs by engine and font, so
+     every run's row is one height. The title's line takes what the second line leaves. */
   & > li > .run-bar-open {
     block-size: calc(var(--run-row-h) + var(--row-top, var(--sp-1)) - var(--sp-1));
     grid-template-rows: minmax(0, 1fr) calc(var(--fs-sm) * 1.35);
@@ -1198,8 +1303,7 @@
 }
 
 /* The fold row sits outside the list's clip so its touch target can reach up into the box's
-   padding and the stack gap above, and it stays on screen while the list scrolls. The list's own
-   row gap is restored below it while open. It is the box's header: the toggle takes the line and the batch button
+   padding and the stack gap above. The list's own row gap is restored below it while open. It is the box's header: the toggle takes the line and the batch button
    (`.run-bar-all`) ends it. */
 .run-bar-fold {
   flex-shrink: 0;
@@ -1223,10 +1327,7 @@
 /* The list is the grid and every row a subgrid, so the title, state, progress, bar
    and clock columns are shared: every bar starts and ends at one x. The title column
    sizes to the widest title up to 18rem and ellipsizes; the row's name and tooltip
-   carry the whole.
-
-   The list takes what the host's cap leaves under the fold row and scrolls inside itself
-   past it. */
+   carry the whole. The clip is what the fold's height slide and `[data-folded]` cut at. */
 .run-bar {
   display: grid;
   grid-template-columns:
@@ -1238,13 +1339,7 @@
   padding: 0;
   list-style: none;
   min-block-size: 0;
-  overflow: hidden auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-
-  /* The clip a scrolled row meets at the list's corners: each row's concentric corner. Under the
-     fold row the top edge is square, since it is no corner of the box. */
-  border-radius: var(--stack-in-r);
+  overflow: clip;
 
   /* The credits column exists only while a row states credits: an empty track still takes a
      column gap, which would pull every clock off the row's end. `:where` keeps this at the base
@@ -1253,11 +1348,6 @@
     grid-template-columns:
       [glyph] auto [title] fit-content(18rem) [state] auto [progress] auto
       [bar] minmax(3rem, 1fr) [clock] auto [credits] auto [end];
-  }
-
-  .run-bar-fold:not([hidden]) + & {
-    border-start-start-radius: 0;
-    border-start-end-radius: 0;
   }
 
   & > li {
@@ -1446,7 +1536,7 @@
 }
 
 /* Beside the batch button the toggle's hover is the button's height on every pointer and width, so the
-   fold row's two targets read as one line. The row already budgets that height (`--run-room`). */
+   fold row's two targets read as one line. */
 .run-bar-fold:has(> .run-bar-all:not([hidden])) > .run-bar-toggle {
   min-block-size: var(--btn-h);
 }
@@ -1575,13 +1665,5 @@
         )
         calc(-1 * clamp(0px, calc(var(--hit-floor) - 100%), var(--run-row-gap)));
     }
-  }
-}
-
-/* A phone-shaped screen: an open run list shows every run up to half the visual
-   viewport. */
-@media (width <= 48rem), (height <= 30rem) {
-  .run-bar-host {
-    --run-cap: calc(0.5 * var(--dock-viewport-h, 100dvh));
   }
 }

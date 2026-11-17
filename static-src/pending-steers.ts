@@ -1,4 +1,4 @@
-import { el, computed, effect, touch, untracked } from "@cplieger/reactive";
+import { el, computed, effect, signal, touch, untracked } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import { announce } from "./legacy-ui/announce.js";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
@@ -22,6 +22,7 @@ import {
   ICON_ARROW_UP,
   ICON_COMPACT,
   ICON_EDIT,
+  ICON_PAPERCLIP,
   ICON_PAUSE,
   ICON_QUEUE,
   ICON_QUEUE_UI,
@@ -36,22 +37,32 @@ import { dockEntries, entryLive, rowIsSteer, waitWords } from "./run-order.js";
 import { pendingSteerRow, steerIDFor } from "./steer-rows.js";
 import { truncate } from "./strings.js";
 import type { PendingSteer, QueuedPrompt, RunEntryView, RunView, RunWait } from "./types.js";
-import type { SendNowKind } from "./wire/types.gen.js";
+import type { Attachment, SendNowKind } from "./wire/types.gen.js";
 import { readQuoted, splitQuotes } from "./message-quote.js";
 import { drawParts } from "./quote-band.js";
+import {
+  buildFoldRow,
+  paintFoldRow,
+  stackFold,
+  type FoldLine,
+  type FoldRow,
+  type StackFold,
+} from "./stack-fold.js";
+import { setStackOpen, stackOpen } from "./device-view.js";
 
 /** Where an unsent steer goes, from the run order: with an entry's wait, with the chat's next message
  *  (none carries it yet), or, for a dock with no run order (a run step's), as the next prompt. */
 type SteerPlace = RunWait | "next_message" | undefined;
 
 /** One dock row: a steer the agent has not read, a compaction entry, the failsafe's resume, a
- *  message the server holds, or the head of the rows the reader's stop paused. */
+ *  message the server holds, the head of the rows the reader's stop paused, or the fold row. */
 type DockRow =
   | { kind: "steer"; steer: PendingSteer; place: SteerPlace }
   | { kind: "compact"; entry: RunEntryView }
   | { kind: "resume"; entry: RunEntryView }
   | { kind: "queued"; entry: RunEntryView; stop: string | undefined }
-  | { kind: "paused" };
+  | { kind: "paused" }
+  | { kind: "fold"; hidden: number; open: boolean };
 
 export interface SteerStackSource {
   /** What the dock is about (a chat id, or a run step's key), its steers and, for a chat, its run
@@ -91,9 +102,20 @@ interface StackState {
   canStop: boolean;
   stopTarget: string | undefined;
   src: SteerStackSource;
+  /** The stack's one fold row, built at mount: key `f` seats and drops this node. */
+  fold: FoldRow;
 }
 
 const mountedStacks = new WeakSet<HTMLUListElement>();
+
+/** Bumped by a fold toggle: the choice lives in device storage, which no signal tracks, and every
+ *  mounted stack follows it. */
+const foldChoice = signal(0);
+
+function toggleFold(): void {
+  setStackOpen(stackOpen() !== true);
+  foldChoice.value += 1;
+}
 
 /** Called once from app.ts. */
 export function initPendingSteers(): void {
@@ -106,17 +128,19 @@ export function mountSteerStack(stack: HTMLUListElement, src: SteerStackSource):
   }
   mountedStacks.add(stack);
   const announced = { waiting: 0, id: "" };
+  const fold = buildFoldRow(toggleFold);
   const sig = computed(() => {
     const s = src.read();
     return join(
       s.id,
       join(...s.steers.map(steerSig)),
       s.run === undefined ? "" : wireSignature(s.run),
+      String(foldChoice.value),
     );
   });
   effect(() => {
     touch(sig);
-    render(stack, src, announced);
+    render(stack, src, announced, fold);
   });
 }
 
@@ -142,6 +166,7 @@ function render(
   stack: HTMLUListElement,
   src: SteerStackSource,
   announced: { waiting: number; id: string },
+  fold: FoldRow,
 ): void {
   const { id, steers, run } = untracked(() => src.read());
   const stopTarget = run === undefined ? undefined : runningTarget(run);
@@ -154,9 +179,15 @@ function render(
     canStop: run === undefined || stopTarget !== undefined,
     stopTarget,
     src,
+    fold,
   };
   const waiting = state.waiting;
   const rows = dockRows(steers, run);
+  const open = stackOpen() === true;
+  const folding = stackFold(rows.map(foldLine));
+  if (folding !== null) {
+    rows.splice(folding.at, 0, { kind: "fold", hidden: folding.hidden, open });
+  }
 
   if (rows.length === 0) {
     reconcile(stack, [], rowSpec(state));
@@ -171,9 +202,13 @@ function render(
   // into a subtree with no box has its first style resolution there — which is the one the entry
   // transition below reads.
   stack.classList.remove("hidden");
+  const focused = document.activeElement;
+  const held = focused instanceof HTMLElement && stack.contains(focused) ? focused : null;
+  const foldWas = Array.from(stack.children).indexOf(fold.li);
   // Arrival order, so the newest sits at the bottom nearest the box it was typed into and every
   // earlier one moves up.
   reconcile(stack, rows, rowSpec(state));
+  applyFold(stack, fold, open ? null : folding, held, foldWas);
 
   // Announce only on the same chat, and only the WAITING count — the number the user is waiting to
   // see fall. A pure chat switch is not news.
@@ -188,6 +223,45 @@ function render(
   }
   announced.waiting = waiting;
   announced.id = id;
+}
+
+function foldLine(r: DockRow): FoldLine {
+  return r.kind === "steer" || r.kind === "queued"
+    ? "message"
+    : r.kind === "paused"
+      ? "pinned"
+      : "other";
+}
+
+/** Marks the rows `folding` hides (`.steer-stack > [data-folded]`, 26-dock.css), none for null, and keeps
+ *  focus a fold hid or a leaving fold row took off `<body>`: on the toggle, or on the row now at `foldWas`,
+ *  the index the fold row held before this render. */
+function applyFold(
+  stack: HTMLUListElement,
+  fold: FoldRow,
+  folding: StackFold | null,
+  held: HTMLElement | null,
+  foldWas: number,
+): void {
+  let row = 0;
+  for (const child of stack.children) {
+    if (child !== fold.li) {
+      child.toggleAttribute("data-folded", folding !== null && folding.shown[row] === false);
+      row++;
+    }
+  }
+  if (held === null) {
+    return;
+  }
+  if (held.isConnected && held.closest("[data-folded]") !== null) {
+    fold.btn.focus({ preventScroll: true });
+    return;
+  }
+  if (held === fold.btn && !held.isConnected) {
+    stack.children[foldWas]?.querySelector<HTMLElement>(".steer-act")?.focus({
+      preventScroll: true,
+    });
+  }
 }
 
 /** `run.cancel` when the entry it names is a running turn: what a steer's send-now stops. */
@@ -295,6 +369,8 @@ function rowSpec(state: StackState): ReconcileSpec<DockRow> {
           return `q:${r.entry.id}`;
         case "paused":
           return "p";
+        case "fold":
+          return "f";
       }
     },
     mount: (r) => {
@@ -309,6 +385,9 @@ function rowSpec(state: StackState): ReconcileSpec<DockRow> {
           return buildQueuedRow(r.entry, r.stop);
         case "paused":
           return buildPausedRow();
+        case "fold":
+          paintFoldRow(state.fold, r.hidden, r.open);
+          return state.fold.li;
       }
     },
     update: (el, r) => {
@@ -326,6 +405,9 @@ function rowSpec(state: StackState): ReconcileSpec<DockRow> {
           updateQueuedRow(el, r.entry, r.stop);
           return;
         case "paused":
+          return;
+        case "fold":
+          paintFoldRow(state.fold, r.hidden, r.open);
           return;
       }
     },
@@ -376,14 +458,29 @@ function syncText(row: HTMLElement, text: string): void {
 
 const shownText = new WeakMap<HTMLElement, string>();
 
-/** Each quote as the band a sent prompt draws, each text between on one line; rebuilt only when the
- *  text changes, so a focused path link in a band survives a repaint. */
-function fillText(textEl: HTMLElement, text: string): void {
-  if (shownText.get(textEl) === text) {
+/** The files first (see `attachLabel`), then each quote as the band a sent prompt draws, each text
+ *  between on one line; rebuilt only when either changes, so a focused path link in a band survives a
+ *  repaint. */
+function fillText(textEl: HTMLElement, text: string, files: readonly Attachment[] = []): void {
+  const key = join(text, ...files.map((f) => f.name));
+  if (shownText.get(textEl) === key) {
     return;
   }
-  shownText.set(textEl, text);
-  textEl.replaceChildren(...drawParts(splitQuotes(text), oneLine));
+  shownText.set(textEl, key);
+  const label = files.length > 0 ? [attachLabel(files)] : [];
+  textEl.replaceChildren(...label, ...drawParts(splitQuotes(text), oneLine));
+}
+
+/** The first file's name, ellipsised by CSS, and "+N" for the rest: every name is in the tooltip. */
+function attachLabel(files: readonly Attachment[]): HTMLElement {
+  const more = files.length - 1;
+  return el(
+    "span",
+    { className: "steer-attach" },
+    el("span", { className: "steer-attach-icon", "aria-hidden": "true" }, iconEl(ICON_PAPERCLIP)),
+    el("span", { className: "steer-attach-name" }, files[0]?.name ?? ""),
+    ...(more > 0 ? [el("span", { className: "steer-attach-more" }, `+${String(more)}`)] : []),
+  );
 }
 
 const actionSig = new WeakMap<HTMLElement, string>();
@@ -957,7 +1054,28 @@ function queuedName(entry: RunEntryView, row: QueuedPrompt): string {
 }
 
 function queuedShown(row: QueuedPrompt): string {
-  return oneLine(row.label ?? readQuoted(row.text));
+  const text = oneLine(row.label ?? readQuoted(row.text));
+  const files = row.attachments ?? [];
+  const first = files[0];
+  if (first === undefined) {
+    return text;
+  }
+  const attached =
+    files.length > 1
+      ? `Attached ${first.name} and ${String(files.length - 1)} more`
+      : `Attached ${first.name}`;
+  return text === "" ? attached : `${attached}, ${text}`;
+}
+
+/** The whole text, under a line naming every attached file. */
+function queuedTooltip(row: QueuedPrompt): string {
+  const text = readQuoted(row.text);
+  const files = row.attachments ?? [];
+  if (files.length === 0) {
+    return text;
+  }
+  const attached = `Attached: ${files.map((f) => f.name).join(", ")}`;
+  return text === "" ? attached : `${attached}\n${text}`;
 }
 
 /** What Discard does to this row, which differs by kind: a carried row was already sent once as
@@ -1034,7 +1152,7 @@ function buildQueuedRow(entry: RunEntryView, stop: string | undefined): HTMLElem
 function updateQueuedRow(li: HTMLElement, entry: RunEntryView, stop: string | undefined): void {
   const row = entry.row ?? { id: entry.id, text: "" };
   queuedRowOf.set(li, { row, entry, stop });
-  li.dataset["tooltip"] = readQuoted(row.text);
+  li.dataset["tooltip"] = queuedTooltip(row);
   li.setAttribute("aria-label", queuedName(entry, row));
   if (entry.state === "held") {
     li.dataset["held"] = "";
@@ -1047,7 +1165,7 @@ function updateQueuedRow(li: HTMLElement, entry: RunEntryView, stop: string | un
   }
   const text = li.querySelector<HTMLElement>(".steer-text");
   if (text !== null) {
-    fillText(text, row.label ?? row.text);
+    fillText(text, row.label ?? row.text, row.attachments ?? []);
   }
   syncQueuedArrow(li, entry);
 }

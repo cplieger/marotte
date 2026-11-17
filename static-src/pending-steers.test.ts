@@ -117,7 +117,7 @@ const {
 import { setSessions, setActive, recordSteerQueued, openTurn, appendEntry, get } from "./store.js";
 import { initPendingSteers, mountSteerStack, type SteerStackSource } from "./pending-steers.js";
 import { signal } from "@cplieger/reactive";
-import { ICON_QUEUE_UI, ICON_STEER } from "./icons.js";
+import { ICON_PAPERCLIP, ICON_QUEUE_UI, ICON_STEER } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 // `vitest/browser` is the Vitest 5 spelling; `@vitest/browser/context` throws.
 import { page } from "vitest/browser";
@@ -142,6 +142,7 @@ import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js"
 import { confirmText } from "./__test-helpers__/confirm-text.js";
 import { QUOTE_ATTRIBUTION, appendQuote, quoteSelection } from "./message-quote.js";
 import { pendingSteerRow, upsertSteerRow } from "./steer-rows.js";
+import { LS_UI_STATE_KEY } from "./ls-keys.js";
 
 function makeSession(chatID: string): Session {
   return {
@@ -1154,6 +1155,386 @@ describe("the steer stack", () => {
     );
 
     expect(rows().map(labelOf)).toEqual(["After the next turn"]);
+  });
+
+  // Past three messages the stack shows its first two and a fold row naming the rest, as the run bar folds
+  // behind its one header line from three runs.
+  describe("the stack's fold", () => {
+    let styleEl: HTMLStyleElement | null = null;
+    const extra: HTMLElement[] = [];
+
+    beforeAll(() => {
+      styleEl = mountAppCSS();
+    });
+
+    beforeEach(() => {
+      localStorage.removeItem(LS_UI_STATE_KEY);
+    });
+
+    afterAll(() => {
+      styleEl?.remove();
+      for (const e of extra) {
+        e.remove();
+      }
+      localStorage.removeItem(LS_UI_STATE_KEY);
+    });
+
+    function prompts(n: number): QueuedPrompt[] {
+      return Array.from({ length: n }, (_, i) => ({
+        id: `m-q${String(i + 1)}`,
+        text: `follow-up ${String(i + 1)}`,
+      }));
+    }
+
+    function texts(n: number): string[] {
+      return prompts(n).map((p) => p.text);
+    }
+
+    function foldIn(stack: Element): HTMLElement | null {
+      return stack.querySelector<HTMLElement>(":scope > .steer-fold");
+    }
+
+    function toggleIn(stack: Element): HTMLButtonElement {
+      const btn = foldIn(stack)?.querySelector<HTMLButtonElement>("button.steer-fold-toggle");
+      if (btn === undefined || btn === null) {
+        throw new Error("no fold toggle");
+      }
+      return btn;
+    }
+
+    function chatStack(): HTMLElement {
+      return document.getElementById("steer-stack")!;
+    }
+
+    function shownIn(stack: Element): string[] {
+      return Array.from(stack.querySelectorAll<HTMLElement>(".steer-row"))
+        .filter((r) => r.checkVisibility())
+        .map(textOf);
+    }
+
+    /** A run step's stack over `n` steers, as the run tab mounts one. */
+    function stepStack(n: number): HTMLElement {
+      const steers = Array.from({ length: n }, (_, i): PendingSteer => ({
+        id: `steer-s${String(i + 1)}`,
+        text: `follow-up ${String(i + 1)}`,
+        origin: "user",
+      }));
+      const stack = document.createElement("ul");
+      stack.className = "steer-stack hidden";
+      document.body.appendChild(stack);
+      extra.push(stack);
+      mountSteerStack(stack, {
+        read: () => ({ id: "wf_1|root/review", steers }),
+        edit: () => Promise.resolve(),
+        editByClear: () => Promise.resolve(),
+        remove: () => Promise.resolve(),
+        discard: () => Promise.resolve(),
+        waitingFor: "the step",
+      });
+      return stack;
+    }
+
+    it("draws no fold row for three rows and shows every row", () => {
+      withRun(behindTurn(prompts(3)));
+
+      expect(foldIn(chatStack())).toBeNull();
+      expect(shownIn(chatStack())).toEqual(texts(3));
+    });
+
+    it("folds four rows behind their first two and a fold row naming the other two", () => {
+      withRun(behindTurn(prompts(4)));
+
+      const fold = foldIn(chatStack());
+      expect(fold).not.toBeNull();
+      expect(Array.from(chatStack().children).indexOf(fold!)).toBe(2);
+      const toggle = toggleIn(chatStack());
+      expect(toggle.textContent).toBe("+2 more");
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      expect(toggle.getAttribute("aria-label")).toBe("Show 2 more waiting messages");
+      expect(shownIn(chatStack())).toEqual(texts(2));
+      expect(rowAt(2).checkVisibility()).toBe(false);
+      expect(rowAt(3).checkVisibility()).toBe(false);
+    });
+
+    it("opens in place with the same rows, and folds them again", () => {
+      withRun(behindTurn(prompts(4)));
+      const before = rows();
+      const fold = foldIn(chatStack());
+
+      toggleIn(chatStack()).click();
+
+      const after = rows();
+      expect(after).toHaveLength(4);
+      after.forEach((r, i) => {
+        expect(r, `row ${String(i)} kept its node`).toBe(before[i]);
+      });
+      expect(shownIn(chatStack())).toEqual(texts(4));
+      expect(foldIn(chatStack())).toBe(fold);
+      expect(Array.from(chatStack().children).indexOf(fold!)).toBe(2);
+      const toggle = toggleIn(chatStack());
+      expect(toggle.getAttribute("aria-expanded")).toBe("true");
+      expect(toggle.textContent).toBe("Show fewer");
+      expect(toggle.getAttribute("aria-label")).toBe("Show fewer waiting messages");
+
+      toggle.click();
+
+      expect(shownIn(chatStack())).toEqual(texts(2));
+      expect(toggleIn(chatStack()).getAttribute("aria-expanded")).toBe("false");
+    });
+
+    it("keeps the reader's choice across a repaint and on a stack mounted after it", () => {
+      withRun(behindTurn(prompts(4)));
+      toggleIn(chatStack()).click();
+
+      withRun(behindTurn(prompts(5)));
+
+      expect(shownIn(chatStack())).toEqual(texts(5));
+      expect(toggleIn(chatStack()).getAttribute("aria-expanded")).toBe("true");
+      const step = stepStack(4);
+      expect(shownIn(step)).toEqual(texts(4));
+    });
+
+    it("removes the fold row when the rows fall back to three", () => {
+      withRun(behindTurn(prompts(4)));
+      expect(foldIn(chatStack())).not.toBeNull();
+
+      withRun(behindTurn(prompts(3)));
+
+      expect(foldIn(chatStack())).toBeNull();
+      expect(shownIn(chatStack())).toEqual(texts(3));
+    });
+
+    it("hands focus to the toggle when the focused row folds away", () => {
+      withRun(behindTurn(prompts(3)));
+      const btn = rowAt(2).querySelector<HTMLButtonElement>(".steer-act")!;
+      btn.focus();
+      expect(document.activeElement).toBe(btn);
+
+      withRun(behindTurn(prompts(4)));
+
+      expect(document.activeElement).toBe(toggleIn(chatStack()));
+    });
+
+    it("hands the toggle's focus to the row in its place when the fold row leaves", () => {
+      withRun(behindTurn(prompts(4)));
+      toggleIn(chatStack()).focus();
+
+      withRun(behindTurn(prompts(3)));
+
+      expect(document.activeElement).toBe(rowAt(2).querySelector(".steer-act"));
+    });
+
+    it("folds a run step's stack by the same rule", () => {
+      const step = stepStack(5);
+
+      expect(shownIn(step)).toEqual(texts(2));
+      expect(toggleIn(step).textContent).toBe("+3 more");
+    });
+
+    it("folds an 18-row chat to its first two rows and +16 more", () => {
+      withRun(behindTurn(prompts(18)));
+
+      expect(shownIn(chatStack())).toEqual(texts(2));
+      expect(toggleIn(chatStack()).textContent).toBe("+16 more");
+    });
+
+    /** `ahead` rows the stop did not pause, then the paused queue's head over `paused` rows it paused. */
+    function stoppedBehind(ahead: number, paused: number): RunEntryView[] {
+      const entry = (id: string, wait: RunWait, over: Partial<RunEntryView>): RunEntryView =>
+        rowEntry(id, wait, { row: { id, text: id }, send_now: "now", ...over });
+      return [
+        ...Array.from({ length: ahead }, (_, i) =>
+          entry(`m-a${String(i + 1)}`, { after: "next" }, {}),
+        ),
+        ...Array.from({ length: paused }, (_, i) =>
+          entry(`m-p${String(i + 1)}`, { after: "paused" }, { state: "paused", stop_paused: true }),
+        ),
+      ];
+    }
+
+    const PAUSED = "Stopped. The messages below wait for your next message or Resume";
+
+    /** The stack's lines top to bottom as a reader sees them, the fold row by its words. */
+    function linesIn(stack: Element): string[] {
+      return Array.from(stack.children)
+        .filter((c): c is HTMLElement => c instanceof HTMLElement && c.checkVisibility())
+        .map((c) => (c === foldIn(stack) ? toggleIn(stack).textContent : textOf(c)));
+    }
+
+    it("keeps a paused queue's head with its Resume under the fold row, folding the rows after it", () => {
+      withRun(stoppedBehind(2, 3), { send: "prompt" }, false);
+
+      expect(linesIn(chatStack())).toEqual(["m-a1", "m-a2", "+3 more", PAUSED]);
+      expect(actions(rowAt(2))).toEqual(["Resume the queue"]);
+      const toggle = toggleIn(chatStack());
+      expect(toggle.getAttribute("aria-label")).toBe("Show 3 more waiting messages");
+    });
+
+    it("folds the rows ahead of a paused queue's head behind their first two, the head under the fold row", () => {
+      withRun(stoppedBehind(5, 2), { send: "prompt" }, false);
+
+      expect(linesIn(chatStack())).toEqual(["m-a1", "m-a2", "+5 more", PAUSED]);
+      expect(actions(rowAt(5))).toEqual(["Resume the queue"]);
+    });
+
+    it("opens a fold over a paused queue's head in send order", () => {
+      withRun(stoppedBehind(3, 2), { send: "prompt" }, false);
+
+      toggleIn(chatStack()).click();
+
+      expect(linesIn(chatStack())).toEqual([
+        "m-a1",
+        "m-a2",
+        "Show fewer",
+        "m-a3",
+        PAUSED,
+        "m-p1",
+        "m-p2",
+      ]);
+    });
+
+    it("draws no fold over three messages and a paused queue's head", () => {
+      withRun(stoppedBehind(2, 1), { send: "prompt" }, false);
+
+      expect(foldIn(chatStack())).toBeNull();
+      expect(shownIn(chatStack())).toEqual(["m-a1", "m-a2", PAUSED, "m-p1"]);
+    });
+
+    it("hands the toggle's focus to the paused queue's Resume when the fold above it leaves", () => {
+      withRun(stoppedBehind(2, 3), { send: "prompt" }, false);
+      toggleIn(chatStack()).focus();
+
+      withRun(stoppedBehind(2, 1), { send: "prompt" }, false);
+
+      expect(document.activeElement).toBe(actionButton(rowAt(2), "Resume the queue"));
+    });
+
+    it("counts only the messages it hides, never a queued compaction", () => {
+      withRun([
+        ...behindTurn(prompts(2)),
+        compactionEntry("compact-1", { after: "turns", turns: 3 }),
+        ...behindTurn(prompts(4)).slice(2),
+      ]);
+
+      expect(shownIn(chatStack())).toEqual(texts(2));
+      const toggle = toggleIn(chatStack());
+      expect(toggle.textContent).toBe("+2 more");
+      expect(toggle.getAttribute("aria-label")).toBe("Show 2 more waiting messages");
+    });
+  });
+
+  // A follow-up's files lead its row as a paperclip and the first file's name, "+N" counting the rest, so a
+  // row whose message is only an attachment never reads as empty.
+  describe("a follow-up's attachments", () => {
+    let styleEl: HTMLStyleElement | null = null;
+    const SHOT = "pasted-2026-11-16T10-00-41.png";
+
+    beforeAll(() => {
+      styleEl = mountAppCSS();
+    });
+
+    beforeEach(() => {
+      localStorage.removeItem(LS_UI_STATE_KEY);
+    });
+
+    afterAll(() => {
+      styleEl?.remove();
+      localStorage.removeItem(LS_UI_STATE_KEY);
+    });
+
+    function files(...names: string[]): NonNullable<QueuedPrompt["attachments"]> {
+      return names.map((name) => ({ path: `/uploads/${name}`, name }));
+    }
+
+    function attachOf(row: HTMLElement): HTMLElement | null {
+      return row.querySelector<HTMLElement>(".steer-text > .steer-attach");
+    }
+
+    function nameOf(row: HTMLElement): string {
+      return attachOf(row)?.querySelector(".steer-attach-name")?.textContent ?? "";
+    }
+
+    function moreOf(row: HTMLElement): string | null {
+      return attachOf(row)?.querySelector(".steer-attach-more")?.textContent ?? null;
+    }
+
+    it("leads an attachment-only follow-up with a paperclip and the file's name", () => {
+      withRun(behindTurn([{ id: "m-q1", text: "", attachments: files(SHOT) }]));
+      const row = firstRow();
+
+      expect(attachOf(row)?.querySelector(".steer-attach-icon svg")).toBeInstanceOf(SVGElement);
+      expect(attachOf(row)?.querySelector(".steer-attach-icon svg")?.outerHTML).toBe(
+        glyph(ICON_PAPERCLIP),
+      );
+      expect(nameOf(row)).toBe(SHOT);
+      expect(moreOf(row)).toBeNull();
+      expect(attachOf(row)?.checkVisibility()).toBe(true);
+      expect(row.getAttribute("aria-label")).toBe(`After this turn: Attached ${SHOT}`);
+      expect(row.dataset["tooltip"]).toBe(`Attached: ${SHOT}`);
+    });
+
+    it("names the first of two attachments and counts the other", () => {
+      withRun(behindTurn([{ id: "m-q1", text: "", attachments: files("a.png", "b.png") }]));
+      const row = firstRow();
+
+      expect(nameOf(row)).toBe("a.png");
+      expect(moreOf(row)).toBe("+1");
+      expect(row.getAttribute("aria-label")).toBe("After this turn: Attached a.png and 1 more");
+    });
+
+    it("puts the attachment before the text, on the text's first line", () => {
+      withRun(behindTurn([{ id: "m-q1", text: "look at this", attachments: files("a.ts") }]));
+      const row = firstRow();
+      const text = row.querySelector<HTMLElement>(".steer-text")!;
+
+      expect(text.firstElementChild).toBe(attachOf(row));
+      expect(text.lastChild?.textContent).toBe("look at this");
+      const words = document.createRange();
+      words.selectNodeContents(text.lastChild!);
+      const icon = attachOf(row)!.getBoundingClientRect();
+      const line = words.getClientRects()[0]!;
+      expect(line.top, "the text starts on the label's line").toBeLessThan(icon.bottom);
+      expect(line.left, "the text follows the label").toBeGreaterThanOrEqual(icon.right);
+      expect(row.getAttribute("aria-label")).toBe("After this turn: Attached a.ts, look at this");
+    });
+
+    it("names every file in the tooltip, above the message", () => {
+      withRun(
+        behindTurn([
+          { id: "m-q1", text: "compare these", attachments: files("a.png", "b.png", "c.png") },
+        ]),
+      );
+
+      expect(firstRow().dataset["tooltip"]).toBe("Attached: a.png, b.png, c.png\ncompare these");
+      expect(moreOf(firstRow())).toBe("+2");
+    });
+
+    it("draws the label again when a row's files change under the same text", () => {
+      withRun(behindTurn([{ id: "m-q1", text: "look", attachments: files("a.png") }]));
+      const row = firstRow();
+
+      withRun(behindTurn([{ id: "m-q1", text: "look", attachments: files("b.png") }]));
+
+      expect(firstRow()).toBe(row);
+      expect(nameOf(row)).toBe("b.png");
+    });
+
+    it("shows the label on an attachment-only row among a folded stack's first two", () => {
+      withRun(
+        behindTurn([
+          { id: "m-q1", text: "first" },
+          { id: "m-q2", text: "", attachments: files(SHOT) },
+          { id: "m-q3", text: "third" },
+          { id: "m-q4", text: "fourth" },
+        ]),
+      );
+      const row = rowAt(1);
+
+      expect(document.querySelector("#steer-stack > .steer-fold")).not.toBeNull();
+      expect(row.checkVisibility()).toBe(true);
+      expect(attachOf(row)?.checkVisibility()).toBe(true);
+      expect(nameOf(row)).toBe(SHOT);
+    });
   });
 
   // A phone row has room for the message and its glyph, not the state word; a row someone else sent still names

@@ -264,6 +264,10 @@ class Elements {
   get steerStack(): HTMLUListElement {
     return byId("steer-stack");
   }
+  /** The run bar and the steer stack's one box, between the dock and the composer. */
+  get holdingArea(): HTMLElement {
+    return byId("holding-area");
+  }
   get sendBtn(): HTMLButtonElement {
     return byId("send-btn");
   }

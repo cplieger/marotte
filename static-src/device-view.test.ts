@@ -21,10 +21,12 @@ import {
   setRunBarOpen,
   setShellHeight,
   setShellOpen,
+  setStackOpen,
   setSidebarWidth,
   shellHeight,
   shellOpen,
   sidebarWidth,
+  stackOpen,
 } from "./device-view.js";
 import { LS_UI_STATE_KEY, clearDeviceKeys } from "./ls-keys.js";
 
@@ -57,6 +59,7 @@ describe("the layout fields this screen keeps to itself", () => {
       shell_h: 0,
       sidebar_w: 0,
       run_bar_open: null,
+      stack_open: null,
     });
   });
 
@@ -68,6 +71,16 @@ describe("the layout fields this screen keeps to itself", () => {
     expect(runBarOpen()).toBe(true);
     localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ run_bar_open: "yes" }));
     expect(runBarOpen()).toBeNull();
+  });
+
+  it("tells a steer stack choice apart from no choice, and reads a non-boolean as none", () => {
+    expect(stackOpen()).toBeNull();
+    setStackOpen(true);
+    expect(stackOpen()).toBe(true);
+    setStackOpen(false);
+    expect(stackOpen()).toBe(false);
+    localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ stack_open: 1 }));
+    expect(stackOpen()).toBeNull();
   });
 
   it("keeps a valid field when a sibling is the wrong type", () => {
@@ -83,6 +96,7 @@ describe("the layout fields this screen keeps to itself", () => {
       shell_h: 0,
       sidebar_w: 0,
       run_bar_open: null,
+      stack_open: null,
     });
   });
 
@@ -115,6 +129,7 @@ describe("the layout fields this screen keeps to itself", () => {
       shell_h: 0,
       sidebar_w: 0,
       run_bar_open: null,
+      stack_open: null,
     };
     localStorage.setItem(LS_UI_STATE_KEY, '"a string"');
     expect(loadDeviceView()).toEqual(defaults);
@@ -259,6 +274,7 @@ describe("one owner of the key", () => {
       shell_h: 420,
       sidebar_w: 380,
       run_bar_open: null,
+      stack_open: null,
     });
   });
 
@@ -288,6 +304,7 @@ describe("one owner of the key", () => {
       shell_h: 420,
       sidebar_w: 380,
       run_bar_open: null,
+      stack_open: null,
     });
   });
 
@@ -312,6 +329,7 @@ describe("one owner of the key", () => {
       shell_h: 420,
       sidebar_w: 380,
       run_bar_open: null,
+      stack_open: null,
     });
   });
 
