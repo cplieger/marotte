@@ -642,12 +642,12 @@ func (h *harness) account(name string) fakeCred {
 // answer decodes one Answer; it fails the test on a refusal unless the caller asks for refusals.
 func (h *harness) answer(id BackendID) (fakeAnswer, *marotte.RPCError) {
 	h.t.Helper()
-	res, rerr := h.v.Answer(h.t.Context(), id)
-	if rerr != nil {
-		return fakeAnswer{}, rerr
+	rep := h.v.Answer(h.t.Context(), id)
+	if rep.Err != nil {
+		return fakeAnswer{}, rep.Err
 	}
 	var a fakeAnswer
-	if err := json.Unmarshal(res, &a); err != nil {
+	if err := json.Unmarshal(rep.Result, &a); err != nil {
 		h.t.Fatalf("answer is not the fake's shape: %v", err)
 	}
 	return a, nil

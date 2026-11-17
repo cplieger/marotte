@@ -1,5 +1,5 @@
 // Package notify serves POST /api/sessions/{session}/notify, the door an outside service uses to
-// wake a chat: a steer while the chat's turn is live, a prompt while it is idle.
+// wake a chat: it places the message on the chat's run order and answers once it is accepted.
 package notify
 
 import (

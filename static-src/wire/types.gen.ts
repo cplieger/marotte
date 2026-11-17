@@ -22,7 +22,7 @@ export type EntryKind = "turn_open" | "turn_bind" | "turn_wake" | "run_named" | 
 
 export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "memory_not_loaded" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed" | "resume_not_sent";
 
-export type FailureKind = "context_limit" | "model_call_limit" | "empty_answer";
+export type FailureKind = "context_limit" | "model_call_limit" | "empty_answer" | "sign_in" | "sign_in_unreachable" | "api_key_refused";
 
 export type FileMatchKind = "content" | "name" | "dir";
 
@@ -58,7 +58,7 @@ export type PreviewHintSource = "meta" | "viewport";
 
 export type PreviewPreset = "phone" | "tablet" | "desktop";
 
-export type PushKind = "agent_finished" | "permission" | "pr_status" | "run_outcome";
+export type PushKind = "agent_finished" | "permission" | "pr_status" | "run_outcome" | "sign_in";
 
 export type ReadState = "ready" | "unavailable";
 
@@ -113,6 +113,10 @@ export type SendVerb = "prompt" | "steer" | "queue";
 export type SettledBy = "user" | "unattended" | "moot" | "ended";
 
 export type ShowRefusalCode = "too_large" | "binary" | "not_utf8";
+
+export type SignInCause = "provider_unreachable" | "rejected" | "refused" | "api_key_refused";
+
+export type SignInState = "ok" | "failing" | "signed_out" | "none";
 
 export type SlashCommandKind = "steering" | "prompt" | "goal";
 
@@ -956,16 +960,16 @@ export interface EffectiveSettings {
    */
   mcp_wait_for_ready: boolean;
   /**
-   * NotificationsEnabled is the push master switch, default off. The three per-kind
+   * NotificationsEnabled is the push master switch, default off. The per-kind
    * switches below take their defaults from settings.Default*, and those are not
-   * uniform either — pr_status is OFF where its two siblings are ON. So there are
-   * three polarities across these four fields, and that asymmetry is exactly why
-   * the client must not guess any of them.
+   * uniform either: pr_status is OFF where its siblings are ON. That asymmetry is
+   * why the client must not guess any of them.
    */
   notifications_enabled: boolean;
   notify_agent_finished: boolean;
   notify_pr_status: boolean;
   notify_run_outcome: boolean;
+  notify_sign_in: boolean;
   /**
    * SupervisedDefault seeds newly created chats; ScheduledAutoApprove decides an
    * unattended run's permission ask at its deadline and is fail-closed by
@@ -3368,6 +3372,11 @@ export interface RunEntry {
    * now or resumes it.
    */
   stop_paused?: boolean;
+  /**
+   * FailedLaunch marks a paused wake whose turn failed to open after its caller was answered: the caller's next
+   * send puts it back in order.
+   */
+  failed_launch?: boolean;
 }
 
 /** RunEntryView is one entry as the header draws it. */
@@ -3397,6 +3406,11 @@ export interface RunEntryView {
    * now or resumes it.
    */
   stop_paused?: boolean;
+  /**
+   * FailedLaunch marks a paused wake whose turn failed to open after its caller was answered: the caller's next
+   * send puts it back in order.
+   */
+  failed_launch?: boolean;
   wait: RunWait;
   /** CarriesUnread marks the entry whose turn the awaits-prompt steers ride. */
   carries_unread?: boolean;
@@ -4019,6 +4033,27 @@ export interface ShowRefusal {
 export interface ShowResponse {
   content: string;
   absent?: boolean;
+}
+
+/** SignInHealth is the signin_health event's payload and GET /api/whoami's health. */
+export interface SignInHealth {
+  /**
+   * Since is when the episode began: the first failed renewal of a failing one, the moment a signed_out one was
+   * seen. Absent while ok or none.
+   */
+  since?: string;
+  state: SignInState;
+  cause?: SignInCause;
+  version: SignInHealthVersion;
+}
+
+/**
+ * SignInHealthVersion orders snapshots that reach a reader by two paths, GET /api/whoami and the signin_health
+ * event, as EngineStatusVersion does: newer is the higher (BootMS, Seq), compared in that order.
+ */
+export interface SignInHealthVersion {
+  boot_ms: number;
+  seq: number;
 }
 
 /** SlashArgument is one declared argument of a saved prompt. */
@@ -4994,6 +5029,8 @@ export interface WakeSteer {
  * pending, since a switch keeps the old account signed in until the new one commits.
  */
 export interface WhoamiResponse {
+  /** Health is the sign-in's state on every arm, absent when no health source is wired. */
+  health?: SignInHealth;
   state: WhoamiState;
   /** Email and the four labels below belong to the signed_in arm. */
   email?: string;

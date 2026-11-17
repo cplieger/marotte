@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"fmt"
 	"slices"
 
 	"github.com/cplieger/marotte/internal/command"
@@ -15,7 +14,7 @@ type notifyDoor struct {
 	enter       func() (release func(), ok bool)
 	engineReady func() bool
 	chats       func(ctx context.Context) []marotte.ChatHeader
-	deliver     func(ctx context.Context, chatID marotte.ChatID, text string, from *marotte.Caller) (command.NotifyDelivery, error)
+	deliver     func(ctx context.Context, chatID marotte.ChatID, text string, from *marotte.Caller) (string, error)
 }
 
 var _ notify.Deliverer = notifyDoor{}
@@ -30,7 +29,8 @@ func (rt *Runtime) Notifier() notify.Deliverer {
 	}
 }
 
-// Deliver holds the drain gate for the whole delivery, so a shutdown waits for it rather than cutting it.
+// Deliver holds the drain gate until the message is placed, so a shutdown waits for the placement rather than cutting
+// it.
 func (d notifyDoor) Deliver(ctx context.Context, session, text, source string) (string, error) {
 	release, ok := d.enter()
 	if !ok {
@@ -44,19 +44,11 @@ func (d notifyDoor) Deliver(ctx context.Context, session, text, source string) (
 	if !ok {
 		return "", notify.ErrUnknownSession
 	}
-	got, err := d.deliver(ctx, chatID, text, &marotte.Caller{Label: source})
+	id, err := d.deliver(ctx, chatID, text, &marotte.Caller{Label: source})
 	if err != nil {
 		return "", notifyError(err)
 	}
-	switch got {
-	case command.NotifySteer:
-		return notify.DeliveredSteer, nil
-	case command.NotifyPrompt:
-		return notify.DeliveredPrompt, nil
-	case command.NotifyQueued:
-		return notify.DeliveredQueued, nil
-	}
-	return "", fmt.Errorf("notify: unknown delivery %q", got)
+	return id, nil
 }
 
 // chatForSession answers the chat whose current session is session, else the one chat whose earlier sessions hold

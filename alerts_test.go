@@ -28,6 +28,8 @@ var shippedAlerts = map[string]string{
 	"MarotteEngineMemoryHigh":           "",
 	"MarottePromptFailures":             "",
 	"MarotteSignInStagedCopyLeft":       "",
+	"MarotteSignInFailing":              "",
+	"MarotteSignedOut":                  "",
 	"MarotteScheduleFailing":            "",
 	"MarotteScheduleStalled":            "",
 	"MarotteScheduleSlotNotStarted":     "",

@@ -827,8 +827,8 @@ export function upsertHeader(h: ChatHeader): void {
         thinking_active: h.thinking_active ?? s.thinking_active ?? "",
         usage: h.usage,
         // The header owns the count and a header read never shrinks it: a live turn the appender
-        // has not closed yet is not counted, and a rewind's shrink heals on that rewind's own
-        // refetch.
+        // has not closed yet is not counted. A rewind's shrink comes from `applyRevert`, so a
+        // header published after the revert already carries the lowered count.
         turn_count: Math.max(s.turn_count, h.turn_count),
         // Authoritative both ways, unlike `turn_count`: a rewind lowers it, and every device must
         // fold the same value or one counts a chat another has read.

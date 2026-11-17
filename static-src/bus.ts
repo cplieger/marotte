@@ -5,6 +5,7 @@ import { createBus } from "@cplieger/reactive";
 
 import type {
   EngineStatus,
+  SignInHealth,
   MCPPrewarmPayload,
   MCPSignInClosedPayload,
   MCPStatusPayload,
@@ -159,6 +160,8 @@ export interface SSEPayloads {
   // The agent engine's whole status, on every state change and every pending or busy change while a restart is
   // pending. Workspace-global.
   readonly engine_status: EngineStatus;
+  // The Kiro sign-in's state, on every move. Workspace-global.
+  readonly signin_health: SignInHealth;
   // GET /api/config/standing changed. Workspace-global.
   readonly config_standing_changed: undefined;
 }

@@ -49,7 +49,7 @@ func TestTurnRegistry_InterruptIsFirstWinsPerTurn(t *testing.T) {
 	}
 
 	// The old id names a finished turn; its cause must not reach the new one.
-	reg.finish(turn, marotte.TurnResult{})
+	reg.finish(turn, &marotte.TurnResult{})
 	next := openTestTurn(t, reg, "c1")
 	if reg.interrupt("c1", turn.ID, "stale cause") {
 		t.Error("a cause for a finished turn was accepted")
@@ -81,7 +81,7 @@ func TestTurnRegistry_ClaimIsFirstWins(t *testing.T) {
 	case <-time.After(20 * time.Millisecond):
 	}
 
-	reg.finish(turn, marotte.TurnResult{})
+	reg.finish(turn, &marotte.TurnResult{})
 	select {
 	case ok := <-second:
 		if ok {
@@ -121,7 +121,7 @@ func TestTurnRegistry_FinalizeWakesAParkedOpen(t *testing.T) {
 	case <-time.After(20 * time.Millisecond):
 	}
 
-	reg.finish(first, marotte.TurnResult{})
+	reg.finish(first, &marotte.TurnResult{})
 	select {
 	case turn := <-opened:
 		if turn == nil {
@@ -246,7 +246,7 @@ func TestForget_DoesNotStrandAnInFlightFinalizeOnAnotherLifecycle(t *testing.T) 
 		woken <- ok
 	}()
 
-	r.finish(claimed, marotte.TurnResult{Stop: marotte.StopReasonEndTurn})
+	r.finish(claimed, &marotte.TurnResult{Stop: marotte.StopReasonEndTurn})
 
 	if !<-woken {
 		t.Fatal("the waiter on the forgotten lifecycle was never woken, so Forward is parked " +
@@ -303,7 +303,7 @@ func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 		if !won {
 			t.Fatal("claimTurn lost the claim on a freshly opened turn")
 		}
-		h.coord.turns.finish(turn, marotte.TurnResult{})
+		h.coord.turns.finish(turn, &marotte.TurnResult{})
 		if busySet(t, h.coord.turns)["c1"] {
 			t.Error("a settled chat is still named busy, so the client never retracts")
 		}

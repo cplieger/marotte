@@ -70,6 +70,17 @@ func TestBuilders_titleIsTheTabAndBodyIsPhraseThenDetail(t *testing.T) {
 			PushSubject: marotte.RunSubject("wf1"), Kind: marotte.PushKindRunOutcome,
 			Title: "nightly · scheduled", Body: "Step failed · wf1:seat-b: ended with an empty model turn and no completion signal",
 		}},
+		{"sign-in failing", SignInFailing(), marotte.NotificationPayload{
+			Kind: marotte.PushKindSignIn, Title: "Kiro sign-in",
+			Body: "Kiro sign-in is failing · the Kiro sign-in service is unreachable",
+		}},
+		{"sign-in ended", SignInEnded(), marotte.NotificationPayload{
+			Kind: marotte.PushKindSignIn, Title: "Kiro sign-in", Body: "Kiro sign-in ended · sign in to Kiro to continue",
+		}},
+		{"API key refused", SignInKeyRefused(), marotte.NotificationPayload{
+			Kind: marotte.PushKindSignIn, Title: "Kiro sign-in",
+			Body: "Kiro sign-in ended · Kiro refused the KIRO_API_KEY marotte signs in with. Replace the key in marotte's environment, then restart marotte",
+		}},
 		{"pr flip", PRStatus(marotte.PRSubject("github:github.com", "r1", 7), "acme/web", 7, "Add login", true), marotte.NotificationPayload{
 			PushSubject: marotte.PRSubject("github:github.com", "r1", 7), Kind: marotte.PushKindPRStatus,
 			Title: "acme/web #7", Body: "Checks passed · Add login",

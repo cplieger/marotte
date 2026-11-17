@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	authNamesSource    = "../command/prompt.go"
+	authNamesSource    = "../rpcerr/rpcerr.go"
 	knownClassesSource = "../rpcerr/rpcerr.go"
 )
 
@@ -246,9 +246,9 @@ func TestAuthSurfaceExtractors(t *testing.T) {
 	}
 }
 
-// TestAuthClassesMatchBundle fails when KAS adds a credential-refusal class or token code that the command
-// package's auth grade does not list (the prompt then fails with no Sign in route and health stays green), or a
-// class the turn-info panel's engine-error row would drop.
+// TestAuthClassesMatchBundle fails when KAS adds a credential-refusal class or token code that rpcerr's auth list
+// does not name (the turn then fails with no sign-in row and the sign-in's health stays ok), or a class the
+// turn-info panel's engine-error row would drop.
 func TestAuthClassesMatchBundle(t *testing.T) {
 	names := declaredStrings(t, authNamesSource, "authErrorNames")
 	known := declaredMapKeys(t, knownClassesSource, "knownClasses")

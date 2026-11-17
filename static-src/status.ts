@@ -12,6 +12,7 @@ import { announce } from "./legacy-ui/announce.js";
 import { iconEl } from "./icon-el.js";
 import { modelIcon } from "./icons.js";
 import type { MeteringItem, ConnectionStatus } from "./types.js";
+import type { SignInState } from "./wire/types.gen.js";
 
 /** Options for updateContextBar — named fields prevent argument-order bugs. */
 interface ContextBarUpdate {
@@ -173,21 +174,8 @@ const STATUS_STYLES: Readonly<
 };
 
 export function setStatus(s: ConnectionStatus): void {
-  const dot = $.statusDot;
-  dot.classList.remove("connected", "error");
-  const style = STATUS_STYLES[s];
-  if (style.cls) {
-    dot.classList.add(style.cls);
-  }
-  // The expanded card tints its border and background from --status-color. It is the dot's sibling,
-  // not its child (15-input.css .pill-slot), so the value lands on the card: on the dot it would
-  // reach nothing.
-  $.statusCard.style.setProperty("--status-color", style.color);
-  // THE STATE IS THE DESCRIPTION, NEVER THE NAME. The trigger's name comes from its contents (the
-  // address plus the `.sr-only` subject) and stays that shape in every state; this is the state
-  // channel beside it.
-  $.accountBtn.dataset["tooltip"] = style.tip;
   lastStatus = s;
+  paintMark();
   paintConnectionLine();
 
   // Debounced screen-reader announcement (2s stable).
@@ -197,9 +185,47 @@ export function setStatus(s: ConnectionStatus): void {
   }, 2000);
 }
 
+/** Mark the account button with the Kiro sign-in's state, beside the connection's. */
+export function setSignInMark(state: SignInState): void {
+  lastSignIn = state;
+  paintMark();
+}
+
+/** The sign-in's mark while the connection is up; a lost connection outranks it. */
+const SIGNIN_MARKS: Readonly<
+  Partial<Record<SignInState, { cls: string; color: string; tip: string }>>
+> = {
+  failing: { cls: "signin-warn", color: "var(--c-yellow)", tip: "Connected. Kiro sign-in failing" },
+  signed_out: { cls: "signin-ended", color: "var(--c-red)", tip: "Connected. Kiro sign-in ended" },
+};
+
 /** The status the transport last reported, held so the version arriving later can repaint the
  *  line without a second status change. */
 let lastStatus: ConnectionStatus = "connecting";
+
+let lastSignIn: SignInState = "none";
+
+/** ONE writer of the dot's classes, the card's tint and the trigger's description, from both states. */
+function paintMark(): void {
+  const dot = $.statusDot;
+  dot.classList.remove("connected", "error", "signin-warn", "signin-ended");
+  const style = STATUS_STYLES[lastStatus];
+  if (style.cls) {
+    dot.classList.add(style.cls);
+  }
+  const mark = lastStatus === "connected" ? SIGNIN_MARKS[lastSignIn] : undefined;
+  if (mark !== undefined) {
+    dot.classList.add(mark.cls);
+  }
+  // The expanded card tints its border and background from --status-color. It is the dot's sibling,
+  // not its child (15-input.css .pill-slot), so the value lands on the card: on the dot it would
+  // reach nothing.
+  $.statusCard.style.setProperty("--status-color", mark?.color ?? style.color);
+  // THE STATE IS THE DESCRIPTION, NEVER THE NAME. The trigger's name comes from its contents (the
+  // address plus the `.sr-only` subject) and stays that shape in every state; this is the state
+  // channel beside it.
+  $.accountBtn.dataset["tooltip"] = mark?.tip ?? style.tip;
+}
 
 /** The connection line: the status, plus WHICH server, once its version is known. */
 function paintConnectionLine(): void {

@@ -17,7 +17,9 @@ import {
   steerCount,
   setAgentStatus,
   tabStatusFor,
+  appendEntry,
 } from "../store.js";
+import { composerDraft, dropComposerState } from "../composer-state.js";
 import type { Session } from "../types.js";
 import type { Entry, EntryTurnClose } from "../wire/types.gen.js";
 import type * as ApiClient from "../api-client.js";
@@ -285,9 +287,7 @@ describe("ERROR_ROUTES", () => {
     string,
     {
       surface: string;
-      action?:
-        | { kind: "setting"; tab: string; control: string; label: string }
-        | { kind: "sign-in"; label: string };
+      action?: { tab: string; control: string; label: string };
     },
   ][] = [
     ["agent_not_found", { surface: "toast" }],
@@ -298,22 +298,15 @@ describe("ERROR_ROUTES", () => {
       {
         surface: "toast",
         action: {
-          kind: "setting",
           tab: "instructions",
           control: "steering-input",
           label: "Open custom instructions",
         },
       },
     ],
-    // Unauthenticated runtime: the only fix is signing in, which no Settings control does, hence the
-    // discriminated action. Turn-scoped AND actionable, so the toast is raised beside the inline reason.
-    [
-      "auth_token_unavailable",
-      {
-        surface: "toast",
-        action: { kind: "sign-in", label: "Sign in" },
-      },
-    ],
+    // A turn refused on its credential: its row and the app-wide sign-in banner carry Sign in again, so the
+    // toast carries no action and stands down for the chat on screen.
+    ["auth_token_unavailable", { surface: "toast" }],
     ["rate_limit", { surface: "toast" }],
     ["compaction_failed", { surface: "toast" }],
     ["resume_not_sent", { surface: "toast" }],
@@ -622,35 +615,26 @@ describe("error handler", () => {
     expect(mockOpenSetting).not.toHaveBeenCalled();
   });
 
-  // KAS answers an auth failure by running unauthenticated, so without this toast every turn fails
-  // silently.
-  it("routes the auth failure to a toast carrying the sign-in CTA", () => {
+  // The turn's row says the sign-in cause and offers Sign in again, so the toast is a plain turn-scoped one:
+  // failure-notice suppresses it for the chat on screen and names the chat elsewhere.
+  it("routes the auth failure to a plain turn-scoped toast, the row carrying Sign in again", () => {
     setSessions([makeSession("chat-1", { thinking: true })]);
     setActive("chat-1");
     fireSSE("error", "chat-1", {
       code: "auth_token_unavailable",
-      message: "kiro-cli: refresh token expired",
+      message: "Kiro sign-in failed: the Kiro sign-in service is unreachable.",
       turn_scoped: true,
     });
 
     expect(mockReportFailure).toHaveBeenCalledWith(
       "chat-1",
-      // kiro-cli's own reason travels through: it names which leg of the login
-      // chain is dead, and no wording invented client-side is more specific.
-      "kiro-cli: refresh token expired",
-      expect.objectContaining({ label: "Sign in" }),
-      // Turn-scoped and still raised: failure-notice.ts never suppresses an action-bearing notice.
+      "Kiro sign-in failed: the Kiro sign-in service is unreachable.",
+      undefined,
       true,
       "",
       "auth_token_unavailable",
     );
-    const action = mockReportFailure.mock.calls[0]?.[2] as
-      { label: string; onClick: () => void } | undefined;
-    action?.onClick();
-    expect(mockShowLoginModal).toHaveBeenCalledTimes(1);
-    // Not a Settings jump: the login modal is not in Settings at all.
-    expect(mockOpenSetting).not.toHaveBeenCalled();
-    // And not the send button: it is not one send that is broken.
+    expect(mockShowLoginModal).not.toHaveBeenCalled();
     expect(mockSetAgentDown).not.toHaveBeenCalled();
   });
 
@@ -883,5 +867,70 @@ describe("decision_settled handler", () => {
       request_id: 45,
     });
     expect(mockCloseNotificationsFor).toHaveBeenCalledWith({ kind: "chat", chatID: "chat-1" });
+  });
+});
+
+// A prompt the server refused during a known sign-in outage never reached the engine (no turn_bind), so its words
+// come back to the chat's composer; one the engine took stays in the transcript only.
+describe("turn_closed for a prompt failed on the sign-in", () => {
+  function openPromptOn(chatID: string, prompt: Record<string, unknown>): void {
+    openTurn(chatID, {
+      id: "t1-open",
+      turn: "t1",
+      kind: "turn_open",
+      seq: 0,
+      ts: 1,
+      payload: { source: "prompt", n: 1, prompt: { id: "m-1", ...prompt } },
+    } as Entry);
+  }
+  const signInClose = {
+    outcome: "interrupted",
+    failure_kind: "sign_in_unreachable",
+  } as Partial<EntryTurnClose>;
+
+  beforeEach(() => {
+    dropComposerState("give-back");
+  });
+
+  it("hands an unsent typed prompt back to its composer, whatever the sign-in's cause", () => {
+    for (const kind of ["sign_in_unreachable", "sign_in", "api_key_refused"] as const) {
+      dropComposerState("give-back");
+      setSessions([makeSession("give-back")]);
+      openPromptOn("give-back", { text: "do the thing" });
+      fireClose("give-back", { payload: { ...signInClose, failure_kind: kind } });
+      expect(composerDraft("give-back"), kind).toBe("do the thing");
+    }
+  });
+
+  it("keeps a prompt the engine took, an automatic one and an API caller's out of the composer", () => {
+    const cases: [string, Record<string, unknown>, boolean][] = [
+      ["bound", { text: "sent to the engine" }, true],
+      ["automatic", { text: "marotte's own", automatic: true }, false],
+      ["caller", { text: "an API call", caller: { kind: "chat", id: "c-2" } }, false],
+    ];
+    for (const [name, prompt, bound] of cases) {
+      dropComposerState("give-back");
+      setSessions([makeSession("give-back")]);
+      openPromptOn("give-back", prompt);
+      if (bound) {
+        appendEntry("give-back", {
+          id: "t1-bind",
+          turn: "t1",
+          kind: "turn_bind",
+          seq: 1,
+          ts: 1,
+          payload: { kas_message_id: "k-1", session_id: "s-1" },
+        } as Entry);
+      }
+      fireClose("give-back", { payload: signInClose, seq: bound ? 2 : 1 });
+      expect(composerDraft("give-back"), name).toBe("");
+    }
+  });
+
+  it("hands nothing back for a failure of another kind", () => {
+    setSessions([makeSession("give-back")]);
+    openPromptOn("give-back", { text: "do the thing" });
+    fireClose("give-back", { payload: { outcome: "interrupted", failure_reason: "boom" } });
+    expect(composerDraft("give-back")).toBe("");
   });
 });

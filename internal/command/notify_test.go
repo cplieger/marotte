@@ -11,14 +11,13 @@ import (
 
 const notifyText = "1 new message from RubyRobin"
 
-func notifyInto(t *testing.T, f *callerFixture) NotifyDelivery {
+func notifyInto(t *testing.T, f *callerFixture) {
 	t.Helper()
-	got, err := f.d.Notify(t.Context(), "c1", notifyText, &marotte.Caller{Label: "grelot"})
+	_, err := f.d.Notify(t.Context(), "c1", notifyText, &marotte.Caller{Label: "grelot"})
 	f.join.join()
 	if err != nil {
 		t.Fatalf("Notify: %v", err)
 	}
-	return got
 }
 
 // composerKept fails t unless c1's draft and staged file are the fixture's.
@@ -32,9 +31,7 @@ func composerKept(t *testing.T, f *callerFixture) {
 
 func TestNotify_PromptsAnIdleChat(t *testing.T) {
 	f := newCallerFixture(t)
-	if got := notifyInto(t, f); got != NotifyPrompt {
-		t.Fatalf("delivered as %q, want prompt", got)
-	}
+	notifyInto(t, f)
 	prompts := f.opens.prompts()
 	if len(prompts) != 1 || prompts[0] == nil {
 		t.Fatalf("turn opens = %v, want one prompt", prompts)
@@ -54,9 +51,7 @@ func TestNotify_PromptsAnIdleChat(t *testing.T) {
 func TestNotify_SteersABusyChat(t *testing.T) {
 	f := newCallerFixture(t)
 	f.opens.admitFirst = AdmissionBusy
-	if got := notifyInto(t, f); got != NotifySteer {
-		t.Fatalf("delivered as %q, want steer", got)
-	}
+	notifyInto(t, f)
 	if len(f.steers.froms) != 1 {
 		t.Fatalf("routed %d steers, want 1", len(f.steers.froms))
 	}
@@ -75,22 +70,18 @@ func TestNotify_PromptsWhenTheTurnEndedBeforeTheSteer(t *testing.T) {
 	f := newCallerFixture(t)
 	f.opens.admitFirst = AdmissionBusy
 	f.steers.routeRef = SteerRefuseNoTurn
-	if got := notifyInto(t, f); got != NotifyPrompt {
-		t.Fatalf("delivered as %q, want prompt", got)
-	}
+	notifyInto(t, f)
 	if prompts := f.opens.prompts(); len(prompts) != 1 {
 		t.Errorf("turn opens = %v, want one prompt", prompts)
 	}
 }
 
-// A wake the chat holds behind its running turn is accepted as queued, waiting under its caller's name.
-func TestNotify_AnswersQueuedForAWakeTheChatHolds(t *testing.T) {
+// A wake the chat holds behind its running turn waits under its caller's name.
+func TestNotify_QueuesAWakeTheChatHolds(t *testing.T) {
 	f := newCallerFixture(t)
 	f.queue.mode = marotte.InterruptQueue
 	f.opens.admitFirst = AdmissionBusy
-	if got := notifyInto(t, f); got != NotifyQueued {
-		t.Fatalf("delivered as %q, want queued", got)
-	}
+	notifyInto(t, f)
 	if len(f.queue.rows) != 1 || f.queue.rows[0].Text != notifyText {
 		t.Fatalf("queued rows = %+v, want the wake", f.queue.rows)
 	}

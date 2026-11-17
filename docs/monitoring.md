@@ -30,7 +30,8 @@ Labels carry fixed values only, with one exception. `rule_id` is the random id m
 | `marotte_engine_exits_total` | counter | `cause` | Agent engine exits, by cause |
 | `marotte_engine_resident_memory_bytes` | gauge | none | The running engine's resident memory at its last sample, taken every 60 seconds. Absent while no engine runs |
 | `marotte_engine_heap_limit_bytes` | gauge | none | The running engine's JavaScript heap limit. Absent while the limit is unknown |
-| `marotte_prompt_failures_total` | counter | `class` | Failed prompts, by `fatal`, `pipe_death`, `busy`, `transient`, `throttled`, `rejected` or `auth`. `pipe_death` is a prompt the engine's own exit ended |
+| `marotte_prompt_failures_total` | counter | `class` | Failed prompts, by `fatal`, `pipe_death`, `busy`, `transient`, `throttled`, `rejected`, `auth` or `signin_outage`. `pipe_death` is a prompt the engine's own exit ended, and `signin_outage` a prompt failed at once while Kiro's sign-in service does not answer |
+| `marotte_signin_state` | gauge | `state` | 1 for the Kiro sign-in's current state and 0 for the others: `ok`, `failing` (renewals have failed for 2 minutes and Kiro's sign-in service does not answer), `signed_out` (Kiro refused the sign-in or the `KIRO_API_KEY`) or `none` (no account, never signed in or signed out on purpose) |
 | `marotte_signin_save_failures_total` | counter | `backend`, `reason` | Sign-in changes marotte could not save, by `staged_copy_left` or `write_failed` |
 | `marotte_schedule_failed_slots` | gauge | `rule_id` | Consecutive slots of an enabled schedule that ended without a completed run. A completed run resets it to 0 |
 | `marotte_schedule_next_due_timestamp_seconds` | gauge | `rule_id` | When an enabled schedule's next slot falls due, in Unix seconds. A slot waiting on a busy agent engine reads the end of its wait, the schedule's next slot |
@@ -68,7 +69,9 @@ Load [`alerts/promql.yaml`](../alerts/promql.yaml) into Prometheus, Mimir or vma
 | `MarotteEngineCrashLoop` | The engine ended by itself 3 or more times in 15 minutes | critical |
 | `MarotteEngineStoppedExternally` | A signal from another process stopped the engine in the last 15 minutes | warning |
 | `MarotteEngineMemoryHigh` | The engine's resident memory stayed above 80% of its heap limit for 2 minutes | warning |
-| `MarottePromptFailures` | 5 or more prompts failed in 15 minutes, leaving out those an engine exit ended | warning |
+| `MarottePromptFailures` | 5 or more prompts failed in 15 minutes, leaving out those an engine exit ended and those a sign-in outage failed, which `MarotteSignInFailing` reports | warning |
+| `MarotteSignInFailing` | Kiro's sign-in service has not answered marotte's renewals for 2 minutes | warning |
+| `MarotteSignedOut` | Kiro refused marotte's sign-in, its renewal or the `KIRO_API_KEY` | warning |
 | `MarotteSignInStagedCopyLeft` | A sign-in save was refused because an earlier save's file is still on disk | warning |
 | `MarotteScheduleFailing` | A schedule's last 2 or more slots ended without a completed run | warning |
 | `MarotteScheduleStalled` | A schedule slot has been overdue by more than 10 minutes for 5 minutes | warning |

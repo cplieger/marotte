@@ -3,6 +3,9 @@
 // scope by class prefix, since the walkers scan the whole document.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import resetCss from "../css/02-reset.css?raw";
+import filesCss from "../css/19-files.css?raw";
+import mcpToolsCss from "../css/61-mcp-tools.css?raw";
 import { WALKERS, pageSource } from "./walkers.js";
 
 interface Row {
@@ -160,6 +163,7 @@ afterEach(() => {
   // the walkers scan the WHOLE document.
   host.remove();
   sheet.remove();
+  window.scrollTo(0, 0);
   document.documentElement.style.removeProperty("--hit-floor");
   document.documentElement.style.removeProperty("--c-text-primary");
 });
@@ -390,11 +394,10 @@ describe("control-height", () => {
   });
 
   it("names the two unmeasurable reasons apart, so a runner prints the right one", () => {
-    // The runners print this string verbatim; the walker owns the whole sentence.
+    // The runners print this string verbatim; the walker owns the whole sentence. The far control
+    // straddles the viewport's bottom edge: a fixed box wholly below it is not rendered.
     mount(
-      `<div class="fx-far" style="position:fixed;inset-block-start:4000px;inset-inline-start:0">
-         <button class="fx-away" style="height:9px;width:9px"></button>
-       </div>
+      `<button class="fx-away" style="position:fixed;inset-block-start:calc(100vh - 3px);inset-inline-start:0;height:9px;width:9px"></button>
        <div class="fx-near" style="transform:scale(1.3)">
          <button class="fx-warped" style="height:9px;width:9px"></button>
        </div>`,
@@ -1023,9 +1026,13 @@ describe("contrast", () => {
   });
 });
 
-// What a reader cannot see, per axe-core 4.13's `isVisibleOnScreen` (lib/commons/dom/
-// is-visible-on-screen.js), which its color-contrast check gates on: every walker counts it out.
-const HIDERS: readonly { name: string; wrap: (slot: string) => string; settle?: () => void }[] = [
+// What a reader can neither see nor scroll into view: every walker counts it out.
+const HIDERS: readonly {
+  name: string;
+  wrap: (slot: string) => string;
+  css?: string;
+  settle?: () => void;
+}[] = [
   {
     name: "beyond the summary of a closed <details>",
     wrap: (s) => `<details class="fx-r-wrap"><summary>s</summary>${s}</details>`,
@@ -1067,12 +1074,57 @@ const HIDERS: readonly { name: string; wrap: (slot: string) => string; settle?: 
     wrap: (s) => `<div class="fx-r-wrap" style="position:absolute;clip:rect(0 0 0 0)">${s}</div>`,
   },
   {
+    name: "under a clip with one zero edge",
+    wrap: (s) =>
+      `<div class="fx-r-wrap" style="position:absolute;clip:rect(0px 100px 0px 0px)">${s}</div>`,
+  },
+  {
     name: "under clip-path: inset(50%)",
     wrap: (s) => `<div class="fx-r-wrap" style="clip-path:inset(50%)">${s}</div>`,
   },
   {
+    name: "in a zero-height overflow:auto scroller",
+    wrap: (s) => `<div class="fx-r-wrap" style="height:0;overflow:auto">${s}</div>`,
+  },
+  {
+    name: "in a zero-width overflow:scroll scroller",
+    wrap: (s) => `<div class="fx-r-wrap" style="width:0;overflow:scroll">${s}</div>`,
+  },
+  {
     name: "positioned before the page's start, where no scroll reaches",
     wrap: (s) => `<div class="fx-r-wrap" style="position:absolute;left:-9999px">${s}</div>`,
+  },
+  {
+    // A fixed box ignores the page's scroll, so scrolling the page must not bring it into view.
+    name: "fixed above the viewport, on a scrolled page",
+    wrap: (s) => `<div class="fx-r-wrap" style="position:fixed;top:-200px">${s}</div>`,
+    css: "body { min-height: 5000px }",
+    settle: () => {
+      window.scrollTo(0, 500);
+    },
+  },
+  {
+    name: "fixed below the viewport",
+    wrap: (s) => `<div class="fx-r-wrap" style="position:fixed;top:100vh">${s}</div>`,
+  },
+  {
+    // No ancestor here contains a fixed box, so the scroller's offset does not move it.
+    name: "fixed above the viewport, under a scrolled scroller",
+    wrap: (s) =>
+      `<div class="fx-r-wrap" style="width:200px;height:100px;overflow:auto"><div style="position:fixed;top:-200px">${s}</div><div style="height:2000px"></div></div>`,
+    settle: () => {
+      const scroller = document.querySelector<HTMLElement>(".fx-r-wrap");
+      if (scroller !== null) {
+        scroller.scrollTop = 400;
+      }
+      expect(scroller?.scrollTop).toBe(400);
+    },
+  },
+  {
+    // Scrollable overflow never extends before a scroller's start edge.
+    name: "absolute above its scroller's scroll origin",
+    wrap: (s) =>
+      `<div class="fx-r-wrap" style="position:relative;width:200px;height:100px;overflow:auto"><div style="position:absolute;top:-400px">${s}</div><div style="height:2000px"></div></div>`,
   },
 ];
 
@@ -1084,9 +1136,9 @@ const ROUND_NEST = `<div style="border:1px solid #000;border-radius:12px;padding
   </div>`;
 const HEADER = (h: number): string => `<div class="fx-r-head" style="height:${h}px">h</div>`;
 
-describe.each(HIDERS)("what is not rendered: $name", ({ wrap, settle }) => {
+describe.each(HIDERS)("what is not rendered: $name", ({ wrap, css, settle }) => {
   const place = (slot: string, beside = ""): void => {
-    mount(`<div style="background:#fff">${wrap(slot)}${beside}</div>`);
+    mount(`<div style="background:#fff">${wrap(slot)}${beside}</div>`, css);
     settle?.();
   };
 
@@ -1160,11 +1212,281 @@ describe("what is rendered", () => {
     expect(findingFor(run<Contrast>("contrast", {}), "fx-r-ink")).toBeDefined();
   });
 
+  it("judges a zero-height box at the page's origin, whose text overflows into view", () => {
+    mount(`<div class="fx-r-ink" style="height:0;color:#eee;font-size:14px">faint</div>`);
+    expect(findingFor(run<Contrast>("contrast", {}), "fx-r-ink")).toBeDefined();
+  });
+
+  it("judges text a scrolled parent carries above the viewport, which scrolling back reaches", () => {
+    mount(
+      `<div class="fx-r-scroller" style="background:#fff;height:50px;overflow:auto"><span class="fx-r-ink" style="color:#eee;font-size:14px">faint</span><div style="height:1000px"></div></div>`,
+    );
+    const scroller = host.querySelector<HTMLElement>(".fx-r-scroller");
+    if (scroller !== null) {
+      scroller.scrollTop = 500;
+    }
+    expect(host.querySelector(".fx-r-ink")?.getBoundingClientRect().bottom).toBeLessThan(0);
+    expect(findingFor(run<Contrast>("contrast", {}), "fx-r-ink")).toBeDefined();
+  });
+
   it("still lists a rendered control the walk never reached", () => {
     mount(SMALL_BTN);
     run("focus-setup", {});
     const unreached = run<string[]>("focus-unreached", {});
     expect(unreached.some((u) => hasClass(u, "fx-r-btn"))).toBe(true);
+  });
+});
+
+// A stylesheet can cancel the UA's skip of a closed <details>: what Chromium then paints is judged.
+describe("what is rendered: a closed <details> whose ::details-content is made visible", () => {
+  const CV = ".fx-r-cv::details-content { content-visibility: visible }";
+  const place = (slot: string): void => {
+    mount(
+      `<div style="background:#fff"><details class="fx-r-cv"><summary>s</summary>${slot}</details></div>`,
+      CV,
+    );
+  };
+
+  it("judges the text inside it", () => {
+    place(FAINT);
+    expect(findingFor(run<Contrast>("contrast", {}), "fx-r-ink")).toBeDefined();
+  });
+
+  it("judges its own text beyond the summary", () => {
+    mount(
+      `<div style="background:#fff"><details class="fx-r-cv fx-r-bare" style="color:#eee;font-size:14px"><summary style="color:#000">s</summary>bare text</details></div>`,
+      CV,
+    );
+    expect(findingFor(run<Contrast>("contrast", {}), "fx-r-bare")).toBeDefined();
+  });
+
+  it("measures its control rather than counting it unrendered", () => {
+    place(SMALL_BTN);
+    const r = run<ControlHeight>("control-height", { tol: 1.5 });
+    expect(r.unrendered.some((u) => hasClass(u.el, "fx-r-btn"))).toBe(false);
+  });
+
+  it("lists its control as focusable but never reached", () => {
+    place(SMALL_BTN);
+    run("focus-setup", {});
+    expect(run<string[]>("focus-unreached", {}).some((u) => hasClass(u, "fx-r-btn"))).toBe(true);
+  });
+
+  it("calls its focused control painted", () => {
+    place(SMALL_BTN);
+    run("focus-setup", {});
+    host.querySelector<HTMLElement>(".fx-r-btn")?.focus();
+    expect(run<FocusStop>("focus-stop", {}).painted).toBe(true);
+  });
+});
+
+// marotte's own inline layouts: a closed <details> whose stylesheet paints its `::details-content`,
+// so the actions are on screen with no summary to open.
+const FOOTER = `<div class="turn-footer"><span class="turn-actions-buttons"><details class="turn-actions-more"><summary class="turn-action-btn turn-action-more" aria-label="More turn actions"></summary><span class="turn-actions-group"><button class="turn-action-btn fx-r-btn" aria-label="Copy as text" style="height:12px;width:12px"><span class="turn-action-label">Copy as text</span></button></span></details></span></div>`;
+const FILE_TOOLBAR = `<div class="view-toolbar-inner"><details class="fb-new-menu"><summary class="icon-btn fb-new-trigger" aria-label="New file or folder"></summary><span class="fb-new-actions"><button type="button" class="icon-btn fx-r-btn" aria-label="New file" style="height:12px;width:12px"><span class="fb-new-label">New file</span></button></span></details></div>`;
+
+describe.each([
+  { name: "the turn footer", html: FOOTER, css: mcpToolsCss },
+  { name: "the file browser toolbar", html: FILE_TOOLBAR, css: filesCss },
+])("what is rendered: $name's inline actions in a closed <details>", ({ html, css }) => {
+  const place = (): HTMLElement | null => {
+    mount(`<div style="background:#fff">${html}</div>`, css);
+    expect(host.querySelector("details")?.open).toBe(false);
+    const btn = host.querySelector<HTMLElement>(".fx-r-btn");
+    const r = btn?.getBoundingClientRect();
+    if (r !== undefined) {
+      expect(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)).toBe(btn);
+    }
+    return btn;
+  };
+
+  it("measures the action rather than counting it unrendered", () => {
+    place();
+    const r = run<ControlHeight>("control-height", { tol: 1.5 });
+    expect(r.unrendered.some((u) => hasClass(u.el, "fx-r-btn"))).toBe(false);
+    expect(undersizeFor(r, "fx-r-btn")).toHaveLength(1);
+  });
+
+  it("lists the action as focusable but never reached", () => {
+    place();
+    run("focus-setup", {});
+    expect(run<string[]>("focus-unreached", {}).some((u) => hasClass(u, "fx-r-btn"))).toBe(true);
+  });
+
+  it("calls the focused action painted", () => {
+    const btn = place();
+    run("focus-setup", {});
+    btn?.focus();
+    expect(run<FocusStop>("focus-stop", {}).painted).toBe(true);
+  });
+});
+
+/** Two animation frames, so the browser has decided which `content-visibility: auto` blocks it skips. */
+const twoFrames = (): Promise<void> =>
+  new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        resolve();
+      });
+    });
+  });
+
+// `#app` is `position: fixed; inset: 0` (02-reset.css) and holds every scroller in the app.
+describe("what is rendered: content a scroll brings into view", () => {
+  const BELOW = (slot: string): string =>
+    `<div id="app"><div class="fx-r-scroller" style="height:300px;overflow:auto;background:#fff"><div style="height:2000px"></div>${slot}</div></div>`;
+  const RIGHT = (slot: string): string =>
+    `<div id="app"><div class="fx-r-scroller" style="width:300px;overflow-x:auto;background:#fff"><div style="display:flex;width:4000px"><div style="flex:none;width:3000px"></div>${slot}</div></div></div>`;
+  const ink = (): DOMRect | undefined => host.querySelector(".fx-r-ink")?.getBoundingClientRect();
+  const scrollTo = (top: number): void => {
+    const scroller = host.querySelector<HTMLElement>(".fx-r-scroller");
+    if (scroller !== null) {
+      scroller.scrollTop = top;
+    }
+  };
+
+  it("judges faint text below the fold of a scroller in the fixed app shell", () => {
+    mount(BELOW(FAINT), resetCss);
+    expect(ink()?.top).toBeGreaterThan(window.innerHeight);
+    expect(findingFor(run<Contrast>("contrast", {}), "fx-r-ink")).toBeDefined();
+  });
+
+  it("judges faint text past the right edge of a scroller in the fixed app shell", () => {
+    mount(RIGHT(FAINT), resetCss);
+    expect(ink()?.left).toBeGreaterThan(window.innerWidth);
+    expect(findingFor(run<Contrast>("contrast", {}), "fx-r-ink")).toBeDefined();
+  });
+
+  it("judges faint text in a content-visibility:auto block the browser skips below the fold", async () => {
+    mount(
+      BELOW(`<div style="content-visibility:auto;contain-intrinsic-size:auto 20px">${FAINT}</div>`),
+      resetCss,
+    );
+    await twoFrames();
+    expect(host.querySelector(".fx-r-ink")?.checkVisibility({ contentVisibilityAuto: true })).toBe(
+      false,
+    );
+    expect(findingFor(run<Contrast>("contrast", {}), "fx-r-ink")).toBeDefined();
+  });
+
+  it("measures a control below the fold rather than counting it unrendered", () => {
+    mount(BELOW(SMALL_BTN), resetCss);
+    const r = run<ControlHeight>("control-height", { tol: 1.5 });
+    expect(r.unrendered.some((u) => hasClass(u.el, "fx-r-btn"))).toBe(false);
+    expect(r.unmeasurable.some((u) => hasClass(u.el, "fx-r-btn"))).toBe(true);
+  });
+
+  it("lists a control past the right edge as focusable but never reached", () => {
+    mount(RIGHT(SMALL_BTN), resetCss);
+    run("focus-setup", {});
+    expect(run<string[]>("focus-unreached", {}).some((u) => hasClass(u, "fx-r-btn"))).toBe(true);
+  });
+
+  it("judges the far end of an rtl scroller resting at its start", () => {
+    mount(
+      `<div id="app"><div dir="rtl" style="width:300px;overflow-x:auto;background:#fff"><div style="display:flex;width:4000px"><div style="flex:none;width:3000px"></div>${FAINT}</div></div></div>`,
+      resetCss,
+    );
+    expect(ink()?.right).toBeLessThan(0);
+    expect(findingFor(run<Contrast>("contrast", {}), "fx-r-ink")).toBeDefined();
+  });
+
+  it("judges the top of a column-reverse scroller resting at its end", () => {
+    mount(
+      `<div id="app"><div style="height:100px;overflow:auto;display:flex;flex-direction:column-reverse;background:#fff"><span>newest</span><div style="flex:none;height:2000px"></div>${FAINT}</div></div>`,
+      resetCss,
+    );
+    expect(ink()?.bottom).toBeLessThan(0);
+    expect(findingFor(run<Contrast>("contrast", {}), "fx-r-ink")).toBeDefined();
+  });
+
+  it("judges an absolute box whose containing block is the scroller that brings it back", () => {
+    mount(
+      `<div class="fx-r-scroller" style="position:relative;width:200px;height:100px;overflow:auto;background:#fff"><span class="fx-r-ink" style="position:absolute;top:30px;color:#eee;font-size:14px">faint</span><div style="height:2000px"></div></div>`,
+    );
+    scrollTo(200);
+    expect(ink()?.bottom).toBeLessThan(0);
+    expect(findingFor(run<Contrast>("contrast", {}), "fx-r-ink")).toBeDefined();
+  });
+
+  it("judges a fixed box a transformed ancestor holds, which scrolls with its scroller", () => {
+    mount(
+      `<div class="fx-r-scroller" style="width:200px;height:100px;overflow:auto;background:#fff"><div style="transform:translateZ(0)"><div style="height:500px"></div><span class="fx-r-ink" style="position:fixed;top:10px;color:#eee;font-size:14px">faint</span><div style="height:2000px"></div></div></div>`,
+    );
+    scrollTo(400);
+    expect(ink()?.bottom).toBeLessThan(0);
+    expect(findingFor(run<Contrast>("contrast", {}), "fx-r-ink")).toBeDefined();
+  });
+
+  it("judges a fixed box that escapes a zero-height scroller", () => {
+    mount(
+      `<div style="width:200px;height:0;overflow:auto"><span class="fx-r-ink" style="position:fixed;top:200px;left:200px;color:#eee;font-size:14px">faint</span><div style="height:100px"></div></div>`,
+    );
+    const r = ink();
+    if (r !== undefined) {
+      expect(document.elementFromPoint(r.left + 2, r.top + 2)).toBe(
+        host.querySelector(".fx-r-ink"),
+      );
+    }
+    expect(findingFor(run<Contrast>("contrast", {}), "fx-r-ink")).toBeDefined();
+  });
+});
+
+describe("what is rendered: a page that scrolls, with no fixed ancestor", () => {
+  const TALL = "body { min-height: 5000px }";
+  beforeEach(() => {
+    host.style.position = "static";
+  });
+
+  it("judges faint text the page has scrolled above the viewport", () => {
+    mount(`<div style="background:#fff">${FAINT}</div>`, TALL);
+    window.scrollTo(0, 500);
+    expect(host.querySelector(".fx-r-ink")?.getBoundingClientRect().bottom).toBeLessThan(0);
+    expect(findingFor(run<Contrast>("contrast", {}), "fx-r-ink")).toBeDefined();
+  });
+
+  it("files no verdict on text positioned before the page's start", () => {
+    mount(
+      `<div style="background:#fff"><span class="fx-r-ink" style="position:absolute;top:-200px;color:#eee;font-size:14px">faint</span></div>`,
+      TALL,
+    );
+    window.scrollTo(0, 500);
+    expect(findingFor(run<Contrast>("contrast", {}), "fx-r-ink")).toBeUndefined();
+  });
+});
+
+// A `display: contents` element has no box: its own text is painted in its parent's.
+const CONTENTS = `<div class="fx-r-dc" style="display:contents;color:#eee;font-size:14px">contents text</div>`;
+
+describe("display:contents", () => {
+  it("judges the text it owns", () => {
+    mount(`<div style="background:#fff">${CONTENTS}</div>`);
+    expect(findingFor(run<Contrast>("contrast", {}), "fx-r-dc")).toBeDefined();
+  });
+
+  it("judges that text at full strength, since a box-less element paints no opacity or background", () => {
+    mount(
+      `<div style="background:#fff"><div class="fx-r-dc" style="display:contents;opacity:0.2;background:#000;color:#767676;font-size:14px">x</div></div>`,
+    );
+    const r = run<Contrast>("contrast", {});
+    expect(r.passes.find((p) => hasClass(p.sel, "fx-r-dc"))?.ratio).toBe(4.54);
+    expect(r.dimmed.some((d) => hasClass(d.sel, "fx-r-dc"))).toBe(false);
+  });
+
+  it.each([
+    { name: "in a closed <details>", wrap: `<details><summary>s</summary>${CONTENTS}</details>` },
+    { name: "under visibility:hidden", wrap: `<div style="visibility:hidden">${CONTENTS}</div>` },
+    { name: "under display:none", wrap: `<div style="display:none">${CONTENTS}</div>` },
+    {
+      name: "under a content-visibility:hidden parent",
+      wrap: `<div style="content-visibility:hidden">${CONTENTS}</div>`,
+    },
+    { name: "under opacity 0", wrap: `<div style="opacity:0">${CONTENTS}</div>` },
+  ])("files no verdict on the text it owns $name", ({ wrap }) => {
+    mount(`<div style="background:#fff">${wrap}</div>`);
+    const r = run<Contrast>("contrast", {});
+    expect(findingFor(r, "fx-r-dc")).toBeUndefined();
+    expect(r.passes.some((p) => hasClass(p.sel, "fx-r-dc"))).toBe(false);
   });
 });
 
@@ -1205,11 +1527,11 @@ describe("focus order", () => {
 
   it("leaves a disabled, negative-tabindex or inert control out of the unreached list", () => {
     mount(
-      `<button class="fx-f-off" disabled>x</button><button class="fx-f-neg" tabindex="-1">y</button><div inert><button class="fx-f-inert">z</button></div>`,
+      `<button class="fx-f-off" disabled>x</button><button class="fx-f-neg" tabindex="-1">y</button><svg class="fx-f-svg" tabindex="-1" width="10" height="10"></svg><div inert><button class="fx-f-inert">z</button></div>`,
     );
     run("focus-setup", {});
     const unreached = run<string[]>("focus-unreached", {});
-    for (const cls of ["fx-f-off", "fx-f-neg", "fx-f-inert"]) {
+    for (const cls of ["fx-f-off", "fx-f-neg", "fx-f-svg", "fx-f-inert"]) {
       expect(unreached.some((u) => hasClass(u, cls))).toBe(false);
     }
   });

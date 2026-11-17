@@ -17,6 +17,7 @@ import {
   codeReferencesFor,
   liveRefusalFor,
   sessionBusy,
+  isBusy,
   isEmptyChat,
 } from "./store.js";
 import { clearTurnSigs } from "./store-signals.js";
@@ -93,7 +94,7 @@ import {
 } from "./turns.js";
 import { turnFace, turnFoldHides } from "./turn-face.js";
 import { severityOf } from "./turn-severity.js";
-import { ICON_REWIND } from "./icons.js";
+import { ICON_REWIND, ICON_SPINNER } from "./icons.js";
 import { buildAssistantBubble } from "./fundamentals/text-bubble.js";
 import { isTurnOpen, isTurnRevealed, setTurnOpen } from "./fold-state.js";
 import {
@@ -147,9 +148,12 @@ import {
 import { wakeLine } from "./turn-wake.js";
 import { rewindChat } from "./actions/rewind.js";
 import { compactChat } from "./actions/chat.js";
+import { showLoginModal } from "./modals.js";
+import { apiKeySignsIn, signInMendsFailure } from "./signin-health.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { confirm as confirmDialog, type Confirmation } from "./confirm.js";
 import { setComposerValue } from "./composer-value.js";
+import { chatNotice } from "./notice-subject.js";
 import { registerCleanup } from "./actions/index.js";
 import {
   disposeAllToolEffects,
@@ -661,6 +665,16 @@ export function mountChatView(): void {
     if (id !== "") {
       bumpMessages(id, "shape");
     }
+  });
+  // whoami can name the API key after the transcript painted, and the newest row's Sign in again follows it.
+  effect(() => {
+    touch(apiKeySignsIn());
+    untracked(() => {
+      const id = getPaintedId();
+      if (id !== "") {
+        bumpMessages(id, "shape");
+      }
+    });
   });
   // The tool layer sits below this module, so the multiplexer injects whether a view is parked and that a resident
   // view's chat must not have its messages evicted.
@@ -1643,11 +1657,26 @@ async function handleRewindClick(target: EntryPrompt): Promise<void> {
   if (at < 0) {
     return;
   }
+  if (refuseSecondRewind(session.id)) {
+    return;
+  }
   const proceed = await confirmDialog(rewindConfirmation(target, turns.slice(at)));
   if (!proceed) {
     return;
   }
-  const outcome = await rewindChat.dispatch({ chatID: session.id, messageID: target.id }).outcome;
+  rewindInFlight.set(session.id, target.id);
+  paintRewinds(session.id);
+  let outcome: Awaited<ReturnType<typeof rewindChat.dispatch>["outcome"]>;
+  try {
+    outcome = await rewindChat.dispatch({ chatID: session.id, messageID: target.id }).outcome;
+  } finally {
+    rewindInFlight.delete(session.id);
+    const back = paintRewinds(session.id, target.id);
+    // Disabling the focused button dropped focus to <body>; give it back while the button is still mounted.
+    if (back?.isConnected === true && document.activeElement === document.body) {
+      back.focus();
+    }
+  }
   if (outcome.status !== "success" || getPaintedId() !== session.id) {
     return;
   }
@@ -1657,6 +1686,15 @@ async function handleRewindClick(target: EntryPrompt): Promise<void> {
   }
   setComposerValue(target.text);
   input.focus();
+}
+
+/** True, with a notice saying why, when `chatID` already has a rewind in flight. */
+function refuseSecondRewind(chatID: string): boolean {
+  if (!rewindInFlight.has(chatID)) {
+    return false;
+  }
+  chatNotice(chatID, "A rewind is already running.");
+  return true;
 }
 
 /**
@@ -1772,6 +1810,7 @@ function cardInputsOf(card: HTMLElement, t: Turn): readonly unknown[] {
     hasTurnBody(card),
     liveRefusalFor(chatID, t.id),
     codeReferencesFor(chatID, t.id),
+    apiKeySignsIn().peek(),
   ];
 }
 
@@ -2244,7 +2283,13 @@ function syncTurnFace(card: HTMLElement, t: Turn): void {
  */
 function syncTurnNotice(card: HTMLElement, t: Turn): void {
   syncNoticeText(card, t);
-  syncCompactAction(card, t);
+  syncNoticeAction(card, t);
+}
+
+/** Whether t is the painted chat's newest turn, the one turn whose notice may offer an action. */
+function isNewestTurn(t: Turn): boolean {
+  const s = get(getPaintedId());
+  return s?.turn_order[s.turn_order.length - 1] === t.id;
 }
 
 /**
@@ -2253,38 +2298,62 @@ function syncTurnNotice(card: HTMLElement, t: Turn): void {
  * turn's compaction, which stops its end's.
  */
 function offersCompact(t: Turn): boolean {
-  if (closeOfBody(t.body)?.failure_kind !== "context_limit") {
-    return false;
-  }
-  const s = get(getPaintedId());
-  if (s?.turn_order[s.turn_order.length - 1] !== t.id) {
+  if (closeOfBody(t.body)?.failure_kind !== "context_limit" || !isNewestTurn(t)) {
     return false;
   }
   const closeAt = t.body.findIndex((e) => e.kind === "turn_close");
   return !t.body.some((e, i) => i > closeAt && e.kind === "compaction");
 }
 
+type NoticeAction = "compact" | "sign-in";
+
+/** The notice's action: Compact for an overflow, Sign in again for the newest turn's sign-in failure that a sign-in
+ *  can mend, read from its close and never while the API key signs the engine in: a replayed close with no stored
+ *  reason reads `sign_in` whatever signed the engine in. */
+function noticeActionOf(t: Turn): NoticeAction | null {
+  if (offersCompact(t)) {
+    return "compact";
+  }
+  if (
+    signInMendsFailure(closeOfBody(t.body)?.failure_kind) &&
+    !apiKeySignsIn().peek() &&
+    isNewestTurn(t)
+  ) {
+    return "sign-in";
+  }
+  return null;
+}
+
+function noticeButton(action: NoticeAction): HTMLElement {
+  const label = action === "compact" ? "Compact the context" : "Sign in again";
+  const btn = el("button", { type: "button", className: "btn-small", [CHROME_ATTR]: "" }, label);
+  if (action === "compact") {
+    const chatID = getPaintedId();
+    btn.addEventListener("click", () => {
+      void compactChat.dispatch({ chatID });
+    });
+  } else {
+    btn.addEventListener("click", showLoginModal);
+  }
+  return btn;
+}
+
 /** The notice's one action, as a sibling, so the notice's text node stays what find-in-chat searches. */
-function syncCompactAction(card: HTMLElement, t: Turn): void {
+function syncNoticeAction(card: HTMLElement, t: Turn): void {
   const existing = card.querySelector<HTMLElement>(":scope > .turn-notice-actions");
   const notice = card.querySelector<HTMLElement>(":scope > .turn-notice");
-  if (notice === null || !offersCompact(t)) {
+  const action = notice === null ? null : noticeActionOf(t);
+  if (action === null || notice === null) {
     existing?.remove();
     return;
   }
-  if (existing !== null) {
+  if (existing?.dataset["action"] === action) {
     return;
   }
-  const chatID = getPaintedId();
-  const btn = el(
-    "button",
-    { type: "button", className: "btn-small", [CHROME_ATTR]: "" },
-    "Compact the context",
-  );
-  btn.addEventListener("click", () => {
-    void compactChat.dispatch({ chatID });
-  });
-  notice.after(el("div", { className: "turn-notice-actions" }, btn));
+  existing?.remove();
+  const row = el("div", { className: "turn-notice-actions" }, noticeButton(action));
+  row.dataset["action"] = action;
+  notice.after(row);
 }
 
 function syncNoticeText(card: HTMLElement, t: Turn): void {
@@ -2839,14 +2908,63 @@ function mountRewind(card: HTMLElement, t: Turn): void {
       console.warn("[messages] rewind failed", e);
     });
   };
-  // Disabled mid-turn: KAS refuses a revert on a session with a live abortController.
-  const busy = passBusy;
-  btn.disabled = busy;
+  rewindTargets.set(btn, target.id);
+  paintRewind(btn, passSession?.id ?? "", passBusy);
+}
+
+/** Each chat's rewind in flight, chat id to its target prompt id, from the confirm until the revert answers. */
+const rewindInFlight = new Map<string, string>();
+/** A mounted Rewind button's target prompt id; `mountRewind` rewrites it every paint. */
+const rewindTargets = new WeakMap<HTMLButtonElement, string>();
+
+const REWINDING = "Rewinding\u2026";
+
+/** Paint one Rewind button from its chat's state: the spinner on the one whose rewind is in flight, every other one
+ *  disabled meanwhile, and mid-turn disabled because KAS refuses a revert on a session with a live abortController. */
+function paintRewind(btn: HTMLButtonElement, chatID: string, agentBusy: boolean): void {
+  const pending = rewindInFlight.get(chatID);
+  const mine = pending !== undefined && pending === rewindTargets.get(btn);
+  if (mine !== (btn.getAttribute("aria-busy") === "true")) {
+    btn.replaceChildren(svgTemplate(mine ? ICON_SPINNER : ICON_REWIND)());
+  }
+  if (mine) {
+    btn.setAttribute("aria-busy", "true");
+  } else {
+    btn.removeAttribute("aria-busy");
+  }
+  btn.disabled = pending !== undefined || agentBusy;
+  btn.setAttribute("aria-label", mine ? REWINDING : "Rewind");
   // `data-tooltip`, not `title`: only it reaches a disabled button.
   btn.setAttribute(
     "data-tooltip",
-    busy ? "Cannot rewind while the agent is running. Cancel the turn first" : "Rewind",
+    mine
+      ? REWINDING
+      : pending !== undefined
+        ? "Another rewind is running"
+        : agentBusy
+          ? "Cannot rewind while the agent is running. Cancel the turn first"
+          : "Rewind",
   );
+}
+
+/** Repaint every Rewind button in `chatID`'s resident view, outside a card pass (a skipped card keeps its DOM).
+ *  Returns the button targeting `targetID`, if one is mounted. */
+function paintRewinds(chatID: string, targetID?: string): HTMLButtonElement | undefined {
+  const view = transcriptViewFor(chatID);
+  if (view === null) {
+    return undefined;
+  }
+  const agentBusy = isBusy(chatID);
+  let found: HTMLButtonElement | undefined;
+  for (const btn of view.querySelectorAll<HTMLButtonElement>(
+    ".turn > .turn-footer > .turn-actions-buttons > .turn-rewind",
+  )) {
+    paintRewind(btn, chatID, agentBusy);
+    if (targetID !== undefined && rewindTargets.get(btn) === targetID) {
+      found = btn;
+    }
+  }
+  return found;
 }
 
 /** Mount or refresh the outcome ledger as the card's last child, turn-scoped: it sums every assistant message. */

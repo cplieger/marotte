@@ -617,7 +617,7 @@ func TestRunList_RowStatesWithASecondRow(t *testing.T) {
 				w.l.doorSend(&runEntry{
 					id: "y", kind: marotte.RunKindRow, origin: marotte.RunFromNotify,
 					row: &marotte.QueuedPrompt{ID: "y", Text: "build failed", Caller: &marotte.Caller{Label: "ci"}},
-				}, w.facts(), 0, false)
+				}, w.facts(), 0)
 			},
 			want:       "u:paused y:paused",
 			stopPaused: []string{"u", "y"},

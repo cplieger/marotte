@@ -45,7 +45,7 @@ func TestTurnLive_TrueWhileFinalizing(t *testing.T) {
 		t.Error("a finalizing turn reports the record final, so a refetch inside the " +
 			"close window derives a verdict from a turn_close that has not landed")
 	}
-	h.coord.turns.finish(turn, marotte.TurnResult{})
+	h.coord.turns.finish(turn, &marotte.TurnResult{})
 	if h.TurnLive("c1") {
 		t.Error("a finished turn still reports live")
 	}

@@ -1,10 +1,13 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/chat"
@@ -273,4 +276,52 @@ func TestRunLabelFor_FitsKASsRule(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A Stop that puts a user's send back after Submit placed it and before Submit waits answers the send at once:
+// Submit waits on the launch the Stop answered, not on the fresh one the Stop swapped in.
+func TestRunList_AStopBetweenASubmitsPlacingAndItsWaitAnswersAtOnce(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s, _, _ := steerOpsHub(t)
+		id, _ := s.h.stagePromptTurn(t, "c1")
+		s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
+		s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnEndMsg("end_turn"))
+		s.h.coord.releaseTurn("c1", id)
+		idleAfter(t, s.h, "c1", id)
+		parked, release := make(chan struct{}), make(chan struct{})
+		launch := s.h.coord.launchEntry
+		var parkOnce sync.Once
+		s.h.coord.launchEntry = func(ctx context.Context, chatID marotte.ChatID, l *command.EntryLaunch) (string, error) {
+			parkOnce.Do(func() {
+				close(parked)
+				<-release
+			})
+			return launch(ctx, chatID, l)
+		}
+		placed, stopped := make(chan struct{}), make(chan struct{})
+		var placeOnce sync.Once
+		swapSeam(t, s.h, &testHookSubmitPlaced, func(marotte.ChatID) {
+			placeOnce.Do(func() {
+				close(placed)
+				<-stopped
+			})
+		})
+
+		sent := sendAsUser(s.h, "c1", "m-u", "check the logs")
+		<-placed
+		<-parked
+		plainStop(t, s.h)
+		close(stopped)
+		close(release)
+		select {
+		case rec := <-sent:
+			if got := ackAs(t, rec); got != "queued" {
+				t.Errorf("the send answered %q, want queued: the Stop withdrew its take", got)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("the send had no answer 1s after the Stop; the admission wait is %v", command.AdmissionWait)
+		}
+		joinInflight(t, s.h)
+		synctest.Wait()
+	})
 }

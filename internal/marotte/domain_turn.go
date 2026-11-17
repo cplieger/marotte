@@ -42,6 +42,8 @@ type TurnResult struct {
 	Turn string
 	// Reason is the failure reason the turn_close carries, empty on a clean close.
 	Reason string
+	// FailureKind is the failure kind the turn_close carries, empty when it names none.
+	FailureKind FailureKind
 	// EngineErrorType is the errorType of the turn's last display_error as KAS sent
 	// it (possibly a minified name), empty when none arrived. A prompt failing inside
 	// the execution gets a reply carrying prose only, so this is where KAS names the class.

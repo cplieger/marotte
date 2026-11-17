@@ -4,15 +4,20 @@
 
 import { apiGetTyped } from "./api-client.js";
 import { decodeWhoamiResponse } from "./wire/decoders.gen.js";
+import type { SignInHealth } from "./wire/types.gen.js";
 
 /**
  * The three answers, plus the transport's. A discriminated union, so a branch over it is total and `unavailable`
  * cannot be mistaken for signed out.
  */
-export type IdentityVerdict =
+export type IdentityVerdict = (
   | ({ state: "signed_in" } & SignedInAccount)
   | { state: "signed_out" }
-  | { state: "unavailable"; reason: string };
+  | { state: "unavailable"; reason: string }
+) & {
+  /** The sign-in's health as whoami reported it; null when it named none, absent on a verdict built locally. */
+  health?: SignInHealth | null;
+};
 
 /** The signed-in account as the account menu shows it; an empty string is a label the server did not report. */
 export interface SignedInAccount {
@@ -36,10 +41,12 @@ export async function resolveIdentity(): Promise<IdentityVerdict> {
   if (d === null) {
     return { state: "unavailable", reason: REASON_UNREACHABLE };
   }
+  const health = d.health ?? null;
   switch (d.state) {
     case "signed_in":
       return {
         state: "signed_in",
+        health,
         email: d.email ?? "",
         method: d.auth ?? "",
         startUrl: d.startUrl ?? "",
@@ -47,9 +54,9 @@ export async function resolveIdentity(): Promise<IdentityVerdict> {
         apiKey: d.apiKey === true,
       };
     case "signed_out":
-      return { state: "signed_out" };
+      return { state: "signed_out", health };
     case "unavailable":
-      return { state: "unavailable", reason: d.reason ?? REASON_UNREACHABLE };
+      return { state: "unavailable", reason: d.reason ?? REASON_UNREACHABLE, health };
   }
 }
 

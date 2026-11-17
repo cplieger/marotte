@@ -40,6 +40,8 @@ cd static-src && SSE_FIXTURE=/tmp/marotte-test npx vitest --run --project e2e-ss
 
 A second marotte you start by hand needs its own `KIRO_CONFIG_DIR`, `HOME` and `KIRO_HOME`, or it finds the running one's lock and refuses to start.
 
+To look at the Kiro sign-in banners without an outage, start that `marotte_test` binary with `MAROTTE_TEST_SIGNIN_STUB=1`, and optionally `MAROTTE_TEST_SIGNIN_GRACE=20s` to shorten the 2 minute grace. It signs a fake Builder ID account in at boot, asks for a credential every 15 seconds as kiro-cli does, and answers every renewal from the file `qa-signin-mode` in `KIRO_CONFIG_DIR`: `ok` (or no file), `transient` for an unreachable sign-in service, `rejected` for an ended sign-in. Signing in from the app completes on its own after 2 seconds.
+
 ## Performance
 
 On a pull request, CI runs the `pr` set of `tests/perf/plan.json` on a hosted runner and compares each cell with `tests/perf/budgets.json`. A cell is one scenario at one fixture scale (`x1` or `x10`), browser engine and width. Its scenarios are listed under `scenarios` in `plan.json`.

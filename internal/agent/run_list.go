@@ -143,6 +143,11 @@ type runEntry struct {
 	// afterSend: the reader's send released this stamped steer kiro-cli holds (releaseHold), so it comes back paused
 	// with pausedBy 0 and waits for the next clean close, never steered into that send's reply (returned).
 	afterSend bool
+	// failedLaunch: a failed launch paused this door entry after its caller was answered, so the caller's next send
+	// puts it back in order while no stop holds it (doorOnto). It is stored with the list (RunEntry.FailedLaunch) and
+	// kept under a stop's hold, so it outlives a close and the stop's undo; a reader's send that lifts a hold, any
+	// other pause or an unpause clears it.
+	failedLaunch bool
 }
 
 func (e *runEntry) live() bool { return e.state.Live() }
@@ -388,7 +393,7 @@ func (l *runList) putBack(e *runEntry, state marotte.RunEntryState, pausedBy uin
 	e.released, e.tailDone = false, false
 	e.submitter, e.opts.awaited, e.opts.composer, e.waiter = false, false, false, false
 	e.stopBy, e.prior, e.prompted, e.userNext = 0, "", false, false
-	e.state, e.pausedBy, e.pausedBefore, e.afterSend = state, pausedBy, false, false
+	e.state, e.pausedBy, e.pausedBefore, e.afterSend, e.failedLaunch = state, pausedBy, false, false, false
 	if e.launch != nil {
 		e.launch = newLaunchWait()
 	}
@@ -477,6 +482,7 @@ func (l *runList) pauseRows(by uint64) {
 
 func (l *runList) pause(e *runEntry, by uint64) {
 	e.state, e.pausedBy, e.pausedBefore, e.afterSend, e.want = marotte.RunPaused, by, false, false, marotte.RunWantPrompt
+	e.failedLaunch = false
 	l.touch()
 }
 
@@ -540,12 +546,13 @@ func (l *runList) mayLaunch(e *runEntry) bool {
 // (pausedBy 0), and a row an outside caller sends while the stopped turn still closes joins the queue pending
 // (queuePaused). A steer kiro-cli holds that a stop stamped comes back pending after a Resume, and after a send comes
 // back paused like the released rows (afterSend), so it waits for the next clean close and is never steered into the
-// send's reply.
+// send's reply. A send that lifts a hold also ends a failed launch's retry (failedLaunch) for the rows it releases.
 func (l *runList) releaseHold(send bool) {
 	for _, e := range l.entries {
 		switch {
 		case l.stopPaused(e):
 			e.pausedBy, e.pausedBefore = 0, false
+			e.failedLaunch = e.failedLaunch && !send
 			l.touch()
 		case e.inFlight() && e.pausedBy != 0:
 			e.pausedBy, e.afterSend = 0, send
@@ -558,7 +565,7 @@ func (l *runList) releaseHold(send bool) {
 func (l *runList) unpauseRows() {
 	for _, e := range l.entries {
 		if e.state == marotte.RunPaused {
-			e.state, e.pausedBy, e.pausedBefore, e.afterSend = marotte.RunPending, 0, false, false
+			e.state, e.pausedBy, e.pausedBefore, e.afterSend, e.failedLaunch = marotte.RunPending, 0, false, false, false
 			l.touch()
 		}
 	}
@@ -825,9 +832,7 @@ func (l *runList) submit(e *runEntry, f *orderFacts, intentStamp uint64, waits b
 		l.releaseHold(true)
 		l.insertPending(e)
 	} else {
-		if by, paused := l.queuePaused(); paused {
-			e.state, e.pausedBy, e.want = marotte.RunPaused, by, marotte.RunWantPrompt
-		}
+		l.join(e)
 		l.insert(len(l.entries), e)
 	}
 	l.intent, l.intentStamp, l.intentRefused = e, intentStamp, takeGranted
@@ -845,6 +850,15 @@ func (l *runList) submit(e *runEntry, f *orderFacts, intentStamp uint64, waits b
 	}
 	answerQueued(e)
 	return submitAnswer{}
+}
+
+// join gives an outside caller's entry e the state it takes on joining the queue: paused, with the pausedBy
+// queuePaused names, while a stop pauses the queue, else pending.
+func (l *runList) join(e *runEntry) {
+	e.state = marotte.RunPending
+	if by, paused := l.queuePaused(); paused {
+		e.state, e.pausedBy, e.want = marotte.RunPaused, by, marotte.RunWantPrompt
+	}
 }
 
 // answerQueued is the one section that answers e's submitter queued: it ends the wait and claims the composer
@@ -871,23 +885,21 @@ const (
 
 // doorSend places a notify-door send: one waiting entry per caller, pending or paused, since a caller's later wake
 // supersedes its earlier one, and none beside one kiro-cli holds unread, which the agent reads anyway. A waiting entry
-// is persisted with the list, so one paused or behind a running turn keeps the draft cap a user's queued row has.
-func (l *runList) doorSend(e *runEntry, f *orderFacts, intentStamp uint64, waits bool) (submitAnswer, doorPlace) {
+// is persisted with the list, so one paused or behind a running turn keeps the draft cap a user's queued row has. A
+// send onto an entry a failed launch paused (failedLaunch) puts it back in order as a new send would join (join), so
+// the caller's resend is the retry, paused while a stop pauses the queue. No submitter waits on a door entry. The
+// string is the id of the entry that now holds the send's text, "" for doorTooBig.
+func (l *runList) doorSend(e *runEntry, f *orderFacts, intentStamp uint64) (submitAnswer, doorPlace, string) {
 	big := len(e.row.Text) > marotte.MaxDraftBytes
 	for _, have := range l.entries[l.liveLen():] {
 		if !sameWakeCaller(have, e) {
 			continue
 		}
-		waiting := have.state == marotte.RunPending || have.state == marotte.RunPaused
-		switch {
-		case waiting && big && (have.state == marotte.RunPaused || turnRuns(l.project())):
-			return submitAnswer{}, doorTooBig
-		case waiting:
-			have.row.Text = e.row.Text
-			l.touch()
-			return submitAnswer{}, doorReplaced
-		case have.inFlight():
-			return submitAnswer{}, doorWithKAS
+		if place, ok := l.doorOnto(have, e, f, big); ok {
+			if place == doorTooBig {
+				return submitAnswer{}, place, ""
+			}
+			return submitAnswer{}, place, have.id
 		}
 	}
 	if e.want == "" {
@@ -895,9 +907,36 @@ func (l *runList) doorSend(e *runEntry, f *orderFacts, intentStamp uint64, waits
 	}
 	_, paused := l.queuePaused()
 	if big && (paused || l.waitsBehindTurn(e)) {
-		return submitAnswer{}, doorTooBig
+		return submitAnswer{}, doorTooBig, ""
 	}
-	return l.submit(e, f, intentStamp, waits), doorPlaced
+	return l.submit(e, f, intentStamp, false), doorPlaced, e.id
+}
+
+// doorOnto places the send e onto have, its caller's earlier entry, reporting false when have neither waits nor is
+// with kiro-cli.
+func (l *runList) doorOnto(have, e *runEntry, f *orderFacts, big bool) (doorPlace, bool) {
+	waiting := have.state == marotte.RunPending || have.state == marotte.RunPaused
+	retake := have.failedLaunch && have.pausedBy == 0
+	staysPaused := have.state == marotte.RunPaused
+	if retake {
+		_, staysPaused = l.queuePaused()
+	}
+	switch {
+	case waiting && big && (staysPaused || turnRuns(l.project())):
+		return doorTooBig, true
+	case waiting:
+		have.row.Text = e.row.Text
+		l.touch()
+		if retake {
+			have.failedLaunch = false
+			l.join(have)
+			l.advance(f)
+		}
+		return doorReplaced, true
+	case have.inFlight():
+		return doorWithKAS, true
+	}
+	return doorPlaced, false
 }
 
 // waitsBehindTurn reports a door entry e that, appended now, would wait behind a running turn rather than be steered
@@ -1451,7 +1490,7 @@ func (l *runList) returned(e *runEntry) {
 	if e.pausedBy != 0 || e.afterSend {
 		e.state, e.want = marotte.RunPaused, marotte.RunWantPrompt
 	}
-	e.afterSend = false
+	e.afterSend, e.failedLaunch = false, false
 	l.touch()
 }
 
@@ -1738,6 +1777,7 @@ func (l *runList) launched(id string, token uint64, turnID string, refusal launc
 		removed = true
 	default:
 		l.requeue(e, 0)
+		e.failedLaunch = e.origin == marotte.RunFromNotify && refusal == launchFailed
 	}
 	if e.launch != nil {
 		e.launch.finish("", err, false, false)
@@ -1936,7 +1976,7 @@ func (l *runList) projectOne(e *runEntry) marotte.RunEntry {
 	return marotte.RunEntry{
 		Row: e.row, ID: e.id, Kind: e.kind, State: e.state, Origin: e.origin, Turn: e.turnID, Next: e.next,
 		Steerable: e.steerable, Yields: e.yields, Admits: e.admits, Want: e.want, Unread: e.unread,
-		StopPaused: l.stopPaused(e),
+		StopPaused: l.stopPaused(e), FailedLaunch: e.failedLaunch,
 	}
 }
 
@@ -1964,7 +2004,7 @@ func (l *runList) load(entries, stored []marotte.RunEntry, version uint64) {
 		re := entries[i]
 		e := &runEntry{
 			id: re.ID, kind: re.Kind, state: re.State, origin: re.Origin, row: re.Row, next: re.Next,
-			want: re.Want, unread: re.Unread,
+			want: re.Want, unread: re.Unread, failedLaunch: re.FailedLaunch,
 		}
 		if re.StopPaused && re.State == marotte.RunPaused {
 			e.pausedBy = loadedStop

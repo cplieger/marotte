@@ -96,13 +96,11 @@ func wantStoppedNothing(t *testing.T, rec *httptest.ResponseRecorder) {
 	}
 }
 
-// withCompactionReturnHook runs fn once, the first time a compaction's call returns.
-func withCompactionReturnHook(t *testing.T, fn func(marotte.ChatID)) {
+// withCompactionReturnHook runs fn once, the first time h's compaction call returns.
+func withCompactionReturnHook(t *testing.T, h *Runtime, fn func(marotte.ChatID)) {
 	t.Helper()
 	var once sync.Once
-	prev := testHookAfterCompactionReturn
-	testHookAfterCompactionReturn = func(chatID marotte.ChatID) { once.Do(func() { fn(chatID) }) }
-	t.Cleanup(func() { testHookAfterCompactionReturn = prev })
+	swapSeam(t, h, &testHookAfterCompactionReturn, func(chatID marotte.ChatID) { once.Do(func() { fn(chatID) }) })
 }
 
 // A message queued during the compaction that ends a turn the model refused for the context's size waits under it and
@@ -292,18 +290,11 @@ func TestRunOrder_AfterAStoppedTurnTheMessageSentDuringItsCompactionGoesFirst(t 
 	waitFor(t, func() bool { return opensInOrder(t, cs, "m-c1", "m-new", "m-q0") })
 }
 
-// withCompactionStartHook runs fn once, the first time h's taken compaction is about to start. Its cleanup shuts h
-// down before restoring the seam: cleanups run last-first, so h's own shutdown would otherwise come after the restore,
-// racing a compaction h starts as the test ends.
+// withCompactionStartHook runs fn once, the first time h's taken compaction is about to start.
 func withCompactionStartHook(t *testing.T, h *Runtime, fn func(marotte.ChatID)) {
 	t.Helper()
 	var once sync.Once
-	prev := testHookBeforeCompactionStart
-	testHookBeforeCompactionStart = func(chatID marotte.ChatID) { once.Do(func() { fn(chatID) }) }
-	t.Cleanup(func() {
-		shutdownHub(t, h)
-		testHookBeforeCompactionStart = prev
-	})
+	swapSeam(t, h, &testHookBeforeCompactionStart, func(chatID marotte.ChatID) { once.Do(func() { fn(chatID) }) })
 }
 
 // answerWithin is the answer on ch, or nil (a test error) when none came within 3s.
@@ -445,7 +436,7 @@ func TestRunOrder_APromptAsACompactionEndsGoesBehindTheQueuedRow(t *testing.T) {
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	release := holdCall(t, br, marotte.MethodSessionCompact)
 	var gap <-chan *httptest.ResponseRecorder
-	withCompactionReturnHook(t, func(chatID marotte.ChatID) {
+	withCompactionReturnHook(t, h, func(chatID marotte.ChatID) {
 		gap = postAsync(h, promptCmd("m-gap", "as it ends"))
 		// The prompt must reach the list before the compaction's end applies: one arriving after m-q1 took steers it.
 		eventually(func() bool { return onRunList(h, chatID, "m-gap") })
@@ -478,6 +469,15 @@ func eventually(cond func() bool) bool {
 		time.Sleep(5 * time.Millisecond)
 	}
 	return true
+}
+
+// hookWaitFor is waitFor for a seam hook's body, which runs on a runtime goroutine: t.Fatal there would end that
+// goroutine mid-compaction, not the test (testing.T.FailNow), so a miss is a t.Errorf and the hook returns.
+func hookWaitFor(t *testing.T, cond func() bool, what string) {
+	t.Helper()
+	if !eventually(cond) {
+		t.Errorf("%s: not within 5s", what)
+	}
 }
 
 // A message sent during the compaction a stop's hold release runs goes behind the row queued under the hold.
@@ -523,6 +523,11 @@ func TestRunOrder_AStaleCancelDuringACompactionChangesNothing(t *testing.T) {
 // row queued during the turn.
 func TestRunOrder_ARowQueuedAsATurnEndsCompactionEndsIsQueued(t *testing.T) {
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+	answered := make(chan *httptest.ResponseRecorder, 1)
+	withCompactionReturnHook(t, h, func(marotte.ChatID) {
+		payload, _ := json.Marshal(marotte.QueuePromptCommand{Text: "as it ends", MessageID: "m-q2"})
+		answered <- postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdQueuePrompt, ChatID: "c1", Payload: payload})
+	})
 	open := promptGates(t, br)
 	atThePoint(t, h, cs)
 	release := holdCall(t, br, marotte.MethodSessionCompact)
@@ -530,11 +535,6 @@ func TestRunOrder_ARowQueuedAsATurnEndsCompactionEndsIsQueued(t *testing.T) {
 		t.Fatalf("Setup: prompt = %d", code)
 	}
 	queueTextDuring(t, h, "m-q1", "queued behind the turn")
-	answered := make(chan *httptest.ResponseRecorder, 1)
-	withCompactionReturnHook(t, func(marotte.ChatID) {
-		payload, _ := json.Marshal(marotte.QueuePromptCommand{Text: "as it ends", MessageID: "m-q2"})
-		answered <- postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdQueuePrompt, ChatID: "c1", Payload: payload})
-	})
 
 	open(0)
 	waitForCall(t, br, marotte.MethodSessionCompact)
@@ -820,7 +820,7 @@ func TestRunOrder_ASendAfterTheChatIsForgottenMidCompactionStarts(t *testing.T) 
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	release := holdCall(t, br, marotte.MethodSessionCompact)
 	returned := make(chan struct{})
-	withCompactionReturnHook(t, func(marotte.ChatID) { close(returned) })
+	withCompactionReturnHook(t, h, func(marotte.ChatID) { close(returned) })
 	answered := make(chan error, 1)
 	go func() {
 		_, err := h.RequestCompact(context.WithoutCancel(t.Context()), "c1")

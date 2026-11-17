@@ -1115,6 +1115,26 @@ func TestEntryProjection_ReplayedDisplayErrorLeavesACleanTurnClean(t *testing.T)
 	}
 }
 
+// A replayed turn the engine failed on its credential closes with the sign-in cause, worded without the outage
+// the replay cannot know about.
+func TestEntryProjection_AReplayedAuthClassClosesWithTheSignInCause(t *testing.T) {
+	turns := entryProject([][2]any{
+		turnStartFrame(t),
+		pair(replayFrame(t, marotte.ACPUpdateSessionInfo, "", "display_error", map[string]any{
+			"displayError": map[string]any{"message": "Authentication failed. Please sign in again.", "errorType": "TokenExpiredError"},
+		})),
+		pair(replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_end", map[string]any{
+			"turnEnd": map[string]any{"stopReason": "error"},
+		})),
+	})
+	var c marotte.EntryTurnClose
+	payloadOf(t, entryOfKind(t, turns[0], marotte.EntryKindTurnClose), &c)
+	if c.FailureKind != marotte.FailureKindSignIn || c.FailureReason != marotte.SignInFailedReason {
+		t.Errorf("turn_close = {%q %q}, want {%q %q}", c.FailureKind, c.FailureReason,
+			marotte.FailureKindSignIn, marotte.SignInFailedReason)
+	}
+}
+
 func TestEntryProjection_AReplayedOffloadReachesTheResult(t *testing.T) {
 	path := "/config/home/.kiro/sessions/ab12/sess_1/tool-outputs/execute_bash-0a1b2c3d.txt"
 	turns := entryProject([][2]any{
