@@ -16,13 +16,12 @@ type doorRig struct {
 	delivered []marotte.ChatID
 	froms     []*marotte.Caller
 	answer    error
-	verb      command.NotifyDelivery
 	draining  bool
 	ready     bool
 }
 
 func newDoorRig(headers ...marotte.ChatHeader) *doorRig {
-	rig := &doorRig{ready: true, verb: command.NotifySteer}
+	rig := &doorRig{ready: true}
 	rig.door = notifyDoor{
 		enter: func() (func(), bool) {
 			if rig.draining {
@@ -32,13 +31,13 @@ func newDoorRig(headers ...marotte.ChatHeader) *doorRig {
 		},
 		engineReady: func() bool { return rig.ready },
 		chats:       func(context.Context) []marotte.ChatHeader { return headers },
-		deliver: func(_ context.Context, chatID marotte.ChatID, _ string, from *marotte.Caller) (command.NotifyDelivery, error) {
+		deliver: func(_ context.Context, chatID marotte.ChatID, _ string, from *marotte.Caller) (string, error) {
 			rig.delivered = append(rig.delivered, chatID)
 			rig.froms = append(rig.froms, from)
 			if rig.answer != nil {
 				return "", rig.answer
 			}
-			return rig.verb, nil
+			return "m-wake", nil
 		},
 	}
 	return rig
@@ -50,9 +49,12 @@ func header(id, current string, prior ...string) marotte.ChatHeader {
 
 func TestNotifyDoor_FindsTheChatBySession(t *testing.T) {
 	rig := newDoorRig(header("c1", "s-old-other"), header("c2", "s-now", "s-before"))
-	got, err := rig.door.Deliver(t.Context(), "s-now", "wake", "grelot")
-	if err != nil || got != notify.DeliveredSteer {
-		t.Fatalf("Deliver = %q, %v; want steer", got, err)
+	id, err := rig.door.Deliver(t.Context(), "s-now", "wake", "grelot")
+	if err != nil {
+		t.Fatalf("Deliver = %v, want accepted", err)
+	}
+	if id != "m-wake" {
+		t.Errorf("message id = %q, want the chat's id for the placed message", id)
 	}
 	if len(rig.delivered) != 1 || rig.delivered[0] != "c2" {
 		t.Errorf("delivered into %v, want c2", rig.delivered)
@@ -151,23 +153,4 @@ func TestNotifyDoor_MapsRefusals(t *testing.T) {
 			t.Errorf("err = %v, want the failure itself", err)
 		}
 	})
-}
-
-func TestNotifyDoor_AnswersTheRouteSpelling(t *testing.T) {
-	for verb, want := range map[command.NotifyDelivery]string{
-		command.NotifySteer:  notify.DeliveredSteer,
-		command.NotifyPrompt: notify.DeliveredPrompt,
-		command.NotifyQueued: notify.DeliveredQueued,
-	} {
-		rig := newDoorRig(header("c1", "s1"))
-		rig.verb = verb
-		if got, err := rig.door.Deliver(t.Context(), "s1", "wake", "grelot"); err != nil || got != want {
-			t.Errorf("Deliver after a %q delivery = %q, %v; want %q", verb, got, err, want)
-		}
-	}
-	rig := newDoorRig(header("c1", "s1"))
-	rig.verb = "parked"
-	if got, err := rig.door.Deliver(t.Context(), "s1", "wake", "grelot"); err == nil {
-		t.Errorf("Deliver after an unknown delivery = %q, nil; want an error, not a verb grelot cannot read", got)
-	}
 }

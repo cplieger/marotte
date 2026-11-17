@@ -288,9 +288,7 @@ func TestNotify_IntoAClosedChatOpensItsTabThenPrompts(t *testing.T) {
 	m := newMessageFixture(t)
 	m.promptsAtFrame = nil
 
-	if got := notifyInto(t, m.callerFixture); got != NotifyPrompt {
-		t.Errorf("delivered as %q, want prompt", got)
-	}
+	notifyInto(t, m.callerFixture)
 	if _, ok := chatTabOf(m.st, "c1"); !ok {
 		t.Error("c1 has no tab after the notify, want it reopened")
 	}

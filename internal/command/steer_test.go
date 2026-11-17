@@ -410,3 +410,28 @@ func TestCmdSteer_LedgerAnswersTheUsersOwnBeforeTheCallReturns(t *testing.T) {
 			duringCall, marotte.SteerOriginUser)
 	}
 }
+
+// A steer send's log names the message ids of the rows it carries: its own id's for a first send, the rows' keys for a
+// fresh or combined send, whose own id names no row.
+func TestSteerMessageIDs(t *testing.T) {
+	cases := []struct {
+		name string
+		send SteerSend
+		want []string
+	}{
+		{"a first send", SteerSend{ID: marotte.SteerIDFor("m-1")}, []string{"m-1"}},
+		{"a resend under a fresh id", SteerSend{ID: "steer-fresh", Keys: []string{marotte.SteerIDFor("m-1")}}, []string{"m-1"}},
+		{
+			"a combined send",
+			SteerSend{ID: "steer-probe", Keys: []string{marotte.SteerIDFor("m-1"), marotte.SteerIDFor("m-2")}},
+			[]string{"m-1", "m-2"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := steerMessageIDs(tc.send); !slices.Equal(got, tc.want) {
+				t.Errorf("steerMessageIDs = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

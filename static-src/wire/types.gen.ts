@@ -3347,6 +3347,11 @@ export interface RunEntry {
    * now or resumes it.
    */
   stop_paused?: boolean;
+  /**
+   * FailedLaunch marks a paused wake whose turn failed to open after its caller was answered: the caller's next
+   * send puts it back in order.
+   */
+  failed_launch?: boolean;
 }
 
 /** RunEntryView is one entry as the header draws it. */
@@ -3376,6 +3381,11 @@ export interface RunEntryView {
    * now or resumes it.
    */
   stop_paused?: boolean;
+  /**
+   * FailedLaunch marks a paused wake whose turn failed to open after its caller was answered: the caller's next
+   * send puts it back in order.
+   */
+  failed_launch?: boolean;
   wait: RunWait;
   /** CarriesUnread marks the entry whose turn the awaits-prompt steers ride. */
   carries_unread?: boolean;

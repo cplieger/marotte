@@ -111,6 +111,9 @@ type RunEntry struct {
 	// StopPaused marks a paused row the reader's stop paused: the queue is paused until the reader sends, sends a row
 	// now or resumes it.
 	StopPaused bool `json:"stop_paused,omitempty"`
+	// FailedLaunch marks a paused wake whose turn failed to open after its caller was answered: the caller's next
+	// send puts it back in order.
+	FailedLaunch bool `json:"failed_launch,omitempty"`
 }
 
 func (e *RunEntry) kiroCLI() bool {
@@ -475,6 +478,7 @@ func SanitizeRun(entries []RunEntry, firstLifeInProcess bool) []RunEntry {
 		}
 		e.Next, e.State = false, sanitizedState(&e, firstLifeInProcess)
 		e.StopPaused = e.StopPaused && e.State == RunPaused
+		e.FailedLaunch = e.FailedLaunch && e.State == RunPaused
 		out = append(out, e)
 	}
 	return out
