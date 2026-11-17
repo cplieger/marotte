@@ -829,6 +829,13 @@ func (b *fakeBridge) clearCallErr(method string) {
 	delete(b.callErrs, method)
 }
 
+// clearCallRPCErr lifts setCallRPCErr's refusal.
+func (b *fakeBridge) clearCallRPCErr(method string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.callRPCErrs, method)
+}
+
 func (b *fakeBridge) setNotifyErr(method string, err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()

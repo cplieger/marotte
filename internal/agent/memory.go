@@ -148,6 +148,11 @@ func writeMemoryErr(w http.ResponseWriter, err error) {
 			))
 			return
 		}
+		if configurationUnreadable(err) {
+			httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable,
+				httpreply.ErrorJSON("kiro-cli cannot read your settings yet. Try again in a moment."))
+			return
+		}
 		text := rpcerr.Text(err)
 		if strings.Contains(text, "Memory is not enabled") {
 			httpserver.WriteJSONStatus(w, http.StatusConflict,

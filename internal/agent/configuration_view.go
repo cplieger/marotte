@@ -14,8 +14,8 @@ import (
 	"github.com/cplieger/marotte/internal/rpcerr"
 )
 
-// configurationAccountLayer is the one layer kiro-cli 3.2.1 lets a client write a setting at, the account's synced
-// settings: _kiro/configuration/set refuses user-local as notGranted.
+// configurationAccountLayer is the account's synced settings, the one layer kiro-cli 3.4.0 grants a client
+// cloudMemory and modelFallback at: _kiro/configuration/set refuses either at user-local as notGranted.
 const configurationAccountLayer = "user-synced"
 
 // configurationNotStoredCode is KAS's -32000, which a configuration write answers when it could not store the value
