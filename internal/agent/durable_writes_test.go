@@ -124,6 +124,11 @@ var durableWriteSites = []durableSite{{
 	calls:   []string{"appendLaneless"},
 	because: "where a receiver's steering epoch ended, which no replay carries and the next clear's settling reads",
 }, {
+	file:    "internal/translate/job_updates.go",
+	fn:      "fileJobEnd",
+	calls:   []string{"appendLaneless"},
+	because: "a background job's end and its output tail; a replay rebuilds the row only from KAS's job notice, with no output",
+}, {
 	file:    "internal/agent/run_queue.go",
 	fn:      "writeRun",
 	calls:   []string{"Mutate"},

@@ -16,6 +16,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/sanitize"
 	"github.com/cplieger/marotte/internal/turnlog"
@@ -225,7 +226,7 @@ func (t *Translator) fileJobEnd(ctx context.Context, chatID marotte.ChatID, e *m
 	desc, card := t.jobs.known(chatID, e.JobID)
 	e.Description = cmp.Or(e.Description, desc)
 	e.ToolCallID = cmp.Or(e.ToolCallID, card)
-	t.appendLaneless(ctx, chatID, marotte.EntryKindJobEnded, marotte.JobEndedID(e.JobID), *e,
+	t.appendLaneless(durable.Context(ctx), chatID, marotte.EntryKindJobEnded, marotte.JobEndedID(e.JobID), *e,
 		func(ctx context.Context, turn *turnlog.Turn) ([]turnlog.Sealed, error) { return turn.JobEnded(ctx, e) })
 }
 
