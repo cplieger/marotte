@@ -171,6 +171,7 @@ func eventRuleOf(repo string) *launchrule.Rule {
 // TestRegisterLaunchRules_MountsTheSurfaceOnlyWithAStoreBehindIt pins that without a store the handlers would
 // panic; with one, skipping them would 404 a working feature.
 func TestRegisterLaunchRules_MountsTheSurfaceOnlyWithAStoreBehindIt(t *testing.T) {
+	t.Parallel()
 	t.Run("a configured store gets the routes", func(t *testing.T) {
 		st, _, err := launchrule.NewStore(t.TempDir())
 		if err != nil {
@@ -217,6 +218,7 @@ func listRules(t *testing.T, mux *http.ServeMux) ruleListView {
 }
 
 func TestLaunchRulesRoute(t *testing.T) {
+	t.Parallel()
 	forge := &fakeEventRuleChecker{}
 	dir, st, mux := launchRuleHub(t, forge)
 	const clock = `{"source":"bundled://publish","enabled":true,"when":{"clock":{"freq":"daily","hour":3,"minute":0}}}`
@@ -289,6 +291,7 @@ func TestLaunchRulesRoute(t *testing.T) {
 }
 
 func TestLaunchRuleWritesNeedWriteGuard(t *testing.T) {
+	t.Parallel()
 	h := newDrainGateHub(t)
 	h.SetEventRuleChecker(&fakeEventRuleChecker{})
 	h.runs.confirmer = trigger.NewConfirmer(h.runs.launchRules, nil, nil)
@@ -316,6 +319,7 @@ func TestLaunchRuleWritesNeedWriteGuard(t *testing.T) {
 }
 
 func TestDismissGapClearsSegment(t *testing.T) {
+	t.Parallel()
 	rh := newRuleHub(t, &fakeEventRuleChecker{}, "")
 	r, err := rh.st.Create(t.Context(), eventRuleOf("cplieger/animap-source"))
 	if err != nil {
@@ -443,6 +447,7 @@ func (idleEffects) NotifyNotStarted(context.Context, *launchrule.Rule, string) {
 // A row text the confirmer sets without a state write, as a recipe held by a run nothing names, is what the list
 // shows.
 func TestLaunchRuleListShowsUnwrittenRowText(t *testing.T) {
+	t.Parallel()
 	rh := newRuleHub(t, &fakeEventRuleChecker{}, "")
 	r, err := rh.st.Create(t.Context(), eventRuleOf("cplieger/animap-source"))
 	if err != nil {
@@ -482,6 +487,7 @@ func TestLaunchRuleListShowsUnwrittenRowText(t *testing.T) {
 // A rule whose state write failed launches nothing until a write lands, and no file can say so: the list and the
 // answer to the write's request do.
 func TestLaunchRuleListShowsWriteFailureBlock(t *testing.T) {
+	t.Parallel()
 	rh := newRuleHub(t, &fakeEventRuleChecker{}, "")
 	r, err := rh.st.Create(t.Context(), eventRuleOf("cplieger/animap-source"))
 	if err != nil {
@@ -512,6 +518,7 @@ func TestLaunchRuleListShowsWriteFailureBlock(t *testing.T) {
 }
 
 func TestLaunchRuleRouteRefusesInvalidSpec(t *testing.T) {
+	t.Parallel()
 	const clockPrefix = `{"source":"bundled://publish","enabled":true,"when":{"clock":`
 	const eventPrefix = `{"source":"bundled://publish","enabled":true,"when":{"event":{"connection":"github:github.com",` +
 		`"repo":"cplieger/animap-source","kind":"run_concluded","filter":{"result":["success"]}`
@@ -572,6 +579,7 @@ func TestLaunchRuleRouteRefusesInvalidSpec(t *testing.T) {
 }
 
 func TestLaunchRuleSaveChecksInputsAgainstTheRecipe(t *testing.T) {
+	t.Parallel()
 	const listing = `{"recipes":[{"name":"publish","source":"bundled://publish","inputs":{"tag":"string","notes":"prompt"}}]}`
 	const prefix = `{"source":"bundled://publish","enabled":true,"when":{"clock":{"freq":"daily","hour":2}},"inputs":`
 	t.Run("declared inputs are kept", func(t *testing.T) {
@@ -598,6 +606,7 @@ func TestLaunchRuleSaveChecksInputsAgainstTheRecipe(t *testing.T) {
 }
 
 func TestEventRuleSaveAnswersTheForgeCheck(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		err  error
@@ -636,6 +645,7 @@ func TestEventRuleSaveAnswersTheForgeCheck(t *testing.T) {
 }
 
 func TestLaunchRuleListShowsHeldEventsAndCursor(t *testing.T) {
+	t.Parallel()
 	rh := newRuleHub(t, &fakeEventRuleChecker{}, "")
 	st, mux := rh.st, rh.mux
 	r, err := st.Create(t.Context(), eventRuleOf("cplieger/animap-source"))
@@ -686,6 +696,7 @@ func TestLaunchRuleListShowsHeldEventsAndCursor(t *testing.T) {
 }
 
 func TestSaveRefusesUndatedRuns(t *testing.T) {
+	t.Parallel()
 	const undated = "This Gitea lists runs with no creation time, so marotte cannot watch them for a finished run"
 	forge := &fakeEventRuleChecker{err: &launchrule.ForgeCheckError{Text: undated}}
 	dir, _, mux := launchRuleHub(t, forge)
@@ -821,6 +832,7 @@ func TestRebaselineEditDropsHeldEvents(t *testing.T) {
 }
 
 func TestPutRefusesWhenBranchSwitch(t *testing.T) {
+	t.Parallel()
 	const clockBody = `{"source":"bundled://publish","enabled":true,"when":{"clock":{"freq":"daily","hour":3}}}`
 	clock := &launchrule.Rule{Source: "bundled://publish", Enabled: true, When: launchrule.When{
 		Clock: &launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 3},
@@ -894,6 +906,7 @@ func budgetedRuleHub(t *testing.T) *ruleHub {
 }
 
 func TestSaveEstimateRefusesOverCap(t *testing.T) {
+	t.Parallel()
 	rh := budgetedRuleHub(t)
 	for i := range 16 {
 		if rec := sendRoute(t, rh.mux, http.MethodPost, "/api/launch-rules", runRuleFor("o/r"+strconv.Itoa(i), 5)); rec.Code != http.StatusOK {
@@ -914,6 +927,7 @@ func TestSaveEstimateRefusesOverCap(t *testing.T) {
 }
 
 func TestSaveEstimatePricesUnreadRunFeedAtThreePages(t *testing.T) {
+	t.Parallel()
 	rh := budgetedRuleHub(t)
 	for i := range 3 {
 		if rec := sendRoute(t, rh.mux, http.MethodPost, "/api/launch-rules", runRuleFor("o/r"+strconv.Itoa(i), 2)); rec.Code != http.StatusOK {

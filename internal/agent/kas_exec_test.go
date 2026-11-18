@@ -9,6 +9,7 @@ import (
 // another closer is turn 9, and a new grace claim is turn 11. A row names the state before, the input and the seq it
 // carries, and what the step must leave.
 func TestKASExec_EveryTransition(t *testing.T) {
+	t.Parallel()
 	const own, other, claim = 7, 9, 11
 	held := func(s kasState) kasExec { return kasExec{state: s, holdSeq: own} }
 	cases := []struct {
@@ -107,6 +108,7 @@ func TestKASExec_EveryTransition(t *testing.T) {
 // A claim during a hold reports a change, so the older closer's waiters wake to find the hold no longer theirs; a step
 // that leaves the state as it was wakes no one.
 func TestKASExec_TheChangeReportWakesOnlyOnAChange(t *testing.T) {
+	t.Parallel()
 	k := kasExec{state: kasHeldRunning, holdSeq: 7}
 	if changed, _ := k.step(kasGraceClaim, 11); !changed {
 		t.Error("claim over a hold reported no change, want one")
@@ -122,6 +124,7 @@ func TestKASExec_TheChangeReportWakesOnlyOnAChange(t *testing.T) {
 // What marotte may do in each state: admit a prompt only with KAS idle and no hold, and run session calls whenever
 // KAS reports no run.
 func TestKASExec_EachStatesPermits(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		state kasState
 		want  kasPermits

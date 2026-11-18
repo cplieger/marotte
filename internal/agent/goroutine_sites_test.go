@@ -45,6 +45,7 @@ var unheldSites = map[string]struct {
 }
 
 func TestUnheldSites_AreOnlyTheListedOnes(t *testing.T) {
+	t.Parallel()
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatalf("read the package dir: %v", err)

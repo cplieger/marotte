@@ -53,6 +53,7 @@ func wantPersonsLease(t *testing.T, rs *Runs) {
 // A person's retry and the rule's cancel of the run it abandoned never interleave: whichever owns the run first
 // finishes before the other starts, so the cancel never stops, parks or releases the person's run.
 func TestAbandonedRunOwner_Concurrent(t *testing.T) {
+	t.Parallel()
 	t.Run("a retry during the cancel waits for its answer", func(t *testing.T) {
 		fc := &fakeConfirmer{retried: true}
 		h, br := triggeredRetryHub(t, fc, t.TempDir())
@@ -173,6 +174,7 @@ func TestAbandonedRunOwner_Concurrent(t *testing.T) {
 
 // A retry that waits out its timeout behind the rule's cancel is refused with nothing changed.
 func TestRetryBehindAbandonedCancelTimesOut(t *testing.T) {
+	t.Parallel()
 	fc := &fakeConfirmer{retried: true}
 	h, br := triggeredRetryHub(t, fc, t.TempDir())
 	answer := blockCancel(t, br)

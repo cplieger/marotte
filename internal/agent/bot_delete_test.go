@@ -30,7 +30,6 @@ func botDirOf(t *testing.T, id string) string {
 }
 
 func TestDeleteChatStateByChain_RemovesTheBotsDirectoryAfterItsSessions(t *testing.T) {
-	t.Parallel()
 	h, _, rig := newDeleteRig(t, noRuns(t))
 	dir := botDirOf(t, "c-bot-del")
 	var mu sync.Mutex
@@ -58,7 +57,6 @@ func TestDeleteChatStateByChain_RemovesTheBotsDirectoryAfterItsSessions(t *testi
 }
 
 func TestDeleteChatStateByChain_AFailedDirectoryRemovalIsLeftForTheSweep(t *testing.T) {
-	t.Parallel()
 	logs := capture.Default(t)
 	h, _, _ := newDeleteRig(t, noRuns(t))
 	kiroHome, _ := botMemoryHome(t)

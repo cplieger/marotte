@@ -11,6 +11,7 @@ import (
 // A launch rule's slot that started no run reaches the push and the page under the rule, titled by its recipe, as a
 // run outcome, so the workflow run switch in Settings governs it.
 func TestNotifyNotStarted_NotifiesUnderTheRule(t *testing.T) {
+	t.Parallel()
 	h, fp := newRunPushHub(t)
 	rule := launchrule.Rule{ID: "r1", Name: "nightly", Source: "bundled://demo"}
 	h.runs.NotifyNotStarted(t.Context(), &rule, "engine busy")

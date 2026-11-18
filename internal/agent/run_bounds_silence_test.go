@@ -216,6 +216,7 @@ func TestSilentStep_AnOpenAskIsNotSilence(t *testing.T) {
 // The answer to a long-open ask restarts the count: past an idle window after it the step is not flagged, an hour
 // after it it is.
 func TestSilentStep_AnAnswerRestartsTheCount(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		fp := newRunOutcomePush()
 		h, br, _ := silentStep(t, agentLaunch(), 2*time.Hour, WithPush(fp))

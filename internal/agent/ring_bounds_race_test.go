@@ -23,6 +23,7 @@ func TestByteRing_BoundsAfterOverflow(t *testing.T) {
 // TestByteRing_ConcurrentWriteRead documents that byteRing is single-goroutine by design;
 // callers must synchronize.
 func TestByteRing_ConcurrentWriteRead(t *testing.T) {
+	t.Parallel()
 	// Skipped: the unsynchronized ring would race the test itself.
 	t.Skip("byteRing is single-goroutine by design; test documents the contract")
 }

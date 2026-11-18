@@ -61,6 +61,7 @@ func serverKeys(t rapid.TB, rt *Runtime) []string {
 // TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks pins the interleaving property:
 // whenever the client's version equals the server's, the sets are equal.
 func TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks(t *testing.T) {
+	t.Parallel()
 	rapid.Check(t, func(t *rapid.T) {
 		rt := pendingFixture()
 		// A resident population to resolve from.
@@ -114,6 +115,7 @@ func TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks(t *testing.T) {
 // TestPendingSnapshot_CounterLastHasAFalseUnchanged is the red check: a test-local counter-last copy
 // yields a false unchanged, which is why the order is normative.
 func TestPendingSnapshot_CounterLastHasAFalseUnchanged(t *testing.T) {
+	t.Parallel()
 	rt := pendingFixture()
 	rt.bus.pendingPerms.add(1, permNeeded("c1", 1), nil)
 	counterLast := func(afterPerms func()) ([]marotte.ServerEvent, string) {
@@ -140,6 +142,7 @@ func TestPendingSnapshot_CounterLastHasAFalseUnchanged(t *testing.T) {
 
 // TestPendingSnapshot_EmptySetIsOneFrameWithItems pins `items: []`, never null, at the unminted version.
 func TestPendingSnapshot_EmptySetIsOneFrameWithItems(t *testing.T) {
+	t.Parallel()
 	rt := pendingFixture()
 	payload, stamp := rt.pendingSnapshotStamped()
 	if payload.Items == nil || len(payload.Items) != 0 {

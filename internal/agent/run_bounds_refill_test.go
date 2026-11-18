@@ -21,6 +21,7 @@ import (
 // TestRefillDeadline_ProgressPastADayAndAHalfKeepsAFullWindow pins that executing time alone never ends a run:
 // only the idle window, the slot, an hour of silence and a cancel do.
 func TestRefillDeadline_ProgressPastADayAndAHalfKeepsAFullWindow(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h := boundsRuns(t)
 		const id = "wf_1"
@@ -45,6 +46,7 @@ func TestRefillDeadline_ProgressPastADayAndAHalfKeepsAFullWindow(t *testing.T) {
 
 // TestRefillDeadline_RefusesAPausedRun pins that a refill re-arming a parked run would cancel one waiting on a person.
 func TestRefillDeadline_RefusesAPausedRun(t *testing.T) {
+	t.Parallel()
 	h := boundsRuns(t)
 	const id = "wf_1"
 	leased(t, h, id)
@@ -69,6 +71,7 @@ func TestRefillDeadline_RefusesAPausedRun(t *testing.T) {
 
 // TestRefillDeadline_RefusesARunWithNoLease pins that a TUI run has no lease or cancel path here.
 func TestRefillDeadline_RefusesARunWithNoLease(t *testing.T) {
+	t.Parallel()
 	h := boundsRuns(t)
 	h.refillDeadline(t.Context(), "wf_tui")
 	if h.bounded("wf_tui") {
@@ -87,6 +90,7 @@ func TestRefillDeadline_RefusesARunWithNoLease(t *testing.T) {
 // TestRefillDeadline_ThrottlesAWriteItWouldBarelyMove pins the granularity's disk saving, and that a
 // skip keeps the same timer.
 func TestRefillDeadline_ThrottlesAWriteItWouldBarelyMove(t *testing.T) {
+	t.Parallel()
 	h := boundsRuns(t)
 	const id = "wf_1"
 	leased(t, h, id)
@@ -295,6 +299,7 @@ func TestRefillDeadline_ConcurrentRefillsLeaveALiveTimerForTheStoredDeadline(t *
 // TestHealProgress_ACompletedNodeRefillsTheIdleWindow pins that one wrapper covers both run populations, and a
 // completed node refills all three budgets.
 func TestHealProgress_ACompletedNodeRefillsTheIdleWindow(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	const id = "wf_1"
 	leased(t, h.runs, id)
@@ -323,6 +328,7 @@ func TestHealProgress_ACompletedNodeRefillsTheIdleWindow(t *testing.T) {
 // TestRunMadeProgress_IsTheDoorTranslateUses pins the exported surface; called per tool-call frame,
 // so a run marotte is not bounding must cost one map read.
 func TestRunMadeProgress_IsTheDoorTranslateUses(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	const id = "wf_1"
 	leased(t, h.runs, id)

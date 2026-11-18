@@ -226,6 +226,7 @@ var closedGateVerbs = []closedGateVerb{
 // Every run verb a person or marotte can send while the sign-in cannot be answered: run work is refused unwritten
 // or held for the sign-in, and a stop goes through.
 func TestSignInGate_EveryRunVerbWhileClosed(t *testing.T) {
+	t.Parallel()
 	for _, tc := range closedGateVerbs {
 		t.Run(tc.name, func(t *testing.T) {
 			hub := tc.hub
@@ -261,6 +262,7 @@ func TestSignInGate_EveryRunVerbWhileClosed(t *testing.T) {
 
 // The table covers every route that writes to a run.
 func TestSignInGate_EveryRunVerbRouteIsInTheTable(t *testing.T) {
+	t.Parallel()
 	f, err := parser.ParseFile(token.NewFileSet(), "run_routes.go", nil, parser.SkipObjectResolution)
 	if err != nil {
 		t.Fatalf("parse run_routes.go: %v", err)

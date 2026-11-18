@@ -91,6 +91,7 @@ func rowOf(t *testing.T, h *Runtime, name string) mcpServerRuntime {
 
 // A sign-in is KAS's explicit reauth: the one reset that keeps a redirect listener waiting.
 func TestSignIn_SendsStartOAuthOnce(t *testing.T) {
+	t.Parallel()
 	h, lane := signInHub(t, "linear")
 
 	if code, body := postSignIn(h, "linear"); code != http.StatusAccepted {
@@ -113,6 +114,7 @@ func TestSignIn_SendsStartOAuthOnce(t *testing.T) {
 
 // Reconnect stays a passive retry: it never discards credentials.
 func TestReconnect_SendsNoStartOAuth(t *testing.T) {
+	t.Parallel()
 	h, lane := signInHub(t, "linear")
 	if rec := postJSON(h.mcpRegistry.handleReconnect, "/api/mcp/reconnect", `{"server":"linear"}`); rec.Code != http.StatusNoContent {
 		t.Fatalf("reconnect = %d, want 204", rec.Code)
@@ -167,6 +169,7 @@ func TestSignIn_RefusesAConnectedServer(t *testing.T) {
 }
 
 func TestSignIn_RefusesAServerAlreadySigningIn(t *testing.T) {
+	t.Parallel()
 	h, lane := signInHub(t, "linear")
 	if code, _ := postSignIn(h, "linear"); code != http.StatusAccepted {
 		t.Fatalf("first sign-in = %d, want 202", code)
@@ -184,6 +187,7 @@ func TestSignIn_RefusesAServerAlreadySigningIn(t *testing.T) {
 }
 
 func TestSignIn_RefusesAnUnknownServer(t *testing.T) {
+	t.Parallel()
 	h, _ := signInHub(t, "linear")
 	if code, _ := postSignIn(h, "nope"); code != http.StatusNotFound {
 		t.Errorf("sign-in(nope) = %d, want 404", code)
@@ -196,6 +200,7 @@ func TestSignIn_RefusesAnUnknownServer(t *testing.T) {
 // openExternalUrl names its server, so two servers sign in at once even in one session, and each consent URL lands on
 // its own server's row.
 func TestSignIn_TwoServersSignInAtOnce(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, enabledConfig("linear", "github"))
 	lane := fakeSourceOf(t, h).lane
 	reportMCP(t, h, "sess-both", awaitingSignIn("linear", marotte.MCPSource{}), awaitingSignIn("github", marotte.MCPSource{}))
@@ -225,6 +230,7 @@ func TestSignIn_TwoServersSignInAtOnce(t *testing.T) {
 // A consent URL KAS names another server for is never taken by the standing Sign in: it is a banner naming that
 // server, and the standing row keeps waiting for its own.
 func TestSignIn_ConsentURLForAnotherServerIsNotTakenByTheStandingSignIn(t *testing.T) {
+	t.Parallel()
 	h, lane := signInHub(t, "linear")
 	if code, _ := postSignIn(h, "linear"); code != http.StatusAccepted {
 		t.Fatalf("sign-in = %d, want 202", code)
@@ -261,6 +267,7 @@ func (c *fakeClock) advance(d time.Duration) {
 
 // A standing sign-in whose server never reported is taken over once KAS's own connect ceiling has passed.
 func TestSignIn_TheStandingSignInExpiresAtItsDeadline(t *testing.T) {
+	t.Parallel()
 	h, lane := signInHub(t, "linear", "github")
 	clock := &fakeClock{t: time.Unix(1_000_000, 0)}
 	h.mcpRegistry.mu.Lock()
@@ -298,6 +305,7 @@ func TestSignIn_TheStandingSignInExpiresAtItsDeadline(t *testing.T) {
 // A reset the engine refuses ends the sign-in at once; the server still waits, so the row says why and offers Sign in
 // again.
 func TestSignIn_EngineErrorEndsTheStandingSignIn(t *testing.T) {
+	t.Parallel()
 	h, lane := signInHub(t, "linear")
 	lane.setCallRPCErr(methodV3MCPResetServer, &marotte.RPCError{Code: -32603, Message: "MCP governance is disabled by your organization"})
 
@@ -329,6 +337,7 @@ func TestSignIn_EngineErrorEndsTheStandingSignIn(t *testing.T) {
 // A refused Sign in in a waiting session leaves the row on that session even while another has the server
 // connected: the row keeps the reason and a retry goes back to the waiting session.
 func TestSignIn_ARefusedSignInLeavesTheWaitingSessionRetryable(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, enabledConfig("linear"))
 	lane := fakeSourceOf(t, h).lane
 	reportMCP(t, h, "sess-a", connectedMCP("linear", marotte.MCPSource{}))
@@ -355,6 +364,7 @@ func TestSignIn_ARefusedSignInLeavesTheWaitingSessionRetryable(t *testing.T) {
 
 // A refusal's reason stands until the waiting session reports something else or a new Sign in starts.
 func TestSignIn_ARefusalsReasonEndsWithTheNextStatusOrClaim(t *testing.T) {
+	t.Parallel()
 	refuse := func(t *testing.T) (*Runtime, *fakeBridge) {
 		t.Helper()
 		h, lane := signInHub(t, "linear")
@@ -403,6 +413,7 @@ func TestSignIn_ARefusalsReasonEndsWithTheNextStatusOrClaim(t *testing.T) {
 
 // A foreign row keeps its provenance through a refused sign-in.
 func TestSignIn_EngineErrorKeepsAForeignRowsOrigin(t *testing.T) {
+	t.Parallel()
 	h, lane := signInHub(t, "mine")
 	reportMCP(t, h, sessionOf("theirs"), awaitingSignIn("theirs", marotte.MCPSource{Origin: "workspace", Root: "/w"}))
 	lane.setCallRPCErr(methodV3MCPResetServer, &marotte.RPCError{Code: -32603, Message: "no such server"})
@@ -419,6 +430,7 @@ func TestSignIn_EngineErrorKeepsAForeignRowsOrigin(t *testing.T) {
 }
 
 func TestSignIn_WithNoEngineIsUnavailable(t *testing.T) {
+	t.Parallel()
 	src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
 	src.startGate = make(chan struct{})
 	cs := newTestChatStore()
@@ -438,6 +450,7 @@ func TestSignIn_WithNoEngineIsUnavailable(t *testing.T) {
 // A sign-in ends with the next status its session reports for its server, whatever it is but connecting, and with
 // its session or the engine.
 func TestSignIn_TerminalStatusEndsTheStandingSignIn(t *testing.T) {
+	t.Parallel()
 	cases := map[string]func(t *testing.T, h *Runtime, name string){
 		"connected": func(t *testing.T, h *Runtime, name string) {
 			reportMCP(t, h, sessionOf(name), connectedMCP(name, marotte.MCPSource{}))
@@ -488,6 +501,7 @@ func TestSignIn_TerminalStatusEndsTheStandingSignIn(t *testing.T) {
 
 // A connecting report is the sign-in's own reconnect, so the sign-in and its record stand through it.
 func TestSignIn_AConnectingReportKeepsTheSignIn(t *testing.T) {
+	t.Parallel()
 	h, _ := signInHub(t, "linear")
 	if _, err := h.mcpRegistry.claimSignIn(t.Context(), "linear"); err != nil {
 		t.Fatalf("claimSignIn = %v", err)
@@ -510,6 +524,7 @@ func TestSignIn_AConnectingReportKeepsTheSignIn(t *testing.T) {
 // A sign-in is filed under the session that binds its server, so a later session for the same server neither
 // carries nor ends it, and the sign-in leaves no engine-wide trace once its session ends.
 func TestSignIn_LivesOnTheBindingSessionsView(t *testing.T) {
+	t.Parallel()
 	h, lane := signInHub(t, "linear")
 	reportMCP(t, h, "sess-later", awaitingSignIn("linear", marotte.MCPSource{}))
 	if code, _ := postSignIn(h, "linear"); code != http.StatusAccepted {
@@ -539,6 +554,7 @@ func TestSignIn_LivesOnTheBindingSessionsView(t *testing.T) {
 // the other is connected, and only a sign-in in that session connects it. The row offers that sign-in whichever
 // session is older, and the reset goes to the waiting session.
 func TestSignIn_GoesToTheSessionWaitingWhileAnotherIsConnected(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct{ older, newer translate.MCPServerReport }{
 		"the older session waits": {
 			older: awaitingSignIn("linear", marotte.MCPSource{}), newer: connectedMCP("linear", marotte.MCPSource{}),
@@ -577,6 +593,7 @@ func TestSignIn_GoesToTheSessionWaitingWhileAnotherIsConnected(t *testing.T) {
 // A sign-in whose session never reported again leaves signing_in once its deadline passes: the row offers Sign in
 // again and a paste for the dead consent URL is not relayed.
 func TestSignIn_AnExpiredSignInReturnsItsServerToNeedsAuth(t *testing.T) {
+	t.Parallel()
 	h, lane := signInHub(t, "linear")
 	clock := &fakeClock{t: time.Unix(1_000_000, 0)}
 	h.mcpRegistry.mu.Lock()
@@ -612,6 +629,7 @@ func TestSignIn_AnExpiredSignInReturnsItsServerToNeedsAuth(t *testing.T) {
 // server needs a sign-in again. The bubble's clock moves only once every goroutine waits, so the URL is claimed before the deadline
 // however slow the runner is.
 func TestSignIn_TheDeadlineEndsTheSignInWithNoFrame(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, lane := signInHub(t, "linear")
 		if code, _ := postSignIn(h, "linear"); code != http.StatusAccepted {
@@ -643,6 +661,7 @@ func TestSignIn_TheDeadlineEndsTheSignInWithNoFrame(t *testing.T) {
 
 // The consent URL KAS opens while a sign-in stands belongs to that server's row, and no chat banner is raised.
 func TestOpenExternalURL_ClaimedBySignInRecordsTheAnchor(t *testing.T) {
+	t.Parallel()
 	const consent = "https://provider.example/authorize?state=s1&redirect_uri=http%3A%2F%2F127.0.0.1%3A4000%2Foauth%2Fcallback"
 	h, _, lane := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -681,6 +700,7 @@ func TestOpenExternalURL_ClaimedBySignInRecordsTheAnchor(t *testing.T) {
 // A status ending the Sign in ends its row's signing_in, not its consent URL: KAS's listener may still be waiting, so
 // the URL stays relayable, single use, until the Sign in's own deadline.
 func TestSignIn_AnAnchorOutlivesTheSignInThatTookIt(t *testing.T) {
+	t.Parallel()
 	lA := newCallbackListener(t, http.StatusOK)
 	h, _, lane := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -732,6 +752,7 @@ func awaitLaneAnswer(t *testing.T, lane *fakeBridge, id int64) fakeResponse {
 // A sign-in whose reset is still unanswered when the server reports and a second Sign in then stands ends with that
 // status: its late failure leaves the second sign-in and its row alone.
 func TestSignIn_AnEarlierAttemptsLateFailureLeavesTheNextOneAlone(t *testing.T) {
+	t.Parallel()
 	h, lane := signInHub(t, "linear")
 	late := make(chan struct{})
 	resets := 0

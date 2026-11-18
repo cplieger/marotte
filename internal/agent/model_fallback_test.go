@@ -45,6 +45,7 @@ func putModelFallback(h *Runtime, body string) *httptest.ResponseRecorder {
 // KAS grants a client modelFallback at user-synced only, and takes a one-model chain or an empty one, which clears
 // the account's choice back to Kiro's.
 func TestModelFallbackPutWritesTheAccountLayer(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, body, wantValue, wantBody string
 	}{
@@ -85,6 +86,7 @@ func TestModelFallbackPutWritesTheAccountLayer(t *testing.T) {
 }
 
 func TestModelFallbackPutRejectsABadRequest(t *testing.T) {
+	t.Parallel()
 	for name, body := range map[string]string{
 		"no model":  `{"target":"model-b"}`,
 		"blank":     `{"model":"  ","target":"model-b"}`,
@@ -112,6 +114,7 @@ func TestModelFallbackPutRejectsABadRequest(t *testing.T) {
 }
 
 func TestModelFallbackPutRefusals(t *testing.T) {
+	t.Parallel()
 	identityChanged := &marotte.RPCError{Code: -32000, Message: "Fallback preference was not stored; the account changed before it could be written. Read the settings again for the current account."}
 	cases := map[string]struct {
 		err      *marotte.RPCError

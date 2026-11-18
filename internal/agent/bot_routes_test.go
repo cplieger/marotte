@@ -60,7 +60,6 @@ func decodeBody[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
 }
 
 func TestBotSetupRoute_AnswersTheBotsSetup(t *testing.T) {
-	t.Parallel()
 	h, cs, _ := newTestHub()
 	seedSetupBot(t, cs, true)
 	at := time.UnixMilli(1_700_000_456_000)
@@ -162,7 +161,6 @@ func TestBotRoutes_RefuseAnIDThatIsNoChatID(t *testing.T) {
 }
 
 func TestBotMemoryRoute_AnswersTheNotes(t *testing.T) {
-	t.Parallel()
 	h, cs, _ := newTestHub()
 	seedSetupBot(t, cs, true)
 	at := time.UnixMilli(1_700_000_789_000)
@@ -181,7 +179,6 @@ func TestBotMemoryRoute_AnswersTheNotes(t *testing.T) {
 }
 
 func TestBotMemoryRoute_AnswersEmptyNotesBeforeTheFileExists(t *testing.T) {
-	t.Parallel()
 	h, cs, _ := newTestHub()
 	seedSetupBot(t, cs, true)
 	_, file := botMemoryHome(t)
@@ -198,7 +195,6 @@ func TestBotMemoryRoute_AnswersEmptyNotesBeforeTheFileExists(t *testing.T) {
 }
 
 func TestBotMemoryRoute_IsNotFoundWhileMemoryIsOff(t *testing.T) {
-	t.Parallel()
 	h, cs, _ := newTestHub()
 	seedSetupBot(t, cs, false)
 	writeBotNotes(t, "- left from before\n", time.UnixMilli(1_700_000_000_000))
@@ -214,7 +210,6 @@ func TestBotMemoryRoute_IsNotFoundWhileMemoryIsOff(t *testing.T) {
 }
 
 func TestBotMemoryRoute_RefusesALinkedFile(t *testing.T) {
-	t.Parallel()
 	h, cs, _ := newTestHub()
 	seedSetupBot(t, cs, true)
 	kiroHome, file := botMemoryHome(t)

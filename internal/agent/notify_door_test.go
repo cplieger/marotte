@@ -48,6 +48,7 @@ func header(id, current string, prior ...string) marotte.ChatHeader {
 }
 
 func TestNotifyDoor_FindsTheChatBySession(t *testing.T) {
+	t.Parallel()
 	rig := newDoorRig(header("c1", "s-old-other"), header("c2", "s-now", "s-before"))
 	id, err := rig.door.Deliver(t.Context(), "s-now", "wake", "grelot")
 	if err != nil {
@@ -65,6 +66,7 @@ func TestNotifyDoor_FindsTheChatBySession(t *testing.T) {
 }
 
 func TestNotifyDoor_SessionLookup(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		headers []marotte.ChatHeader
@@ -102,6 +104,7 @@ func TestNotifyDoor_SessionLookup(t *testing.T) {
 }
 
 func TestNotifyDoor_Unavailable(t *testing.T) {
+	t.Parallel()
 	t.Run("while draining", func(t *testing.T) {
 		rig := newDoorRig(header("c1", "s1"))
 		rig.draining = true
@@ -122,6 +125,7 @@ func TestNotifyDoor_Unavailable(t *testing.T) {
 }
 
 func TestNotifyDoor_MapsRefusals(t *testing.T) {
+	t.Parallel()
 	t.Run("a chat gone meanwhile is unknown", func(t *testing.T) {
 		rig := newDoorRig(header("c1", "s1"))
 		rig.answer = command.StatusErrorReason(http.StatusConflict, "chat_not_found", command.ErrChatNotFound)

@@ -100,6 +100,7 @@ func relayState(t *testing.T, h *Runtime, server string) (relayed, pending bool)
 }
 
 func TestOAuthRelay_DeliversAStrandedCallback(t *testing.T) {
+	t.Parallel()
 	l := newCallbackListener(t, http.StatusOK)
 	h := newHubWithMCPConfig(t, nil)
 	stageFlow(t, h, "linear", l.srv.URL, "st-abc")
@@ -120,6 +121,7 @@ func TestOAuthRelay_DeliversAStrandedCallback(t *testing.T) {
 
 // The relay is single use per attempt: the first delivery spends the code.
 func TestOAuthRelay_IsSingleUsePerAttempt(t *testing.T) {
+	t.Parallel()
 	l := newCallbackListener(t, http.StatusOK)
 	h := newHubWithMCPConfig(t, nil)
 	stageFlow(t, h, "linear", l.srv.URL, "st-abc")
@@ -191,6 +193,7 @@ func (l *blockingListener) releaseAll() {
 
 // The single-use rule must be atomic: the listener holds the first relay open while a second paste tries.
 func TestOAuthRelay_ConcurrentPastesDeliverOnce(t *testing.T) {
+	t.Parallel()
 	l := newBlockingListener(t, http.StatusOK)
 	h := newHubWithMCPConfig(t, nil)
 	stageFlow(t, h, "linear", l.srv.URL, "st-abc")
@@ -220,6 +223,7 @@ func TestOAuthRelay_ConcurrentPastesDeliverOnce(t *testing.T) {
 
 // An old relay's completion must not latch a newer attempt, or the new one's paste box is withheld.
 func TestOAuthRelay_AnOldRelayCannotLatchANewAttempt(t *testing.T) {
+	t.Parallel()
 	l := newBlockingListener(t, http.StatusOK)
 	h := newHubWithMCPConfig(t, nil)
 	stageFlow(t, h, "linear", l.srv.URL, "st-one")
@@ -254,6 +258,7 @@ func TestOAuthRelay_AnOldRelayCannotLatchANewAttempt(t *testing.T) {
 
 // A fresh attempt's consent URL is a new anchor with its own latch.
 func TestOAuthRelay_ANewAttemptClearsTheLatch(t *testing.T) {
+	t.Parallel()
 	l := newCallbackListener(t, http.StatusOK)
 	h := newHubWithMCPConfig(t, nil)
 	stageFlow(t, h, "linear", l.srv.URL, "st-one")
@@ -274,6 +279,7 @@ func TestOAuthRelay_ANewAttemptClearsTheLatch(t *testing.T) {
 
 // A server waiting for sign-in with no Sign in pressed has no live listener, so a paste is refused unsent.
 func TestOAuthRelay_RefusesThePassiveURL(t *testing.T) {
+	t.Parallel()
 	l := newCallbackListener(t, http.StatusOK)
 	h := newHubWithMCPConfig(t, nil)
 	msg := &marotte.RPCResponse{Method: "_kiro/mcp/status", Params: mustJSON(t, map[string]any{"servers": []map[string]any{{
@@ -293,6 +299,7 @@ func TestOAuthRelay_RefusesThePassiveURL(t *testing.T) {
 
 // No flow in flight means no relay: nothing to check a paste against.
 func TestOAuthRelay_RefusesWithNoFlowInFlight(t *testing.T) {
+	t.Parallel()
 	l := newCallbackListener(t, http.StatusOK)
 	for name, server := range map[string]string{
 		"a server with no authorization pending": "linear",
@@ -318,6 +325,7 @@ func TestOAuthRelay_RefusesWithNoFlowInFlight(t *testing.T) {
 // A mid-session re-auth's consent URL names no server, so its pasted callback is relayed on the anchor its state
 // picks, single use, whatever server the paste names.
 func TestOAuthRelay_ALazySignInIsRelayedByItsState(t *testing.T) {
+	t.Parallel()
 	for name, server := range map[string]string{
 		"no server named":                       "",
 		"a connected server, the re-auth's row": "linear",
@@ -347,6 +355,7 @@ func TestOAuthRelay_ALazySignInIsRelayedByItsState(t *testing.T) {
 }
 
 func TestOAuthRelay_ALazySignInRefusesAnotherState(t *testing.T) {
+	t.Parallel()
 	l := newCallbackListener(t, http.StatusOK)
 	h := newHubWithMCPConfig(t, nil)
 	h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: authURLFor(t, l.srv.URL, "st-lazy")}, true)
@@ -363,6 +372,7 @@ func TestOAuthRelay_ALazySignInRefusesAnotherState(t *testing.T) {
 
 // The paste is checked before any anchor is chosen, so a malformed one is named as such.
 func TestOAuthRelay_ALazySignInRefusesAMalformedPaste(t *testing.T) {
+	t.Parallel()
 	l := newCallbackListener(t, http.StatusOK)
 	h := newHubWithMCPConfig(t, nil)
 	h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: authURLFor(t, l.srv.URL, "st-lazy")}, true)
@@ -380,6 +390,7 @@ func TestOAuthRelay_ALazySignInRefusesAMalformedPaste(t *testing.T) {
 // KAS's lazy listener closes after LAZY_AUTH_TIMEOUT_MS, the engine's end drops every anchor, and the oldest goes
 // past the cap.
 func TestOAuthRelay_ALazySignInEnds(t *testing.T) {
+	t.Parallel()
 	cases := map[string]func(t *testing.T, h *Runtime, clock *fakeClock, listenerURL string){
 		"at KAS's timeout": func(_ *testing.T, _ *Runtime, clock *fakeClock, _ string) {
 			clock.advance(lazySignInTTL)
@@ -419,6 +430,7 @@ func TestOAuthRelay_ALazySignInEnds(t *testing.T) {
 
 // A listener's refusal gives the anchor back, as it does a row's reservation.
 func TestOAuthRelay_ALazySignInStaysRetryableAfterARefusal(t *testing.T) {
+	t.Parallel()
 	l := newCallbackListener(t, http.StatusBadRequest)
 	h := newHubWithMCPConfig(t, nil)
 	h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: authURLFor(t, l.srv.URL, "st-lazy")}, true)
@@ -435,6 +447,7 @@ func TestOAuthRelay_ALazySignInStaysRetryableAfterARefusal(t *testing.T) {
 
 // A URL with no state could never match a paste, so it anchors nothing; KAS still waits its 300 s for it.
 func TestAnchorConsentURL_KeepsNoURLWithoutAState(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, nil)
 	clock := &fakeClock{t: time.Unix(1_000_000, 0)}
 	h.mcpRegistry.mu.Lock()
@@ -469,6 +482,7 @@ func TestAnchorConsentURL_KeepsNoURLWithoutAState(t *testing.T) {
 // Two overlapping sign-ins both complete: a later consent URL leaves the standing Sign in's anchor and row alone, and
 // each paste reaches the listener its own URL named.
 func TestOAuthRelay_ALaterConsentURLLeavesTheStandingSignInsAnchor(t *testing.T) {
+	t.Parallel()
 	lA := newCallbackListener(t, http.StatusOK)
 	lB := newCallbackListener(t, http.StatusOK)
 	h, lane := signingInOnLane(t)
@@ -494,6 +508,7 @@ func TestOAuthRelay_ALaterConsentURLLeavesTheStandingSignInsAnchor(t *testing.T)
 
 // The paste's state picks its anchor; the server it was pasted under picks nothing.
 func TestOAuthRelay_APasteIsRelayedByItsStateWhicheverServerItNames(t *testing.T) {
+	t.Parallel()
 	lL := newCallbackListener(t, http.StatusOK)
 	lA := newCallbackListener(t, http.StatusOK)
 	h, _, lane := newTestHub()
@@ -520,6 +535,7 @@ func TestOAuthRelay_APasteIsRelayedByItsStateWhicheverServerItNames(t *testing.T
 
 // The anchor cap evicts the oldest anchor, never the standing Sign in's.
 func TestOAuthRelay_LaterURLsNeverEvictTheStandingSignInsAnchor(t *testing.T) {
+	t.Parallel()
 	lA := newCallbackListener(t, http.StatusOK)
 	h, lane := signingInOnLane(t)
 	connectPage(t, h)
@@ -543,6 +559,7 @@ func TestOAuthRelay_LaterURLsNeverEvictTheStandingSignInsAnchor(t *testing.T) {
 
 // A listener refusing the callback leaves the attempt retryable: a 4xx is usually KAS's own state check.
 func TestOAuthRelay_ARefusedCallbackStaysRetryable(t *testing.T) {
+	t.Parallel()
 	l := newCallbackListener(t, http.StatusBadRequest)
 	h := newHubWithMCPConfig(t, nil)
 	stageFlow(t, h, "linear", l.srv.URL, "st-abc")
@@ -559,6 +576,7 @@ func TestOAuthRelay_ARefusedCallbackStaysRetryable(t *testing.T) {
 
 // A gone listener is a gateway failure, not a success.
 func TestOAuthRelay_ADeadListenerIsAGatewayFailure(t *testing.T) {
+	t.Parallel()
 	l := newCallbackListener(t, http.StatusOK)
 	dead := l.srv.URL
 	l.srv.Close() // frees the port; nothing is listening now
@@ -573,6 +591,7 @@ func TestOAuthRelay_ADeadListenerIsAGatewayFailure(t *testing.T) {
 }
 
 func TestOAuthRelay_RejectsNonPOST(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, nil)
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/mcp/oauth-relay", nil)
 	rec := httptest.NewRecorder()
@@ -608,6 +627,7 @@ func TestOAuthRelay_NeverLogsTheCode(t *testing.T) {
 }
 
 func TestValidateRelayAddress(t *testing.T) {
+	t.Parallel()
 	const (
 		host  = "127.0.0.1:41234"
 		state = "st-abc"
@@ -815,6 +835,7 @@ func TestValidateRelayAddress(t *testing.T) {
 // The reservation binds a paste by its state: anything but the anchor's own state is refused and leaves the anchor
 // unlatched, and with no anchor there is nothing to relay to.
 func TestReserveRelay_BindsThePasteByItsState(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"a mismatched state belongs to a different sign-in": "st-other",
 		"a missing state cannot be matched":                 "",

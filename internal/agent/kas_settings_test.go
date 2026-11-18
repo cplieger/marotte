@@ -213,6 +213,7 @@ func writeCompactionSetting(t *testing.T, dir string, enabled bool, pct int) {
 }
 
 func TestAutoCompactionPolicy_ReadsTheSettingAndFailsToTheDefault(t *testing.T) {
+	t.Parallel()
 	policy := func(dir string) (bool, int) {
 		t.Helper()
 		doc, _, err := settings.Read(t.Context(), dir)

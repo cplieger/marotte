@@ -87,6 +87,7 @@ func inspectWithLoopStep(t *testing.T, workflowID, repeatID string, n int, nodeI
 // TestRunNodeComplete_ARefusedStepTellsTheLaunchingChat pins that KAS grades a refused step `completed`, and that the
 // note follows the grade recorded under KAS's record, never the seal alone.
 func TestRunNodeComplete_ARefusedStepTellsTheLaunchingChat(t *testing.T) {
+	t.Parallel()
 	const (
 		id     = "wf_1"
 		chatID = marotte.ChatID("c1")
@@ -150,6 +151,7 @@ func TestRunNodeComplete_ARefusedStepTellsTheLaunchingChat(t *testing.T) {
 // KAS grades a step its iteration limit stopped `completed` with no signal, so only this note tells the launching chat
 // it did not finish.
 func TestRunNodeComplete_AStepStoppedAtTheModelCallLimitTellsTheLaunchingChat(t *testing.T) {
+	t.Parallel()
 	const (
 		id     = "wf_1"
 		chatID = marotte.ChatID("c1")
@@ -194,6 +196,7 @@ func TestRunNodeComplete_AStepStoppedAtTheModelCallLimitTellsTheLaunchingChat(t 
 
 // Every refusal field is optional, so absence is not evidence the model did not decline.
 func TestRunNodeComplete_ARefusalWithNoMetadataStillLeavesANote(t *testing.T) {
+	t.Parallel()
 	const (
 		id     = "wf_1"
 		chatID = marotte.ChatID("c1")
@@ -220,6 +223,7 @@ func TestRunNodeComplete_ARefusalWithNoMetadataStillLeavesANote(t *testing.T) {
 
 // The run's own frames already say it finished.
 func TestRunNodeComplete_AStepThatRanLeavesNoNote(t *testing.T) {
+	t.Parallel()
 	const (
 		id     = "wf_1"
 		chatID = marotte.ChatID("c1")
@@ -289,6 +293,7 @@ func TestRunNodeComplete_AParentlessRunLeavesNoNote(t *testing.T) {
 
 // CloseNode closes a turn once, so a repeated node_complete seals no second note.
 func TestRunNodeComplete_ARefusalIsNotedOnce(t *testing.T) {
+	t.Parallel()
 	const (
 		id     = "wf_1"
 		chatID = marotte.ChatID("c1")
@@ -314,6 +319,7 @@ func TestRunNodeComplete_ARefusalIsNotedOnce(t *testing.T) {
 // An included step's id carries its include's id and a '/', so a '/' join of its path reads
 // wf_1/inc/inc/a, the same text as a four-deep path; its key wf_1:inc:inc/a is not wf_1:inc:inc:a.
 func TestStepNoteText_KeepsAnIncludedStepsPathUnambiguous(t *testing.T) {
+	t.Parallel()
 	path := []string{"wf_1", "inc", "inc/a"}
 	if got, want := stepModelCallLimitNoteText("nightly", workflow.PathKey(path)), "nightly step wf_1:inc:inc/a stopped early. "+marotte.ModelCallLimitStepReason; got != want {
 		t.Errorf("model-call-limit note = %q, want %q", got, want)
@@ -324,6 +330,7 @@ func TestStepNoteText_KeepsAnIncludedStepsPathUnambiguous(t *testing.T) {
 }
 
 func TestRunOpenTurn_AnswersOnlyAnOpenTurnAndOpensNone(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	path := []string{"wf_1", "build"}
 	nodePath := workflow.PathKey(path)

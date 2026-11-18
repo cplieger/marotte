@@ -9,6 +9,7 @@ import (
 )
 
 func TestLineTrackerRecord(t *testing.T) {
+	t.Parallel()
 	lt := buffer.NewLineTracker()
 	lt.Record("chat1", "main.go", buffer.LineRange{StartLine: 1, EndLine: 10, Turn: 1, Kind: "edit"})
 	lt.Record("chat1", "main.go", buffer.LineRange{StartLine: 15, EndLine: 20, Turn: 2, Kind: "edit"})
@@ -41,6 +42,7 @@ func TestLineTrackerRecord(t *testing.T) {
 }
 
 func TestLineTrackerRecordFromDiffs(t *testing.T) {
+	t.Parallel()
 	lt := buffer.NewLineTracker()
 	diffs := []marotte.ToolDiff{
 		{Path: "a.go", NewText: "line1\nline2\nline3\n"},
@@ -66,6 +68,7 @@ func TestLineTrackerRecordFromDiffs(t *testing.T) {
 // TestLineTrackerRecordFromDiffs_WholeFileDiff pins that KAS sends whole-file OldText/NewText, and a
 // one-line change must mark one line.
 func TestLineTrackerRecordFromDiffs_WholeFileDiff(t *testing.T) {
+	t.Parallel()
 	var old, edited string
 	for i := range 300 {
 		line := fmt.Sprintf("line %d\n", i)
@@ -90,6 +93,7 @@ func TestLineTrackerRecordFromDiffs_WholeFileDiff(t *testing.T) {
 }
 
 func TestLineTrackerClear(t *testing.T) {
+	t.Parallel()
 	lt := buffer.NewLineTracker()
 	lt.Record("c1", "f.go", buffer.LineRange{StartLine: 1, EndLine: 5, Turn: 1, Kind: "edit"})
 	lt.Clear("c1")
@@ -99,6 +103,7 @@ func TestLineTrackerClear(t *testing.T) {
 }
 
 func TestLineTrackerGet(t *testing.T) {
+	t.Parallel()
 	lt := buffer.NewLineTracker()
 	lt.Record("c1", "main.go", buffer.LineRange{StartLine: 1, EndLine: 10, Turn: 1, Kind: "edit"})
 

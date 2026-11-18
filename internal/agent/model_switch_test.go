@@ -43,6 +43,7 @@ func awaitModel(t *testing.T, cs *testChatStore, chatID marotte.ChatID, model st
 }
 
 func TestSwitchModel_MissingChatID(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	rec := postCmd(t, h, marotte.ClientCommand{Type: "switch_model"})
 	if rec.Code != http.StatusBadRequest {
@@ -51,6 +52,7 @@ func TestSwitchModel_MissingChatID(t *testing.T) {
 }
 
 func TestSwitchModel_ChatNotFound(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "switch_model", ChatID: "nope",
@@ -62,6 +64,7 @@ func TestSwitchModel_ChatNotFound(t *testing.T) {
 
 // An idle chat with no bridge takes the pick on the record alone: no entry, no session open, session id kept.
 func TestSwitchModel_ANoBridgeChatTakesThePickOnTheRecord(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
@@ -94,6 +97,7 @@ func TestSwitchModel_ANoBridgeChatTakesThePickOnTheRecord(t *testing.T) {
 }
 
 func TestSwitchModel_WithModelOverride(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
@@ -118,6 +122,7 @@ func TestSwitchModel_WithModelOverride(t *testing.T) {
 
 // An idle live chat switches at once, records one model_switched entry and resets usage; context_size is kept.
 func TestSwitchModel_ALiveIdleChatRecordsTheSwitchAndResetsUsage(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	finishedTurn(t, h, "c1")
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -184,6 +189,7 @@ func sessionUsageFrame(t *testing.T, sessionID string, total float64, replay boo
 
 // KAS stamps the load-time total replay, yet it is the resumed session's current figure.
 func TestReplayedSessionUsage_ReachesTheHeader(t *testing.T) {
+	t.Parallel()
 	const chatID = marotte.ChatID("chat-resumed")
 	h, cs, _ := newTestHub()
 	defer shutdownHub(t, h)
@@ -206,6 +212,7 @@ func TestReplayedSessionUsage_ReachesTheHeader(t *testing.T) {
 // A closer's dispatch and the switch command can apply one pending pick at the same moment; the
 // pick is applied and recorded once.
 func TestApplyPendingModel_ConcurrentAppliersRecordOneSwitch(t *testing.T) {
+	t.Parallel()
 	for range 50 {
 		h, cs, _ := newTestHub()
 		finishedTurn(t, h, "c1")
@@ -232,6 +239,7 @@ func TestApplyPendingModel_ConcurrentAppliersRecordOneSwitch(t *testing.T) {
 
 // The same model answers ok and writes nothing; there is no bare restart.
 func TestSwitchModel_TheSameModelAnswersOKAndWritesNothing(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
@@ -267,6 +275,7 @@ func TestSwitchModel_TheSameModelAnswersOKAndWritesNothing(t *testing.T) {
 
 // A bad model is a 400 with no state change.
 func TestSwitchModel_RejectsInvalidModel(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
@@ -293,6 +302,7 @@ func TestSwitchModel_RejectsInvalidModel(t *testing.T) {
 
 // The in-session switch (set_config_option) succeeds and the bridge stays alive.
 func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
@@ -345,6 +355,7 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 
 // kiro-cli accepts an unserved id and only the service rejects it mid-prompt, so the gate refuses first.
 func TestSwitchModel_RefusesAModelTheAccountDoesNotServe(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
@@ -373,6 +384,7 @@ func TestSwitchModel_RefusesAModelTheAccountDoesNotServe(t *testing.T) {
 
 // Both fail-open cases: no advertised catalog behaves as before the gate.
 func TestSwitchModel_AllowsWhenEntitlementIsUnknowable(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		served []string
@@ -402,6 +414,7 @@ func TestSwitchModel_AllowsWhenEntitlementIsUnknowable(t *testing.T) {
 
 // The gate reads the unfiltered served set: the display list drops [Deprecated] and [Legacy].
 func TestSwitchModel_AllowsADeprecatedModelTheAccountStillServes(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
@@ -469,6 +482,7 @@ func TestSwitchModel_TheChatRecordOutranksTheLiveSession(t *testing.T) {
 
 // A refused swap clears pending_model, keeps model, reports switch_failed and leaves the bridge alone.
 func TestSwitchModel_ARefusedSwapClearsThePickAndReportsIt(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
@@ -516,6 +530,7 @@ func TestSwitchModel_ARefusedSwapClearsThePickAndReportsIt(t *testing.T) {
 
 // A busy chat's pick is parked and applied by the close that idles it.
 func TestSwitchModel_ABusyChatParksThePickUntilTheClose(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -544,6 +559,7 @@ func TestSwitchModel_ABusyChatParksThePickUntilTheClose(t *testing.T) {
 // A pick made while KAS still runs a turn marotte's cancel grace closed is parked like a busy chat's, and applied
 // once KAS reports the session idle.
 func TestSwitchModel_AKASHeldChatParksThePickUntilKASGoesIdle(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, _ := newTestHub()
 		defer shutdownHub(t, h)
@@ -580,6 +596,7 @@ func TestSwitchModel_AKASHeldChatParksThePickUntilKASGoesIdle(t *testing.T) {
 
 // KAS lists Auto as a model, so picking it from a concrete model is a switch like any other, not "keep the current".
 func TestSwitchModel_ACatalogListedAutoIsAPick(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -608,6 +625,7 @@ func TestSwitchModel_ACatalogListedAutoIsAPick(t *testing.T) {
 
 // A pick on a never-run chat is a preference persisted on the record alone, so a later set_effort auto-persist cannot clobber it.
 func TestSwitchModel_PreSessionPickPersistsWithoutABridge(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
@@ -644,6 +662,7 @@ func TestSwitchModel_PreSessionPickPersistsWithoutABridge(t *testing.T) {
 
 // A pick parked with no bridge lands at the next session open, so the session opens on it.
 func TestOpenBridge_APendingPickLandsBeforeTheSessionOpens(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"

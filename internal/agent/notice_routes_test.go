@@ -69,6 +69,7 @@ func postEvent(rt *Runtime, path, tag, body string) *httptest.ResponseRecorder {
 }
 
 func TestHandleView_RefusesABadReport(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct{ tag, body string }{
 		"no tag":           {"", `{"page":"p1","visible":true,"focused":true}`},
 		"bad page id":      {routeTag, `{"page":"p 1","visible":true,"focused":true}`},
@@ -96,6 +97,7 @@ func TestHandleView_RefusesABadReport(t *testing.T) {
 }
 
 func TestHandleView_RecordsAGoodReport(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		body string
 		want marotte.PageView
@@ -142,6 +144,7 @@ func TestHandleView_RecordsAGoodReport(t *testing.T) {
 }
 
 func TestHandleNotice_RecordsWhatThePageDid(t *testing.T) {
+	t.Parallel()
 	h, fp := newRouteHub(t)
 	for _, body := range []string{`{"id":"n1","outcome":"shown"}`, `{"id":"n2","outcome":"declined"}`} {
 		if rec := postEvent(h, "/api/events/notice", routeTag, body); rec.Code != http.StatusNoContent {
@@ -156,6 +159,7 @@ func TestHandleNotice_RecordsWhatThePageDid(t *testing.T) {
 }
 
 func TestHandleNotice_RefusesABadReport(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct{ tag, body string }{
 		"no tag":          {"", `{"id":"n1","outcome":"shown"}`},
 		"bad id":          {routeTag, `{"id":"n 1","outcome":"shown"}`},

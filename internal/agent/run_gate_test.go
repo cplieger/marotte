@@ -377,6 +377,7 @@ func TestSignInGate_ALapsePausesTheRunningRunAndTheNextSignInResumesIt(t *testin
 // paused with the unreachable reason, and the next renewal that succeeds resumes it. In a bubble, whose clock passes
 // the whole window at once.
 func TestSignInGate_AnUnreachableProviderPausesThenResumesOnTheNextRenewal(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, unreachableProviderPausesThenResumes)
 }
 

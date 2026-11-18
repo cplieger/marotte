@@ -6,6 +6,7 @@ import (
 )
 
 func TestNewMessageID_UUIDv7Format(t *testing.T) {
+	t.Parallel()
 	a := newMessageID()
 	time.Sleep(2 * time.Millisecond)
 	b := newMessageID()
@@ -33,6 +34,7 @@ func TestNewMessageID_UUIDv7Format(t *testing.T) {
 }
 
 func TestNewMessageID_Unique(t *testing.T) {
+	t.Parallel()
 	seen := make(map[string]struct{}, 1000)
 	for range 1000 {
 		id := newMessageID()

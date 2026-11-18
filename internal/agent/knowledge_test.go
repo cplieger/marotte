@@ -16,6 +16,7 @@ import (
 )
 
 func TestParseKnowledgeResult(t *testing.T) {
+	t.Parallel()
 	t.Run("ShowEntries", func(t *testing.T) {
 		raw := `{"success":true,"entries":[` +
 			`{"name":"docs","id":"abc12345","description":"d","item_count":7,"path":"/w/docs"},` +
@@ -60,6 +61,7 @@ func TestParseKnowledgeResult(t *testing.T) {
 }
 
 func TestResolveKnowledgePath(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub() // workDir = /tmp/work
 	if got := h.config.resolveKnowledgePath("docs"); got != "/tmp/work/docs" {
 		t.Errorf("relative resolve = %q, want /tmp/work/docs", got)
@@ -77,6 +79,7 @@ func seedKnowledge(br *fakeBridge, result string) {
 }
 
 func TestHandleKnowledgeList_OK(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":true,"entries":[`+
@@ -112,6 +115,7 @@ func TestHandleKnowledgeList_OK(t *testing.T) {
 }
 
 func TestHandleKnowledgeList_BridgeError(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":false,"message":"boom"}`)
@@ -124,6 +128,7 @@ func TestHandleKnowledgeList_BridgeError(t *testing.T) {
 }
 
 func TestHandleKnowledgeAdd_MissingPath(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	rec := postJSON(h.config.handleKnowledgeAdd, "/api/knowledge", `{"path":""}`)
 	if rec.Code != http.StatusBadRequest {
@@ -132,6 +137,7 @@ func TestHandleKnowledgeAdd_MissingPath(t *testing.T) {
 }
 
 func TestHandleKnowledgeAdd_OK_ResolvesPathAndDerivesName(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":true,"message":"Indexing 'docs' in background\nFiles: 3"}`)
@@ -156,6 +162,7 @@ func TestHandleKnowledgeAdd_OK_ResolvesPathAndDerivesName(t *testing.T) {
 }
 
 func TestHandleKnowledgeAdd_ExplicitName(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":true,"message":"Indexing 'Project docs' in background"}`)
@@ -171,6 +178,7 @@ func TestHandleKnowledgeAdd_ExplicitName(t *testing.T) {
 }
 
 func TestHandleKnowledgeAdd_Failure(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":false,"message":"Usage: /knowledge add <name> <path>"}`)
@@ -182,6 +190,7 @@ func TestHandleKnowledgeAdd_Failure(t *testing.T) {
 }
 
 func TestHandleKnowledgeRemove_MissingName(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	req := httptest.NewRequest(http.MethodDelete, "/api/knowledge/", nil)
 	rec := httptest.NewRecorder()
@@ -192,6 +201,7 @@ func TestHandleKnowledgeRemove_MissingName(t *testing.T) {
 }
 
 func TestHandleKnowledgeRemove_OK(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":true,"message":"Removed 'docs'"}`)
@@ -213,6 +223,7 @@ func TestHandleKnowledgeRemove_OK(t *testing.T) {
 }
 
 func TestHandleKnowledgeRemove_NotFound(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":false,"message":"Entry not found: gone"}`)
@@ -228,6 +239,7 @@ func TestHandleKnowledgeRemove_NotFound(t *testing.T) {
 
 // TestCleanKnowledgeMsg pins KAS's own message whenever there is one, the sentinel only for an empty one.
 func TestCleanKnowledgeMsg(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		in   string
@@ -249,6 +261,7 @@ func TestCleanKnowledgeMsg(t *testing.T) {
 
 // TestRegisterKnowledgeRoutes_RefusedMethodsCarryAllow pins 405 + Allow under the /api/ subtree fallback stand-in.
 func TestRegisterKnowledgeRoutes_RefusedMethodsCarryAllow(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	const fallbackStatus = 299 // a status no marotte handler produces
 
@@ -289,6 +302,7 @@ func TestRegisterKnowledgeRoutes_RefusedMethodsCarryAllow(t *testing.T) {
 
 // TestRegisterKnowledgeRoutes_TheDispatchedMethodsReachTheirHandler is the control: a wall would 405 everything.
 func TestRegisterKnowledgeRoutes_TheDispatchedMethodsReachTheirHandler(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":true,"entries":[{"name":"docs","id":"a1","item_count":1,"path":"/w/docs"}]}`)
@@ -318,6 +332,7 @@ func TestRegisterKnowledgeRoutes_TheDispatchedMethodsReachTheirHandler(t *testin
 
 // TestHandleKnowledgeReindex_ResolvesTheNameToItsPath pins that KAS's `update` matches on path, so the server looks it up.
 func TestHandleKnowledgeReindex_ResolvesTheNameToItsPath(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":true,"entries":[`+
@@ -349,6 +364,7 @@ func TestHandleKnowledgeReindex_ResolvesTheNameToItsPath(t *testing.T) {
 
 // TestHandleKnowledgeReindex_RefusesANameNoSettledBaseHolds asserts the RPC count, so the 404 is never KAS's.
 func TestHandleKnowledgeReindex_RefusesANameNoSettledBaseHolds(t *testing.T) {
+	t.Parallel()
 	tests := map[string]struct {
 		entries string
 		name    string
@@ -386,6 +402,7 @@ func TestHandleKnowledgeReindex_RefusesANameNoSettledBaseHolds(t *testing.T) {
 }
 
 func TestHandleKnowledgeReindex_MissingName(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	rec := httptest.NewRecorder()
 	// No path value, as a bare /api/knowledge//reindex produces.
@@ -396,6 +413,7 @@ func TestHandleKnowledgeReindex_MissingName(t *testing.T) {
 }
 
 func TestHandleKnowledgeReindex_BridgeError(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.setCallErr(methodKiroKnowledge, errKnowledgeProbe)
@@ -412,6 +430,7 @@ func TestHandleKnowledgeReindex_BridgeError(t *testing.T) {
 // TestHandleKnowledgeCancel_SendsTheInFlightEntrysOperationID pins that a base and its re-index share a
 // name, and only the in-flight id is cancellable.
 func TestHandleKnowledgeCancel_SendsTheInFlightEntrysOperationID(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":true,"message":"Cancelled","entries":[`+
@@ -439,6 +458,7 @@ func TestHandleKnowledgeCancel_SendsTheInFlightEntrysOperationID(t *testing.T) {
 
 // TestHandleKnowledgeCancel_RefusesANameWithNothingIndexing asserts the RPC count, so the 404 is never an empty-id cancel.
 func TestHandleKnowledgeCancel_RefusesANameWithNothingIndexing(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":true,"entries":[{"name":"docs","id":"ctx12345","item_count":7,"path":"/w/docs"}]}`)
@@ -463,6 +483,7 @@ func TestHandleKnowledgeCancel_RefusesANameWithNothingIndexing(t *testing.T) {
 
 // TestHandleKnowledgeCancel_KASRefusalIs404 covers the operation finishing between show and cancel.
 func TestHandleKnowledgeCancel_KASRefusalIs404(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.onCall = func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
@@ -489,6 +510,7 @@ func TestHandleKnowledgeCancel_KASRefusalIs404(t *testing.T) {
 }
 
 func TestHandleKnowledgeClear_SendsClearWithoutASession(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":true,"message":"Cleared 2 knowledge bases"}`)
@@ -508,6 +530,7 @@ func TestHandleKnowledgeClear_SendsClearWithoutASession(t *testing.T) {
 }
 
 func TestHandleKnowledgeClear_RefusalIsAServerError(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedKnowledge(br, `{"success":false,"message":"store locked"}`)
@@ -524,6 +547,7 @@ var errKnowledgeProbe = errors.New("bridge gone")
 
 // TestKnowledgeNameUnaddressable pins the two refusals; any other free-text name is legal.
 func TestKnowledgeNameUnaddressable(t *testing.T) {
+	t.Parallel()
 	tests := map[string]struct {
 		name    string
 		wantBad bool
@@ -558,6 +582,7 @@ func TestKnowledgeNameUnaddressable(t *testing.T) {
 
 // TestHandleKnowledgeAdd_RefusesAnUnaddressableName pins the refusal at add time.
 func TestHandleKnowledgeAdd_RefusesAnUnaddressableName(t *testing.T) {
+	t.Parallel()
 	tests := map[string]string{
 		"a supplied name holding a slash": `{"path":"/abs/docs","name":"a/b"}`,
 		"a supplied name that is a dot":   `{"path":"/abs/docs","name":"."}`,

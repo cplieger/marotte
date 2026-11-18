@@ -56,6 +56,7 @@ func undurableLeaseStore(t *testing.T) *runlease.Store {
 
 // TestArmRunDeadline_FeedsTheLeasesSlotIntoTheOneDeadline covers the wiring only; runlease.NextDeadline owns the arithmetic.
 func TestArmRunDeadline_FeedsTheLeasesSlotIntoTheOneDeadline(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		slotIn time.Duration
 		wantIn time.Duration
@@ -300,6 +301,7 @@ func TestCancelExpiredRun_LogsAScheduleDeletedDuringItsRunAtInfo(t *testing.T) {
 
 // TestArmRunDeadline_IsIdempotent pins that the earliest arm wins, or a run extends its own budget.
 func TestArmRunDeadline_IsIdempotent(t *testing.T) {
+	t.Parallel()
 	h := boundsRuns(t)
 	const id = "wf_1"
 	leased(t, h, id)
@@ -325,6 +327,7 @@ func TestArmRunDeadline_IsIdempotent(t *testing.T) {
 
 // TestArmRunDeadline_RefusesARunWithNoLease pins that a TUI run has no cancel path marotte owns.
 func TestArmRunDeadline_RefusesARunWithNoLease(t *testing.T) {
+	t.Parallel()
 	h := boundsRuns(t)
 	h.armDeadline(t.Context(), "wf_tui")
 	if h.bounded("wf_tui") {
@@ -340,6 +343,7 @@ func TestArmRunDeadline_RefusesARunWithNoLease(t *testing.T) {
 
 // TestDisarmRunDeadline_ParksTheLeaseAndStopsTheTimer pins that a stale lease deadline makes the next re-arm skip the run forever.
 func TestDisarmRunDeadline_ParksTheLeaseAndStopsTheTimer(t *testing.T) {
+	t.Parallel()
 	h := boundsRuns(t)
 	const id = "wf_1"
 	leased(t, h, id)
@@ -376,6 +380,7 @@ func TestDisarmRunDeadline_ParksTheLeaseAndStopsTheTimer(t *testing.T) {
 // TestRunDeadline_ResumeGetsAFreshBudgetRatherThanARemainder asserts a full idle window from the resume,
 // which "later than the first deadline" cannot.
 func TestRunDeadline_ResumeGetsAFreshBudgetRatherThanARemainder(t *testing.T) {
+	t.Parallel()
 	h := boundsRuns(t)
 	const id = "wf_1"
 	leased(t, h, id)
@@ -413,6 +418,7 @@ func TestRunDeadline_ResumeGetsAFreshBudgetRatherThanARemainder(t *testing.T) {
 // TestCancelExpiredRun_ASupersededTimerDoesNothing pins that a callback in flight across a pause and resume
 // arrives with the old deadline.
 func TestCancelExpiredRun_ASupersededTimerDoesNothing(t *testing.T) {
+	t.Parallel()
 	h := boundsRuns(t)
 	const id = "wf_1"
 	leased(t, h, id)
@@ -640,6 +646,7 @@ func TestClaimRunTermination_IsTakenOnce(t *testing.T) {
 
 // TestClaimRunTermination_UserCancelBeatsALaterBound pins that a user cancel records nothing, so a later bound must not record over it.
 func TestClaimRunTermination_UserCancelBeatsALaterBound(t *testing.T) {
+	t.Parallel()
 	h := boundsRuns(t)
 	const id = "wf_1"
 	leased(t, h, id)
@@ -699,6 +706,7 @@ func TestReleaseRunTermination_ReopensAFailedCancel(t *testing.T) {
 
 // TestForgetRunBounds_ClearsTheClaimOnATerminalRun pins that the claim map holds only runs terminating now.
 func TestForgetRunBounds_ClearsTheClaimOnATerminalRun(t *testing.T) {
+	t.Parallel()
 	h := boundsRuns(t)
 	const id = "wf_1"
 	leased(t, h, id)
@@ -739,6 +747,7 @@ func (b *refillingBus) Broadcast(ctx context.Context, _ marotte.ServerEvent) {
 // TestForgetRunBounds_ARefillInsideTheTeardownLeavesNoTimer pins the order: lease first, so the timer
 // clear is final (bounds.timers has no eviction).
 func TestForgetRunBounds_ARefillInsideTheTeardownLeavesNoTimer(t *testing.T) {
+	t.Parallel()
 	h := boundsRuns(t)
 	const id = "wf_1"
 	bus := &refillingBus{rs: h, id: id}
@@ -820,6 +829,7 @@ func TestClearRunEnd_ClearsTheClaimOfAUserCancelledRun(t *testing.T) {
 
 // TestRearmRetriedRun_GivesAFreshClock pins that an aborted run without a terminal frame still carries its launch deadline.
 func TestRearmRetriedRun_GivesAFreshClock(t *testing.T) {
+	t.Parallel()
 	h := boundsRuns(t)
 	const id = "wf_1"
 	leased(t, h, id)
@@ -841,6 +851,7 @@ func TestRearmRetriedRun_GivesAFreshClock(t *testing.T) {
 // TestRearmRetriedRun_MintsALeaseForARunWhoseTerminalFrameReleasedIt pins that the minted lease carries the recipe
 // name the single-run rule needs.
 func TestRearmRetriedRun_MintsALeaseForARunWhoseTerminalFrameReleasedIt(t *testing.T) {
+	t.Parallel()
 	hub, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, hub) })
 	h := hub.runs
@@ -903,6 +914,7 @@ func TestRunStartLaunch_ClassifiesByTheLane(t *testing.T) {
 
 // TestObserveRunStart_AParentlessFrameMintsASweepableLease pins that an unsweepable parentless run blocks every later launch of its recipe.
 func TestObserveRunStart_AParentlessFrameMintsASweepableLease(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	const id = "wf_retry"
 
@@ -1074,6 +1086,7 @@ func TestObserveComplete_ForgetsStepSessionsOnlyOnATerminalStatus(t *testing.T) 
 // TestObserveComplete_ClearsAStepsPendingDecisionOnlyWhenTheRunEnds pins that the tracker feeds the connect replay,
 // so only the server can stop a dead run's ask being re-offered; `paused` keeps it.
 func TestObserveComplete_ClearsAStepsPendingDecisionOnlyWhenTheRunEnds(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		status   string
 		survives bool
@@ -1171,6 +1184,7 @@ func TestRunBoundConstants_HoldTheirRelationships(t *testing.T) {
 // TestObserveComplete_ClosesTheStepTurnOnlyOnATerminalStatus pins that the terminal frame is the only closer of a
 // step whose node_complete never came; `paused` must not close it.
 func TestObserveComplete_ClosesTheStepTurnOnlyOnATerminalStatus(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		status    string
 		stillOpen bool
@@ -1205,6 +1219,7 @@ func TestObserveComplete_ClosesTheStepTurnOnlyOnATerminalStatus(t *testing.T) {
 // TestObserveComplete_ClosesAParentlessRunsStepTurns pins the close keyed on the workflow: a parentless
 // run's frames carry an empty chat id.
 func TestObserveComplete_ClosesAParentlessRunsStepTurns(t *testing.T) {
+	t.Parallel()
 	h := newBudgetRuntime(t)
 	host := runChatID("wf_1")
 	if _, _, err := h.runs.log.open(t.Context(), &translate.RunStep{RunID: "wf_1", NodePath: "seq/coder", SessionID: "sess-step"}, host); err != nil {
@@ -1228,6 +1243,7 @@ func TestObserveComplete_ClosesAParentlessRunsStepTurns(t *testing.T) {
 // TestCancel_ReleasesTheLeaseOfAPausedRunThatSendsNoTerminalFrame pins that a node-boundary cancel of a run with
 // no in-flight node sends no `run_complete`, so releaseIfOver must release. The cancel precedes the reconcile.
 func TestCancel_ReleasesTheLeaseOfAPausedRunThatSendsNoTerminalFrame(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
@@ -1259,6 +1275,7 @@ func TestCancel_ReleasesTheLeaseOfAPausedRunThatSendsNoTerminalFrame(t *testing.
 
 // TestCancel_LeavesTheLeaseOfARunThatIsStillRunning pins that a running run's own terminal frame releases it.
 func TestCancel_LeavesTheLeaseOfARunThatIsStillRunning(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowCancel: json.RawMessage(`{}`),
@@ -1278,6 +1295,7 @@ func TestCancel_LeavesTheLeaseOfARunThatIsStillRunning(t *testing.T) {
 
 // TestCancel_ReconcilesNothingWhenTheCancelFAILED pins that a refused cancel issues no inspect and hands back the claim.
 func TestCancel_ReconcilesNothingWhenTheCancelFAILED(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("bridge gone")}
 	// A reconcile reading this would release the lease; the stop's own card refresh reads it too and releases

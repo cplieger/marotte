@@ -30,6 +30,7 @@ func adminRule(capability, effect string, match ...string) marotte.PolicyRule {
 }
 
 func TestComposeLocks(t *testing.T) {
+	t.Parallel()
 	personal := sampleGovernance()
 	tests := []struct {
 		profile *marotte.GovernanceStatePayload
@@ -99,6 +100,7 @@ func TestComposeLocks(t *testing.T) {
 }
 
 func TestReduceAdminRules_AnyRuleRestricts(t *testing.T) {
+	t.Parallel()
 	if p := reduceAdminRules([]marotte.PolicyRule{adminRule("shell", "ask", "rm *")}); !p.any {
 		t.Error("an administration ask rule did not set any: the picker hint would not show")
 	}
@@ -177,6 +179,7 @@ func TestSettingsGovernance_PublishesComposedStateOnChangeOnly(t *testing.T) {
 }
 
 func TestGovernanceLocks_ColdCacheCarriesAdminLocks(t *testing.T) {
+	t.Parallel()
 	r := newGovRecorder(t)
 	r.st.publishGovernance(t.Context(), r.st.governance.setAdmin(reduceAdminRules([]marotte.PolicyRule{adminRule("power", "deny")})))
 	if _, ok := r.st.GovernanceLocks()[marotte.LockPowers]; !ok {
@@ -278,6 +281,7 @@ func TestContentCollectionEnabled(t *testing.T) {
 }
 
 func TestAgentFeatures_SubagentLockWins(t *testing.T) {
+	t.Parallel()
 	dir := writeSettings(t, `{"workflows_enabled":true}`)
 	h := reopenFixtureIn(t, dir, nil)
 	if got := h.readSessionSettings(t.Context()).Features; !got.Workflows {

@@ -1367,6 +1367,7 @@ func wrapDoc(b *strings.Builder, text, first, rest string) {
 // runGate's doc comment ends with holdSummary. With GATE_HOLD_TABLE set it writes the summary there, and every cell
 // to the same name with ".cells" added.
 func TestGateHold_TheTableIsRunGatesDoc(t *testing.T) {
+	t.Parallel()
 	want := holdSummary()
 	if out := os.Getenv("GATE_HOLD_TABLE"); out != "" {
 		if err := os.WriteFile(out, []byte(want), 0o600); err != nil {

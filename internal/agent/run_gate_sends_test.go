@@ -32,6 +32,7 @@ type stepSteerParams struct {
 
 // Each request is sent through a method held in a local, the shape a source scan cannot follow.
 func TestRunWork_AnUnadmittedSendIsRefusedAtTheEngine(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 	eng, _ := h.engine.current()
@@ -154,6 +155,7 @@ var knownUnguarded = map[string][]string{
 // A method added to engineHandle or engineSession reaches the engine past guardRunWork through the guard's embedded
 // value, so it must be declared on the guard or classified as sending no run work.
 func TestRunWork_EveryEngineMethodIsGuardedOrClassified(t *testing.T) {
+	t.Parallel()
 	declared := map[string]map[string]bool{"guardedEngine": {}, "guardedSession": {}}
 	_, files := parseAgentSources(t)
 	for _, f := range files {
@@ -205,6 +207,7 @@ var guardOwners = map[string][]string{
 }
 
 func TestRunWork_TheGuardsProofIsMintedInOnePlace(t *testing.T) {
+	t.Parallel()
 	fset, files := parseAgentSources(t)
 	runWorkVerbConsts := map[string]bool{}
 	for _, f := range files {

@@ -30,7 +30,6 @@ func oneTurn(t *testing.T, got []command.CloseTurn, want command.CloseTurn) {
 
 // Each kind of turn a close stops is named by the ids a page can know it by.
 func TestCloseImpact_NamesEachTurnByItsIds(t *testing.T) {
-	t.Parallel()
 	t.Run("an open prompt turn names its turn, prompt, admission and resends", func(t *testing.T) {
 		rt, cs, _ := newTestHub()
 		seedChat(t, cs, "c1")

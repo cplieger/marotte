@@ -40,6 +40,7 @@ func busyRun(t *testing.T, h *Runtime, workflowID string) marotte.EngineBusyRun 
 }
 
 func TestEngineStatus_NamesABusyRunByItsDisplayNameNeverItsRecipe(t *testing.T) {
+	t.Parallel()
 	h, _, _ := restartFixture(t)
 	deadline := time.Now().Add(time.Hour)
 	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_read", Recipe: promptRecipe, Deadline: deadline})
@@ -59,6 +60,7 @@ func TestEngineStatus_NamesABusyRunByItsDisplayNameNeverItsRecipe(t *testing.T) 
 }
 
 func TestEngineStatus_NamesABusyRunsLaunchingChat(t *testing.T) {
+	t.Parallel()
 	h, _, _ := restartFixture(t)
 	if _, err := h.chatStore.Mutate(t.Context(), "c-1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "Findings cleanup"
@@ -90,6 +92,7 @@ func TestLiveRuns_NamesALeasedRunByItsDisplayName(t *testing.T) {
 }
 
 func TestToWorkflowRuns_NamesARunByItsLabelAndNeverByThePromptRecipe(t *testing.T) {
+	t.Parallel()
 	h := ownedBy(t, map[string][]string{})
 	got := h.runs.toWire(h.claimedSessions(t.Context()), []kasWorkflowRun{
 		{WorkflowID: "wf_labelled", Name: "Fix the run bar", WorkflowName: promptRecipe},
@@ -112,6 +115,7 @@ func TestToWorkflowRuns_NamesARunByItsLabelAndNeverByThePromptRecipe(t *testing.
 }
 
 func TestHandleRun_CarriesTheRunsDisplayName(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, runLabel, workflowName, want string
 	}{

@@ -110,6 +110,7 @@ func TestCancelExpired_ASlotOutranksAnOpenStep(t *testing.T) {
 
 // A permission ask arrives as its own request, so it reports progress through its own door, by session id.
 func TestRequestPermission_AStepsAskRefillsTheWindow(t *testing.T) {
+	t.Parallel()
 	const (
 		chatID  = marotte.ChatID("chat-step")
 		stepSID = "step-session-1"
@@ -145,6 +146,7 @@ func TestRequestPermission_AStepsAskRefillsTheWindow(t *testing.T) {
 // TestHandleSessionUpdate_AStepsThinkingChunkRefillsTheWindow pins the report at the frame's door: a
 // step that only reasons is not a stall.
 func TestHandleSessionUpdate_AStepsThinkingChunkRefillsTheWindow(t *testing.T) {
+	t.Parallel()
 	const (
 		chatID  = marotte.ChatID("chat-step")
 		stepSID = "step-session-1"
@@ -176,6 +178,7 @@ func TestHandleSessionUpdate_AStepsThinkingChunkRefillsTheWindow(t *testing.T) {
 
 // A replayed frame is stored history, not progress.
 func TestHandleSessionUpdate_AReplayedStepFrameIsNotProgress(t *testing.T) {
+	t.Parallel()
 	const (
 		chatID  = marotte.ChatID("chat-step")
 		stepSID = "step-session-1"

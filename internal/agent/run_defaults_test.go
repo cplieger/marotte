@@ -58,6 +58,7 @@ func errorText(t *testing.T, rec *httptest.ResponseRecorder) string {
 
 // A launch left on Default sends no launch default, so KAS's and the recipe's own pins win.
 func TestLaunchRoute_SendsTheModelPickOnlyWhenSet(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name       string
 		body       string
@@ -95,6 +96,7 @@ func TestLaunchRoute_SendsTheModelPickOnlyWhenSet(t *testing.T) {
 // A pick the catalog does not offer is refused before anything reaches KAS, which would take it
 // and fail the run at its first model call.
 func TestLaunchRoute_RefusesAPickTheCatalogDoesNotOffer(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name, body, wantText string
 	}{
@@ -123,6 +125,7 @@ func TestLaunchRoute_RefusesAPickTheCatalogDoesNotOffer(t *testing.T) {
 // With no live catalog the template's list decides, as GET /api/config-template serves it; with
 // neither, a pick cannot be checked and is refused as retryable.
 func TestLaunchRoute_ChecksThePickAgainstTheTemplateWithNoLiveCatalog(t *testing.T) {
+	t.Parallel()
 	newHub := func(t *testing.T) (*fakeBridge, *http.ServeMux) {
 		t.Helper()
 		h, _, br := newTestHub()
@@ -175,6 +178,7 @@ func TestLaunchRoute_ChecksThePickAgainstTheTemplateWithNoLiveCatalog(t *testing
 // A clock rule stores its pick, shows it, keeps it across a restart, and refuses an unknown one
 // at save time without touching the stored row.
 func TestLaunchRuleRoute_StoresThePickAndRefusesAnUnknownOne(t *testing.T) {
+	t.Parallel()
 	h, _, mux := runDefaultsHub(t)
 	const spec = `"when":{"clock":{"freq":"daily","hour":2,"minute":0}}`
 	rec := postRoute(t, mux, "/api/launch-rules", `{"source":"bundled://publish","model":"model-a","effort":"high",`+spec+`,"enabled":true}`)
@@ -202,6 +206,7 @@ func TestLaunchRuleRoute_StoresThePickAndRefusesAnUnknownOne(t *testing.T) {
 
 // A schedule's pick reaches workflow/new at its fire.
 func TestLaunchScheduled_SendsTheSchedulesPick(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_sched")
 	if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", launchrule.Row{ID: "sched-1"},
@@ -216,6 +221,7 @@ func TestLaunchScheduled_SendsTheSchedulesPick(t *testing.T) {
 
 // The Run and Schedule forms list a model's tiers from GET /api/config-template.
 func TestHandleConfigTemplate_ListsEachModelsTiers(t *testing.T) {
+	t.Parallel()
 	h, _, _ := runDefaultsHub(t)
 	rec := httptest.NewRecorder()
 	h.handleConfigTemplate(rec, httptest.NewRequest(http.MethodGet, "/api/config-template", nil))
@@ -247,6 +253,7 @@ func pinnedRecipe(br *fakeBridge, step string) {
 // KAS owns a step pin's validation: it launches, warns, then falls back at step start or fails the
 // step at its first model call.
 func TestLaunch_SendsAStepPinTheCatalogDoesNotOffer(t *testing.T) {
+	t.Parallel()
 	_, br, mux := runDefaultsHub(t)
 	pinnedRecipe(br, planStep("review", "model-e-9", "xhigh"))
 	rec := postRoute(t, mux, "/api/runs", `{"source":"bundled://publish"}`)
@@ -260,6 +267,7 @@ func TestLaunch_SendsAStepPinTheCatalogDoesNotOffer(t *testing.T) {
 
 // Only the run's own pick reads the model list, so a pinned plan launches while it is unreadable.
 func TestHandleLaunch_PinnedPlanNeedsNoModelList(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_pins")
 	pinnedRecipe(br, planStep("review", "model-a", "high"))
@@ -273,6 +281,7 @@ func TestHandleLaunch_PinnedPlanNeedsNoModelList(t *testing.T) {
 
 // A schedule's fire sends a recipe whose step pin the catalog does not offer.
 func TestLaunchScheduled_StepPinsReachWorkflowNew(t *testing.T) {
+	t.Parallel()
 	h, br, _ := runDefaultsHub(t)
 	pinnedRecipe(br, planStep("review", "model-e-9", ""))
 	id, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", launchrule.Row{ID: "sched-1"},
@@ -287,6 +296,7 @@ func TestLaunchScheduled_StepPinsReachWorkflowNew(t *testing.T) {
 
 // workflow/new's warnings reach the launching browser verbatim.
 func TestHandleLaunch_CarriesWorkflowNewWarnings(t *testing.T) {
+	t.Parallel()
 	_, br, mux := runDefaultsHub(t)
 	const warning = "[workflow] step 'a' modelId 'm-x' is not a served model; the step fails at its first model call"
 	br.setCallResult(methodKiroWorkflowNew, json.RawMessage(`{"workflowId":"wf_pick","warnings":["`+warning+`"]}`))
@@ -305,6 +315,7 @@ func TestHandleLaunch_CarriesWorkflowNewWarnings(t *testing.T) {
 
 // A launch KAS gave no warning answers no warnings key.
 func TestHandleLaunch_OmitsWarningsWhenKASSentNone(t *testing.T) {
+	t.Parallel()
 	for name, answer := range map[string]string{
 		"absent": `{"workflowId":"wf_pick"}`,
 		"empty":  `{"workflowId":"wf_pick","warnings":[]}`,

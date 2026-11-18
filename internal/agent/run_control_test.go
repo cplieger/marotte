@@ -37,6 +37,7 @@ func runStatuses(t *testing.T) []marotte.RunStatus {
 
 // TestRunVerbGates pins each verb's `from` list; the rationale is run_affordance.go's. Cancel stays unrestricted: it is the tab-close gesture.
 func TestRunVerbGates(t *testing.T) {
+	t.Parallel()
 	all := runStatuses(t)
 
 	cases := map[string]struct {
@@ -65,6 +66,7 @@ func TestRunVerbGates(t *testing.T) {
 // TestRunVerbsAreWired pins that a verb with no issuer 200s doing nothing, one with no name logs as "", and a
 // restricted cancel errors on tab close.
 func TestRunVerbsAreWired(t *testing.T) {
+	t.Parallel()
 	for _, verb := range []runVerb{runVerbCancel, runVerbPause, runVerbResume, runVerbDelete} {
 		if verb.name == "" {
 			t.Error("a run verb has no name; its 409 and its log line would both be blank")
@@ -344,6 +346,7 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 
 // TestHealBudget_BoundsThePauseHealLoopAndProgressRefillsIt pins that the budget stops a heal/pause loop and progress refills it.
 func TestHealBudget_BoundsThePauseHealLoopAndProgressRefillsIt(t *testing.T) {
+	t.Parallel()
 	t.Run("three attempts, then the run is left paused", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		for i := 1; i <= maxAutoHeals; i++ {

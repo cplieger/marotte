@@ -123,6 +123,7 @@ func (s sendGateStep) apply(t *testing.T, h *Runtime, release func(), folded *st
 // prompt's own run, since KAS has not been sent the prompt. Each order holds the send until KAS's run is over, then
 // sends it once as written, never fails it, and records the re-wake's text in a turn of its own.
 func TestCmdPrompt_ARewakeBeforeTheSendIsWaitedOutInEveryOrder(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		steps []sendGateStep
@@ -251,6 +252,7 @@ func earlyRunFrames(t *testing.T, h *Runtime, cs *testChatStore) (textTurn, tool
 // then feeds the run that follows the gate its text and tool call before its turn_start, the frame order KAS uses
 // for the prompt it was just sent, and checks where they are recorded and how the prompt's turn closes.
 func TestCmdPrompt_TheSendGateHandsThePromptTheChatFromEveryOwnState(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		steps []sendGateStep
@@ -389,6 +391,7 @@ func gateRewakeHub(t *testing.T, hook func(h *Runtime)) (h *Runtime, cs *testCha
 // KAS reporting a run between the send gate's wake and its decision keeps the fold-opened re-wake open, its next
 // text in that turn, and the prompt unsent until KAS goes idle again.
 func TestCmdPrompt_ARunReportedAsTheSendGateWakesKeepsTheRewakeOpen(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		var armed atomic.Bool
 		h, cs, br, rewake := gateRewakeHub(t, func(h *Runtime) {

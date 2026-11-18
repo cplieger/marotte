@@ -141,6 +141,7 @@ func TestRunAsks_SeqGrowsAcrossARebuiltCell(t *testing.T) {
 
 // A trigger racing the lease's release never leaves a cell behind it, in either order.
 func TestRunAsks_ACreateRacingTheEndLeavesNoCell(t *testing.T) {
+	t.Parallel()
 	for i := range 50 {
 		rs := &Runs{chats: newTestChatStore()}
 		if err := rs.leaseStore().Put(t.Context(), &runlease.Lease{WorkflowID: "wf_1", Origin: runlease.OriginManual}); err != nil {
@@ -695,6 +696,7 @@ func TestRunAsks_AnUnseenQuestionReadsTheStepsLastWords(t *testing.T) {
 // kiro-cli's reason reaches the wire, and a reason arriving on an unchanged ask is a change to
 // publish.
 func TestWireAsks_CarriesTheReasonAndCountsItAsAChange(t *testing.T) {
+	t.Parallel()
 	const reason = "Step 'ask' sent a send_message success signal that could not be saved, so it is paused awaiting user input instead of finishing."
 	before := wireAsks([]workflow.Ask{{ID: "a1", NodeID: "ask", TextSource: marotte.RunAskTextLastMessage}})
 	after := wireAsks([]workflow.Ask{{ID: "a1", NodeID: "ask", TextSource: marotte.RunAskTextLastMessage, Reason: reason}})

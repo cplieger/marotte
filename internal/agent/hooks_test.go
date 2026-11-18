@@ -14,6 +14,7 @@ import (
 )
 
 func TestHookIDRoundTrip(t *testing.T) {
+	t.Parallel()
 	// The base64url handle must survive the '/' and '#' of a KAS id.
 	cases := []string{
 		"/workspace/.kiro/hooks/greet.json#hook-0",
@@ -36,12 +37,14 @@ func TestHookIDRoundTrip(t *testing.T) {
 }
 
 func TestDecodeHookIDInvalid(t *testing.T) {
+	t.Parallel()
 	if _, err := decodeHookID("not base64!!"); err == nil {
 		t.Error("expected error decoding invalid base64url")
 	}
 }
 
 func TestParseHookResult(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		raw     string
@@ -67,6 +70,7 @@ func TestParseHookResult(t *testing.T) {
 }
 
 func TestHookScopeAndPath(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -99,12 +103,14 @@ func TestHookScopeAndPath(t *testing.T) {
 }
 
 func TestHookScopeRankOrdersWorkspaceFirst(t *testing.T) {
+	t.Parallel()
 	if hookScopeRank(hookScopeWorkspace) >= hookScopeRank(hookScopeGlobal) {
 		t.Error("workspace hooks must sort before global hooks")
 	}
 }
 
 func TestToHookInfo(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	h := &Settings{lifecycle: &lifetime{workDir: work}}
 	fp := filepath.Join(work, ".kiro", "hooks", "greet.json")
@@ -173,6 +179,7 @@ func TestToHookInfo(t *testing.T) {
 // TestToHookInfo_MatcherWarning pins the badge: a tool trigger without matcher runs on every tool
 // call, which upstream only logs. Computed server-side so the table exists once.
 func TestToHookInfo_MatcherWarning(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	h := &Settings{lifecycle: &lifetime{workDir: work}}
 	fp := filepath.Join(work, ".kiro", "hooks", "h.json")

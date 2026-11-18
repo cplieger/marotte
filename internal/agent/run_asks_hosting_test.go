@@ -63,6 +63,7 @@ func TestRunAsks_RunStartRecordsTheParentSessionOnTheLease(t *testing.T) {
 // A paused run keeps its question across an engine restart: the new generation's read finds the same wait under the
 // same id, and no published snapshot between the two drops or replaces the card.
 func TestRunAsks_AnEngineRestartKeepsTheRunsQuestion(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))

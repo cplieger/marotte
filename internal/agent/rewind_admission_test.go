@@ -31,6 +31,7 @@ func rewindTo(t *testing.T, h *Runtime, messageID string) *httptest.ResponseReco
 // A close's drain holds the chat's slot while it looks for a queued prompt, with no turn running; a rewind landing in
 // that window waits for the slot as a prompt does, and reverts.
 func TestRewindChat_WaitsOutAReservationThatOpensNoTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	openChat(t, h, "c1")

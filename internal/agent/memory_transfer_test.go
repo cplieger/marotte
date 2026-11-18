@@ -29,6 +29,7 @@ func comingSoon() *marotte.RPCError {
 }
 
 func TestMemoryImportPrompt_ComingSoonIs409(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.setCallRPCErr(methodKiroMemoryGetImportPrompt, comingSoon())
@@ -46,6 +47,7 @@ func TestMemoryImportPrompt_ComingSoonIs409(t *testing.T) {
 }
 
 func TestMemoryImportPrompt_AnswersThePromptWithoutASession(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	const prompt = "Export every memory you hold about me as JSON Lines.\nOne object per line."
@@ -71,6 +73,7 @@ func TestMemoryImportPrompt_AnswersThePromptWithoutASession(t *testing.T) {
 }
 
 func TestMemoryImport_SendsTheBodyAsContentAndReportsPerLine(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	// The answer shape of kiro-cli 3.2.1's runJsonlImport: per-line records in all four lists.
@@ -112,6 +115,7 @@ func TestMemoryImport_SendsTheBodyAsContentAndReportsPerLine(t *testing.T) {
 }
 
 func TestMemoryImport_RefusesAnOversizeBodyBeforeTheWire(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 
@@ -127,6 +131,7 @@ func TestMemoryImport_RefusesAnOversizeBodyBeforeTheWire(t *testing.T) {
 }
 
 func TestMemoryImport_KASContentRefusalIs400WithItsText(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	// The wire shape KAS's ACP layer gives a thrown InvalidMemoryCommandError (badImportContent).
@@ -141,6 +146,7 @@ func TestMemoryImport_KASContentRefusalIs400WithItsText(t *testing.T) {
 }
 
 func TestMemoryImport_UnreadableReportStillRefetches(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	// KAS answered, so lines may have landed, but added is a count where the report carries records.
@@ -158,6 +164,7 @@ func TestMemoryImport_UnreadableReportStillRefetches(t *testing.T) {
 }
 
 func TestMemoryExport_NoContentIs502(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.setCallResult(methodKiroMemoryExport, json.RawMessage(`{"format":"json"}`))
@@ -172,6 +179,7 @@ func TestMemoryExport_NoContentIs502(t *testing.T) {
 }
 
 func TestMemoryExport_DownloadsKASContentVerbatim(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	doc := "{\n  \"format\": \"kiro-memory\",\n  \"version\": 1,\n  \"recordCount\": 0,\n  \"records\": []\n}"

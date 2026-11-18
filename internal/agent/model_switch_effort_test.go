@@ -64,6 +64,7 @@ func switchEntries(t *testing.T, d *effortDrift) []marotte.EntryModelSwitched {
 // The reported bug: the tier picked with the switch is what the switch asserts, what its one row
 // names and what the record keeps, and the respawn after a crash loads the new session at it.
 func TestSwitchModel_ATierPickedWithTheSwitchIsWhatTheNewSessionRuns(t *testing.T) {
+	t.Parallel()
 	d, h := switchFixture(t)
 	br := fakeOf(h.coord.bridgeFor("c1"))
 
@@ -94,6 +95,7 @@ func TestSwitchModel_ATierPickedWithTheSwitchIsWhatTheNewSessionRuns(t *testing.
 // Pick high, then the model in a second gesture: the switch carries the chat's level, which the
 // new model offers, rather than reading the new model's seed.
 func TestSwitchModel_AModelSwitchCarriesTheLevelThePickSet(t *testing.T) {
+	t.Parallel()
 	d, h := switchFixture(t)
 	br := fakeOf(h.coord.bridgeFor("c1"))
 
@@ -118,6 +120,7 @@ func TestSwitchModel_AModelSwitchCarriesTheLevelThePickSet(t *testing.T) {
 // A tier the new model lacks is never asserted: the switch takes the model's first level and its
 // row names the tier that was not offered.
 func TestSwitchModel_ATierTheNewModelLacksFallsBackAndTheRowSaysSo(t *testing.T) {
+	t.Parallel()
 	d, h := switchFixture(t)
 	br := fakeOf(h.coord.bridgeFor("c1"))
 
@@ -141,6 +144,7 @@ func TestSwitchModel_ATierTheNewModelLacksFallsBackAndTheRowSaysSo(t *testing.T)
 // A remembered seed the new model no longer offers is no fallback: the switch takes the model's
 // default, so the session is never asked a tier its row calls not offered.
 func TestSwitchModel_AStaleSeedTheNewModelLacksIsNotItsFallback(t *testing.T) {
+	t.Parallel()
 	d, h := switchFixture(t)
 	br := fakeOf(h.coord.bridgeFor("c1"))
 	writeEffortSeed(t, d.dir, map[string]string{"model-e": "max"})
@@ -162,6 +166,7 @@ func TestSwitchModel_AStaleSeedTheNewModelLacksIsNotItsFallback(t *testing.T) {
 // A pick before any session has reported the model keeps its tier: nothing in the catalog can
 // refuse it, and the session the chat opens next runs at it.
 func TestSwitchModel_APickTheCatalogCannotJudgeKeepsItsTier(t *testing.T) {
+	t.Parallel()
 	d, h := switchFixture(t)
 	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
 	h.coord.catalog.SetModels([]marotte.SessionModel{catalogModel(t, "fake-model", fiveTiersMeta)})
@@ -179,6 +184,7 @@ func TestSwitchModel_APickTheCatalogCannotJudgeKeepsItsTier(t *testing.T) {
 // Mid-turn, a second commit naming the parked model and no tier keeps the parked tier, and the
 // close lands it as the one row.
 func TestSwitchModel_AModelOnlyRepickKeepsTheParkedTier(t *testing.T) {
+	t.Parallel()
 	d, h := switchFixture(t)
 	br := fakeOf(h.coord.bridgeFor("c1"))
 	id, _ := h.stagePromptTurn(t, "c1")
@@ -204,6 +210,7 @@ func TestSwitchModel_AModelOnlyRepickKeepsTheParkedTier(t *testing.T) {
 // Mid-turn, a second commit naming the parked model with the chat's own tier replaces the parked
 // tier: the last pick wins, even one equal to the level the chat already holds.
 func TestSwitchModel_ARepickBackToTheChatsTierReplacesTheParkedTier(t *testing.T) {
+	t.Parallel()
 	d, h := switchFixture(t)
 	br := fakeOf(h.coord.bridgeFor("c1"))
 	id, _ := h.stagePromptTurn(t, "c1")
@@ -227,6 +234,7 @@ func TestSwitchModel_ARepickBackToTheChatsTierReplacesTheParkedTier(t *testing.T
 // Mid-turn, a commit naming another model replaces the pick whole: the tier parked with the
 // first model does not ride the second.
 func TestSwitchModel_ARepickOfAnotherModelDropsTheParkedTier(t *testing.T) {
+	t.Parallel()
 	d, h := switchFixture(t)
 	h.stagePromptTurn(t, "c1")
 
@@ -242,6 +250,7 @@ func TestSwitchModel_ARepickOfAnotherModelDropsTheParkedTier(t *testing.T) {
 // thinking off when it is on: the close lands the model at the chat's level with thinking still
 // off. A model-only re-pick would keep the tier and turn thinking back on.
 func TestSwitchModel_OffOverAParkedTierDropsIt(t *testing.T) {
+	t.Parallel()
 	const toggleable = `{"kiro":{"hasEffort":true,"thinkingToggleable":true,"effortLevels":["low","medium","high","xhigh","max"]}}`
 	for name, thinkingWasOn := range map[string]bool{"Off turns thinking off": true, "thinking already off": false} {
 		t.Run(name, func(t *testing.T) {
@@ -295,6 +304,7 @@ func TestSwitchModel_OffOverAParkedTierDropsIt(t *testing.T) {
 // switch in one request: the stop lands in place, the pair is cleared, and the close moves nothing,
 // so the last gesture sticks.
 func TestSwitchModel_AStopKeptOnTheRunningModelCancelsAParkedSwitch(t *testing.T) {
+	t.Parallel()
 	const toggleable = `{"kiro":{"hasEffort":true,"thinkingToggleable":true,"effortLevels":["low","medium","high","xhigh","max"]}}`
 	for name, tc := range map[string]struct {
 		thinkingWasOff           bool
@@ -483,6 +493,7 @@ func TestSwitchModel_TheSpawnsFoldWaitsForASwitchBeingAdmitted(t *testing.T) {
 // An admission applies the one decision it read: a model the session reports meanwhile, which no
 // switch lock orders, does not turn the request into an OK that parks nothing.
 func TestSwitchModel_AnAdmissionParksWhatItDecidedWhenTheModelMovesMeanwhile(t *testing.T) {
+	t.Parallel()
 	d, h := heldSwitchFixture(t)
 	parkOnBridgelessChat(t, d, h, pendingPair{model: "model-e", effort: "low"})
 	finish := admitHeld(t, h, marotte.SwitchModelCommand{Model: "model-e", Effort: "max"})
@@ -507,6 +518,7 @@ func TestSwitchModel_AnAdmissionParksWhatItDecidedWhenTheModelMovesMeanwhile(t *
 // A client walking away once the switch's stop has landed still gets its park: the stop never
 // stands with the pair it cancelled still parked.
 func TestSwitchModel_AStopThatLandedKeepsItsParkWhenTheClientWalksAway(t *testing.T) {
+	t.Parallel()
 	d, h := heldSwitchFixture(t)
 	if _, err := d.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.PendingModel, c.PendingEffort = "model-a", "high"
@@ -532,6 +544,7 @@ func TestSwitchModel_AStopThatLandedKeepsItsParkWhenTheClientWalksAway(t *testin
 // Mid-turn the tier waits with the model: nothing reaches the running session, and the close
 // lands both as one row.
 func TestSwitchModel_ABusyChatParksTheTierWithThePick(t *testing.T) {
+	t.Parallel()
 	d, h := switchFixture(t)
 	br := fakeOf(h.coord.bridgeFor("c1"))
 	id, _ := h.stagePromptTurn(t, "c1")
@@ -566,6 +579,7 @@ func TestSwitchModel_ABusyChatParksTheTierWithThePick(t *testing.T) {
 // A tier picked with a model on a chat with no bridge lands on the record, and the session it
 // opens next runs at it.
 func TestSwitchModel_ABridgelessPickOpensItsSessionAtTheTier(t *testing.T) {
+	t.Parallel()
 	d, h := switchFixture(t)
 	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
 
@@ -582,6 +596,7 @@ func TestSwitchModel_ABridgelessPickOpensItsSessionAtTheTier(t *testing.T) {
 // A pair parked with no bridge lands when the next session opens: the open folds it onto the
 // record first, so the session opens on the model at the parked tier.
 func TestSwitchModel_TheSpawnLandsAParkedPair(t *testing.T) {
+	t.Parallel()
 	d, h := switchFixture(t)
 	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
 	if _, err := d.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -605,6 +620,7 @@ func TestSwitchModel_TheSpawnLandsAParkedPair(t *testing.T) {
 // A switch-by-restart opens the target's first session at the chat's level when the target
 // offers it, not at the target's seed.
 func TestSwitchModel_ASwitchByRestartCarriesTheChatsLevel(t *testing.T) {
+	t.Parallel()
 	d, h := switchFixture(t)
 	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
 	if _, err := d.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -627,6 +643,7 @@ func TestSwitchModel_ASwitchByRestartCarriesTheChatsLevel(t *testing.T) {
 // A tier picked with a switch turns thinking back on, as a set_effort pick does, so the session
 // is asked the tier uncapped.
 func TestSwitchModel_ATierPickedWithTheSwitchTurnsThinkingOn(t *testing.T) {
+	t.Parallel()
 	d, h := switchFixture(t)
 	br := fakeOf(h.coord.bridgeFor("c1"))
 	h.coord.catalog.SetModels([]marotte.SessionModel{
@@ -656,6 +673,7 @@ func TestSwitchModel_ATierPickedWithTheSwitchTurnsThinkingOn(t *testing.T) {
 // Onto a model whose thinking stays off, the row names the tier the session is asked to run, the
 // cap, while the record keeps the carried preference for when thinking comes back on.
 func TestSwitchModel_TheRowNamesTheCappedTierAndTheRecordThePreference(t *testing.T) {
+	t.Parallel()
 	d, h := switchFixture(t)
 	br := fakeOf(h.coord.bridgeFor("c1"))
 	h.coord.catalog.SetModels([]marotte.SessionModel{
@@ -687,6 +705,7 @@ func TestSwitchModel_TheRowNamesTheCappedTierAndTheRecordThePreference(t *testin
 // Two gestures before any session has reported the new model: the chat's level rides the pick,
 // since nothing in the catalog can refuse it, and the next session runs at it.
 func TestSwitchModel_ACarriedLevelRidesAPickTheCatalogCannotJudge(t *testing.T) {
+	t.Parallel()
 	d, h := switchFixture(t)
 	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
 	h.coord.catalog.SetModels([]marotte.SessionModel{catalogModel(t, "fake-model", fiveTiersMeta)})
@@ -705,6 +724,7 @@ func TestSwitchModel_ACarriedLevelRidesAPickTheCatalogCannotJudge(t *testing.T) 
 // A model listed with no tiers runs none: the switch asserts no effort, its row names the wanted
 // tier as not offered, and a stale seed for it is never taken as its level.
 func TestSwitchModel_ATierlessModelRunsNoTierAndTheRowSaysSo(t *testing.T) {
+	t.Parallel()
 	for name, payload := range map[string]string{
 		"a picked tier":  `{"model":"flat","effort":"high"}`,
 		"a carried tier": `{"model":"flat"}`,
@@ -746,6 +766,7 @@ func TestSwitchModel_ATierlessModelRunsNoTierAndTheRowSaysSo(t *testing.T) {
 // A switch retried after it landed (its first response lost) answers ok and writes nothing more,
 // a tier the new model lacked included.
 func TestSwitchModel_ARetryOfALandedSwitchIsOK(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		payload string
 		row     marotte.EntryModelSwitched
@@ -768,6 +789,7 @@ func TestSwitchModel_ARetryOfALandedSwitchIsOK(t *testing.T) {
 
 // A tier the model in force lacks is refused, as is a malformed tier.
 func TestSwitchModel_RefusesAnEffortItCannotCarry(t *testing.T) {
+	t.Parallel()
 	d, h := switchFixture(t)
 	if _, err := d.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Model, c.Effort = "model-e", "low"
@@ -791,6 +813,7 @@ func TestSwitchModel_RefusesAnEffortItCannotCarry(t *testing.T) {
 // A tier named with the model in force is set in place, as set_effort sets it: its row and the
 // record.
 func TestSwitchModel_ATierOnTheModelInForceIsSetInPlace(t *testing.T) {
+	t.Parallel()
 	d, h := switchFixture(t)
 
 	postOK(t, h, "switch_model", `{"model":"fake-model","effort":"high"}`)

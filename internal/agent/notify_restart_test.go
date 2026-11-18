@@ -117,6 +117,7 @@ func TestHoldUnread_CarriesOnlyTheUsersWords(t *testing.T) {
 // A wake waiting on a chat whose session is not running when the process stops still gets its restart entry, with
 // its words.
 func TestHoldUnread_AWakeOnAChatWithNoSessionIsRecorded(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
 	lc := h.coord.turns.testLifecycle("c1")

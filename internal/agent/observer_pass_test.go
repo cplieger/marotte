@@ -16,6 +16,7 @@ import (
 // An observer pass opens a session with the profile's presets as they are now and nothing else, answers every tool
 // or permission request on it with a refusal, and closes the session when its reads return.
 func TestObserverPass_OpensWithTheCurrentPresetsRefusesToolRequestsAndCloses(t *testing.T) {
+	t.Parallel()
 	h, dir := reopenFixture(t)
 	awaitBoot(h)
 	writeSetting(t, dir, settings.KeySecurityProfile, "unrestricted")
@@ -62,6 +63,7 @@ func TestObserverPass_OpensWithTheCurrentPresetsRefusesToolRequestsAndCloses(t *
 // A pass whose close KAS refuses deletes the session on the engine, so KAS drops it, and then closes it, so marotte's
 // lane for it ends: nothing is left live.
 func TestObserverPass_ARefusedCloseDeletesTheSessionAndClosesIt(t *testing.T) {
+	t.Parallel()
 	h, _ := reopenFixture(t)
 	awaitBoot(h)
 	o := oneObserver(t, h)

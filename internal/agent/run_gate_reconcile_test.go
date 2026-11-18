@@ -24,6 +24,7 @@ import (
 // lost resume write wakes it to try at once, rather than after its backoff, and starts no second release, so the
 // run's heal budget is charged once.
 func TestSignInGate_AGateFlapDuringAReleasesRetryWakesItsOneRelease(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		g := newManualGateRun(t, signedInDisk(), withReleaseRetryBase(time.Hour))
 		g.br.setCallResult(methodKiroWorkflowInspect, heldInspect(t, signInHoldReason))
@@ -94,6 +95,7 @@ func (g *gateRun) lapseVault(t *testing.T) {
 // run then, still charged the one heal its lost write took: a release that ended there would leave the next edge a
 // new release, which claims a second.
 func TestSignInGate_AReleaseThatMeetsTheClosedGateResumesOnTheNextEdgeOnItsOneHeal(t *testing.T) {
+	t.Parallel()
 	g := newManualGateRun(t, signedInDisk(), fastGateRetries())
 	g.br.setCallResult(methodKiroWorkflowInspect, heldInspect(t, signInHoldReason))
 	verbs := g.watchVerbs(t)
@@ -148,6 +150,7 @@ func newManualGateRun(t *testing.T, disk filemode.Disk, opts ...Option) *gateRun
 // the refused claim started no release of its own, so ending there would leave the run held until a further sign-in.
 // The edge's tries lose two writes more, which only fresh tries outlast.
 func TestSignInGate_AReleaseThatSpendsItsTriesServesTheEdgeItRefused(t *testing.T) {
+	t.Parallel()
 	g := newManualGateRun(t, filemodetest.NewDisk(), fastGateRetries())
 	verbs := g.watchVerbs(t)
 	failFirst(g.br, methodKiroWorkflowResume, maxReleaseAttempts+2)
@@ -184,6 +187,7 @@ func TestSignInGate_AReleaseThatSpendsItsTriesServesTheEdgeItRefused(t *testing.
 // write landed, and the gate opened again before the release ended, so ending there would leave the run held until a
 // further sign-in. The new pause is healed on a heal of its own.
 func TestSignInGate_AReleaseThatResumesTheRunServesALaterEdgeItRefused(t *testing.T) {
+	t.Parallel()
 	g := newManualGateRun(t, signedInDisk())
 	k := &kasRun{
 		id: gateRunID, parent: testLaunchSession,
@@ -255,6 +259,7 @@ func TestSignInGate_AReleaseThatResumesTheRunServesALaterEdgeItRefused(t *testin
 // A run's release serves one opening edge of the gate at a time: a claim of a later edge while it runs starts no
 // other release, and a release that spends its tries before it served that edge serves it then.
 func TestRunGate_OneReleasePerRunAndOpeningEdge(t *testing.T) {
+	t.Parallel()
 	// at moves g to its read after opening edges.
 	at := func(g *runGate, opening uint64) {
 		g.mu.Lock()

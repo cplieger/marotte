@@ -42,6 +42,7 @@ func settleAsk(t *testing.T, h *Runtime, acpID int64) {
 }
 
 func TestPushTurnOutcome_ParksTheFinishWhileATurnIsOpen(t *testing.T) {
+	t.Parallel()
 	h, fp := newWithholdHub(t)
 	closeB := openTurn(t, h)
 
@@ -57,6 +58,7 @@ func TestPushTurnOutcome_ParksTheFinishWhileATurnIsOpen(t *testing.T) {
 }
 
 func TestPushTurnOutcome_ReleasesItAtTheLastAskSettle(t *testing.T) {
+	t.Parallel()
 	h, fp := newWithholdHub(t)
 	addPermission(t, h, nil, 1, "")
 	addPermission(t, h, nil, 2, "")
@@ -73,6 +75,7 @@ func TestPushTurnOutcome_ReleasesItAtTheLastAskSettle(t *testing.T) {
 }
 
 func TestPushTurnOutcome_DropsItWithTheChat(t *testing.T) {
+	t.Parallel()
 	h, fp := newWithholdHub(t)
 	addPermission(t, h, nil, 1, "")
 
@@ -86,6 +89,7 @@ func TestPushTurnOutcome_DropsItWithTheChat(t *testing.T) {
 }
 
 func TestPushTurnOutcome_ReleasesItWhenTheBlockingTurnClosesUnderALiveRun(t *testing.T) {
+	t.Parallel()
 	h, fp := newWithholdHub(t)
 	closeB := openTurn(t, h)
 
@@ -102,6 +106,7 @@ func TestPushTurnOutcome_ReleasesItWhenTheBlockingTurnClosesUnderALiveRun(t *tes
 }
 
 func TestPushTurnOutcome_DropsItAtTheChatsLastTabClose(t *testing.T) {
+	t.Parallel()
 	for name, push := range map[string]bool{"with a push service": true, "with no push service": false} {
 		t.Run(name, func(t *testing.T) {
 			h, fp := newWithholdHub(t)
@@ -122,6 +127,7 @@ func TestPushTurnOutcome_DropsItAtTheChatsLastTabClose(t *testing.T) {
 }
 
 func TestPushTurnOutcome_ParksABrokenCloseBehindAnAsk(t *testing.T) {
+	t.Parallel()
 	h, fp := newWithholdHub(t)
 	addPermission(t, h, nil, 1, "")
 
@@ -135,6 +141,7 @@ func TestPushTurnOutcome_ParksABrokenCloseBehindAnAsk(t *testing.T) {
 }
 
 func TestPushTurnOutcome_ALiveRunDoesNotHoldAParkedFinish(t *testing.T) {
+	t.Parallel()
 	h, fp := newWithholdHub(t)
 	addPermission(t, h, nil, 1, "")
 	closeClean(t, h, "focus-A")
@@ -149,6 +156,7 @@ func TestPushTurnOutcome_ALiveRunDoesNotHoldAParkedFinish(t *testing.T) {
 }
 
 func TestPushTurnOutcome_ARunAskDoesNotHoldThePark(t *testing.T) {
+	t.Parallel()
 	h, fp := newWithholdHub(t)
 	addPermission(t, h, nil, 1, "wf_1")
 
@@ -160,6 +168,7 @@ func TestPushTurnOutcome_ARunAskDoesNotHoldThePark(t *testing.T) {
 }
 
 func TestPushTurnOutcome_AnAskOnAnotherChatDoesNotPark(t *testing.T) {
+	t.Parallel()
 	h, fp := newWithholdHub(t)
 	h.bus.pendingPerms.add(1, permNeeded("c2", 0), nil)
 
@@ -171,6 +180,7 @@ func TestPushTurnOutcome_AnAskOnAnotherChatDoesNotPark(t *testing.T) {
 }
 
 func TestPushTurnOutcome_RaisesAtOnceWithNothingOutstanding(t *testing.T) {
+	t.Parallel()
 	h, fp := newWithholdHub(t)
 
 	closeClean(t, h, "focus-A")
