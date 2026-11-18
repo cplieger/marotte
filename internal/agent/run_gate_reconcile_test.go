@@ -872,6 +872,43 @@ func TestSignInGate_TheClosingPauseLandsAfterAnInFlightResume(t *testing.T) {
 
 // A closing sweep that cannot read the run list or pause a run tries again until the run is paused, and says so
 // at ERROR when it gives up.
+// A sign-in that commits while the closing sweep's pause is sent but not yet taken finds the run still running, so
+// no opening edge resumes it then: the pause, once taken with the gate open, is resumed.
+func TestSignInGate_APauseTakenAfterTheGateOpenedIsResumed(t *testing.T) {
+	g := newGateRun(t, filemodetest.NewDisk(), fastGateRetries())
+	g.signIn(t)
+	g.awaitEdgeFinder(t)
+	g.runningNow(t)
+	verbs := g.watchVerbs(t)
+	sent, take := make(chan struct{}), make(chan struct{})
+	g.br.mu.Lock()
+	watched := g.br.onCall
+	g.br.onCall = func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if method == methodKiroWorkflowPause {
+			close(sent)
+			<-take
+		}
+		return watched(method, params)
+	}
+	g.br.mu.Unlock()
+	g.b.set(false, false, func() error { return signin.ErrRejected })
+	asked := make(chan *marotte.RPCError, 1)
+	go func() { asked <- g.askVault(t.Context(), t) }()
+	select {
+	case <-sent:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Setup: the closing sweep sent no pause")
+	}
+
+	g.b.set(true, true, nil)
+	g.signIn(t)
+	close(take)
+	<-asked
+	waitUntil(t, "the pause taken", func() bool { return len(verbs.pauseParams()) == 1 })
+
+	awaitResumes(t, &verbs.resumes, 1)
+}
+
 func TestSignInGate_TheClosingSweepRetriesUntilTheRunIsPaused(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

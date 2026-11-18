@@ -500,6 +500,11 @@ func (rs *Runs) holdPause(ctx context.Context, workflowID string) error {
 	}
 	slog.Info("sign-in gate: paused a running run until the agent's sign-in can be answered",
 		"workflow_id", workflowID, "answerability", m.to.String())
+	// An opening edge while the pause was in flight listed the run as running, so its finder skipped it.
+	if open, moved := rs.gate.now(); open {
+		rs.applyGateMove(moved)
+		rs.findHoldsAsync(workflowID)
+	}
 	return nil
 }
 
