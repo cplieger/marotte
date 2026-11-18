@@ -148,7 +148,15 @@ class Canned(unittest.TestCase):
         self.record('git-prs', [answer(route, 'http://h/api/forges/x/repos', {'repos': []})])
         [doc] = self.docs(canned.assemble(self.dir, FIX, ['git-prs'], ROUTES))
         self.assertEqual(doc['route'], 'GET /api/forges/{forge}/repos')
-        self.assertEqual(canned.route_key('GET /api/forges/inventory'), 'GET /api/forges/inventory')
+        for own in (
+            'GET /api/forges/inventory',
+            'POST /api/forges/login',
+            'POST /api/forges/detect',
+        ):
+            self.assertEqual(canned.route_key(own), own)
+        self.assertEqual(
+            canned.route_key('GET /api/forges/inventory%3Ax/repos'), 'GET /api/forges/{forge}/repos'
+        )
 
     def test_refuses_a_route_with_no_decoder_entry(self):
         self.record('tabs', [answer('GET /api/unknown', 'http://h/api/unknown', {})])

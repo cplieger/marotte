@@ -1,10 +1,9 @@
 // The shape of tests/perf/record-canned.sh's output under static-src/perf/canned/.
 
-/** The recorder's cap on the whole set (tests/perf/measure/canned.py MAX_BYTES), which holds every
- *  view's x1 answers and streams (4.8 MB recorded) and fails a recording that grows by more than
- *  a new view's worth. The whole run tree stays out because canned-routes.json names no decoder
- *  for its route, so the recorder refuses it. */
-export const CANNED_MAX_BYTES = 6 * 1024 * 1024;
+/** The recorder's cap on the whole set, tests/perf/measure/canned.py MAX_BYTES's twin: room for
+ *  the payload streams the read-budget windows replay, and too small for the set plus the whole
+ *  run's tree (1.15 MB at x1), so a recording that takes in that tree fails. */
+export const CANNED_MAX_BYTES = 5 * 1024 * 1024;
 
 /** A wire/decoders.gen.ts export, `[]` for an array of it; or, for an answer that wraps wire
  *  types in an untyped object, the decoder of each such field, `?` after a field it may omit;

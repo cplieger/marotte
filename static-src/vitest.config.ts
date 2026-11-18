@@ -304,9 +304,15 @@ export default defineConfig({
   server: {
     fs: {
       // The `?raw` reads across the package boundary (the shipped page, Go sources the cross-language
-      // tests pin, the scripts a CSS guard reads, the perf plan the read budgets drive). Narrowest
-      // set; NOT the repo root.
-      allow: ["../static", "../internal", "../scripts", "../tests/perf/plan.json"],
+      // tests pin, the scripts a CSS guard reads, the perf plan the read budgets drive, the canned
+      // recorder whose cap the canned test pins). Narrowest set; NOT the repo root.
+      allow: [
+        "../static",
+        "../internal",
+        "../scripts",
+        "../tests/perf/plan.json",
+        "../tests/perf/measure/canned.py",
+      ],
     },
   },
   test: {

@@ -124,10 +124,9 @@ const sameTopics = (a: readonly string[] | null, b: readonly string[] | null): b
 
 /** The canned hub: a hello and the recorded connect frames on each stream the page opens, a
  *  keepalive on the hello's period, the scope, liveness and digest endpoints, and a driver's
- *  recorded frames. The three endpoints are the stream's own traffic, which a page's SharedWorker
- *  sends in production, so they are answered here and never counted. The digest answers nothing
- *  changed: the canned answers are the server's whole state, and it moves only by the frames the
- *  page itself receives. */
+ *  recorded frames. The three endpoints answer from the hub's own state and are counted like any
+ *  read. The digest answers nothing changed: the canned answers are the server's whole state, and
+ *  it moves only by the frames the page itself receives. */
 class Hub {
   private readonly topics = new Map<number, readonly string[] | null>();
   private greeted = 0;
@@ -137,28 +136,45 @@ class Hub {
   private readonly beatMs = Number(connect.hello["keepalive_ms"] ?? 15_000);
   private readonly beatEvent = String(connect.hello["keepalive_event"] ?? "heartbeat");
 
-  constructor(private readonly net: ScriptedFetch) {
-    net.respond("/api/events/alive", () => new Response(null, { status: 204 }));
-    net.respond("/api/sync", (req) => {
-      const { subjects } = JSON.parse(req.body ?? "{}") as { subjects?: unknown[] };
-      return Response.json({
+  constructor(
+    private readonly net: ScriptedFetch,
+    counted: Counted[],
+  ) {
+    // Answered synchronously, as a body read would resolve on real time and move the counts.
+    const own = (prefix: string, reply: (body: string | null) => unknown): void => {
+      net.respond(prefix, (req) => {
+        const value = reply(req.body);
+        const text = value === null ? null : JSON.stringify(value);
+        counted.push({
+          route: routeOf(req.method, req.url, location.origin),
+          bytes: text === null ? 0 : new TextEncoder().encode(text).length,
+        });
+        return text === null
+          ? new Response(null, { status: 204 })
+          : new Response(text, { headers: { "content-type": "application/json" } });
+      });
+    };
+    own("/api/events/alive", () => null);
+    own("/api/sync", (body) => {
+      const { subjects } = JSON.parse(body ?? "{}") as { subjects?: unknown[] };
+      return {
         epoch: connect.hello["epoch"],
         head: this.offset,
         must_refetch: false,
         checked: subjects?.length ?? 0,
         changed: [],
         removed: [],
-      });
+      };
     });
-    net.respond("/api/events/scope", (req) => {
-      const body = JSON.parse(req.body ?? "{}") as { conn?: string; topics?: string[] | null };
+    own("/api/events/scope", (body) => {
+      const req = JSON.parse(body ?? "{}") as { conn?: string; topics?: string[] | null };
       const index = this.net.connections.findIndex(
-        (c, i) => this.connName(i) === body.conn && !c.aborted(),
+        (c, i) => this.connName(i) === req.conn && !c.aborted(),
       );
       if (index >= 0) {
-        this.topics.set(index, body.topics ?? null);
+        this.topics.set(index, req.topics ?? null);
       }
-      return Response.json({ epoch: connect.hello["epoch"], offset: this.offset });
+      return { epoch: connect.hello["epoch"], offset: this.offset };
     });
   }
 
@@ -332,7 +348,7 @@ async function measure(scenario: string): Promise<{ counts: ViewCounts; missing:
       });
     });
   });
-  const hub = new Hub(net);
+  const hub = new Hub(net, counted);
   vi.stubGlobal("fetch", net.fetch);
   // A fresh profile's empty IndexedDB, answered at once: the boot snapshot read
   // (boot-snapshot.ts) races the chat list, and a real-time read would decide that race.

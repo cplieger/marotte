@@ -94,14 +94,14 @@ cd static-src && READ_BUDGET_RECORD=1 npx vitest --run perf/read-budget/
 
 A scenario added to `perf/views.ts` needs its own file there and its own entry; `perf/read-budget.test.ts` fails until it has both.
 
-`static-src/perf/canned.test.ts` decodes each recorded answer with the generated decoder that `tests/perf/canned-routes.json` names for its route, and fails when the set is over 6 MiB, so a wire change that leaves the recording stale fails it. Record the set again from a fresh x1 instance, then rewrite the read budgets as above, since their counts come from the set:
+`static-src/perf/canned.test.ts` decodes each recorded answer with the generated decoder that `tests/perf/canned-routes.json` names for its route, and fails when the set is over 5 MiB, so a wire change that leaves the recording stale fails it. Record the set again from a fresh x1 instance, then rewrite the read budgets as above, since their counts come from the set:
 
 ```sh
 tests/perf/build.sh /tmp/perf-build
 PERF_BUILD=/tmp/perf-build PERF_PORT=20151 tests/perf/record-canned.sh
 ```
 
-The recorder refuses an answer from a route that `canned-routes.json` does not name. Add the route with the decoder its client read uses: a `wire/decoders.gen.ts` name, that name with `[]` for an array, a map of field names to decoders for an answer the client wraps in a local decoder, or `null` for a route with no generated type, which the test checks only for being a JSON object.
+The recorder refuses an answer from a route that `canned-routes.json` does not name. Add the route with the decoder its client read uses: a `wire/decoders.gen.ts` name, that name with `[]` for an array, a map of field names to decoders for an answer the client wraps in a local decoder, or `null` for a route with no generated type. A `null` route's answers are held in Go instead: `testsupport.HoldCannedShape` in the handler's package reads each one into the type the handler writes and fails a field that type lacks or writes differently, and `TestCannedRoutes_EveryNullRouteIsHeld` (`internal/testsupport`) fails a `null` route no Go test holds.
 
 The `*Cost_*` tests in `internal/chat`, `internal/agent`, `internal/filebrowse`, `internal/git` and `internal/server` hold what each server read costs per request, in allocations and bytes, at the x1 and x10 fixture sizes, within 5% either way. Their tables hold the `-race` build's costs, because CI runs Go tests only with `-race`, and the tests skip without it. A cost that moves by design rewrites its entry in the same diff. `-v` logs every entry's measured cost in the table's own form:
 

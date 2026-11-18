@@ -3,8 +3,8 @@
 URL and request body, with the wire decoder canned-routes.json names for its route), frames/ (the chat-stream live
 window's frame types, sizes and instants; the connect's hello and frames; each driver's stream
 with its payloads, per page scope) and facts.json (the seeded ids). Writes nothing
-for a route canned-routes.json does not name or a set over 6 MiB (CANNED_MAX_BYTES in
-static-src/__test-helpers__/canned.ts).
+for a route canned-routes.json does not name or a set over MAX_BYTES, the twin of
+CANNED_MAX_BYTES in static-src/__test-helpers__/canned.ts, which owns its why.
 Usage: canned.py --recorded DIR --instance DIR --plan PLAN --routes ROUTES --out DIR
 """
 
@@ -18,7 +18,7 @@ import sys
 from collections.abc import Callable
 from urllib.parse import quote, urlsplit
 
-MAX_BYTES = 6 * 1024 * 1024
+MAX_BYTES = 5 * 1024 * 1024
 FACTS = (
     'run',
     'long_chat',
@@ -46,8 +46,9 @@ def compact(v) -> str:
     return json.dumps(v, separators=(',', ':'), ensure_ascii=False)
 
 
-# view.mjs keeps a forge id in its route, and the fake forge's id carries the run's port.
-FORGE_ID = re.compile(r'^(\w+ /api/forges/)(?!inventory\b|oauth\b)[^/?]+')
+# The fake forge's id carries the run's port; perf/route-of.ts names it {forge} the same way. The
+# excluded segments are internal/forges/http.go's own routes, not ids.
+FORGE_ID = re.compile(r'^(\w+ /api/forges/)(?!(?:inventory|oauth|login|detect)(?:/|$|\?))[^/?]+')
 
 
 def route_key(route: str) -> str:

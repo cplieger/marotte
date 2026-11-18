@@ -2,6 +2,8 @@
 // tier 1 read-budget harness (__test-helpers__/read-budget.ts), so both count one name per route.
 
 const ID_SEGMENTS: readonly (readonly [RegExp, string])[] = [
+  // A forge id names its host and port, which differ per run; canned.py FORGE_ID is the twin.
+  [/^\/api\/forges\/(?!(?:inventory|oauth|login|detect)(?:\/|$))[^/]+/, "/api/forges/{forge}"],
   [/\/(steps|turns|tools)\/[^/]+/g, "/$1/{id}"],
   [/wf_[0-9a-z]+/g, "{run}"],
   [/c-[0-9a-f]{32}/g, "{chat}"],

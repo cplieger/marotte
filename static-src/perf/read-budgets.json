@@ -66,6 +66,10 @@
           "count": 1,
           "maxBytes": 2453
         },
+        "POST /api/sync": {
+          "count": 1,
+          "maxBytes": 99
+        },
         "GET /api/chats/{chat}": {
           "count": 1,
           "maxBytes": 943665
@@ -80,6 +84,10 @@
     "rest": {
       "routes": {
         "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "POST /api/events/alive": {
           "count": 1,
           "maxBytes": 0
         }
@@ -103,6 +111,10 @@
         "GET /api/git/status-all": {
           "count": 1,
           "maxBytes": 5046
+        },
+        "POST /api/events/alive": {
+          "count": 1,
+          "maxBytes": 0
         }
       },
       "topics": []
@@ -120,6 +132,10 @@
         "GET /api/chats/{chat}/turns": {
           "count": 2,
           "maxBytes": 4429
+        },
+        "POST /api/events/alive": {
+          "count": 1,
+          "maxBytes": 0
         },
         "GET /api/git/status-all": {
           "count": 1,
@@ -205,6 +221,10 @@
           "count": 1,
           "maxBytes": 2453
         },
+        "POST /api/sync": {
+          "count": 1,
+          "maxBytes": 99
+        },
         "GET /api/chats/{chat}": {
           "count": 1,
           "maxBytes": 377991
@@ -219,6 +239,10 @@
     "rest": {
       "routes": {
         "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "POST /api/events/alive": {
           "count": 1,
           "maxBytes": 0
         }
@@ -242,6 +266,10 @@
         "POST /api/events/view": {
           "count": 1,
           "maxBytes": 0
+        },
+        "POST /api/events/alive": {
+          "count": 1,
+          "maxBytes": 0
         }
       },
       "topics": []
@@ -259,6 +287,10 @@
         "GET /api/chats/{chat}/turns": {
           "count": 2,
           "maxBytes": 1402
+        },
+        "POST /api/events/alive": {
+          "count": 1,
+          "maxBytes": 0
         },
         "GET /api/git/status-all": {
           "count": 1,
@@ -344,6 +376,10 @@
           "count": 1,
           "maxBytes": 2453
         },
+        "POST /api/sync": {
+          "count": 1,
+          "maxBytes": 99
+        },
         "POST /api/command": {
           "count": 1,
           "maxBytes": 154
@@ -368,6 +404,10 @@
         "POST /api/events/view": {
           "count": 1,
           "maxBytes": 0
+        },
+        "POST /api/events/alive": {
+          "count": 1,
+          "maxBytes": 0
         }
       },
       "topics": []
@@ -387,6 +427,10 @@
           "maxBytes": 5046
         },
         "POST /api/events/view": {
+          "count": 2,
+          "maxBytes": 0
+        },
+        "POST /api/events/alive": {
           "count": 2,
           "maxBytes": 0
         },
@@ -418,6 +462,10 @@
         "GET /api/git/status-all": {
           "count": 33,
           "maxBytes": 5046
+        },
+        "POST /api/events/alive": {
+          "count": 2,
+          "maxBytes": 0
         }
       },
       "topics": []
@@ -515,6 +563,10 @@
           "count": 1,
           "maxBytes": 2453
         },
+        "POST /api/sync": {
+          "count": 1,
+          "maxBytes": 99
+        },
         "POST /api/command": {
           "count": 1,
           "maxBytes": 154
@@ -551,6 +603,10 @@
         "POST /api/events/view": {
           "count": 1,
           "maxBytes": 0
+        },
+        "POST /api/events/alive": {
+          "count": 1,
+          "maxBytes": 0
         }
       },
       "topics": []
@@ -566,6 +622,10 @@
           "maxBytes": 15716
         },
         "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "POST /api/events/alive": {
           "count": 1,
           "maxBytes": 0
         }
@@ -593,6 +653,10 @@
         "GET /api/sessions": {
           "count": 5,
           "maxBytes": 15716
+        },
+        "POST /api/events/alive": {
+          "count": 1,
+          "maxBytes": 0
         }
       },
       "topics": []
@@ -706,6 +770,10 @@
           "count": 1,
           "maxBytes": 2453
         },
+        "POST /api/sync": {
+          "count": 1,
+          "maxBytes": 99
+        },
         "GET /api/files?path": {
           "count": 1,
           "maxBytes": 28702
@@ -716,6 +784,10 @@
     "rest": {
       "routes": {
         "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "POST /api/events/alive": {
           "count": 1,
           "maxBytes": 0
         }
@@ -743,6 +815,10 @@
         "POST /api/events/view": {
           "count": 1,
           "maxBytes": 0
+        },
+        "POST /api/events/alive": {
+          "count": 1,
+          "maxBytes": 0
         }
       },
       "topics": []
@@ -768,6 +844,10 @@
         "GET /api/git/status-all": {
           "count": 13,
           "maxBytes": 5046
+        },
+        "POST /api/events/alive": {
+          "count": 1,
+          "maxBytes": 0
         }
       },
       "topics": []
@@ -853,6 +933,10 @@
           "count": 1,
           "maxBytes": 2453
         },
+        "POST /api/sync": {
+          "count": 1,
+          "maxBytes": 99
+        },
         "POST /api/command": {
           "count": 1,
           "maxBytes": 153
@@ -869,7 +953,7 @@
           "count": 1,
           "maxBytes": 5046
         },
-        "GET /api/forges/gitea%3A127.0.0.1%5C%3A19980/repos": {
+        "GET /api/forges/{forge}/repos": {
           "count": 1,
           "maxBytes": 4058
         }
@@ -879,6 +963,10 @@
     "rest": {
       "routes": {
         "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "POST /api/events/alive": {
           "count": 1,
           "maxBytes": 0
         }
@@ -903,6 +991,10 @@
           "count": 1,
           "maxBytes": 0
         },
+        "POST /api/events/alive": {
+          "count": 1,
+          "maxBytes": 0
+        },
         "GET /api/chats/{chat}/turns": {
           "count": 1,
           "maxBytes": 604
@@ -923,6 +1015,10 @@
         "GET /api/chats/{chat}/turns": {
           "count": 2,
           "maxBytes": 1402
+        },
+        "POST /api/events/alive": {
+          "count": 2,
+          "maxBytes": 0
         },
         "GET /api/git/status-all?paths": {
           "count": 12,
@@ -1016,6 +1112,10 @@
           "count": 1,
           "maxBytes": 2453
         },
+        "POST /api/sync": {
+          "count": 1,
+          "maxBytes": 99
+        },
         "POST /api/command": {
           "count": 1,
           "maxBytes": 153
@@ -1032,13 +1132,13 @@
           "count": 1,
           "maxBytes": 0
         },
+        "GET /api/forges/{forge}/repos": {
+          "count": 1,
+          "maxBytes": 4058
+        },
         "GET /api/forges/inventory": {
           "count": 1,
           "maxBytes": 69179
-        },
-        "GET /api/forges/gitea%3A127.0.0.1%5C%3A19980/repos": {
-          "count": 1,
-          "maxBytes": 4058
         }
       },
       "topics": []
@@ -1048,6 +1148,10 @@
         "POST /api/events/view": {
           "count": 1,
           "maxBytes": 0
+        },
+        "POST /api/events/alive": {
+          "count": 1,
+          "maxBytes": 0
         }
       },
       "topics": []
@@ -1055,6 +1159,10 @@
     "live": {
       "routes": {
         "POST /api/events/view": {
+          "count": 9,
+          "maxBytes": 0
+        },
+        "POST /api/events/alive": {
           "count": 9,
           "maxBytes": 0
         },
@@ -1081,6 +1189,10 @@
         },
         "POST /api/forges/inventory/watch": {
           "count": 1,
+          "maxBytes": 0
+        },
+        "POST /api/events/alive": {
+          "count": 8,
           "maxBytes": 0
         }
       },
@@ -1171,6 +1283,10 @@
           "count": 1,
           "maxBytes": 2453
         },
+        "POST /api/sync": {
+          "count": 1,
+          "maxBytes": 99
+        },
         "GET /api/sessions": {
           "count": 1,
           "maxBytes": 15716
@@ -1181,6 +1297,10 @@
     "rest": {
       "routes": {
         "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "POST /api/events/alive": {
           "count": 1,
           "maxBytes": 0
         }
@@ -1194,6 +1314,10 @@
           "maxBytes": 1656
         },
         "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "POST /api/events/alive": {
           "count": 1,
           "maxBytes": 0
         },
@@ -1221,6 +1345,10 @@
         "GET /api/chats/{chat}/turns": {
           "count": 2,
           "maxBytes": 1402
+        },
+        "POST /api/events/alive": {
+          "count": 1,
+          "maxBytes": 0
         },
         "GET /api/git/status-all": {
           "count": 1,
@@ -1310,6 +1438,10 @@
           "count": 1,
           "maxBytes": 2453
         },
+        "POST /api/sync": {
+          "count": 1,
+          "maxBytes": 99
+        },
         "GET /api/sessions": {
           "count": 1,
           "maxBytes": 15716
@@ -1320,6 +1452,10 @@
     "rest": {
       "routes": {
         "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "POST /api/events/alive": {
           "count": 1,
           "maxBytes": 0
         }
@@ -1337,6 +1473,10 @@
           "maxBytes": 15716
         },
         "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "POST /api/events/alive": {
           "count": 1,
           "maxBytes": 0
         }
@@ -1360,6 +1500,10 @@
         "GET /api/runs/{run}?view=header": {
           "count": 5,
           "maxBytes": 710
+        },
+        "POST /api/events/alive": {
+          "count": 1,
+          "maxBytes": 0
         }
       },
       "topics": []
@@ -1445,6 +1589,10 @@
           "count": 1,
           "maxBytes": 2453
         },
+        "POST /api/sync": {
+          "count": 1,
+          "maxBytes": 99
+        },
         "GET /api/runs/{run}?view=glance": {
           "count": 1,
           "maxBytes": 61788
@@ -1463,6 +1611,10 @@
     "rest": {
       "routes": {
         "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "POST /api/events/alive": {
           "count": 1,
           "maxBytes": 0
         }
@@ -1491,6 +1643,10 @@
         "GET /api/chats/{chat}/turns": {
           "count": 1,
           "maxBytes": 1402
+        },
+        "POST /api/events/alive": {
+          "count": 1,
+          "maxBytes": 0
         }
       },
       "topics": []
@@ -1503,6 +1659,10 @@
         },
         "POST /api/events/view": {
           "count": 2,
+          "maxBytes": 0
+        },
+        "POST /api/events/alive": {
+          "count": 1,
           "maxBytes": 0
         }
       },
@@ -1576,9 +1736,17 @@
           "count": 1,
           "maxBytes": 2453
         },
+        "POST /api/sync": {
+          "count": 1,
+          "maxBytes": 99
+        },
         "POST /api/command": {
           "count": 1,
           "maxBytes": 281
+        },
+        "POST /api/events/scope": {
+          "count": 1,
+          "maxBytes": 42
         },
         "GET /api/runs/{run}?view=glance": {
           "count": 1,
@@ -1596,6 +1764,10 @@
     "rest": {
       "routes": {
         "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "POST /api/events/alive": {
           "count": 1,
           "maxBytes": 0
         }
@@ -1625,9 +1797,17 @@
           "count": 1,
           "maxBytes": 204467
         },
+        "POST /api/events/scope": {
+          "count": 1,
+          "maxBytes": 44
+        },
         "GET /api/chats/{chat}/turns": {
           "count": 1,
           "maxBytes": 1402
+        },
+        "POST /api/events/alive": {
+          "count": 1,
+          "maxBytes": 0
         }
       },
       "topics": []
@@ -1638,9 +1818,17 @@
           "count": 2,
           "maxBytes": 0
         },
+        "POST /api/events/scope": {
+          "count": 1,
+          "maxBytes": 44
+        },
         "GET /api/runs/{run}?view=glance": {
           "count": 2,
           "maxBytes": 61788
+        },
+        "POST /api/events/alive": {
+          "count": 1,
+          "maxBytes": 0
         }
       },
       "topics": [
@@ -1715,6 +1903,10 @@
           "count": 1,
           "maxBytes": 2453
         },
+        "POST /api/sync": {
+          "count": 1,
+          "maxBytes": 99
+        },
         "POST /api/command": {
           "count": 1,
           "maxBytes": 158
@@ -1735,6 +1927,10 @@
         "POST /api/events/view": {
           "count": 1,
           "maxBytes": 0
+        },
+        "POST /api/events/alive": {
+          "count": 1,
+          "maxBytes": 0
         }
       },
       "topics": []
@@ -1746,6 +1942,10 @@
           "maxBytes": 1656
         },
         "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "POST /api/events/alive": {
           "count": 1,
           "maxBytes": 0
         },
@@ -1773,6 +1973,10 @@
         "GET /api/chats/{chat}/turns": {
           "count": 2,
           "maxBytes": 1402
+        },
+        "POST /api/events/alive": {
+          "count": 1,
+          "maxBytes": 0
         },
         "GET /api/git/status-all": {
           "count": 1,
@@ -1866,6 +2070,10 @@
           "count": 1,
           "maxBytes": 2453
         },
+        "POST /api/sync": {
+          "count": 1,
+          "maxBytes": 99
+        },
         "POST /api/command": {
           "count": 1,
           "maxBytes": 158
@@ -1886,6 +2094,10 @@
         "POST /api/events/view": {
           "count": 1,
           "maxBytes": 0
+        },
+        "POST /api/events/alive": {
+          "count": 1,
+          "maxBytes": 0
         }
       },
       "topics": []
@@ -1897,6 +2109,10 @@
           "maxBytes": 1656
         },
         "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "POST /api/events/alive": {
           "count": 1,
           "maxBytes": 0
         },
@@ -1924,6 +2140,10 @@
         "GET /api/chats/{chat}/turns": {
           "count": 2,
           "maxBytes": 1402
+        },
+        "POST /api/events/alive": {
+          "count": 1,
+          "maxBytes": 0
         },
         "GET /api/git/status-all": {
           "count": 1,
@@ -2017,6 +2237,10 @@
           "count": 1,
           "maxBytes": 2453
         },
+        "POST /api/sync": {
+          "count": 1,
+          "maxBytes": 99
+        },
         "GET /api/chats/{chat}": {
           "count": 1,
           "maxBytes": 204467
@@ -2031,6 +2255,10 @@
     "rest": {
       "routes": {
         "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "POST /api/events/alive": {
           "count": 1,
           "maxBytes": 0
         }
@@ -2053,6 +2281,10 @@
     "back": {
       "routes": {
         "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "POST /api/events/alive": {
           "count": 1,
           "maxBytes": 0
         }
@@ -2127,6 +2359,10 @@
           "count": 1,
           "maxBytes": 2453
         },
+        "POST /api/sync": {
+          "count": 1,
+          "maxBytes": 99
+        },
         "GET /api/chats/{chat}": {
           "count": 1,
           "maxBytes": 204467
@@ -2143,6 +2379,10 @@
         "POST /api/events/view": {
           "count": 1,
           "maxBytes": 0
+        },
+        "POST /api/events/alive": {
+          "count": 1,
+          "maxBytes": 0
         }
       },
       "topics": []
@@ -2154,6 +2394,10 @@
           "maxBytes": 1656
         },
         "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "POST /api/events/alive": {
           "count": 1,
           "maxBytes": 0
         },
@@ -2181,6 +2425,10 @@
         "GET /api/chats/{chat}/turns": {
           "count": 2,
           "maxBytes": 707
+        },
+        "POST /api/events/alive": {
+          "count": 1,
+          "maxBytes": 0
         },
         "GET /api/git/status-all": {
           "count": 1,

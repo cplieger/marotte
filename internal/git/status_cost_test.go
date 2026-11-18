@@ -75,8 +75,11 @@ func TestStatusCost_StatusSummaryHoldsItsBudget(t *testing.T) {
 			h := newTestHandler(t, work)
 			got := testsupport.MeasureCost(11, func() {
 				st := h.scanRepos(t.Context(), false, nil)
-				if len(st) != 3*scale || len(st[0].Files) != 20 {
-					t.Fatalf("the scan read %d repositories, the first with %d changes; want %d with 20", len(st), len(st[0].Files), 3*scale)
+				if len(st) != 3*scale {
+					t.Fatalf("the scan read %d repositories, want %d", len(st), 3*scale)
+				}
+				if len(st[0].Files) != 20 {
+					t.Fatalf("the first repository has %d changes, want 20", len(st[0].Files))
 				}
 			})
 			testsupport.HoldCost(t, op, statusCosts[op], got)

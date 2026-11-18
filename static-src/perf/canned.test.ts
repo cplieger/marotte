@@ -3,6 +3,7 @@
 // set is re-recorded, and the set stays under the recorder's cap.
 import { describe, expect, it } from "vitest";
 
+import recorder from "../../tests/perf/measure/canned.py?raw";
 import * as decoders from "../wire/decoders.gen.js";
 import { asObject, decodeArray, reqStr, type Decoder } from "../wire/validators.gen.js";
 import { EVENT_DECODERS } from "../wire/events.gen.js";
@@ -69,6 +70,13 @@ describe("the canned set", () => {
       0,
     );
     expect(bytes).toBeLessThanOrEqual(CANNED_MAX_BYTES);
+  });
+
+  it("caps the set at the recorder's own cap", () => {
+    const product = /^MAX_BYTES = (\d+(?: \* \d+)*)$/m.exec(recorder)?.[1];
+    expect(product, "canned.py MAX_BYTES").toBeDefined();
+    const cap = (product ?? "").split(" * ").reduce((n, f) => n * Number(f), 1);
+    expect(cap).toBe(CANNED_MAX_BYTES);
   });
 
   it.each(answers)("%s decodes with its route's decoder", (_file, text) => {
