@@ -66,6 +66,7 @@ func countWorkspaceHandlers(h *Runtime) func(method string) int {
 }
 
 func TestWorkspaceNotifications_HandledOnceOnEveryLane(t *testing.T) {
+	t.Parallel()
 	h, cs, br, count := countedHub(t)
 	seedChat(t, cs, "c1")
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
@@ -107,6 +108,7 @@ func TestWorkspaceNotifications_HandledOnceOnEveryLane(t *testing.T) {
 }
 
 func TestWorkspaceNotifications_EngineAddressedConfigurationStateUpdatesSettings(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	before := settingsUpdatedCount(t, h)
@@ -122,6 +124,7 @@ func TestWorkspaceNotifications_EngineAddressedConfigurationStateUpdatesSettings
 }
 
 func TestWorkspaceNotifications_IsTheOnlyTable(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if got, want := slices.Sorted(maps.Keys(h.workspaceHandlers)), slices.Sorted(slices.Values(workspaceMethods)); !slices.Equal(got, want) {
@@ -140,6 +143,7 @@ func TestWorkspaceNotifications_IsTheOnlyTable(t *testing.T) {
 // TestWorkspaceNotifications_CatalogMoveRefetchesTheDocsPage pins that a skill or steering file
 // another writer adds reaches an open Kiro docs page without a reload.
 func TestWorkspaceNotifications_CatalogMoveRefetchesTheDocsPage(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	before := len(eventsOfType(h, marotte.EventKiroDocsChanged))

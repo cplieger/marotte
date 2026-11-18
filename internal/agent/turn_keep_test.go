@@ -21,6 +21,7 @@ func hasTurnFact(t *testing.T, cs *testChatStore, id marotte.ChatID) bool {
 }
 
 func TestReservation_HoldsTheTurnFactUntilTheLifecycleGoesIdle(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
 	res, ok := h.coord.turns.tryReserveIdle("c1", marotte.TurnSourcePrompt, h.coord.LifeStamp())
@@ -39,6 +40,7 @@ func TestReservation_HoldsTheTurnFactUntilTheLifecycleGoesIdle(t *testing.T) {
 // A reservation can outlive its chat's teardown, which forgets the lifecycle once the life's work is done; its
 // release still owes the fact, or the chat is kept until restart.
 func TestReservation_AReleaseAfterTheTeardownForgotTheLifecycleReleasesTheFact(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
 	res, ok := h.coord.turns.tryReserveIdle("c1", marotte.TurnSourcePrompt, h.coord.LifeStamp())
@@ -56,6 +58,7 @@ func TestReservation_AReleaseAfterTheTeardownForgotTheLifecycleReleasesTheFact(t
 }
 
 func TestReservation_ADeletedChatIsRefusedAndNothingIsReserved(t *testing.T) {
+	t.Parallel()
 	cases := map[string]func(bc *bridgeCoordinator) bool{
 		"prompt": func(bc *bridgeCoordinator) bool {
 			out, _ := bc.reservePromptSlot(context.Background(), "c1", 10*time.Millisecond, bc.LifeStamp(), "")

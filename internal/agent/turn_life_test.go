@@ -52,6 +52,7 @@ func TestChatLife_BeginWorkIsCountedUntilTheEndAndRefusedAfter(t *testing.T) {
 }
 
 func TestChatLife_EndLifeCancelsRemintsAndIsIdempotent(t *testing.T) {
+	t.Parallel()
 	r := newTurnRegistry(nopTurnRecords{})
 	lc := r.testLifecycle("c1")
 	ctx, done, _ := lc.beginWork(workDoor)
@@ -99,6 +100,7 @@ func TestChatLife_QuietClosesAtOnceWhenNoWorkRuns(t *testing.T) {
 }
 
 func TestChatLife_ForgetEndsTheLife(t *testing.T) {
+	t.Parallel()
 	r := newTurnRegistry(nopTurnRecords{})
 	lc := r.testLifecycle("c1")
 	ctx, done, _ := lc.beginWork(workForward)
@@ -153,6 +155,7 @@ func TestChatLife_AwaitQuietWarnsOnceAndKeepsWaiting(t *testing.T) {
 }
 
 func TestChatLife_AnEndedLifeAdmitsNoReservationAndIsNeverHandedOut(t *testing.T) {
+	t.Parallel()
 	r := newTurnRegistry(nopTurnRecords{})
 	r.testLifecycle("c1")
 	h := r.gates.hold("c1")
@@ -206,6 +209,7 @@ func TestLifecycleForRun_RefusesAChatID(t *testing.T) {
 // A reply for a turn of a life that was replaced waits on nothing of the new life: the new forward's position says
 // nothing about the old session's frames.
 func TestAwaitClosePosition_ATurnOfAnotherLifeWaitsOnNothing(t *testing.T) {
+	t.Parallel()
 	r := newTurnRegistry(nopTurnRecords{})
 	r.testLifecycle("c1")
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)

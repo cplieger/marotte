@@ -38,6 +38,7 @@ func (s *healthHub) providerBack(t *testing.T) {
 // one signs the engine in, else Kiro's refusal. The awaited result carries the close's kind, which latches the
 // sign-out only for a refusal a sign-in or a new key mends.
 func TestCloseTurn_AnAuthClassClosesWithTheSignInCause(t *testing.T) {
+	t.Parallel()
 	closers := map[string]func(h *Runtime, id string){
 		"wire turn_end": func(h *Runtime, _ string) {
 			h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonError)
@@ -115,6 +116,7 @@ func TestCloseTurn_AnAuthClassClosesWithTheSignInCause(t *testing.T) {
 
 // Another latched class keeps the engine's own account, outage or not.
 func TestCloseTurn_AThrottleKeepsItsOwnAccountDuringAnOutage(t *testing.T) {
+	t.Parallel()
 	s := newHealthHub(t)
 	s.signIn(t)
 	s.providerDown(t)
@@ -135,6 +137,7 @@ func TestCloseTurn_AThrottleKeepsItsOwnAccountDuringAnOutage(t *testing.T) {
 // A prompt the command layer graded a sign-in failure, with no class latched on the turn, is worded from the asks the
 // engine was answered as the latched case is.
 func TestCloseTurn_ASignInKindFromThePromptIsWordedFromTheAsks(t *testing.T) {
+	t.Parallel()
 	s := newHealthHub(t)
 	s.signIn(t)
 	s.providerDown(t)
@@ -157,6 +160,7 @@ func TestCloseTurn_ASignInKindFromThePromptIsWordedFromTheAsks(t *testing.T) {
 // its cause after the provider came back and another session's ask was served, so the grade latches no sign-out,
 // sends no push and the row keeps the outage's sentence.
 func TestCloseTurn_AnAskServedAfterTheTurnsRefusalLeavesItTheOutage(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s := newHealthHub(t)
 		s.signIn(t)

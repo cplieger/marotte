@@ -45,6 +45,7 @@ func bindsOf(t *testing.T, entries []marotte.Entry) []marotte.EntryTurnBind {
 // The id KAS assigns on the chat's own session names the persisted prompt, the only id
 // `_kiro/checkpoint/revertMultiple` accepts.
 func TestHandleSessionUpdate_StampsTheKASMessageIDFromTheChatsOwnSession(t *testing.T) {
+	t.Parallel()
 	const chatID = marotte.ChatID("chat-own")
 	h, cs, _ := newTestHub()
 	defer shutdownHub(t, h)
@@ -76,6 +77,7 @@ func TestHandleSessionUpdate_StampsTheKASMessageIDFromTheChatsOwnSession(t *test
 // A step's answer prompt gets an id too, byte-identical to the chat's; only the session says it is not the
 // reader's, and stamping it would point rewind at the wrong row.
 func TestHandleSessionUpdate_AStepSessionsAssignedIDStampsNothing(t *testing.T) {
+	t.Parallel()
 	const (
 		chatID  = marotte.ChatID("chat-step-id")
 		stepSID = "step-session-1"

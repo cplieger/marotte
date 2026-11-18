@@ -64,6 +64,7 @@ func BenchmarkHandleAssistantChunk(b *testing.B) {
 
 // A repeated plan frame seals nothing (ACP resends the whole array); a changed one appends. The client renders the newest.
 func TestHandlePlan_ARepeatedFrameSealsNothingAndAChangedOneAppends(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
@@ -93,6 +94,7 @@ func TestHandlePlan_ARepeatedFrameSealsNothingAndAChangedOneAppends(t *testing.T
 
 // A plan folds into the chat's own open turn, so each turn keeps its own.
 func TestHandlePlan_EachTurnKeepsItsOwnPlan(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 
@@ -119,6 +121,7 @@ func TestHandlePlan_EachTurnKeepsItsOwnPlan(t *testing.T) {
 }
 
 func TestHandleModeUpdate_BroadcastsOnlyOnChange(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"

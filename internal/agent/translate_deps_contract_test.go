@@ -111,6 +111,7 @@ func TranslateRolesContractTest(t *testing.T, newRoles func(t *testing.T) *trans
 }
 
 func TestHub_TranslateRolesContract(t *testing.T) {
+	t.Parallel()
 	TranslateRolesContractTest(t, func(t *testing.T) *translate.Roles {
 		t.Helper()
 		h, cs, _ := newTestHub()
@@ -125,6 +126,7 @@ func TestHub_TranslateRolesContract(t *testing.T) {
 // TestRequireWired_RefusesBothNils pins the guard, including the typed nil (a nil *T in an interface) that a
 // field IsNil() misses. It runs in production at the call site: after New returns every field looks populated.
 func TestRequireWired_RefusesBothNils(t *testing.T) {
+	t.Parallel()
 	full := func() *translate.Roles {
 		h, _, _ := newTestHub()
 		return h.translateRoles()

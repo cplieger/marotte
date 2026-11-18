@@ -15,6 +15,7 @@ import (
 // leaves the prompt Call blocked and every later prompt 409ing. `_kiro/workspace/currently_open_files` is
 // the live case: ungated in KAS and deliberately unimplemented here.
 func TestTranslateACPEvent_RefusesUnknownRequests(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		// The live case.
 		"ungated workspace pull": "_kiro/workspace/currently_open_files",
@@ -105,6 +106,7 @@ func TestTranslateACPEvent_IgnoresUnknownNotifications(t *testing.T) {
 
 // TestHubContextIsLiveOnAFreshHub guards the tests above: a shutting-down runtime would refuse to send and pass them wrongly.
 func TestHubContextIsLiveOnAFreshHub(t *testing.T) {
+	t.Parallel()
 	h, _ := hubForFSTest(t, t.TempDir())
 	ctx, cancel := h.lifecycle.derivedContext()
 	defer cancel()
@@ -161,6 +163,7 @@ func TestTranslateACPEvent_ReportsARefusalItCouldNotDeliver(t *testing.T) {
 // to a request would otherwise be swallowed by a notification handler. The three request-shaped ones go
 // through routeInboundRequest, disjoint by construction.
 func TestTranslateACPEvent_HandlerTableIsIDAware(t *testing.T) {
+	t.Parallel()
 	const method = "_kiro/mcp/status" // a notification handler in the table
 	params := mustJSON(t, map[string]any{
 		"sessionId": "s1",

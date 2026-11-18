@@ -23,6 +23,7 @@ func reserveNow(t *testing.T, h *Runtime) command.Reservation {
 
 // An old life's reservation released after a reopen leaves the reopened life's reservation held.
 func TestCloseTab_AnEndedPromptsReleaseLeavesTheReopenedPromptsSlot(t *testing.T) {
+	t.Parallel()
 	h, _, _, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	old := reserveNow(t, h)
@@ -229,6 +230,7 @@ func TestDrain_APromptParkedBeforeItsDoorAcrossTheCloseOpensNothing(t *testing.T
 // A turn closing after the close committed and before its job's bridge close starts no tail: the parked model pick
 // stays parked and no model apply reaches the session.
 func TestCloseTab_ATurnClosingBeforeTheJobStartsNoTail(t *testing.T) {
+	t.Parallel()
 	h, cs, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
@@ -283,6 +285,7 @@ func TestCloseTab_ATurnClosingBeforeTheJobStartsNoTail(t *testing.T) {
 // A close held after a caller found its lifecycle still stops that caller's reservation: reserveLocked checks the
 // gate under the lifecycle's lock, so a hold taken between the lookup and the reserve is not missed.
 func TestReserveLocked_AHoldAfterTheLookupParksTheReservation(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	turns := h.coord.turns
