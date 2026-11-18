@@ -15,15 +15,18 @@ import (
 
 var grelotCaller = &marotte.Caller{Label: "grelot"}
 
-// chatTabOf is the open chat tab for ref, if any.
-func chatTabOf(st *tabs.Store, ref marotte.ChatID) (marotte.TabSubject, bool) {
+// hasChatTab reports whether ref has an open chat tab in st.
+func hasChatTab(st interface {
+	List() ([]marotte.TabSubject, uint64)
+}, ref marotte.ChatID,
+) bool {
 	open, _ := st.List()
 	for _, s := range open {
 		if s.Kind == marotte.TabKindChat && s.Ref == string(ref) {
-			return s, true
+			return true
 		}
 	}
-	return marotte.TabSubject{}, false
+	return false
 }
 
 // messageFixture is the caller fixture over a real coordinator and tab store, with c1 closed and listed after c2.
@@ -73,7 +76,7 @@ func (m *messageFixture) leftClosed(t *testing.T, before tabState) {
 	if m.queue.resumed != 0 || len(m.queue.sentNow) != 0 {
 		t.Errorf("queue resumed %d times, rows sent now %v; want neither for a closed chat", m.queue.resumed, m.queue.sentNow)
 	}
-	if _, ok := chatTabOf(m.st, "c1"); ok {
+	if hasChatTab(m.st, "c1") {
 		t.Error("c1 has a tab after the message, want it left closed")
 	}
 	if after := m.tabState(t); after.version != before.version || after.frames != before.frames ||

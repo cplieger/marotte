@@ -63,7 +63,7 @@ func TestBeginMessage_AnOutsideCallersMessageIntoAClosedBotIsSessionClosed(t *te
 		t.Errorf("BeginMessage = %d %q, stamps taken %d; want 410 %s and no stamp",
 			statusOf(err), reasonOf(err), stamps.taken, reasonSessionClosed)
 	}
-	if _, ok := chatTabOf(st, "c-bot"); ok {
+	if hasChatTab(st, "c-bot") {
 		t.Error("an outside caller's message opened the closed Bot's tab")
 	}
 	if c := botOf(t, store, "c-bot"); c.Bot.ClosedAt != 2 {
@@ -82,7 +82,7 @@ func TestBeginMessage_APagesMessageIntoARegularChatWithNoTabTakesItsStampAndOpen
 	if err != nil || got != 7 || stamps.taken != 1 {
 		t.Errorf("BeginMessage = %d %v, stamps taken %d; want stamp 7 taken once", got, err, stamps.taken)
 	}
-	if _, ok := chatTabOf(st, "c-a"); ok {
+	if hasChatTab(st, "c-a") {
 		t.Error("a page's message opened a tab, want only an outside caller's to")
 	}
 }
@@ -123,7 +123,7 @@ func TestPrompt_APagesPromptToAClosedBotIsRefusedAndSubmitsNothing(t *testing.T)
 	if got := run.submitted(); got != 0 {
 		t.Errorf("%d submission(s) reached the run order, want none for a closed Bot", got)
 	}
-	if _, ok := chatTabOf(st, "c-bot"); ok {
+	if hasChatTab(st, "c-bot") {
 		t.Error("a page's prompt opened the closed Bot's tab")
 	}
 }
@@ -161,7 +161,7 @@ func TestBeginMessage_ARulesMessageNeverReopensABot(t *testing.T) {
 			if stamps.taken != 0 {
 				t.Errorf("stamps taken = %d, want none", stamps.taken)
 			}
-			if _, ok := chatTabOf(st, "c-bot"); ok {
+			if hasChatTab(st, "c-bot") {
 				t.Error("a rule's message opened the Bot's tab")
 			}
 			if c := botOf(t, store, "c-bot"); !reflect.DeepEqual(c, was) {
@@ -206,7 +206,7 @@ func TestNotify_ARulesPromptIntoAClosedBotIsBotClosedAndSubmitsNothing(t *testin
 	if got := run.submitted(); got != 0 {
 		t.Errorf("%d submission(s) reached the run order, want none", got)
 	}
-	if _, ok := chatTabOf(st, "c-bot"); ok {
+	if hasChatTab(st, "c-bot") {
 		t.Error("a rule's prompt reopened the closed Bot")
 	}
 }

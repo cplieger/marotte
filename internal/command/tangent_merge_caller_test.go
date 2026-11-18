@@ -25,16 +25,6 @@ func closeTabOf(t *testing.T, f *mergeFixture, tab marotte.TabSubject) {
 	}
 }
 
-func hasChatTab(f *mergeFixture, ref marotte.ChatID) bool {
-	open, _ := f.tabs.List()
-	for _, s := range open {
-		if s.Kind == marotte.TabKindChat && s.Ref == string(ref) {
-			return true
-		}
-	}
-	return false
-}
-
 var findingsOfTheCache = &fakeTangents{parent: "c-parent", reply: "The cache halves the load."}
 
 func TestMergeTangent_FromAnAPICallerIntoAClosedChatIsSessionClosed(t *testing.T) {
@@ -54,7 +44,7 @@ func TestMergeTangent_FromAnAPICallerIntoAClosedChatIsSessionClosed(t *testing.T
 			if _, ok := f.merges.record(t.Context(), tangentOp1); ok {
 				t.Error("a merge record was written, want none for a refused merge")
 			}
-			if hasChatTab(f, closed) {
+			if hasChatTab(f.tabs, closed) {
 				t.Errorf("%s has a tab after the merge, want it left closed", closed)
 			}
 		})
@@ -81,7 +71,7 @@ func TestMergeTangent_FromAnAPICallerFailsWhenTheParentClosesDuringTheSummary(t 
 	if rows := f.queue.queued(); len(rows) != 0 {
 		t.Errorf("queued rows = %+v, want no findings row in the parent", rows)
 	}
-	if hasChatTab(f, "c-parent") {
+	if hasChatTab(f.tabs, "c-parent") {
 		t.Error("c-parent has a tab after the merge, want it left closed")
 	}
 }
@@ -104,7 +94,7 @@ func TestTangentMerges_OnlyThePagesLandedMergeReopensTheParent(t *testing.T) {
 
 			f.merges.conclude(t.Context(), tangentOp1, "c-parent", tc.from, "")
 
-			if got := hasChatTab(f, "c-parent"); got != tc.reopen {
+			if got := hasChatTab(f.tabs, "c-parent"); got != tc.reopen {
 				t.Errorf("c-parent tab open = %v, want %v", got, tc.reopen)
 			}
 		})
