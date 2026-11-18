@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -16,6 +15,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/marotte/internal/filemode"
+	"github.com/cplieger/marotte/internal/filemode/filemodetest"
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/schedule"
@@ -141,12 +142,15 @@ type gateRun struct {
 
 const gateRunID = "wf_1"
 
-// openVault opens a vault on dir and joins its goroutines before the cleanups registered ahead of it, dir's removal
-// among them: the vault saves dir as its lifetime ends, so on t.Context() that save races t.TempDir's RemoveAll.
-func openVault(t *testing.T, dir string, backends ...signin.Backend) *signin.Vault {
+// vaultDir is the state dir every test vault keeps signin.json in, on its own in-memory disk.
+const vaultDir = "/state"
+
+// openVault opens a vault on disk and joins its goroutines before the cleanups registered ahead of it: the vault
+// saves as its lifetime ends, so on t.Context() that save would outlive the test.
+func openVault(t *testing.T, disk filemode.Disk, backends ...signin.Backend) *signin.Vault {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	vault := signin.Open(ctx, dir, backends...)
+	vault := signin.Open(ctx, vaultDir, disk, backends...)
 	t.Cleanup(func() {
 		cancel()
 		vault.Wait()
@@ -154,10 +158,10 @@ func openVault(t *testing.T, dir string, backends ...signin.Backend) *signin.Vau
 	return vault
 }
 
-func newGateRun(t *testing.T, dir string, opts ...Option) *gateRun {
+func newGateRun(t *testing.T, disk filemode.Disk, opts ...Option) *gateRun {
 	t.Helper()
 	b := newGateBackend()
-	vault := openVault(t, dir, b)
+	vault := openVault(t, disk, b)
 	h, br := agentRunOnChat(t, gateRunID, append([]Option{WithSignIn(vault, gateBackendID)}, opts...)...)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	h.runs.grantLease(t.Context(), gateRunID, "publish", agentLaunch(), hostSec())
@@ -292,19 +296,17 @@ func waitUntil(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-// writeLapsed leaves a signin.json whose record the identity provider rejected before the restart.
-func writeLapsed(t *testing.T, dir string) {
-	t.Helper()
-	raw := `{"backends":{"test":{"data":{},"lapsed":true}}}`
-	if err := os.WriteFile(filepath.Join(dir, "signin.json"), []byte(raw), 0o600); err != nil {
-		t.Fatalf("write signin.json: %v", err)
-	}
+// lapsedDisk holds a signin.json whose record the identity provider rejected before the restart.
+func lapsedDisk() *filemodetest.Disk {
+	d := filemodetest.NewDisk()
+	d.WriteFile(filepath.Join(vaultDir, "signin.json"), []byte(`{"backends":{"test":{"data":{},"lapsed":true}}}`), 0o600)
+	return d
 }
 
 // A boot with no sign-in resumes nothing it would fail: the rehydrate sweep holds the restart-paused run, and the
 // sign-in that commits resumes it exactly once.
 func TestSignInGate_ABootWithNoSignInHoldsTheRunUntilTheSignIn(t *testing.T) {
-	g := newGateRun(t, t.TempDir())
+	g := newGateRun(t, filemodetest.NewDisk())
 	resumes := countResumes(t, g.br, gateRunID)
 
 	g.h.runs.resumeInterruptedRuns(t.Context(), g.h.coord.turns.testLifecycle(parkChat), parkChat)
@@ -315,9 +317,7 @@ func TestSignInGate_ABootWithNoSignInHoldsTheRunUntilTheSignIn(t *testing.T) {
 }
 
 func TestSignInGate_ALapsedSignInAtBootHoldsTheRun(t *testing.T) {
-	dir := t.TempDir()
-	writeLapsed(t, dir)
-	g := newGateRun(t, dir)
+	g := newGateRun(t, lapsedDisk())
 	if st := g.vault.Status(gateBackendID); st.Kind != signin.StatusSignedOut {
 		t.Fatalf("Setup: Status = %v, want the lapsed record read as signed out", st.Kind)
 	}
@@ -332,7 +332,7 @@ func TestSignInGate_ALapsedSignInAtBootHoldsTheRun(t *testing.T) {
 
 // An API key authenticates the engine, so the vault's sign-in never holds a run.
 func TestSignInGate_APIKeyModePassesTheGate(t *testing.T) {
-	g := newGateRun(t, t.TempDir(), WithAPIKey(true))
+	g := newGateRun(t, filemodetest.NewDisk(), WithAPIKey(true))
 	resumes := countResumes(t, g.br, gateRunID)
 	if _, err := g.h.runs.admitRunWork(refuseClosed, gateRunID, ""); err != nil {
 		t.Errorf("admission with an API key = %v, want none", err)
@@ -345,7 +345,7 @@ func TestSignInGate_APIKeyModePassesTheGate(t *testing.T) {
 // A lapse while signed in pauses the running run with marotte's reason, which no heal resumes, and the next sign-in
 // resumes it.
 func TestSignInGate_ALapsePausesTheRunningRunAndTheNextSignInResumesIt(t *testing.T) {
-	g := newGateRun(t, t.TempDir())
+	g := newGateRun(t, filemodetest.NewDisk())
 	g.signIn(t)
 	g.listed(marotte.RunStatusRunning)
 	g.br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, gateRunID, marotte.RunStatusRunning, ""))
@@ -381,7 +381,7 @@ func TestSignInGate_AnUnreachableProviderPausesThenResumesOnTheNextRenewal(t *te
 }
 
 func unreachableProviderPausesThenResumes(t *testing.T) {
-	g := newGateRun(t, t.TempDir())
+	g := newGateRun(t, filemodetest.NewDisk())
 	g.signIn(t)
 	g.listed(marotte.RunStatusRunning)
 	g.br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, gateRunID, marotte.RunStatusRunning, ""))
@@ -418,7 +418,7 @@ func TestResume_EveryAutomaticResumerAtOnceResumesOnce(t *testing.T) {
 	prev := healBaseDelay
 	healBaseDelay = time.Millisecond
 	t.Cleanup(func() { healBaseDelay = prev })
-	g := newGateRun(t, t.TempDir())
+	g := newGateRun(t, filemodetest.NewDisk())
 	var resumes atomic.Int32
 	running := inspectReply(t, gateRunID, marotte.RunStatusRunning, "")
 	g.br.mu.Lock()
@@ -451,7 +451,7 @@ func TestResume_EveryAutomaticResumerAtOnceResumesOnce(t *testing.T) {
 
 // Every driving verb a person sends while the gate is closed is refused unwritten, with the sign-in's reason.
 func TestSignInGate_AUserResumeIsRefusedUnwritten(t *testing.T) {
-	g := newGateRun(t, t.TempDir())
+	g := newGateRun(t, filemodetest.NewDisk())
 	resumes := countResumes(t, g.br, gateRunID)
 
 	err := g.h.runs.resume(t.Context(), gateRunID, callerPage)
@@ -553,7 +553,7 @@ func TestHealBudget_ASpentRunIsNotResumedByItsChatsSweep(t *testing.T) {
 
 // With the gate closed no run is created: a launch is refused before workflow/new, with the sign-in's reason.
 func TestSignInGate_ALaunchIsRefusedBeforeAnythingIsCreated(t *testing.T) {
-	g := newGateRun(t, t.TempDir())
+	g := newGateRun(t, filemodetest.NewDisk())
 	if _, err := g.h.runs.admitRunWork(refuseClosed, gateRunID, ""); !errors.Is(err, errRunsNeedSignIn) {
 		t.Fatalf("admission signed out = %v, want the sign-in refusal", err)
 	}

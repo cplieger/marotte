@@ -10,6 +10,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/marotte/internal/filemode/filemodetest"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/signin"
 	"github.com/cplieger/marotte/internal/testsupport"
@@ -56,7 +57,7 @@ type healthHub struct {
 func newHealthHub(t *testing.T, opts ...Option) *healthHub {
 	t.Helper()
 	b := newGateBackend()
-	vault := openVault(t, t.TempDir(), b)
+	vault := openVault(t, filemodetest.NewDisk(), b)
 	p := &healthPush{}
 	h, cs, _ := newTestHub(append([]Option{WithSignIn(vault, gateBackendID), WithPush(p)}, opts...)...)
 	t.Cleanup(func() { shutdownHub(t, h) })

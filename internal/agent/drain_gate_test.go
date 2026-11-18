@@ -15,6 +15,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/marotte/internal/filemode/filemodetest"
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/signin"
@@ -186,7 +187,7 @@ func TestAnswerConnectionRequest_OnceShutdownBeganAnswersAtOnceWithoutJoiningInf
 // Once Shutdown began a sign-in ask still gets the vault's credential: KAS fails the asking step for good on any
 // refusal, while the engine's stop leaves it to the next boot.
 func TestAnswerConnectionRequest_OnceShutdownBeganAnswersASignInAskWithTheCredential(t *testing.T) {
-	g := newGateRun(t, t.TempDir())
+	g := newGateRun(t, filemodetest.NewDisk())
 	g.signIn(t)
 	asker := newFakeBridge()
 	beginDraining(g.h)
@@ -212,7 +213,7 @@ func TestAnswerConnectionRequest_OnceShutdownBeganAnswersASignInAskWithTheCreden
 // provider did not. In a bubble, whose clock passes the bound at once.
 func TestAnswerConnectionRequest_OnceShutdownBeganCutsAHangingRenewalShortAtTheBound(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		g := newGateRun(t, t.TempDir())
+		g := newGateRun(t, filemodetest.NewDisk())
 		g.signIn(t)
 		g.b.set(false, false, nil)
 		g.b.setHang(true)

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/bridge"
+	"github.com/cplieger/marotte/internal/filemode/filemodetest"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/obs"
 	"github.com/cplieger/marotte/internal/signin"
@@ -590,7 +591,7 @@ func declRuntime(t *testing.T, b *declBackend) (*Runtime, *fakeEngineSource) {
 	t.Helper()
 	src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
 	cs := newTestChatStore()
-	vault := openVault(t, t.TempDir(), b)
+	vault := openVault(t, filemodetest.NewDisk(), b)
 	h := newRuntimeOn(context.Background(), "/tmp/work", src, cs, WithSignIn(vault, "test"))
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })

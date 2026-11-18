@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/filemode/filemodetest"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/settings"
@@ -195,7 +196,7 @@ func (*flowBackend) Poll(context.Context, signin.DeviceStart) (signin.Credential
 }
 
 func TestSignIn_AnotherBackendsSignInLeavesTheEngineSessionsAlone(t *testing.T) {
-	vault := openVault(t, t.TempDir(), &flowBackend{id: "test"}, &flowBackend{id: "other"})
+	vault := openVault(t, filemodetest.NewDisk(), &flowBackend{id: "test"}, &flowBackend{id: "other"})
 	h, _ := reopenFixture(t, WithSignIn(vault, "test"))
 	awaitBoot(h)
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {

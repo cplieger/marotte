@@ -10,7 +10,6 @@ import (
 	"go/token"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
@@ -22,6 +21,7 @@ import (
 	"time"
 
 	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/marotte/internal/filemode/filemodetest"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/signin"
@@ -1805,25 +1805,30 @@ type holdLogs struct {
 // holdNamed finds the cell names in a record's attribute, an error's text included.
 var holdNamed = regexp.MustCompile(`\b(?:wf|chat|sess)_hold_\d+\b`)
 
-// cellRecord is one routed record: its message and its attributes, key=value.
+// cellRecord is one routed record: its level, its message and its attributes, key=value.
 type cellRecord struct {
 	msg   string
 	attrs []string
+	level slog.Level
 }
 
 // cellLog is one cell's routed records.
 type cellLog struct {
 	errors []cellRecord
 	infos  []string
-	// all is every record, with its level and attributes, for a failed cell's report.
-	all []string
+	// all is every record, formatted only for a failed cell's report.
+	all []cellRecord
 	mu  sync.Mutex
 }
 
 func (l *cellLog) String() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return strings.Join(l.all, "\n")
+	lines := make([]string, len(l.all))
+	for i, r := range l.all {
+		lines[i] = r.level.String() + " " + r.msg + " " + strings.Join(r.attrs, " ")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // infoSince is whether a record below ERROR from the from'th on holds msg in its message.
@@ -1874,7 +1879,9 @@ func (h *holdLogs) Handle(_ context.Context, rec slog.Record) error {
 	visit := func(a slog.Attr) bool {
 		text := a.String()
 		attrs = append(attrs, text)
-		keys = append(keys, holdNamed.FindAllString(text, -1)...)
+		if strings.Contains(text, "_hold_") {
+			keys = append(keys, holdNamed.FindAllString(text, -1)...)
+		}
 		return true
 	}
 	for _, a := range h.attrs {
@@ -1886,10 +1893,11 @@ func (h *holdLogs) Handle(_ context.Context, rec slog.Record) error {
 		if v, ok := h.sinks.Load(key); ok && !seen[v.(*cellLog)] {
 			l := v.(*cellLog)
 			seen[l] = true
+			r := cellRecord{msg: rec.Message, attrs: attrs, level: rec.Level}
 			l.mu.Lock()
-			l.all = append(l.all, rec.Level.String()+" "+rec.Message+" "+strings.Join(attrs, " "))
+			l.all = append(l.all, r)
 			if rec.Level >= slog.LevelError {
-				l.errors = append(l.errors, cellRecord{msg: rec.Message, attrs: attrs})
+				l.errors = append(l.errors, r)
 			} else {
 				l.infos = append(l.infos, rec.Message)
 			}
@@ -2419,26 +2427,24 @@ func newHoldCell(t *testing.T, router *holdLogs, c holdCombo) *holdCell {
 // boot starts a runtime for the cell over its KAS run, the vault answerable at boot when signedIn.
 func (c *holdCell) boot(t *testing.T, signedIn bool) {
 	t.Helper()
-	dir := t.TempDir()
+	disk := filemodetest.NewDisk()
 	if signedIn {
-		if err := os.WriteFile(filepath.Join(dir, "signin.json"), []byte(signedInAtBoot), 0o600); err != nil {
-			t.Fatalf("Setup: write signin.json: %v", err)
-		}
+		disk = signedInDisk()
 	}
 	b := newGateBackend()
-	vault := openVault(t, dir, b)
+	vault := openVault(t, disk, b)
 	c.watchMarks(vault, true)
 	var (
 		h  *Runtime
 		br *fakeBridge
 	)
 	if c.c.chat() {
-		h, br = agentRunOnChatAs(t, c.id, c.chat, c.session, c.k.door().(*fakeBridge), c.options(vault)...)
+		h, br = agentRunOnChatAs(t, c.id, c.chat, c.session, c.k.door().(*fakeBridge), holdCellOptions(vault)...)
 		h.runs.grantLease(t.Context(), c.id, "publish",
 			launchOrigin{origin: runlease.OriginAgent, chatID: string(c.chat)}, hostSec())
 		h.runs.recordParentSession(t.Context(), c.id, c.session)
 	} else {
-		h, _, br = newTestHub(c.options(vault)...)
+		h, _, br = newTestHub(holdCellOptions(vault)...)
 		origin := runlease.OriginManual
 		if c.c.kind == kindScheduled {
 			origin = runlease.OriginScheduled
@@ -2716,9 +2722,9 @@ func (c *holdCell) armEntryList(s *gateHoldStep) {
 // holdOrphanResumeDelay is a cell runtime's resume sweep re-read delay.
 const holdOrphanResumeDelay = 20 * time.Millisecond
 
-// options are a cell runtime's: signed in through vault, with the gate's retry gaps and the resume sweep's re-read
-// delay short enough for a cell's quiet windows (faultQuiet).
-func (c *holdCell) options(vault *signin.Vault) []Option {
+// holdCellOptions are a cell runtime's: signed in through vault, with the gate's retry gaps and the resume sweep's
+// re-read delay short enough for a cell's quiet windows (faultQuiet).
+func holdCellOptions(vault *signin.Vault) []Option {
 	return []Option{WithSignIn(vault, gateBackendID), fastGateRetries(), withOrphanResumeDelay(holdOrphanResumeDelay)}
 }
 

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/filemode/filemodetest"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/signin"
 )
@@ -97,7 +98,7 @@ type notLiveBackend struct{ flowBackend }
 func (*notLiveBackend) LiveSwitchable(_, _ signin.Credential) bool { return false }
 
 func TestUnreadableConfig_AnAccountSwitchIsQueuedAndAppliedOnceConfigReads(t *testing.T) {
-	vault := openVault(t, t.TempDir(), &notLiveBackend{flowBackend{id: "test"}})
+	vault := openVault(t, filemodetest.NewDisk(), &notLiveBackend{flowBackend{id: "test"}})
 	h, dir := reopenFixture(t, WithSignIn(vault, "test"))
 	awaitBoot(h)
 	src := fakeSourceOf(t, h)

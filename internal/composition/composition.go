@@ -22,6 +22,7 @@ import (
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/chat/archive"
 	"github.com/cplieger/marotte/internal/filebrowse"
+	"github.com/cplieger/marotte/internal/filemode"
 	"github.com/cplieger/marotte/internal/forges"
 	"github.com/cplieger/marotte/internal/git"
 	"github.com/cplieger/marotte/internal/kirosession"
@@ -164,7 +165,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	sweepBotDirs(ctx, chatStore, bot.Paths{KiroHome: workspace.KiroHome()})
 
 	// The sign-in the agent engine is answered from, on the app's lifetime: its poll and renewals outlive a request.
-	vault := signin.Open(appCtx, cfg.ConfigDir, signinBackends()...)
+	vault := signin.Open(appCtx, cfg.ConfigDir, filemode.OS(), signinBackends()...)
 	startQASignIn(appCtx, vault, engineBackend)
 	apiKey := apiKeyReachesEngine(cfg)
 
