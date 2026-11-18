@@ -537,10 +537,13 @@ func (rr *runRoutes) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Off the request: a browser that gives up must not abandon a run KAS may already have created.
+	sent := make(chan struct{})
 	rr.runs.lifecycle.answerEngineMutation(w, r, engineMutation{
 		verb: "run launch",
+		sent: sent,
 		call: func(ctx context.Context) engineReply {
-			id, name, warnings, err := rr.runs.launch(ctx, req.Source, req.Inputs, defaults)
+			id, name, warnings, err := rr.runs.launch(ctx, req.Source, req.Inputs, defaults,
+				func() { close(sent) })
 			if err != nil {
 				return engineReply{err: err, write: func(w http.ResponseWriter) { writeLaunchErr(w, req.Source, err) }}
 			}

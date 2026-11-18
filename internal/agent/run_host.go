@@ -77,12 +77,13 @@ var errLaunchNewUnconfirmed = errors.New("the engine's answer to the launch was 
 // stall (engineOwner.stallAware). A var so a test can shorten it.
 var launchTimeout = 120 * time.Second
 
-// launch starts one parentless attended run of the recipe and returns its workflow id, its name and KAS's
-// launch warnings.
+// launch starts one parentless attended run of the recipe for POST /api/runs and returns its workflow id, its name and
+// KAS's launch warnings. Every step before workflow/new answers within clientAnswerBudget; sent, when set, runs just
+// before workflow/new is written.
 func (rs *Runs) launch(
-	ctx context.Context, source string, inputs map[string]string, defaults marotte.RunDefaults,
+	ctx context.Context, source string, inputs map[string]string, defaults marotte.RunDefaults, sent func(),
 ) (id, name string, warnings []string, err error) {
-	return rs.launchAs(ctx, source, inputs, defaults, manualLaunch())
+	return rs.launchAs(ctx, source, inputs, defaults, manualLaunch(), &launchRequest{sent: sent, prepareBy: clientAnswerBudget})
 }
 
 // LaunchScheduled launches an unattended run for a schedule. slotAt is its next slot; zero leaves the idle window.
@@ -98,7 +99,7 @@ func (rs *Runs) LaunchScheduled(
 		return "", "", errRuntimeDraining
 	}
 	defer release()
-	id, name, _, err = rs.launchAs(ctx, source, inputs, defaults, scheduledLaunch(row, slotAt))
+	id, name, _, err = rs.launchAs(ctx, source, inputs, defaults, scheduledLaunch(row, slotAt), nil)
 	switch {
 	case errors.Is(err, errRunsNeedSignIn) || errors.Is(err, errRunsProviderDown):
 		err = fmt.Errorf("%w: %w", schedule.ErrNoRunCanStart, err)
@@ -133,7 +134,7 @@ func (rs *Runs) LaunchTriggered(
 		return "", classLaunch(dErr)
 	}
 	o := triggeredLaunch(ruleID, eventKey, coalesceKey, trigger.EventLabel(inputs))
-	workflowID, _, _, err = rs.launchAs(ctx, source, inputs, defaults, o)
+	workflowID, _, _, err = rs.launchAs(ctx, source, inputs, defaults, o, nil)
 	if workflowID == "" {
 		err = classLaunch(err)
 	}
@@ -142,6 +143,7 @@ func (rs *Runs) LaunchTriggered(
 
 func (rs *Runs) launchAs(
 	ctx context.Context, source string, inputs map[string]string, defaults marotte.RunDefaults, o launchOrigin,
+	req *launchRequest,
 ) (id, name string, warnings []string, err error) {
 	// One admission from before workflow/new through invoke, so no run is created that the gate then never starts.
 	a, gErr := rs.admitRunWork(refuseClosed, "", "")
@@ -152,8 +154,10 @@ func (rs *Runs) launchAs(
 	budgetEnd := time.Now().Add(launchTimeout)
 	cctx, cancel := rs.engine.stallAware(ctx, launchTimeout)
 	defer cancel()
+	pctx, pcancel := req.prepareContext(cctx)
+	defer pcancel()
 
-	recipe, err := rs.launchRecipe(cctx, source, inputs)
+	recipe, err := rs.launchRecipe(pctx, source, inputs)
 	if err != nil {
 		return "", "", nil, unanswered(ctx, err)
 	}
@@ -161,7 +165,7 @@ func (rs *Runs) launchAs(
 		// A manual run yields to its recipe's next slot.
 		o.slotAt = rs.manualSlot(recipe.Source)
 	}
-	unlock, bErr := rs.lockIdleRecipe(cctx, recipe.Name, &o)
+	unlock, bErr := rs.lockIdleRecipe(pctx, recipe.Name, &o)
 	if bErr != nil {
 		return "", "", nil, unanswered(ctx, bErr)
 	}
@@ -170,19 +174,19 @@ func (rs *Runs) launchAs(
 	if o.origin == runlease.OriginScheduled {
 		// Before the door: KAS's reset reconnects unconditionally, so a reset after the host's acquire began a fresh
 		// connect would connect twice and close the good one.
-		rs.resetFailedMCP(cctx)
+		rs.resetFailedMCP(pctx)
 	}
 
 	// The host session's presets are resolved once and recorded on the lease: a reload after a restart applies
 	// these, never the profile as it is then.
-	settings := rs.doorSettings(cctx)
+	settings := rs.doorSettings(pctx)
 	presets := settings.RunPresets
 	sb := newSharedBridge(runHostLife{ctx: rs.lifecycle.shutdownCtx})
 	var relay *hostRelay
 	door := &marotte.SessionOpts{
 		Role: marotte.SessionRoleHost, Presets: presets, AdditionalDirectories: settings.AdditionalDirectories,
 	}
-	if _, oErr := rs.engine.openSession(cctx, door,
+	if _, oErr := rs.engine.openSession(pctx, door,
 		func(s engineSession) error {
 			relay = newHostRelay(s, func(msg *marotte.RPCResponse) { rs.answerEarly(s, msg) })
 			sb.attach(relay)
@@ -196,6 +200,7 @@ func (rs *Runs) launchAs(
 		return "", "", nil, fmt.Errorf("%w: the host session's door answered no session id", errRunHostStart)
 	}
 	defer rs.launchHosts.claim(string(parent))()
+	req.markSent()
 	var wfID string
 	err = sb.useRun(cctx, func(ctx context.Context, s engineSession) error {
 		var nErr error
@@ -1130,10 +1135,16 @@ var agentNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 func isAgentSource(source string) bool { return strings.HasPrefix(source, agentSourcePrefix) }
 
-// launchRecipe resolves a listed recipe or an agent:// source. An agent run needs a prompt, and its
-// recipe name is KAS's `agent-<name>`, so one live run per agent. KAS refuses an unregistered agent.
+// launchRecipe resolves a recipe source, from the held catalog when it names the source and a live listing when it
+// does not, or an agent:// source. The launch needs only the recipe's name and declared inputs: KAS's workflow/new
+// validates the source itself. An agent run needs a prompt, and its recipe name is KAS's `agent-<name>`, so one live
+// run per agent. KAS refuses an unregistered agent.
 func (rs *Runs) launchRecipe(ctx context.Context, source string, inputs map[string]string) (marotte.Recipe, error) {
 	if !isAgentSource(source) {
+		held := rs.recipes.heldCatalog()
+		if i := slices.IndexFunc(held, func(r marotte.Recipe) bool { return r.Source == source }); i >= 0 {
+			return held[i], nil
+		}
 		return rs.recipeBySource(ctx, source)
 	}
 	name := strings.TrimPrefix(source, agentSourcePrefix)

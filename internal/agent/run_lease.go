@@ -36,6 +36,30 @@ type launchOrigin struct {
 	origin runlease.Origin
 }
 
+// launchRequest is a launch a person waits on (POST /api/runs): how it answers before the run can exist. A nil
+// *launchRequest is a launch nobody waits on.
+type launchRequest struct {
+	// sent runs just before workflow/new is written, the first step that may create a run.
+	sent func()
+	// prepareBy bounds every step before workflow/new.
+	prepareBy time.Duration
+}
+
+// prepareContext bounds the steps before workflow/new by the request's prepareBy: a timeout there is an engine that
+// did not answer before anything was created (unanswered).
+func (q *launchRequest) prepareContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if q == nil {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, q.prepareBy)
+}
+
+func (q *launchRequest) markSent() {
+	if q != nil && q.sent != nil {
+		q.sent()
+	}
+}
+
 // triggerEvent is the queued event a triggered launch delivers, and the run label it sends before runLabelFor
 // shapes it.
 type triggerEvent struct {

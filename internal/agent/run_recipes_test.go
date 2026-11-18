@@ -40,9 +40,10 @@ func holdCatalog(t *testing.T, h *Runtime) {
 	}
 }
 
-// A held catalog is a display hint: a launch reads its recipe's name from a live listing, so a file whose recipe was
-// renamed since the hold still meets that recipe's live run under the one-live-run rule.
-func TestLaunch_ReadsTheRecipeNameLiveOverAHold(t *testing.T) {
+// A launch reads its recipe from the held catalog, so a recipe renamed since the hold launches under its held name
+// until KAS reports the change; after recipes_changed the launch reads the renamed recipe live and meets its live
+// run under the one-live-run rule.
+func TestLaunch_ReadsTheRenamedRecipeLiveAfterACatalogChange(t *testing.T) {
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_second")
 	holdCatalog(t, h)
@@ -51,9 +52,10 @@ func TestLaunch_ReadsTheRecipeNameLiveOverAHold(t *testing.T) {
 	br.setCallResult(methodKiroWorkflowList, json.RawMessage(
 		`{"runs":[{"workflowId":"wf_live","name":"publish-v2","workflowName":"publish-v2","status":"running"}]}`,
 	))
+	h.dispatchWorkspace(context.Background(), "chat-1", recipesChangedFrame())
 	br.forgetCalls()
 
-	_, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{})
+	_, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, nil)
 	if busy, ok := errors.AsType[*schedule.BusyError](err); !ok || busy.WorkflowID != "wf_live" {
 		t.Errorf("launch = %v, want the live run wf_live to refuse it", err)
 	}
@@ -62,30 +64,85 @@ func TestLaunch_ReadsTheRecipeNameLiveOverAHold(t *testing.T) {
 	}
 }
 
-// A launch or a launch rule save of a source the held catalog still names, but the live listing no longer does, is
-// refused as unknown.
-func TestRecipeRoutes_RefuseASourceGoneSinceTheHold(t *testing.T) {
-	routes := []struct{ name, target, body string }{
-		{"a launch", "/api/runs", `{"source":"bundled://publish"}`},
-		{
-			"a launch rule save", "/api/launch-rules",
-			`{"source":"bundled://publish","when":{"clock":{"freq":"daily","hour":2,"minute":0}},"enabled":true}`,
-		},
+// A launch whose recipe the held catalog names sends workflow/new without waiting on a listing: KAS's own launch
+// check resolves the one recipe, while a whole-catalog walk can queue behind KAS's other catalog work.
+func TestLaunch_SendsWorkflowNewFromTheHeldCatalogWhileAListingIsHeld(t *testing.T) {
+	answerBudgetOf(t, time.Second)
+	h, br, mux := runDefaultsHub(t)
+	holdCatalog(t, h)
+	holdCall(t, br, methodKiroWorkflowListRecipes)
+
+	rec := answeredWithin(t, func(w http.ResponseWriter) {
+		mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(`{"source":"bundled://publish"}`)))
+	})
+	if rec.Code != http.StatusOK {
+		t.Errorf("POST /api/runs = %d %s, want 200 from the held catalog", rec.Code, rec.Body.String())
 	}
-	for _, rt := range routes {
-		t.Run(rt.name, func(t *testing.T) {
-			h, br, mux := runDefaultsHub(t)
-			holdCatalog(t, h)
-			br.setCallResult(methodKiroWorkflowListRecipes, json.RawMessage(`{"recipes":[]}`))
-			rec := postRoute(t, mux, rt.target, rt.body)
-			if rec.Code != http.StatusBadRequest {
-				t.Errorf("POST %s = %d %s, want 400", rt.target, rec.Code, rec.Body.String())
+	if !slices.Contains(br.callLog(), methodKiroWorkflowNew) {
+		t.Errorf("calls = %v, want workflow/new sent", br.callLog())
+	}
+}
+
+// A source the held catalog names but KAS no longer has in force is refused by KAS's workflow/new, and the launch
+// answers 400 with KAS's sentence. A launch rule save reads live, so it refuses the source itself.
+func TestRecipeRoutes_RefuseASourceGoneSinceTheHold(t *testing.T) {
+	const gone = "_kiro/workflow/new: the workflow recipe at 'bundled://publish' is not available in this session's configuration."
+	t.Run("a launch", func(t *testing.T) {
+		h, br, mux := runDefaultsHub(t)
+		holdCatalog(t, h)
+		br.setCallResult(methodKiroWorkflowListRecipes, json.RawMessage(`{"recipes":[]}`))
+		br.setCallRPCErr(methodKiroWorkflowNew, &marotte.RPCError{Code: -32603, Message: gone})
+		rec := postRoute(t, mux, "/api/runs", `{"source":"bundled://publish"}`)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(errorText(t, rec), "not available") {
+			t.Errorf("POST /api/runs = %d %s, want 400 with KAS's refusal", rec.Code, rec.Body.String())
+		}
+		if slices.Contains(br.callLog(), methodKiroWorkflowInvoke) {
+			t.Errorf("calls = %v, want no invoke for a refused launch", br.callLog())
+		}
+	})
+	t.Run("a launch rule save", func(t *testing.T) {
+		h, br, mux := runDefaultsHub(t)
+		holdCatalog(t, h)
+		br.setCallResult(methodKiroWorkflowListRecipes, json.RawMessage(`{"recipes":[]}`))
+		rec := postRoute(t, mux, "/api/launch-rules",
+			`{"source":"bundled://publish","when":{"clock":{"freq":"daily","hour":2,"minute":0}},"enabled":true}`)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("POST /api/launch-rules = %d %s, want 400", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// A launch whose engine does not answer before workflow/new (the recipe listing, the run list for the one-live-run
+// rule) has created nothing: 503 engine_slow with a Retry-After at the answer budget, never 504 still_applying.
+func TestLaunch_AnUnansweredPrepareAnswers503NotStillApplying(t *testing.T) {
+	for _, held := range []string{methodKiroWorkflowListRecipes, methodKiroWorkflowList} {
+		t.Run(held, func(t *testing.T) {
+			answerBudgetOf(t, 50*time.Millisecond)
+			_, br, mux := runDefaultsHub(t)
+			holdCall(t, br, held)
+			rec := answeredWithin(t, func(w http.ResponseWriter) {
+				mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/runs",
+					strings.NewReader(`{"source":"bundled://publish"}`)))
+			})
+			if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" {
+				t.Errorf("POST /api/runs = %d %s, want 503 with a Retry-After", rec.Code, rec.Body.String())
 			}
 			if slices.Contains(br.callLog(), methodKiroWorkflowNew) {
-				t.Errorf("calls = %v, want no workflow/new for a source the live listing lacks", br.callLog())
+				t.Errorf("calls = %v, want no workflow/new", br.callLog())
 			}
 		})
 	}
+}
+
+// A launch whose workflow/new KAS has not answered may have created a run: 504 still_applying at the answer budget.
+func TestLaunch_AnUnansweredWorkflowNewIsStillApplying(t *testing.T) {
+	answerBudgetOf(t, 50*time.Millisecond)
+	_, br, mux := runDefaultsHub(t)
+	holdCall(t, br, methodKiroWorkflowNew)
+	rec := answeredWithin(t, func(w http.ResponseWriter) {
+		mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(`{"source":"bundled://publish"}`)))
+	})
+	assertStillApplying(t, rec)
 }
 
 // Lookups arriving while a listing runs share it: KAS admits every recipe file per call, so overlapping walks are
@@ -330,7 +387,7 @@ func TestRecipeLookup_FindsARecipeAddedSinceTheCatalogWasHeld(t *testing.T) {
 		holdCatalog(t, h)
 		addedRecipe(br)
 		br.forgetCalls()
-		if _, name, _, err := h.runs.launch(t.Context(), "bundled://added", nil, marotte.RunDefaults{}); err != nil || name != "added" {
+		if _, name, _, err := h.runs.launch(t.Context(), "bundled://added", nil, marotte.RunDefaults{}, nil); err != nil || name != "added" {
 			t.Fatalf("launch = (%q, %v), want the added recipe launched", name, err)
 		}
 		if n := listRecipesCalls(br); n != 1 {

@@ -24,7 +24,10 @@ type engineMutation struct {
 	call func(ctx context.Context) engineReply
 	// changed broadcasts the refetch signal that settles the UI; nil sends none.
 	changed func()
-	verb    string
+	// sent closes once call has written the change. Until it does, nothing can apply, so the budget never answers
+	// still_applying and the call's own answer is awaited; nil means call writes at once.
+	sent <-chan struct{}
+	verb string
 }
 
 // engineReply is a finished call: write answers the request, applied says the change landed, err is a failure
@@ -36,7 +39,7 @@ type engineReply struct {
 }
 
 // answerEngineMutation runs m.call off the request and answers with its reply, or with 504 still_applying once
-// clientAnswerBudget passes first. m.changed runs when the call applied the change or answered after the 504,
+// clientAnswerBudget passes first after m.sent closed. m.changed runs when the call applied the change or answered after the 504,
 // whatever it answered, so a list the UI re-reads settles the outcome either way.
 func (lt *lifetime) answerEngineMutation(w http.ResponseWriter, r *http.Request, m engineMutation) {
 	var (
@@ -69,16 +72,10 @@ func (lt *lifetime) answerEngineMutation(w http.ResponseWriter, r *http.Request,
 		writeShuttingDown(w)
 		return
 	}
-	timer := time.NewTimer(clientAnswerBudget)
-	defer timer.Stop()
-	left := false
-	select {
-	case rep := <-done:
+	rep, answered, left := awaitReply(r.Context(), done, m.sent)
+	if answered {
 		rep.write(w)
 		return
-	case <-timer.C:
-	case <-r.Context().Done():
-		left = true
 	}
 	mu.Lock()
 	select {
@@ -99,4 +96,27 @@ func (lt *lifetime) answerEngineMutation(w http.ResponseWriter, r *http.Request,
 		"kiro-cli has not answered yet and may still apply the change; the list updates when it does",
 		stillApplyingCode,
 	))
+}
+
+// awaitReply waits for the call's reply until clientAnswerBudget has passed with the change written (sent closed or
+// nil), or until the client leaves (left); answered is false when the reply did not come first.
+func awaitReply(ctx context.Context, done <-chan engineReply, sent <-chan struct{}) (rep engineReply, answered, left bool) {
+	timer := time.NewTimer(clientAnswerBudget)
+	defer timer.Stop()
+	budget, expired := timer.C, false
+	for {
+		select {
+		case rep := <-done:
+			return rep, true, false
+		case <-ctx.Done():
+			return engineReply{}, false, true
+		case <-budget:
+			budget, expired = nil, true
+		case <-sent:
+			sent = nil
+		}
+		if expired && sent == nil {
+			return engineReply{}, false, false
+		}
+	}
 }

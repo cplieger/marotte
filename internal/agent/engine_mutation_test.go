@@ -131,3 +131,40 @@ func TestAnswerEngineMutation_SettlesTheListOnlyForAChangeOrALateAnswer(t *testi
 		})
 	}
 }
+
+// A change whose call has not yet written it cannot apply, so the budget does not answer still_applying: the request
+// waits for the call's own answer. Once the call marks it written, the budget answers still_applying.
+func TestAnswerEngineMutation_StillApplyingOnlyOnceTheChangeWasWritten(t *testing.T) {
+	for _, written := range []bool{false, true} {
+		t.Run(map[bool]string{false: "not yet written", true: "written"}[written], func(t *testing.T) {
+			answerBudgetOf(t, 20*time.Millisecond)
+			h, _, _ := newTestHub()
+			t.Cleanup(func() { shutdownHub(t, h) })
+			sent := make(chan struct{})
+			gate := make(chan struct{})
+			m := engineMutation{
+				verb: "test change",
+				sent: sent,
+				call: func(context.Context) engineReply {
+					if written {
+						close(sent)
+						<-gate
+					} else {
+						time.Sleep(100 * time.Millisecond)
+					}
+					return engineReply{write: func(w http.ResponseWriter) { w.WriteHeader(http.StatusTeapot) }}
+				},
+			}
+			rec := answeredWithin(t, func(w http.ResponseWriter) {
+				h.lifecycle.answerEngineMutation(w, httptest.NewRequest(http.MethodPost, "/", nil), m)
+			})
+			if written {
+				assertStillApplying(t, rec)
+				close(gate)
+			} else if rec.Code != http.StatusTeapot {
+				t.Errorf("answer = %d %s, want the call's own reply: nothing was written", rec.Code, rec.Body.String())
+			}
+			joinInflight(h)
+		})
+	}
+}

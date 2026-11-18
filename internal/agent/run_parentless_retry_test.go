@@ -40,7 +40,7 @@ func failedRunList(workflowID, session string) json.RawMessage {
 func launchFailedParentless(t *testing.T, h *Runtime, br *fakeBridge) string {
 	t.Helper()
 	launchableRecipe(br, "wf_1")
-	if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
+	if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, nil); err != nil {
 		t.Fatalf("Setup: Launch = %v", err)
 	}
 	l, held := h.runs.lease("wf_1")
@@ -127,7 +127,7 @@ func TestObserveStart_AParentlessRunKeepsNoUnreadChat(t *testing.T) {
 	h, cs, br := newTestHub(WithConfigDir(t.TempDir()))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	launchableRecipe(br, "wf_1")
-	if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
+	if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, nil); err != nil {
 		t.Fatalf("Setup: Launch = %v", err)
 	}
 	l, _ := h.runs.lease("wf_1")
@@ -198,7 +198,7 @@ func TestReattributeRuns_AParentlessRunKeepsNoUnreadChat(t *testing.T) {
 	h, cs, br := newTestHub(WithConfigDir(t.TempDir()))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	launchableRecipe(br, "wf_1")
-	if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
+	if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, nil); err != nil {
 		t.Fatalf("Setup: Launch = %v", err)
 	}
 	if err := h.runs.leaseStore().SetUnattributed(t.Context(), "wf_1", true); err != nil {
@@ -222,7 +222,7 @@ func TestObserveStart_AParentlessRunIsAttributedWhenTheChatsDirectoryIsUnlistabl
 	h, cs, br := newTestHub(WithConfigDir(t.TempDir()))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	launchableRecipe(br, "wf_1")
-	if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
+	if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, nil); err != nil {
 		t.Fatalf("Setup: Launch = %v", err)
 	}
 	l, _ := h.runs.lease("wf_1")
@@ -273,7 +273,7 @@ func TestRunHostedBy_ALaunchHostsItsSessionFromItsMint(t *testing.T) {
 			return nil, nil, false
 		})
 
-		if _, _, _, lErr := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); lErr != nil {
+		if _, _, _, lErr := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, nil); lErr != nil {
 			t.Fatalf("Setup: Launch = %v", lErr)
 		}
 		if err != nil || !hosted || wf != "" {
@@ -295,7 +295,7 @@ func TestRunHostedBy_ALaunchHostsItsSessionFromItsMint(t *testing.T) {
 		}
 		br.mu.Unlock()
 
-		if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err == nil {
+		if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, nil); err == nil {
 			t.Fatal("Setup: Launch = nil, want workflow/new's failure")
 		}
 		if session == "" {
