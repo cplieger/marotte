@@ -22,6 +22,7 @@ import type {
 } from "../types.js";
 
 import { RATE_LIMITED } from "../tool-rate-limit.js";
+import { decodeJobResponse } from "../wire/decoders.gen.js";
 
 /** POST /api/tools fields. Only the name is required; the server fills the rest from the catalog. */
 export interface CreateToolRequest {
@@ -50,6 +51,7 @@ export const createTool = apiAction<CreateToolRequest, JobResponse>({
   scope: "tools",
   idempotencyKey: true,
   request: (body) => ({ method: "POST", path: "/api/tools", body }),
+  decode: (data) => decodeJobResponse(data),
   decodeError: (info) =>
     info.status === 503 && info.code === RATE_LIMITED
       ? {
@@ -73,6 +75,7 @@ export const installTool = apiAction<{ name: string }, JobResponse>({
     path: `/api/tools/${encodeURIComponent(name)}/install`,
     body: {},
   }),
+  decode: (data) => decodeJobResponse(data),
   error: "Could not start install",
 });
 
@@ -81,6 +84,7 @@ export const updateTools = apiAction<{ names?: string[] } | undefined, JobRespon
   scope: "tools",
   idempotencyKey: true,
   request: (body) => ({ method: "POST", path: "/api/tools/update", body: body ?? {} }),
+  decode: (data) => decodeJobResponse(data),
   error: "Could not start update",
 });
 
@@ -187,7 +191,7 @@ async function runEnsure(
     const msg = hasErrorString(parsed) ? parsed.error : `HTTP ${String(res.status)}`;
     throw new ActionError(msg, { status: res.status });
   }
-  return parsed ?? {};
+  return decodeJobResponse(parsed);
 }
 
 export const ensureTool = defineAction<{ name: string }, JobResponse>({
