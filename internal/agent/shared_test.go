@@ -50,7 +50,6 @@ func newTestHubOn(workDir string, coldGovernance bool, opts ...Option) (*Runtime
 	// The engine's boot work reads br's scripts; a test edits them unlocked, so only after this.
 	awaitBoot(h)
 	br.forgetCalls()
-	seededHubs.Store(cs, h)
 	return h, cs, br
 }
 

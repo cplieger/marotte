@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,6 +28,26 @@ func TestShutdownCompletesWithoutHanging(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Error("Shutdown hung")
+	}
+}
+
+// Anything that keeps a shut-down runtime reachable (a registry in a test helper, a goroutine Shutdown missed) keeps
+// its terminal screens and replay rings for the rest of the test binary, thousands of runtimes per package run.
+func TestShutdown_LeavesTheRuntimeCollectable(t *testing.T) {
+	const hubs = 3
+	var collected atomic.Int32
+	for range hubs {
+		h, _, _ := newTestHub()
+		shutdownHub(t, h)
+		runtime.AddCleanup(h, func(n *atomic.Int32) { n.Add(1) }, &collected)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for collected.Load() < hubs {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d of %d shut-down runtimes are still reachable after 10s of collections", hubs-collected.Load(), hubs)
+		}
+		runtime.GC()
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
