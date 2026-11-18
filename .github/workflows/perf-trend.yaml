@@ -1,0 +1,55 @@
+# Synced from cplieger/ci/.github/workflow-templates/perf-trend.yml — DO NOT EDIT.
+# The performance trend of a repository that commits tests/perf/plan.json: a
+# point of its full set on the default branch every eight hours, stored on its
+# perf-trend branch, and one issue per scenario that regressed at two
+# consecutive points. Dispatch it with a branch and a series of its own to
+# measure that branch apart from the default branch's series.
+name: Performance trend
+
+on:
+  schedule:
+    # Every eight hours, clear of the 22:00 UTC weekly runs.
+    - cron: "17 1,9,17 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch to measure. Empty measures the default branch."
+        required: false
+        default: ""
+      series:
+        description: "Series the point joins. Empty is dev, which only the default branch joins."
+        required: false
+        default: ""
+      only:
+        description: "Comma/space-separated scenarios to keep, for a series other than dev. Empty keeps all."
+        required: false
+        default: ""
+      seed:
+        description: "Start a missing perf-trend branch with this point of the dev series. Refused while the branch exists or an issue is marked with dev."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# One point of a series at a time: a second waits, so it judges on top of the first.
+concurrency:
+  group: perf-trend-${{ inputs.series || 'dev' }}
+  cancel-in-progress: false
+
+jobs:
+  trend:
+    # The called workflow narrows these per job: only the job that runs none of
+    # the measured code pushes the perf-trend branch, and only the issue job and
+    # the failure notice write issues.
+    permissions:
+      actions: read
+      contents: write
+      issues: write
+    uses: cplieger/ci/.github/workflows/perf-trend.yaml@541abd8adbe2f88325053b720de94871feb69573 # v3
+    with:
+      ref: ${{ inputs.ref }}
+      series: ${{ inputs.series }}
+      only: ${{ inputs.only }}
+      seed: ${{ inputs.seed == true }}
+      runner: ${{ vars.CI_RUNNER }}
