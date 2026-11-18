@@ -11,7 +11,7 @@ import (
 
 	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/forgeapi/v3/families"
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 	"github.com/cplieger/marotte/internal/httpreply"
 )
 

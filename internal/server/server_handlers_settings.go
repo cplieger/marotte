@@ -15,7 +15,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/go/filesafe"
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"

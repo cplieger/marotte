@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 )
 
 // TestTagOf_MatchesTheCrossLanguageGolden pins the derivation both halves compute:

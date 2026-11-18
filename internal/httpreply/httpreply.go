@@ -16,7 +16,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 )
 
 // jsonKeyError is the standard JSON error response key.

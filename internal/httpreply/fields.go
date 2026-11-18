@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 )
 
 // FieldError is one refused field of a request body, named by its JSON path.

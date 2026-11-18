@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/go/envx"
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/marotte"

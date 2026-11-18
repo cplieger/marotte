@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"os/exec"
 
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 	"github.com/cplieger/marotte/internal/httpreply"
 )
 

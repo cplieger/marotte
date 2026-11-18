@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/cplieger/go/health/v2"
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/notify"

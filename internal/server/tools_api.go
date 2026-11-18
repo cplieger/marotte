@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/toolbelt/v3/httpapi"

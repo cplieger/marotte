@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi/v3"
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 )

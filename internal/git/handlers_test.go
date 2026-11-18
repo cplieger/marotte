@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/go/textsafe"
 	"golang.org/x/sync/singleflight"

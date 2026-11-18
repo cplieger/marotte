@@ -10,7 +10,7 @@ import (
 	"os"
 	"slices"
 
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 	kirosignin "github.com/cplieger/marotte/internal/signin/kiro"
 )
 

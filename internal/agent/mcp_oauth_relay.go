@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 	"github.com/cplieger/go/ssrf"
 	"github.com/cplieger/marotte/internal/httpreply"
 )

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 	"github.com/cplieger/toolbelt/v3"
 )
 

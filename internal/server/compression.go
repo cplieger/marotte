@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/preview"
 )

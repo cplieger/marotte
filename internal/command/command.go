@@ -18,7 +18,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/apicaller"

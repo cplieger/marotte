@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/httpserver/v2"
 	"github.com/cplieger/go/sse/v2"
 	"github.com/cplieger/go/sse/v2/ssetest"
 	"github.com/cplieger/marotte/internal/agent"
