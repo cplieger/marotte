@@ -163,21 +163,21 @@ func (sc *toolRunScan) flush(k toolRunKey) {
 	sc.endRun(k, false, false)
 }
 
-// endRun ends lane k's run, at a box when atBox, whose call was refused when nextRefused. A box owns the PostToolUse
-// hooks right after it, and the PreToolUse hooks right before it in a run of hooks only, each set a run of its own
-// (messages-blocks.ts indexGroups), and a refused box keeps them.
+// endRun ends lane k's run, at a box when atBox, whose call was refused when nextRefused. A box owns the hooks seated
+// after a call right after it, and those seated before one right before it in a run of hooks only, each set a run of
+// its own (messages-blocks.ts indexGroups), and a refused box keeps them.
 func (sc *toolRunScan) endRun(k toolRunKey, atBox, nextRefused bool) {
 	members := sc.open[k]
 	prevRefused, afterBox := sc.after[k]
 	delete(sc.after, k)
 	delete(sc.open, k)
 	from := 0
-	for afterBox && from < len(members) && hookOn(members[from], "PostToolUse") {
+	for afterBox && from < len(members) && hookSeated(members[from], marotte.HookCallSeatAfter) {
 		from++
 	}
 	to := len(members)
 	hooksOnly := !slices.ContainsFunc(members, func(m toolRunMember) bool { return m.call.Kind != marotte.ToolKindHook })
-	for atBox && hooksOnly && to > from && hookOn(members[to-1], "PreToolUse") {
+	for atBox && hooksOnly && to > from && hookSeated(members[to-1], marotte.HookCallSeatBefore) {
 		to--
 	}
 	for _, run := range [][]toolRunMember{members[:from], members[from:to], members[to:]} {
@@ -192,9 +192,9 @@ func (sc *toolRunScan) endRun(k toolRunKey, atBox, nextRefused bool) {
 	}
 }
 
-// hookOn is a hook card fired by trigger.
-func hookOn(m toolRunMember, trigger string) bool {
-	return m.call.Kind == marotte.ToolKindHook && m.call.HookTrigger == trigger
+// hookSeated is a hook card whose trigger sits at seat beside its tool call.
+func hookSeated(m toolRunMember, seat marotte.HookCallSeat) bool {
+	return m.call.Kind == marotte.ToolKindHook && marotte.HookCallSeatOf(m.call.HookTrigger) == seat
 }
 
 // silentSteers are the indexes of the steers that draw nothing where they were filed: a row a wake draws in its
@@ -335,7 +335,7 @@ func hookQuiet(call *marotte.EntryToolCall, res *marotte.EntryToolResult) bool {
 
 // toolTriggerHook is a hook that gates one tool call; an unresolved trigger is not one.
 func toolTriggerHook(call *marotte.EntryToolCall) bool {
-	return call.HookTrigger == "PreToolUse" || call.HookTrigger == "PostToolUse"
+	return marotte.HookCallSeatOf(call.HookTrigger) != marotte.HookCallSeatNone
 }
 
 // toolRefused is a card whose outcome mark reads failed, denied or declined, twin of static-src/hook-fold.ts

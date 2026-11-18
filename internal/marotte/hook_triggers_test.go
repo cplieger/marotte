@@ -33,6 +33,9 @@ func TestCanonicalHookTrigger(t *testing.T) {
 		{"preCompact", "PreCompact"},
 		{"postCompact", "PostCompact"},
 		{"POSTCOMPACT", "PostCompact"},
+		// The permission-prompt trigger and the camelCase spelling KAS accepts.
+		{"PermissionRequest", "PermissionRequest"},
+		{"permissionRequest", "PermissionRequest"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
@@ -67,36 +70,37 @@ func TestHookTriggerSubject_RejectsUnknown(t *testing.T) {
 // expectation would agree with any map, including a wrong one.
 func TestEveryCanonicalTriggerHasASubject(t *testing.T) {
 	want := map[string]HookMatcherSubject{
-		"PreToolUse":       HookMatcherSubjectToolName,
-		"PostToolUse":      HookMatcherSubjectToolName,
-		"PostFileCreate":   hookMatcherSubjectFilePath,
-		"PostFileSave":     hookMatcherSubjectFilePath,
-		"PostFileDelete":   hookMatcherSubjectFilePath,
-		"SessionStart":     HookMatcherSubjectNone,
-		"SessionEnd":       HookMatcherSubjectNone,
-		"Stop":             HookMatcherSubjectNone,
-		"UserPromptSubmit": HookMatcherSubjectNone,
-		"PreTaskExec":      HookMatcherSubjectNone,
-		"PostTaskExec":     HookMatcherSubjectNone,
-		"PreCompact":       HookMatcherSubjectNone,
-		"PostCompact":      HookMatcherSubjectNone,
-		"Manual":           HookMatcherSubjectNone,
+		"PreToolUse":        HookMatcherSubjectToolName,
+		"PermissionRequest": HookMatcherSubjectToolName,
+		"PostToolUse":       HookMatcherSubjectToolName,
+		"PostFileCreate":    hookMatcherSubjectFilePath,
+		"PostFileSave":      hookMatcherSubjectFilePath,
+		"PostFileDelete":    hookMatcherSubjectFilePath,
+		"SessionStart":      HookMatcherSubjectNone,
+		"SessionEnd":        HookMatcherSubjectNone,
+		"Stop":              HookMatcherSubjectNone,
+		"UserPromptSubmit":  HookMatcherSubjectNone,
+		"PreTaskExec":       HookMatcherSubjectNone,
+		"PostTaskExec":      HookMatcherSubjectNone,
+		"PreCompact":        HookMatcherSubjectNone,
+		"PostCompact":       HookMatcherSubjectNone,
+		"Manual":            HookMatcherSubjectNone,
 	}
 
-	for name, subject := range triggerSubjects {
-		if w, ok := want[name]; !ok || subject != w {
-			t.Errorf("trigger %s has the subject %q, want %q (absent from this test: %v)", name, subject, w, !ok)
+	for name, facts := range triggerTable {
+		if w, ok := want[name]; !ok || facts.subject != w {
+			t.Errorf("trigger %s has the subject %q, want %q (absent from this test: %v)", name, facts.subject, w, !ok)
 		}
 	}
 	for name := range want {
-		if _, ok := triggerSubjects[name]; !ok {
+		if _, ok := triggerTable[name]; !ok {
 			t.Errorf("trigger %s is expected in the table and absent from it", name)
 		}
 	}
 	// Every spelling names a canonical trigger, which is what makes an alias a spelling rather
 	// than a second trigger with no subject.
 	for alias, name := range hookTriggerNames {
-		if _, ok := triggerSubjects[name]; !ok {
+		if _, ok := triggerTable[name]; !ok {
 			t.Errorf("alias %q maps to trigger %q, which has no subject; "+
 				"add it with its subject or ClassifyHookMatcher will silently ignore it", alias, name)
 		}
@@ -129,6 +133,7 @@ func TestClassifyHookMatcher(t *testing.T) {
 		{"pre tool use with no matcher", "PreToolUse", "", hookMatcherMissingToolName},
 		{"post tool use with no matcher", "PostToolUse", "  ", hookMatcherMissingToolName},
 		{"pre tool use with a matcher", "PreToolUse", "fsWrite", hookMatcherOK},
+		{"permission request with no matcher", "PermissionRequest", "", hookMatcherMissingToolName},
 		// KAS owns the tool-matcher grammar: a tag, an alias or a glob that is not a
 		// valid regex still matches tools, so none of them may read as a defect.
 		{"a tag is a tool matcher", "PreToolUse", "shell", hookMatcherOK},
@@ -146,5 +151,48 @@ func TestClassifyHookMatcher(t *testing.T) {
 				t.Errorf("ClassifyHookMatcher(%q, %q) = %q, want %q", tc.trigger, tc.matcher, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestHookCallSeatOf pins, per trigger KAS loads, where its hook sits beside its tool call's card and
+// whether KAS runs only its command hooks. KAS runs a PermissionRequest hook inside its call's
+// permission check, after the card exists, and runs PermissionRequest and SessionEnd hooks through
+// a command-only filter.
+func TestHookCallSeatOf(t *testing.T) {
+	for _, tc := range []struct {
+		trigger     string
+		seat        HookCallSeat
+		commandOnly bool
+	}{
+		{"PreToolUse", HookCallSeatBefore, false},
+		{"PermissionRequest", HookCallSeatAfter, true},
+		{"PostToolUse", HookCallSeatAfter, false},
+		{"SessionStart", HookCallSeatNone, false},
+		{"SessionEnd", HookCallSeatNone, true},
+		{"Stop", HookCallSeatNone, false},
+		{"UserPromptSubmit", HookCallSeatNone, false},
+		{"PreTaskExec", HookCallSeatNone, false},
+		{"PostTaskExec", HookCallSeatNone, false},
+		{"PostFileCreate", HookCallSeatNone, false},
+		{"PostFileSave", HookCallSeatNone, false},
+		{"PostFileDelete", HookCallSeatNone, false},
+		{"PreCompact", HookCallSeatNone, false},
+		{"PostCompact", HookCallSeatNone, false},
+		{"Manual", HookCallSeatNone, false},
+		// A spelling reaches its canonical trigger's facts; an unknown trigger has none.
+		{"permissionRequest", HookCallSeatAfter, true},
+		{"someFutureTrigger", HookCallSeatNone, false},
+	} {
+		t.Run(tc.trigger, func(t *testing.T) {
+			if got := HookCallSeatOf(tc.trigger); got != tc.seat {
+				t.Errorf("HookCallSeatOf(%q) = %q, want %q", tc.trigger, got, tc.seat)
+			}
+			if got := HookTriggerRunsCommandsOnly(tc.trigger); got != tc.commandOnly {
+				t.Errorf("HookTriggerRunsCommandsOnly(%q) = %v, want %v", tc.trigger, got, tc.commandOnly)
+			}
+		})
+	}
+	if len(triggerTable) != 15 {
+		t.Errorf("the table holds %d triggers, this test lists 15; add the new trigger's row", len(triggerTable))
 	}
 }

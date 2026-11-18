@@ -222,6 +222,36 @@ func TestHandleKiroDocNew_WritesAHookWithItsMatcher(t *testing.T) {
 	}
 }
 
+// KAS runs only the command hooks of PermissionRequest, so an Ask Kiro hook on it would never run.
+func TestHandleKiroDocNew_PermissionRequestHookRunsCommandsOnly(t *testing.T) {
+	t.Run("command", func(t *testing.T) {
+		requireKASNode(t)
+		dir := t.TempDir()
+		createdPath(t, postKiroDocNew(t, docServer(dir), `{"category":"hook","name":"Allow Reads","trigger":"PermissionRequest",`+
+			`"matcher":"fs_read","action":"command","content":"echo allow"}`))
+		want := "{\n  \"version\": \"v1\",\n  \"hooks\": [\n    {\n" +
+			"      \"name\": \"Allow Reads\",\n" +
+			"      \"trigger\": \"PermissionRequest\",\n" +
+			"      \"action\": {\n        \"type\": \"command\",\n        \"command\": \"echo allow\"\n      },\n" +
+			"      \"matcher\": \"fs_read\",\n" +
+			"      \"enabled\": true\n    }\n  ]\n}\n"
+		if body := readCreated(t, dir, "hooks/allow-reads.json"); body != want {
+			t.Errorf("file = %q\nwant  %q", body, want)
+		}
+	})
+	t.Run("agent", func(t *testing.T) {
+		dir := t.TempDir()
+		rec := postKiroDocNew(t, docServer(dir), `{"category":"hook","name":"Ask","trigger":"PermissionRequest",`+
+			`"matcher":"fs_read","action":"agent","content":"Decide"}`)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "Permission Request hooks can only run a command.") {
+			t.Errorf("status = %d, body %s; want 400 refusing the Ask Kiro action", rec.Code, rec.Body.String())
+		}
+		if got := treeOf(t, dir); len(got) != 1 {
+			t.Errorf("workspace tree = %v, want the refused create to leave it empty", got)
+		}
+	})
+}
+
 func TestHandleKiroDocNew_PathMatchesTheInventoryRow(t *testing.T) {
 	dir := t.TempDir()
 	srv := docServer(dir)

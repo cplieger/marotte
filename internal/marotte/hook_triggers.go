@@ -9,9 +9,9 @@ import "strings"
 // the fact that decides whether a matcher means anything for that trigger.
 //
 // The three values mirror KAS's own matcherSubjectForTrigger, spelling included,
-// re-read off the 2.28.0 bundle. Keeping the spellings identical is
-// deliberate: the classification is upstream's, so a divergence here would be
-// marotte inventing a rule and attributing it to KAS.
+// and TestHookTriggersMatchBundle pins them to the bundle. Keeping the spellings
+// identical is deliberate: the classification is upstream's, so a divergence here
+// would be marotte inventing a rule and attributing it to KAS.
 type HookMatcherSubject string
 
 const (
@@ -30,67 +30,91 @@ const (
 	HookMatcherSubjectNone HookMatcherSubject = "none"
 )
 
-// The fourteen canonical trigger names, as KAS's hook loader spells them.
+// HookCallSeat is where a hook that fires for one tool call sits beside that call's card.
+type HookCallSeat string
+
+const (
+	// HookCallSeatNone is a hook that fires for no single tool call.
+	HookCallSeatNone HookCallSeat = ""
+	// HookCallSeatBefore is a hook that runs before its call's card exists.
+	HookCallSeatBefore HookCallSeat = "before"
+	// HookCallSeatAfter is a hook that runs once its call's card exists.
+	HookCallSeatAfter HookCallSeat = "after"
+)
+
+// The fifteen canonical trigger names, as KAS's hook loader spells them.
 //
 // Constants rather than repeated literals because the spelling table below points
 // many spellings at ONE canonical name, and that is the file's invariant: a typo
-// in an alias would otherwise mint a silent fifteenth trigger that KAS then drops.
+// in an alias would otherwise mint a silent sixteenth trigger that KAS then drops.
 // Unexported — nothing outside this package names a trigger, it normalizes one.
 const (
-	triggerSessionStart     = "SessionStart"
-	triggerSessionEnd       = "SessionEnd"
-	triggerStop             = "Stop"
-	triggerPreToolUse       = "PreToolUse"
-	triggerPostToolUse      = "PostToolUse"
-	triggerPreTaskExec      = "PreTaskExec"
-	triggerPostTaskExec     = "PostTaskExec"
-	triggerUserPromptSubmit = "UserPromptSubmit"
-	triggerPostFileCreate   = "PostFileCreate"
-	triggerPostFileSave     = "PostFileSave"
-	triggerPostFileDelete   = "PostFileDelete"
-	triggerPreCompact       = "PreCompact"
-	triggerPostCompact      = "PostCompact"
-	triggerManual           = "Manual"
+	triggerSessionStart      = "SessionStart"
+	triggerSessionEnd        = "SessionEnd"
+	triggerStop              = "Stop"
+	triggerPreToolUse        = "PreToolUse"
+	triggerPermissionRequest = "PermissionRequest"
+	triggerPostToolUse       = "PostToolUse"
+	triggerPreTaskExec       = "PreTaskExec"
+	triggerPostTaskExec      = "PostTaskExec"
+	triggerUserPromptSubmit  = "UserPromptSubmit"
+	triggerPostFileCreate    = "PostFileCreate"
+	triggerPostFileSave      = "PostFileSave"
+	triggerPostFileDelete    = "PostFileDelete"
+	triggerPreCompact        = "PreCompact"
+	triggerPostCompact       = "PostCompact"
+	triggerManual            = "Manual"
 )
 
-// triggerSubjects gives each canonical trigger its one matcher subject, so an alias, which
-// names a canonical trigger, cannot disagree about one. The set is CLOSED, which makes the
-// pairing check total (TestEveryCanonicalTriggerHasASubject).
-var triggerSubjects = map[string]HookMatcherSubject{
-	triggerSessionStart:     HookMatcherSubjectNone,
-	triggerSessionEnd:       HookMatcherSubjectNone,
-	triggerStop:             HookMatcherSubjectNone,
-	triggerPreToolUse:       HookMatcherSubjectToolName,
-	triggerPostToolUse:      HookMatcherSubjectToolName,
-	triggerPreTaskExec:      HookMatcherSubjectNone,
-	triggerPostTaskExec:     HookMatcherSubjectNone,
-	triggerUserPromptSubmit: HookMatcherSubjectNone,
-	triggerPostFileCreate:   hookMatcherSubjectFilePath,
-	triggerPostFileSave:     hookMatcherSubjectFilePath,
-	triggerPostFileDelete:   hookMatcherSubjectFilePath,
-	triggerPreCompact:       HookMatcherSubjectNone,
-	triggerPostCompact:      HookMatcherSubjectNone,
-	triggerManual:           HookMatcherSubjectNone,
+// triggerFacts is what marotte reads off one canonical trigger.
+type triggerFacts struct {
+	subject HookMatcherSubject
+	seat    HookCallSeat
+	// commandOnly is a trigger whose agent-action hooks KAS never runs.
+	commandOnly bool
+}
+
+// triggerTable gives each canonical trigger its facts, so an alias, which names a canonical
+// trigger, cannot disagree about one. The set is CLOSED, which makes the pairing check total
+// (TestEveryCanonicalTriggerHasASubject). PermissionRequest seats after its call because KAS
+// runs it inside the call's permission check, once the call's card exists.
+var triggerTable = map[string]triggerFacts{
+	triggerSessionStart:      {subject: HookMatcherSubjectNone},
+	triggerSessionEnd:        {subject: HookMatcherSubjectNone, commandOnly: true},
+	triggerStop:              {subject: HookMatcherSubjectNone},
+	triggerPreToolUse:        {subject: HookMatcherSubjectToolName, seat: HookCallSeatBefore},
+	triggerPermissionRequest: {subject: HookMatcherSubjectToolName, seat: HookCallSeatAfter, commandOnly: true},
+	triggerPostToolUse:       {subject: HookMatcherSubjectToolName, seat: HookCallSeatAfter},
+	triggerPreTaskExec:       {subject: HookMatcherSubjectNone},
+	triggerPostTaskExec:      {subject: HookMatcherSubjectNone},
+	triggerUserPromptSubmit:  {subject: HookMatcherSubjectNone},
+	triggerPostFileCreate:    {subject: hookMatcherSubjectFilePath},
+	triggerPostFileSave:      {subject: hookMatcherSubjectFilePath},
+	triggerPostFileDelete:    {subject: hookMatcherSubjectFilePath},
+	triggerPreCompact:        {subject: HookMatcherSubjectNone},
+	triggerPostCompact:       {subject: HookMatcherSubjectNone},
+	triggerManual:            {subject: HookMatcherSubjectNone},
 }
 
 // hookTriggerNames maps trigger spellings (canonical names plus v2 / Kiro-IDE camelCase
 // aliases), lowercased for lookup, to the canonical trigger.
 var hookTriggerNames = map[string]string{
 	// Canonical PascalCase names (self-map via their lowercase key).
-	"sessionstart":     triggerSessionStart,
-	"sessionend":       triggerSessionEnd,
-	"stop":             triggerStop,
-	"pretooluse":       triggerPreToolUse,
-	"posttooluse":      triggerPostToolUse,
-	"pretaskexec":      triggerPreTaskExec,
-	"posttaskexec":     triggerPostTaskExec,
-	"userpromptsubmit": triggerUserPromptSubmit,
-	"postfilecreate":   triggerPostFileCreate,
-	"postfilesave":     triggerPostFileSave,
-	"postfiledelete":   triggerPostFileDelete,
-	"precompact":       triggerPreCompact,
-	"postcompact":      triggerPostCompact,
-	"manual":           triggerManual,
+	"sessionstart":      triggerSessionStart,
+	"sessionend":        triggerSessionEnd,
+	"stop":              triggerStop,
+	"pretooluse":        triggerPreToolUse,
+	"permissionrequest": triggerPermissionRequest,
+	"posttooluse":       triggerPostToolUse,
+	"pretaskexec":       triggerPreTaskExec,
+	"posttaskexec":      triggerPostTaskExec,
+	"userpromptsubmit":  triggerUserPromptSubmit,
+	"postfilecreate":    triggerPostFileCreate,
+	"postfilesave":      triggerPostFileSave,
+	"postfiledelete":    triggerPostFileDelete,
+	"precompact":        triggerPreCompact,
+	"postcompact":       triggerPostCompact,
+	"manual":            triggerManual,
 	// v2 / Kiro-IDE camelCase aliases.
 	"agentstop":         triggerStop,
 	"promptsubmit":      triggerUserPromptSubmit,
@@ -126,7 +150,21 @@ func HookTriggerSubject(eventType string) (HookMatcherSubject, bool) {
 	if !ok {
 		return "", false
 	}
-	return triggerSubjects[name], true
+	return triggerTable[name].subject, true
+}
+
+// HookCallSeatOf is where a hook fired by a trigger spelling sits beside its tool call's card;
+// HookCallSeatNone for a trigger that fires for no single call, or one KAS does not load.
+func HookCallSeatOf(eventType string) HookCallSeat {
+	name, _ := CanonicalHookTrigger(eventType)
+	return triggerTable[name].seat
+}
+
+// HookTriggerRunsCommandsOnly reports whether KAS runs only the Run Command hooks of a trigger
+// spelling, so an Ask Kiro hook on it never runs.
+func HookTriggerRunsCommandsOnly(eventType string) bool {
+	name, _ := CanonicalHookTrigger(eventType)
+	return triggerTable[name].commandOnly
 }
 
 // HookMatcherDefect is what is wrong with a trigger-and-matcher pairing, shown as
