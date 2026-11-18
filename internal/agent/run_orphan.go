@@ -347,7 +347,7 @@ type inspectRunState struct {
 		StopInitiator string            `json:"stopInitiator"`
 		StopReason    string            `json:"stopReason"`
 		WorkflowID    string            `json:"workflowId"`
-		// ParentSessionID is the run's launching session, how RunOwner attributes a run the inventory omits.
+		// ParentSessionID is the run's launching session, how RunOwner attributes an unleased run.
 		ParentSessionID string `json:"parentSessionId"`
 	} `json:"state"`
 	WorkflowID string `json:"workflowId"`

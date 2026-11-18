@@ -122,7 +122,7 @@ var _ membershipChats = (*chat.Store)(nil)
 // session parents, and a run's read bound. Declared here, at the consumer;
 // *agent.Runs satisfies it.
 type runOwner interface {
-	// RunOwner may read the engine's run inventory: never call it under mu. An error means
+	// RunOwner may read the run from the engine: never call it under mu. An error means
 	// the owners could not be read.
 	RunOwner(ctx context.Context, workflowID string) (RunOwner, error)
 	// RunsParentedBy answers the runs whose parent is sessionID: live is every leased or
@@ -143,8 +143,8 @@ const (
 	RunOwned runVerdict = iota + 1
 	// RunParentless is a run the engine answered for whose parent session no chat owns.
 	RunParentless
-	// RunUnknown is a run no lease, inventory row or inspect reply names, so its
-	// launcher is unknown. Never read as parentless.
+	// RunUnknown is a run no lease or inspect reply names, so its launcher is
+	// unknown. Never read as parentless.
 	RunUnknown
 )
 

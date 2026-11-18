@@ -143,7 +143,7 @@ func TestRouter_OwnerRegisteredBeforeInvokeIsVisibleToItsFirstFrame(t *testing.T
 	br.mu.Unlock()
 	launchableRecipe(br, "wf_9")
 
-	wf, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{})
+	wf, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, nil)
 	if err != nil {
 		t.Fatalf("launch: %v", err)
 	}

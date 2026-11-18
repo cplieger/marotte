@@ -230,7 +230,7 @@ func TestLaunchRun_SequencesNewRegisterInvoke(t *testing.T) {
 		methodKiroWorkflowInvoke:      json.RawMessage(`{}`),
 	}
 
-	id, name, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{})
+	id, name, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, nil)
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
@@ -256,13 +256,14 @@ func TestLaunchRun_SequencesNewRegisterInvoke(t *testing.T) {
 	}
 }
 
-// TestLaunchRun_RefusesAnUnknownSource pins that the source is re-checked against listRecipes, so no arbitrary file can be launched.
+// TestLaunchRun_RefusesAnUnknownSource pins that a source the held catalog lacks is checked against a live listing
+// before workflow/new, so no arbitrary file is sent.
 func TestLaunchRun_RefusesAnUnknownSource(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish"}]}`),
 	}
-	if _, _, _, err := h.runs.launch(t.Context(), "/etc/passwd", nil, marotte.RunDefaults{}); err == nil {
+	if _, _, _, err := h.runs.launch(t.Context(), "/etc/passwd", nil, marotte.RunDefaults{}, nil); err == nil {
 		t.Fatal("an unlisted source launched")
 	}
 	if !strings.Contains(br.lastCall(), "listRecipes") {
@@ -403,7 +404,7 @@ func TestLaunchRun_AnAgentSourceGoesStraightToNew(t *testing.T) {
 		methodKiroWorkflowNew:    json.RawMessage(`{"workflowId":"wf_9"}`),
 		methodKiroWorkflowInvoke: json.RawMessage(`{}`),
 	}
-	_, name, _, err := h.runs.launch(t.Context(), "agent://wf-coder", map[string]string{"prompt": "fix the build"}, marotte.RunDefaults{})
+	_, name, _, err := h.runs.launch(t.Context(), "agent://wf-coder", map[string]string{"prompt": "fix the build"}, marotte.RunDefaults{}, nil)
 	if err != nil {
 		t.Fatalf("Launch(agent://wf-coder) = %v, want nil", err)
 	}
@@ -431,7 +432,7 @@ func TestLaunchRun_AnAgentSourceIsValidatedBeforeAnyCall(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			h, _, br := newTestHub()
-			if _, _, _, err := h.runs.launch(t.Context(), tc.source, tc.inputs, marotte.RunDefaults{}); err == nil {
+			if _, _, _, err := h.runs.launch(t.Context(), tc.source, tc.inputs, marotte.RunDefaults{}, nil); err == nil {
 				t.Errorf("Launch(%q, %v) = nil, want an error", tc.source, tc.inputs)
 			}
 			if calls := br.callLog(); slices.Contains(calls, methodKiroWorkflowNew) {
@@ -449,7 +450,7 @@ func TestLaunchRun_SingleRunRule(t *testing.T) {
 		// Both name fields as the wire sends them; they agree only while unlabelled.
 		methodKiroWorkflowList: json.RawMessage(`{"runs":[{"workflowId":"wf_1","name":"publish","workflowName":"publish","status":"running"}]}`),
 	}
-	_, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{})
+	_, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, nil)
 	if err == nil || !strings.Contains(err.Error(), "live run") {
 		t.Fatalf("err = %v, want the single-run refusal", err)
 	}
@@ -459,7 +460,7 @@ func TestLaunchRun_SingleRunRule(t *testing.T) {
 	)
 	br.callResults[methodKiroWorkflowNew] = json.RawMessage(`{"workflowId":"wf_2"}`)
 	br.callResults[methodKiroWorkflowInvoke] = json.RawMessage(`{}`)
-	if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
+	if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, nil); err != nil {
 		t.Fatalf("a terminal run blocked a relaunch: %v", err)
 	}
 }
@@ -534,19 +535,11 @@ func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testin
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowRetry: json.RawMessage(`{}`),
-		// The run list supplies a reloaded run's recipe.
-		methodKiroWorkflowList: json.RawMessage(
-			`{"runs":[{"workflowId":"wf_1","name":"nightly","workflowName":"nightly","status":"aborted",` +
-				`"parentSessionId":"` + testLaunchSession + `"}]}`,
-		),
 	}
 	held := make(chan struct{})
 	br.blockOn = map[string]chan struct{}{methodKiroWorkflowRetry: held}
 	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
-	if o := h.runs.originOf(t.Context(), id); o.recipe != "nightly" {
-		t.Fatalf("Setup: the run list resolves recipe %q, want nightly", o.recipe)
-	}
-	aff := h.runs.affordance(id, &runHead{Status: "aborted"})
+	aff := h.runs.affordance(id, launchedHead("aborted", testLaunchSession, "nightly"))
 
 	done := make(chan error, 1)
 	go func() {
@@ -590,25 +583,18 @@ func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testin
 	}
 }
 
-// TestRetry_ALoadedHostRunTakesItsRecipeFromTheRunList pins that the lease needs the recipe the single-run rule compares.
-func TestRetry_ALoadedHostRunTakesItsRecipeFromTheRunList(t *testing.T) {
+// TestRetry_AReloadedHostRunTakesItsRecipeFromItsState pins that the lease needs the recipe the single-run rule compares.
+func TestRetry_AReloadedHostRunTakesItsRecipeFromItsState(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowRetry: json.RawMessage(`{}`),
-		methodKiroWorkflowList: json.RawMessage(
-			`{"runs":[{"workflowId":"wf_1","name":"nightly","workflowName":"nightly","status":"aborted",` +
-				`"parentSessionId":"` + testLaunchSession + `"}]}`,
-		),
 	}
 	// No host session in the manager: the reload path.
 	if h.bridge.mgr.get(runChatID(id)) != nil {
 		t.Fatal("the fixture registered a bridge, so this exercises the wrong branch")
 	}
-	if o := h.runs.originOf(t.Context(), id); o.recipe != "nightly" {
-		t.Fatalf("Setup: the run list resolves recipe %q, want nightly", o.recipe)
-	}
-	aff := h.runs.affordance(id, &runHead{Status: "aborted"})
+	aff := h.runs.affordance(id, launchedHead("aborted", testLaunchSession, "nightly"))
 
 	if _, err := h.runs.retry(t.Context(), id, aff); err != nil {
 		t.Fatalf("Retry: %v", err)
@@ -618,7 +604,7 @@ func TestRetry_ALoadedHostRunTakesItsRecipeFromTheRunList(t *testing.T) {
 		t.Fatal("the reloaded run holds no lease, so nothing bounds it")
 	}
 	if l.Recipe != "nightly" {
-		t.Errorf("recipe = %q, want nightly off KAS's run list", l.Recipe)
+		t.Errorf("recipe = %q, want nightly off KAS's state of the run", l.Recipe)
 	}
 	if l.Origin != runlease.OriginManual {
 		t.Errorf("origin = %q, want manual: the user clicked Retry, so this run is the user's "+
@@ -633,15 +619,10 @@ func TestRetry_ALoadedHostRunTakesItsRecipeFromTheRunList(t *testing.T) {
 func TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
-	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowList: json.RawMessage(
-			`{"runs":[{"workflowId":"wf_1","name":"nightly","workflowName":"nightly","status":"aborted",` +
-				`"parentSessionId":"` + testLaunchSession + `"}]}`,
-		),
-	}
+	br.callResults = map[string]json.RawMessage{}
 	br.callErrs = map[string]error{methodKiroWorkflowRetry: errors.New("kas refused")}
 
-	_, err := h.runs.retry(t.Context(), id, h.runs.affordance(id, &runHead{Status: "aborted"}))
+	_, err := h.runs.retry(t.Context(), id, h.runs.affordance(id, launchedHead("aborted", testLaunchSession, "nightly")))
 	if !slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
 		t.Fatalf("Setup: the retry never reached KAS (err %v); calls were %v", err, br.callLog())
 	}
@@ -821,7 +802,7 @@ func TestLaunchRun_ReportsTheReplysOwnError(t *testing.T) {
 		methodKiroWorkflowNew: {Code: -32602, Message: "inputs.branch: Required"},
 	}
 
-	_, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{})
+	_, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, nil)
 	if err == nil {
 		t.Fatal("a launch KAS refused reported success")
 	}
@@ -873,7 +854,7 @@ func TestStopChatRuns_CancelsARunOnAnySessionOfTheChain(t *testing.T) {
 // record.
 func TestStopChatRuns_ReportsARunListItCouldNotRead(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
-	const wantLine = "close: the run list could not be read; stopping only the runs marotte leases"
+	const wantLine = "close: no run inventory could be read; stopping only the runs marotte leases"
 
 	t.Run("an unreadable run list is reported", func(t *testing.T) {
 		logs := captureLogs(t)
@@ -1003,7 +984,7 @@ func TestLaunchRun_SendsTheHostSessionAsParent(t *testing.T) {
 		methodKiroWorkflowInvoke:      json.RawMessage(`{}`),
 	}
 
-	if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err != nil {
+	if _, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, nil); err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
 
@@ -1038,7 +1019,7 @@ func TestLaunchRun_RefusesAHostSessionDoorWithNoSessionID(t *testing.T) {
 	br.sessionID = ""
 	br.mu.Unlock()
 
-	_, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{})
+	_, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, nil)
 	if !errors.Is(err, errRunHostStart) {
 		t.Fatalf("Launch on a door with no session id = %v, want errRunHostStart", err)
 	}
@@ -1149,7 +1130,7 @@ func TestAgentLaunchKeepsPrompt(t *testing.T) {
 		methodKiroWorkflowInvoke: json.RawMessage(`{}`),
 	}
 	if _, _, _, err := h.runs.launch(t.Context(), "agent://wf-coder", map[string]string{"prompt": "fix the build"},
-		marotte.RunDefaults{}); err != nil {
+		marotte.RunDefaults{}, nil); err != nil {
 		t.Fatalf("launch(agent://wf-coder): %v", err)
 	}
 	if got, want := sentInputs(t, br), map[string]any{"prompt": "fix the build"}; !maps.Equal(got, want) {
@@ -1224,7 +1205,7 @@ func TestConcurrentLaunchesOneRecipeOneRun(t *testing.T) {
 
 	errs := make(chan error, 2)
 	go func() {
-		_, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{})
+		_, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, nil)
 		errs <- err
 	}()
 	go func() {
@@ -1263,7 +1244,7 @@ func TestTriggeredInvokeErrorReturnsWorkflowID(t *testing.T) {
 	br.callErrs = map[string]error{methodKiroWorkflowInvoke: errHoldFault}
 	o := triggeredLaunch(entry.ID, "github.com/o/r/run/8/failure", "github.com/o/r/run/8", "run 8")
 
-	id, _, _, err := h.runs.launchAs(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, o)
+	id, _, _, err := h.runs.launchAs(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, o, nil)
 	if id != "wf_1" || !errors.Is(err, errHoldFault) {
 		t.Fatalf("launchAs = %q, %v; want wf_1 with the invoke error", id, err)
 	}
@@ -1384,7 +1365,7 @@ func TestTriggeredLeaseGrantFailureWritesNoInvoke(t *testing.T) {
 			h.runs.confirmer = &fakeConfirmer{}
 			launchableRecipe(br, tc.workflowID)
 
-			id, _, _, err := h.runs.launchAs(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, eventLaunch())
+			id, _, _, err := h.runs.launchAs(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, eventLaunch(), nil)
 			if id != tc.workflowID || !errors.Is(err, trigger.ErrLeaseNotGranted) {
 				t.Fatalf("launchAs = %q, %v; want %q with trigger.ErrLeaseNotGranted", id, err, tc.workflowID)
 			}
@@ -1486,7 +1467,7 @@ func TestCancelAbandonedEndsUninvokedRun(t *testing.T) {
 	if !h.runs.claimTermination(before.WorkflowID) {
 		t.Error("the cancelled run's termination claim survived, though it sends no run_complete to release it")
 	}
-	if _, _, _, err := h.runs.launch(t.Context(), "bundled://probe", nil, marotte.RunDefaults{}); err != nil {
+	if _, _, _, err := h.runs.launch(t.Context(), "bundled://probe", nil, marotte.RunDefaults{}, nil); err != nil {
 		t.Errorf("the next launch after the cancel = %v, want it launched", err)
 	}
 }
@@ -1532,7 +1513,7 @@ func TestCancelAbandonedRefusedKeepsRecipeBusy(t *testing.T) {
 	if _, held := h.runs.lease("wf_1"); !held {
 		t.Error("the refused cancel released the run's lease")
 	}
-	_, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{})
+	_, _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, nil)
 	var be *schedule.BusyError
 	if !errors.As(err, &be) || be.WorkflowID != "wf_1" {
 		t.Errorf("the next launch = %v, want a BusyError naming wf_1", err)
@@ -1590,7 +1571,7 @@ func lostInvokeHub(t *testing.T) (*Runtime, *fakeBridge, *fakeConfirmer, error) 
 		return nil, nil, false, errHoldFault
 	}
 	br.mu.Unlock()
-	id, _, _, err := h.runs.launchAs(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, eventLaunch())
+	id, _, _, err := h.runs.launchAs(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, eventLaunch(), nil)
 	if id != "wf_1" {
 		t.Fatalf("launchAs id = %q (%v), want wf_1", id, err)
 	}
@@ -1675,7 +1656,7 @@ func triggeredRetryHubOn(t *testing.T, c TriggerConfirmer, dir string, o launchO
 
 func retryFailed(t *testing.T, h *Runtime) error {
 	t.Helper()
-	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "failed"}))
+	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", launchedHead("failed", testLaunchSession, "publish")))
 	return err
 }
 

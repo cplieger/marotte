@@ -531,6 +531,9 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	h.engine = newEngineOwner(source, lc, &hooks)
 	runs.engine, runs.router = h.engine, h.router
 	runs.answerEarly = h.answerEarly
+	if h.sessionReaper != nil {
+		runs.runsOnDisk = h.sessionReaper.RunsOnDisk
+	}
 	runs.doorSettings = h.readSessionSettings
 	bridgeP.mgr.closeSession = h.closeSession
 	runs.mutations.covered = func(wf string) bool { return runs.bounded(wf) || (runs.log != nil && runs.log.hasOpen(wf)) }

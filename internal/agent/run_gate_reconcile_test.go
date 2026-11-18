@@ -757,7 +757,7 @@ func TestSignInGate_AVerbCrossingTheClosingEdgeLeavesNoRunRunning(t *testing.T) 
 			name: "a launch", verb: methodKiroWorkflowNew, wf: "wf_9",
 			send: func(g *gateRun) error {
 				_, _, _, err := g.h.runs.launch(context.Background(), "agent://wf-coder",
-					map[string]string{"prompt": "fix the build"}, marotte.RunDefaults{})
+					map[string]string{"prompt": "fix the build"}, marotte.RunDefaults{}, nil)
 				return err
 			},
 		},
