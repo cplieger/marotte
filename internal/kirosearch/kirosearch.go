@@ -29,8 +29,9 @@ import (
 
 // searchDeadline bounds one search across every root; a var so tests can shorten it. Measured on a
 // 1.18-million-file workspace (warm cache): a full file listing took 1.2 s and an unscoped text
-// search 24.5 s, against KAS's own 30 s rg budget. 15 s returns every scoped search whole and an
-// unscoped one partial.
+// search 24.5 s, against KAS's own 30 s rg budget. KAS reruns a search answered after its 30 s
+// client wait on a walker with no deadline, so this plus killWait must leave KAS's own delay room
+// under 30 s.
 var searchDeadline = 15 * time.Second
 
 // errSearchDeadline is the cause searchDeadline ends a search with, which tells it from a deadline
@@ -492,8 +493,9 @@ func includeGlob(root, glob string) string {
 // directories, so rg skips every other subtree (a --glob filters names but still descends every
 // directory). A leading "/" anchors glob at root, as in rg. ok is false when no file under root can
 // match: a ".." segment (rg's paths have none), or a directory that is absent, cannot be resolved
-// (any stat error), or is reached through a symlink, which rg does not follow. Only a glob with no
-// literal leading directory searches all of root.
+// (any stat error), or is reached through a symlink: a walk of root does not follow it, but rg
+// given it as the start path does, outside root included. Only a glob with no literal leading
+// directory searches all of root.
 func scope(root, glob string) (dir string, ok bool) {
 	glob = strings.TrimPrefix(glob, "/")
 	segs := strings.Split(glob, "/")
@@ -505,7 +507,7 @@ func scope(root, glob string) (dir string, ok bool) {
 	}
 	var lit []string
 	for _, seg := range segs[:len(segs)-1] {
-		if seg == "" || seg == "." || seg == ".." || strings.ContainsAny(seg, `*?[]{}\!`) {
+		if seg == "" || seg == "." || strings.ContainsAny(seg, `*?[]{}\!`) {
 			break
 		}
 		lit = append(lit, seg)

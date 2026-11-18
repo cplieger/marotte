@@ -633,7 +633,8 @@ func TestFiles_RealRGReadsAFlagShapedDirectoryAsAPath(t *testing.T) {
 	}
 }
 
-// rg does not follow a symlink, so no file under a linked prefix can match.
+// A linked prefix is never rg's start path: rg follows a start path that is a symlink, outside the
+// root included.
 func TestText_IncludeThroughASymlinkRunsNoSearch(t *testing.T) {
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{"real/a.go": "x"})
