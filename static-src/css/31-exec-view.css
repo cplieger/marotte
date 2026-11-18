@@ -13,8 +13,10 @@
      has something taller than itself to scroll. `flex: 1 1 0; min-height: 0` made
      this column exactly the free space of that box, so `scrollHeight ===
      clientHeight` and no scrollbar could ever appear — every region below was
-     crushed into a cage that scrolled on its own instead. */
-  flex: 1 0 auto;
+     crushed into a cage that scrolled on its own instead. It never GROWS either:
+     under the scroll owner's clamp floor on the body, a grown page measures the
+     floor instead of its content, so a shrink is never seen and never lowered. */
+  flex: none;
   gap: var(--sp-3);
 
   /* A CONTAINER spaces its children and a child never spaces itself: the gap above

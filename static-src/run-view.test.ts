@@ -301,7 +301,7 @@ import {
 // The REAL router: a zero-import leaf, so no mock, and taking the node from the PARSER rather than
 // a literal is what makes the fragment case below cover the
 import { parseRoute } from "./route-path.js";
-import { openDockPanel, openRunDockPanel } from "./__test-helpers__/exec-dock.js";
+import { openDockPanel, openRunDockPanel, settledOpen } from "./__test-helpers__/exec-dock.js";
 import type { Entry } from "./types.js";
 
 /** Kept as a helper rather than inlined per case so a case reads as "this run offers these
@@ -2924,10 +2924,12 @@ describe("the page's scroll position", () => {
 
   beforeEach(() => {
     const replies = new Map(
-      ["wf_scroll_a", "wf_scroll_b", "wf_shrink_a", "wf_shrink_b"].map((id) => [
-        `/api/runs/${id}`,
-        { workflowId: id, state: { workflowId: id, status: "completed", root: steps(id) } },
-      ]),
+      ["wf_scroll_a", "wf_scroll_b", "wf_shrink_a", "wf_shrink_b", "wf_steps", "wf_shrink_c"].map(
+        (id) => [
+          `/api/runs/${id}`,
+          { workflowId: id, state: { workflowId: id, status: "completed", root: steps(id) } },
+        ],
+      ),
     );
     vi.mocked(apiGetOrError).mockImplementation((path: string) => {
       const data = replies.get(path.split("?")[0] ?? path);
@@ -3054,4 +3056,71 @@ describe("the page's scroll position", () => {
       kept: true,
     });
   });
+
+  // A step pick swaps the page's subject in place: the step left keeps its own position, and the
+  // step shown gets its own page height, so a short step after a long one never opens on blank space.
+  it("gives each step its own page height and position across a step pick", async () => {
+    await activate("wf_steps");
+    await frames();
+    await openRunDockPanel(document.body);
+    await settledOpen(document.body);
+    const longEnd = bottom();
+    expect(longEnd, "the premise: the first step's page overflows").toBeGreaterThan(400);
+    const readAt = longEnd - 100;
+    readerScrollTo(readAt);
+    await frames();
+
+    pickStep("wf_steps:wf_steps-step-1");
+    await frames();
+    await frames();
+    const port = scroller().getBoundingClientRect();
+    const detail = document.querySelector(".ev-pane-detail")?.getBoundingClientRect();
+    if (detail === undefined) {
+      throw new Error("no detail pane");
+    }
+    // Where the short step's content ends in the scroller's own coordinates; past it is blank.
+    const contentEnd = detail.bottom - port.top + scroller().scrollTop;
+    // A step never shown before opens Following, at its own end, as a run tab opens.
+    expect({
+      atOwnEnd: scroller().scrollTop === bottom(),
+      blankRange: scroller().scrollHeight > Math.max(scroller().clientHeight, contentEnd + 40),
+    }).toEqual({ atOwnEnd: true, blankRange: false });
+
+    pickStep("wf_steps:wf_steps-step-0");
+    await frames();
+    await frames();
+    expect(scroller().scrollTop).toBe(readAt);
+  });
+
+  // The clamp floor holds the page's height through a shrink only until the follower answers it, so a
+  // step whose own content shrinks ends at that content.
+  it("lowers the page to a step's content when the step's content shrinks", async () => {
+    await activate("wf_shrink_c");
+    await frames();
+    expect(bottom(), "the premise: the step's page overflows").toBeGreaterThan(400);
+    const items = [...document.querySelectorAll(".ev-r-item")];
+    for (const item of items.slice(2)) {
+      item.remove();
+    }
+    await frames();
+    await frames();
+    const port = scroller().getBoundingClientRect();
+    const results = document.querySelector(".ev-results")?.getBoundingClientRect();
+    if (results === undefined) {
+      throw new Error("no results region");
+    }
+    const contentEnd = results.bottom - port.top + scroller().scrollTop;
+    expect(scroller().scrollHeight).toBeLessThanOrEqual(
+      Math.max(scroller().clientHeight, contentEnd + 40),
+    );
+  });
 });
+
+/** A click on a step's row in the open dock panel, the way a reader picks the step the page shows. */
+function pickStep(path: string): void {
+  const row = document.querySelector<HTMLElement>(`.ev-row[data-path="${path}"] > .ev-row-main`);
+  if (row === null) {
+    throw new Error(`no step row ${path}`);
+  }
+  row.click();
+}

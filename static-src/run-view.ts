@@ -344,14 +344,21 @@ let controls: RunControlsView | undefined;
 let stepEnds: StepEndView | undefined;
 
 let follower: FollowScroller | undefined;
+/** The `join(run, step path)` the follower is attached for; undefined while it is parked. */
+let followed: string | undefined;
+/** The path the page's detail pane shows, "" for none. */
+let pagePath = "";
 
-/** Where each run's page stood when another run took the one scroller. */
+/** Where each step's page stood when another step or run took the one scroller, by
+ *  `join(run, step path)`: a step pick swaps the page's subject in place, so each step needs a
+ *  position and a clamp floor of its own. */
 const parkedScroll = new Map<string, ViewScrollState>();
 
-function parkPage(): void {
-  if (follower !== undefined && page !== undefined && pageRun !== "") {
-    parkedScroll.set(pageRun, follower.detach());
+function parkFollower(): void {
+  if (follower !== undefined && followed !== undefined) {
+    parkedScroll.set(followed, follower.detach());
   }
+  followed = undefined;
 }
 
 function attachFollower(workflowID: string): void {
@@ -359,10 +366,12 @@ function attachFollower(workflowID: string): void {
   if (follower === undefined || body === null) {
     return;
   }
+  const key = join(workflowID, pagePath);
   follower.attach({
     el: body,
-    ...(parkedScroll.get(workflowID) ?? { scrollTop: 0, readingState: "following" }),
+    ...(parkedScroll.get(key) ?? { scrollTop: 0, readingState: "following" }),
   });
+  followed = key;
 }
 
 let runFlags = { live: false, paused: false };
@@ -537,12 +546,15 @@ function mountPage(
   dockHost: HTMLElement,
   workflowID: string,
 ): ExecPageView {
-  parkPage();
+  parkFollower();
   dropPage();
   const verbs = buildRunControlsView(workflowID);
   controls = verbs;
   const ends = buildStepEndView(workflowID);
   stepEnds = ends;
+  /** Whether a step pick parked the follower, which the shown step then takes back. A new page's
+   *  first pick parks nothing: `paint` attaches it once the first render is done. */
+  let swapping = false;
   const built = buildExecPage({
     emptyNote: stepEmptyNote,
     emptyAction: stepEmptyAction,
@@ -550,8 +562,19 @@ function mountPage(
     dock: dockHost,
     controls: () => verbs.current(),
     notes: () => verbs.refusals(),
+    onLeaveNode: () => {
+      swapping = followed !== undefined;
+      parkFollower();
+    },
     // The pane's effect projects the step this names.
-    onShowNode: armStepRead,
+    onShowNode: (node) => {
+      pagePath = node?.path ?? "";
+      armStepRead(node);
+      if (swapping) {
+        swapping = false;
+        attachFollower(workflowID);
+      }
+    },
     output: (node) => stepCapture(workflowID, node.path),
     // Never another run's page: `showRun` repaints at once, and that paint drops this page.
     onSelect: (node) => {
@@ -581,6 +604,7 @@ function mountPage(
   // another run's path, and a stale answer would swallow the first hole here.
   shownNode = undefined;
   shownStep.value = "";
+  pagePath = "";
   holesAnswered = "";
   cancelStepRetry();
   catchUpsOwed.clear();
@@ -944,7 +968,7 @@ function paint(workflowID: string, state: RunState | undefined): void {
   if (state === undefined) {
     if (pageRun !== workflowID && page !== undefined) {
       // Another run's page and its dock must not stand in for this run while it loads.
-      parkPage();
+      parkFollower();
       dropPage();
       container.replaceChildren();
     }

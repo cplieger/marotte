@@ -46,6 +46,9 @@ interface ExecPageOpts {
    *  run on every render and must stay pure). The STATE half is required because `select()`
    *  PINS the selection: a path-only guard never re-fires for a step clicked while running. */
   onShowNode?: (node: ExecNode | undefined) => void;
+  /** Fired with the path the detail pane is showing ("" for none) just before it shows another, while
+   *  the page still lays out the node being left: the seam a consumer parks that node's scroll on. */
+  onLeaveNode?: (path: string) => void;
   /** Fired after every repaint with the selected node as that render built it, so a consumer keeps no
    *  copy whose fields (`verb` among them) can go stale between `onShowNode` calls. */
   onSelect?: (node: ExecNode | undefined) => void;
@@ -202,11 +205,14 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     if (run === undefined) {
       return;
     }
+    const node = nodeAt(run.nodes, selected);
+    if ((node?.path ?? "") !== shownPath) {
+      opts.onLeaveNode?.(shownPath);
+    }
     tree.render(run.nodes, selected);
     timeline.render(run.nodes, selected, run.live);
     dock.paint(run, selected, opts.notes?.(run) ?? []);
     dock.setControls(opts.controls?.(run) ?? null);
-    const node = nodeAt(run.nodes, selected);
     detail.render(node);
     // In `repaint` rather than in `render`, because the region is the SELECTED node's:
     // a selection change is a change of subject, and only this path runs on one.
