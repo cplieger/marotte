@@ -11,6 +11,7 @@ export const FILE_SECONDS: Readonly<Record<string, number>> = {
   "user-input-layout.pointer.test.ts": 212,
   "tab-close-optimistic.test.ts": 102,
   "button-size.test.ts": 100,
+  "text-alignment.test.ts": 70,
   "scroll.holds.test.ts": 47,
   "scroll.motion.test.ts": 42,
   "scroll.test.ts": 38,

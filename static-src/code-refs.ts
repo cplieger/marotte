@@ -84,7 +84,8 @@ function buildItem(ref: CodeReference): HTMLLIElement {
           target: "_blank",
           rel: "noopener noreferrer",
         },
-        label,
+        // A span, not a bare text node: 15-input.css's label trim needs a box.
+        el("span", { className: "code-refs-link-text" }, label),
         iconEl(ICON_EXTERNAL),
       ),
     );

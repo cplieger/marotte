@@ -1419,12 +1419,12 @@
   display: none;
 }
 
+/* `inline-block`, a block container, so 15-input.css's label trim reaches the count's text. */
 .turn-hit-count:not(:empty) {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  display: inline-block;
+  text-align: center;
   min-width: 1rem;
-  padding: 0 var(--sp-1);
+  padding-inline: var(--sp-1);
   border-radius: var(--r-sm);
   background: color-mix(in srgb, var(--c-yellow) 25%, transparent);
   color: var(--c-yellow);

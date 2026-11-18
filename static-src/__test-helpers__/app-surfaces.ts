@@ -3,11 +3,16 @@
 // state and planted by hand in that module's shape where none does. `touch-targets.test.ts` walks them
 // on the coarse tier and `button-size.test.ts` classifies every control on them.
 import { expect } from "vitest";
+import { http, HttpResponse } from "msw";
+import { setupWorker } from "msw/browser";
 import { _resetForTest as resetAsk } from "../legacy-ui/ask.js";
 import { _resetForTest as resetScrollLock } from "../legacy-ui/modal.js";
 
 import indexHtml from "../../static/index.html?raw";
 import type { Pele } from "../mermaid-svg.js";
+import type { Inventory, PolicyView } from "../wire/types.gen.js";
+import type { RunNode } from "../run-store.js";
+import { settingsPayload } from "./settings.js";
 
 export type Size = 1180 | 820 | 390;
 export const VIEWPORTS: Record<Size, readonly [number, number]> = {
@@ -43,8 +48,10 @@ const { buildToolCard } = await import("../tool-card.js");
 const { buildToolGroupShell, groupBody, refreshGroupHeader } = await import("../tool-group.js");
 const { stampHookCard } = await import("../hook-fold.js");
 const { iconEl } = await import("../icon-el.js");
-const { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP, ICON_RUN_WHEN_UI, ICON_SEND } =
+const { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP, ICON_CLOSE, ICON_RUN_WHEN_UI, ICON_SEND, modelIcon } =
   await import("../icons.js");
+const { FallbackSlot } = await import("../model-fallback-row.js");
+const { modeOption } = await import("../role-picker.js");
 const { openModal } = await import("../modals.js");
 const { createSearchShell, searchIconButton } = await import("../search-shell.js");
 const { createSearchPopup } = await import("../search-popup.js");
@@ -55,6 +62,9 @@ const { buildElicitationCard } = await import("../elicitation.js");
 const { buildEffortSlider } = await import("../effort-slider.js");
 const { buildAttachmentPill } = await import("../attachment-pill.js");
 const { buildChip } = await import("../chip.js");
+const { initNativePolicyUI, loadNativePolicy } = await import("../permissions-ui.js");
+const { initTools, loadToolsList } = await import("../tools.js");
+const { initKnowledge, loadKnowledge } = await import("../knowledge.js");
 const { mountNewDocButton } = await import("../docs-new.js");
 const { mountSteerStack } = await import("../pending-steers.js");
 const { makeExpandable } = await import("../pill-expand.js");
@@ -189,7 +199,7 @@ function plantTabs(): void {
   for (let i = 0; i < 4; i++) {
     const row = make("div", "tab", { role: "tab", tabindex: i === 0 ? "0" : "-1" });
     const close = make("span", "tab-close", { "aria-hidden": "true" });
-    close.textContent = "×";
+    close.append(iconEl(ICON_CLOSE));
     row.append(text("span", "tab-name", `Conversation ${String(i)}`), close);
     list.appendChild(row);
   }
@@ -223,7 +233,8 @@ export function turn(...body: HTMLElement[]): HTMLElement {
   const header = buildTurnHeader({
     n: 1,
     outcome: "completed",
-    ts: 0,
+    // A real time: the header writes `.turn-ts` only for one.
+    ts: Date.UTC(2026, 10, 17, 14, 32),
     request: "Fix the build",
     attachments: [],
   });
@@ -387,8 +398,31 @@ const step = (nodeId: string): { nodeId: string; type: "step"; status: "complete
   status: "completed",
 });
 
-/** A run card whose loop holds three steps, beside a top-level one. */
-function plantLoop(): void {
+/** An inner loop on its second pass, so the progress phrase shows its "› 2" part. */
+const NESTED = {
+  nodeId: "patch-loop",
+  type: "repeat",
+  status: "running",
+  children: [
+    {
+      nodeId: "patch-loop#0",
+      type: "sequence",
+      status: "completed",
+      iteration: 0,
+      children: [step("patch")],
+    },
+    {
+      nodeId: "patch-loop#1",
+      type: "sequence",
+      status: "running",
+      iteration: 1,
+      children: [{ nodeId: "patch", type: "step", status: "running" }],
+    },
+  ],
+} satisfies RunNode;
+
+/** A run card whose loop holds three steps, beside a top-level one; `nested` adds an inner loop. */
+function plantLoop(nested = false): void {
   const view = buildRunCard("wf", "deadset-ci", () => undefined);
   turn(view.root);
   view.render({
@@ -411,7 +445,7 @@ function plantLoop(): void {
               type: "sequence",
               status: "running",
               iteration: 0,
-              children: [step("code"), step("review"), step("fix")],
+              children: [step("code"), step("review"), step("fix"), ...(nested ? [NESTED] : [])],
             },
           ],
         },
@@ -738,48 +772,121 @@ function plantPRs(): void {
   q("#git-prs-mount").appendChild(list);
 }
 
-function plantToolRows(): void {
-  const host = q("#tools-list");
-  host.replaceChildren();
-  for (const name of ["ripgrep", "typescript-language-server"]) {
-    const toggle = make("label", "toggle toggle-inline tool-toggle");
-    toggle.append(
-      make("input", "", { type: "checkbox", "aria-label": `Disable ${name}` }),
-      make("span", "toggle-slider"),
-    );
-    const wrap = box("tool-name-wrap", [
-      text("span", "list-row-name", name),
-      box("tool-hit-chips", [text("span", "tool-source-chip", "LSP")]),
-    ]);
-    const row = box("list-row", [
-      make("span", "tool-state-dot tool-state-ok"),
-      wrap,
-      text("span", "list-row-meta", "15.2.0"),
-      box("list-row-actions", [
-        toggle,
-        iconButton("list-row-btn list-row-pin", `Pin ${name} version`),
-        iconButton("list-row-btn", `Remove ${name}`),
-      ]),
-    ]);
-    host.appendChild(row);
+/** The inventory `tools.ts` renders from GET /api/tools: a tool with an LSP chip, one without a
+ *  chip, and a system tool. */
+const INVENTORY: Inventory = {
+  tools: [
+    {
+      name: "gopls",
+      source: "aqua:golang/tools/gopls",
+      version: "0.24.0",
+      installed: true,
+      installing: false,
+      lsp: true,
+    },
+    {
+      name: "ripgrep",
+      source: "aqua:BurntSushi/ripgrep",
+      version: "15.2.0",
+      installed: true,
+      installing: false,
+    },
+  ],
+  system: [{ name: "git", installed: true }],
+};
+
+let server: ReturnType<typeof setupWorker> | null = null;
+
+/** Serves `handlers` alone over the page's MSW worker, started on first use. */
+async function serve(...handlers: Parameters<ReturnType<typeof setupWorker>["resetHandlers"]>) {
+  if (server === null) {
+    server = setupWorker();
+    await server.start({ quiet: true, onUnhandledFrame: "bypass" });
+  }
+  server.resetHandlers(...handlers);
+}
+
+/** Polls until `sel` matches `n` elements, the rows a production loader paints after its fetch. */
+async function rendered(sel: string, n: number): Promise<void> {
+  for (let i = 0; document.querySelectorAll(sel).length < n; i++) {
+    if (i === 100) {
+      throw new Error(`fixture: ${sel} never rendered ${String(n)} rows`);
+    }
+    await new Promise((r) => setTimeout(r, 10));
   }
 }
 
-/** Two writable policy rules and a chip list, as `permissions-ui.ts` and `chip.ts` render them. */
-function plantPermissions(): void {
-  const host = q("#native-policy-list");
-  for (const cap of ["fs_write", "execute"]) {
-    const effect = make("select", "native-rule-effect", { "aria-label": "Effect" });
-    effect.appendChild(text("option", "", "ask"));
-    host.appendChild(
-      box("native-rule native-rule-ask", [
-        effect,
-        text("span", "native-rule-cap mono", cap),
-        text("span", "native-rule-src", "workspace"),
-        iconButton("icon-btn native-rule-remove", "Remove rule"),
-      ]),
-    );
-  }
+/** The tool rows `tools.ts` renders from the inventory. */
+async function plantToolRows(): Promise<void> {
+  await serve(http.get("/api/tools", () => HttpResponse.json(INVENTORY)));
+  initTools();
+  loadToolsList();
+  await rendered("#tools-list .list-row", 3);
+}
+
+/** The knowledge rows `knowledge.ts` renders from GET /api/knowledge. */
+async function plantKnowledgeRows(): Promise<void> {
+  await serve(
+    http.get("/api/knowledge", () =>
+      HttpResponse.json({
+        contexts: [
+          { name: "docs", id: "a", item_count: 42, path: "/workspace/docs" },
+          { name: "rust-book", id: "b", item_count: 1 },
+        ],
+      }),
+    ),
+  );
+  initKnowledge();
+  loadKnowledge();
+  await rendered("#knowledge-list .list-row", 2);
+}
+
+/** The rule table's answer: writable rules with and without globs, and a read-only one. */
+const POLICY: PolicyView = {
+  available: true,
+  profile: "custom",
+  run_profile: "custom",
+  profile_saved: true,
+  profiles: [
+    { id: "guarded", presets: [] },
+    { id: "custom", presets: [] },
+  ],
+  writable_scopes: ["user", "workspace"],
+  capabilities: ["fs_read", "fs_write", "shell"],
+  load_errors: [],
+  rules: [
+    {
+      capability: "fs_read",
+      effect: "allow",
+      scope: "kiro",
+      source: "kiro-scope",
+      match: ["/workspace/**", "/data/**"],
+      editable: false,
+    },
+    {
+      capability: "fs_write",
+      effect: "ask",
+      scope: "workspace",
+      source: "/workspace/.kiro/settings/permissions.yaml",
+      match: ["src/**"],
+      editable: true,
+    },
+    {
+      capability: "shell",
+      effect: "deny",
+      scope: "user",
+      source: "/config/home/.kiro/settings/permissions.yaml",
+      editable: true,
+    },
+  ],
+};
+
+/** The policy rows `permissions-ui.ts` renders from GET /api/permissions, and a chip list. */
+async function plantPermissions(): Promise<void> {
+  await serve(http.get("/api/permissions", () => HttpResponse.json(POLICY)));
+  initNativePolicyUI();
+  loadNativePolicy();
+  await rendered("#native-policy-list .native-rule", 3);
   const chips = q("#agent-dirs-chips");
   for (const label of ["/data", "/srv"]) {
     chips.appendChild(buildChip({ label, code: true, onRemove: () => undefined }));
@@ -962,38 +1069,88 @@ function plantSteers(): void {
   });
 }
 
-function plantModelList(): void {
-  openCard("#switch-model-btn", "#model-switch-list", fillModelList);
+function plantModelList(fallback: boolean): void {
+  openCard("#switch-model-btn", "#model-switch-list", (list) => {
+    fillModelList(list, fallback);
+  });
 }
 
-function fillModelList(list: HTMLElement): void {
+const MODELS = [
+  { model_id: "claude-opus-5.5", model_name: "claude opus 5.5", rate_multiplier: 2.2 },
+  { model_id: "claude-opus-4.8", model_name: "claude opus 4.8", rate_multiplier: 2.2 },
+  { model_id: "auto", model_name: "Auto", rate_multiplier: 1 },
+];
+
+/** The model card as `model-switcher.ts` lays it out: the first panel holds the model rows (in its
+ *  `buildModelOption` shape), the effort section and, with model fallback on, the Fallback row
+ *  `FallbackSlot` builds. */
+function fillModelList(list: HTMLElement, fallback: boolean): void {
+  const main = make("div", "model-panel model-panel-main");
   const scroll = make("div", "pill-model-scroll", { role: "listbox", "aria-label": "Models" });
-  for (const [i, name] of ["Model A", "Model B", "Auto"].entries()) {
+  for (const [i, m] of MODELS.entries()) {
     const opt = make("div", i === 0 ? "pill-model-item active" : "pill-model-item", {
       role: "option",
       "aria-selected": i === 0 ? "true" : "false",
     });
-    opt.append(text("span", "", name), text("span", "pill-model-meta", "1x"));
+    const icon = make("span", "pill-model-item-icon", { "aria-hidden": "true" });
+    icon.appendChild(iconEl(modelIcon(m.model_id, "ui")));
+    opt.append(icon, text("span", "pill-model-name", m.model_name));
+    if (m.model_id !== "auto") {
+      opt.appendChild(text("span", "pill-model-meta", `${String(m.rate_multiplier)}x`));
+    }
     scroll.appendChild(opt);
   }
   const slider = buildEffortSlider({ onPick: () => undefined });
-  list.append(scroll, slider.el);
+  main.append(scroll, slider.el);
+  list.appendChild(main);
   slider.setLevels([
     { id: "low", name: "Low" },
     { id: "high", name: "High" },
   ]);
+  slider.setActive("high");
+  new FallbackSlot(() => undefined).sync(
+    { card: list, main },
+    {
+      model: "claude-opus-5.5",
+      settings: settingsPayload({
+        model_fallback_enabled: fallback,
+        model_fallbacks: [
+          {
+            model: "claude-opus-5.5",
+            configured: "",
+            vendor_default: "claude-opus-4.8",
+            read_only_reason: "",
+          },
+        ],
+      }),
+      catalog: MODELS,
+      identity: {
+        state: "signed_in",
+        email: "someone@example.invalid",
+        method: "",
+        startUrl: "",
+        region: "",
+        apiKey: false,
+      },
+    },
+  );
 }
 
 function plantRoleList(): void {
   openCard("#role-pill", "#role-list", fillRoleList);
 }
 
+/** The role card's rows from `role-picker.ts`: a bundled mode, and custom agents with their scope,
+ *  one shadowing a global agent. */
 function fillRoleList(list: HTMLElement): void {
-  for (const name of ["Default", "Spec", "Reviewer"]) {
-    const opt = make("button", "pill-role-item", { type: "button", role: "option" });
-    opt.append(make("span", "pill-role-item-icon"), text("span", "pill-role-name", name));
-    list.appendChild(opt);
-  }
+  list.append(
+    modeOption({ id: "kiro_default", name: "Default" }, "kiro_default"),
+    modeOption({ id: "reviewer", name: "Reviewer", source: "workspace" }, "kiro_default"),
+    modeOption(
+      { id: "planner", name: "Planner", source: "workspace", shadows: "global" },
+      "kiro_default",
+    ),
+  );
 }
 
 /** The chat options card's strip and action rows, as `chat-options.ts` builds them. */
@@ -1286,7 +1443,7 @@ function plantForgeConnection(): void {
 export interface Surface {
   readonly name: string;
   readonly sizes: readonly Size[];
-  readonly setup: (size: Size) => void;
+  readonly setup: (size: Size) => void | Promise<void>;
   /** Controls inside a layout: painted at the mouse's size, the 44px target invisible around them.
    *  Each selector must match at least one rendered element, and every match is checked. */
   readonly controls: readonly string[];
@@ -1401,7 +1558,19 @@ export const SURFACES: readonly Surface[] = [
   {
     name: "the model popup",
     sizes: TWO,
-    setup: plantModelList,
+    setup: () => {
+      plantModelList(true);
+    },
+    controls: [],
+    painted: [".effort-knob"],
+    rows: [".pill-model-item", ".effort-track"],
+  },
+  {
+    name: "the model popup without a fallback",
+    sizes: TWO,
+    setup: () => {
+      plantModelList(false);
+    },
     controls: [],
     painted: [".effort-knob"],
     rows: [".pill-model-item", ".effort-track"],
@@ -1516,7 +1685,18 @@ export const SURFACES: readonly Surface[] = [
   {
     name: "a run card's loop",
     sizes: TWO,
-    setup: plantLoop,
+    setup: () => {
+      plantLoop();
+    },
+    controls: [],
+    rows: [".run-head", ".run-step-head"],
+  },
+  {
+    name: "a run card's nested loop",
+    sizes: TWO,
+    setup: () => {
+      plantLoop(true);
+    },
     controls: [],
     rows: [".run-head", ".run-step-head"],
   },
@@ -1566,6 +1746,24 @@ export const SURFACES: readonly Surface[] = [
     },
     controls: ["#decision-dock .dock-card .btn-small"],
     rows: ["#decision-dock .user-input-option", "#decision-dock .dock-ask-more"],
+  },
+  {
+    name: "a question with a recommended option",
+    sizes: TWO,
+    setup: () => {
+      dock(
+        buildUserInputCard(
+          {
+            request_id: 1,
+            question: "Ship it?",
+            options: [{ title: "Ship", recommended: true }, { title: "Wait" }],
+          },
+          () => undefined,
+        ),
+      );
+    },
+    controls: ["#decision-dock .dock-card .btn-small"],
+    rows: ["#decision-dock .user-input-option"],
   },
   {
     name: "a question's sub-options",
@@ -1872,7 +2070,7 @@ export const SURFACES: readonly Surface[] = [
     setup: () => {
       show("settings-view");
       showPanel("data-settings-panel", "tools");
-      plantToolRows();
+      return plantToolRows();
     },
     controls: [
       "#tool-update-btn",
@@ -1882,7 +2080,18 @@ export const SURFACES: readonly Surface[] = [
       "#tools-list .list-row-btn",
       "#tool-open-manifest",
     ],
-    rows: ["#tools-list .list-row"],
+    rows: ["#tools-list .list-row:not(.list-row-system)"],
+  },
+  {
+    name: "Settings, Knowledge",
+    sizes: TWO,
+    setup: () => {
+      show("settings-view");
+      showPanel("data-settings-panel", "instructions");
+      return plantKnowledgeRows();
+    },
+    controls: ["#knowledge-add-btn", "#knowledge-clear-btn", "#knowledge-list .list-row-btn"],
+    rows: ["#knowledge-list .list-row"],
   },
   {
     name: "Settings, Permissions",
@@ -1891,7 +2100,7 @@ export const SURFACES: readonly Surface[] = [
       show("settings-view");
       showPanel("data-settings-panel", "permissions");
       q("#native-policy-explain-box").setAttribute("open", "");
-      plantPermissions();
+      return plantPermissions();
     },
     controls: [
       "#native-rule-add",
@@ -2111,6 +2320,6 @@ export async function mountSurface(s: Surface, size: Size, tier: "fine" | "coars
   clearSurface();
   mountApp();
   document.documentElement.dataset["pointer"] = tier;
-  s.setup(size);
+  await s.setup(size);
   await frames();
 }

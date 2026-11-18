@@ -179,7 +179,7 @@
      30-utilities.css carried a stale `width: 3ch` from a retired renderer, which
      capped that automatic minimum and clipped every line number over 999. */
   text-align: right;
-  padding: 0 var(--sp-1);
+  padding-inline: var(--sp-1);
   /* Hint ink with NO `opacity`. Secondary under `opacity: 0.7` measured 3.565:1
      in light mode — under AA for a line number the reader uses to carry their
      place across a click. The hint ink alone is 4.771 / 4.719 and reads the same. */
@@ -1070,19 +1070,25 @@
   min-width: 0;
 }
 
-/* One line while closed. The height matches the install button's dense tier so
-   the two read as one row, and `align-items: center` aligns each FLEX LINE's own
-   items — which is what keeps line 1 level with the button after the description
-   has moved to line 2. `list-style: none` or the native marker paints beside the
-   real chevron. */
+/* One line while closed, at the install button's dense height so the two read
+   as one row. The 14, 12 and 11px pieces align on their baseline (centred boxes
+   of different font sizes put baselines up to 1.5px apart); `align-content`,
+   which only a wrapping container honours, centres that line in the row, and the
+   chevron centres on the line. `list-style: none` or the native marker paints
+   beside the real chevron. */
 .mcp-result-summary {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-content: center;
+  align-items: baseline;
   gap: var(--sp-2);
   min-block-size: var(--row-tap-dense);
   list-style: none;
   cursor: pointer;
+
+  & > .disclosure-chevron {
+    align-self: center;
+  }
 }
 
 .mcp-result-summary::-webkit-details-marker {
@@ -1145,7 +1151,7 @@
    separating a dead server from a live one in this list. */
 .mcp-result-status {
   flex: none;
-  padding: 0 0.25rem;
+  padding-inline: 0.25rem;
   border: 1px solid var(--c-warning);
   border-radius: var(--r-sm);
   color: var(--c-warning);
