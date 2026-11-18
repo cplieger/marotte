@@ -537,7 +537,7 @@
   font-size: var(--fs-sm);
 }
 
-/* `.spinner` (15-input.css) in the in-flight accent, at the tool header's glyph size. */
+/* `.spinner` (15-input.css) in the in-flight accent. */
 .tool-spinner {
   --spinner-size: 0.75rem;
   --vk-ring-band: 2px;
@@ -1167,6 +1167,10 @@ a.subagent-header {
 .action-pill.is-busy {
   color: var(--c-accent);
   border-color: var(--c-accent);
+}
+
+.action-pill.is-busy > .spinner {
+  --spinner-arc: currentcolor;
 }
 
 .action-pill.is-busy:hover {

@@ -16,7 +16,7 @@ export function spinnerEl(modifier?: string): HTMLSpanElement {
 export function bindLoadingSpinner(
   actionName: string,
   btn: HTMLButtonElement,
-  opts?: Parameters<typeof bindLoadingState>[2],
+  opts?: Omit<NonNullable<Parameters<typeof bindLoadingState>[2]>, "ariaBusy" | "preserveAriaBusy">,
 ): () => void {
   if (btn.querySelector(":scope > .spinner-on-busy") === null) {
     btn.prepend(spinnerEl("spinner-on-busy"));

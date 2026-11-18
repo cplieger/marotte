@@ -592,6 +592,11 @@
   &.switching {
     pointer-events: none;
   }
+
+  /* The busy ring takes the box of the glyph it replaces, the `.ic-inline` model mark (status.ts). */
+  & > .spinner {
+    --spinner-size: calc(var(--icon-inline) + var(--icon-grow));
+  }
 }
 
 /* A pick parked until the running turn ends: the model's (`status.ts`) and the profile's (`profile-pill.ts`). */
@@ -2187,9 +2192,8 @@
 
 /* THE loading ring, 00-header.css "A RING THAT SPINS WHILE WORK RUNS". A site tunes it only through
    `--spinner-size`, `--vk-ring-band`, `--spinner-arc` and `--spinner-track`, never with a ring of its own.
-   `.spinner-sm` is its small step, and a whole ring alone: @cplieger/reactive's `withAsyncFeedback` emits it bare.
    `flex-shrink: 0`: in a flex row a long label squeezes the disc into an ellipse, which wobbles as it turns. */
-:is(.spinner, .spinner-sm) {
+.spinner {
   display: inline-block;
   vertical-align: middle;
   inline-size: var(--spinner-size, var(--icon-ui));
@@ -2203,7 +2207,7 @@
   );
 }
 
-:is(.spinner, .spinner-sm)::before {
+.spinner::before {
   content: "";
   display: block;
   inline-size: 100%;

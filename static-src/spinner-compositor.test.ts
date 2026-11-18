@@ -84,6 +84,19 @@ const RINGS: readonly (readonly [string, string])[] = [
   ],
 ];
 
+describe("a job pill's busy ring", () => {
+  it("draws its arc in the pill's accent ink over the shared track", () => {
+    host.innerHTML = `<button type="button" class="action-pill is-busy"><span class="spinner" aria-hidden="true"></span><span>Cancel</span></button><span class="spinner" aria-hidden="true"></span>`;
+    const [ring, reference] = [...host.querySelectorAll(".spinner")];
+    const ink = getComputedStyle(host.querySelector("button")!).color;
+    const arc = getComputedStyle(ring!, "::before").backgroundImage;
+    const ref = getComputedStyle(reference!, "::before").backgroundImage;
+    const head = `conic-gradient(from -45deg, ${ink} 0deg, ${ink} 90deg, `;
+    expect(arc.slice(0, head.length), "the arc").toBe(head);
+    expect(arc.slice(head.length), "the track").toBe(ref.slice(ref.indexOf("90deg, ") + 7));
+  });
+});
+
 describe("a spinning ring", () => {
   it.each(RINGS)("in %s animates only compositor properties", async (_name, markup) => {
     host.innerHTML = markup;
