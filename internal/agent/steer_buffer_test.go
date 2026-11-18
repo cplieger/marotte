@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/command"
@@ -992,36 +993,36 @@ func TestSteerRecords_DiscardLeavesARowReadBeforeTheClearRead(t *testing.T) {
 // The teardown marks the record gone before its cancel: the turn end that cancel
 // causes owes no job, and the rows nothing read come back for the close's notes.
 func TestSteerRecords_ATornDownChatOwesNothing(t *testing.T) {
-	s := newSteerHarness(t)
-	s.bind()
-	s.steer("steer-a", "first")
-	exit := make(chan struct{})
+	synctest.Test(t, func(t *testing.T) {
+		s := newSteerHarness(t)
+		t.Cleanup(func() { shutdownHub(t, s.h) })
+		s.bind()
+		s.steer("steer-a", "first")
+		exit := make(chan struct{})
 
-	unread := s.recs.beginTeardown(s.chat, exit)
-	s.endTurn()
+		unread := s.recs.beginTeardown(s.chat, exit)
+		s.endTurn()
 
-	if len(unread) != 1 || unread[0].SteerID != "steer-a" {
-		t.Errorf("unread = %+v, want steer-a", unread)
-	}
-	if jobs := s.spy.takeJobs(); len(jobs) != 0 {
-		t.Errorf("a torn-down chat queued %+v", jobs)
-	}
-	done := make(chan struct{})
-	go func() { s.recs.endTeardown(s.chat); close(done) }()
-	select {
-	case <-done:
-		t.Fatal("EndTeardown returned before the forward goroutine drained")
-	case <-time.After(20 * time.Millisecond):
-	}
-	close(exit)
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("EndTeardown never returned after the drain")
-	}
-	if s.recs.gone(s.chat) {
-		t.Error("the record is still marked gone after EndTeardown, so a reopened chat starts dead")
-	}
+		if len(unread) != 1 || unread[0].SteerID != "steer-a" {
+			t.Errorf("unread = %+v, want steer-a", unread)
+		}
+		if jobs := s.spy.takeJobs(); len(jobs) != 0 {
+			t.Errorf("a torn-down chat queued %+v", jobs)
+		}
+		done := make(chan struct{})
+		go func() { s.recs.endTeardown(s.chat); close(done) }()
+		synctest.Wait()
+		select {
+		case <-done:
+			t.Fatal("EndTeardown returned before the forward goroutine drained")
+		default:
+		}
+		close(exit)
+		<-done
+		if s.recs.gone(s.chat) {
+			t.Error("the record is still marked gone after EndTeardown, so a reopened chat starts dead")
+		}
+	})
 }
 
 // A steer routed after the teardown began is refused: no row.
@@ -1043,49 +1044,54 @@ func TestSteerRecords_ATornDownChatTakesNoNewRow(t *testing.T) {
 // The teardown waits behind a publication already under way, and that step's frame,
 // owed to a chat now gone, is not broadcast after the teardown began.
 func TestSteerRecords_BeginTeardownWaitsForAnActivePublication(t *testing.T) {
-	s := newSteerHarness(t)
-	var mu sync.Mutex
-	var order []string
-	log := func(ev string) {
-		mu.Lock()
-		order = append(order, ev)
-		mu.Unlock()
-	}
-	entered, release := make(chan struct{}), make(chan struct{})
-	s.recs.note = func(_ context.Context, _ marotte.ChatID, id string, _ *marotte.EntrySteer) {
-		close(entered)
-		<-release
-		log("note " + id)
-	}
-	s.recs.broadcast = func(e marotte.ServerEvent) {
-		log("frame " + e.Payload.(marotte.SteerQueuedPayload).SteerID)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		s := newSteerHarness(t)
+		t.Cleanup(func() { shutdownHub(t, s.h) })
+		var mu sync.Mutex
+		var order []string
+		log := func(ev string) {
+			mu.Lock()
+			order = append(order, ev)
+			mu.Unlock()
+		}
+		entered, release := make(chan struct{}), make(chan struct{})
+		s.recs.note = func(_ context.Context, _ marotte.ChatID, id string, _ *marotte.EntrySteer) {
+			close(entered)
+			<-release
+			log("note " + id)
+		}
+		s.recs.broadcast = func(e marotte.ServerEvent) {
+			log("frame " + e.Payload.(marotte.SteerQueuedPayload).SteerID)
+		}
 
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		s.recs.step(s.chat, true, func(_ *steerRecord, fx *steerFx) {
-			fx.notes = append(fx.notes, steerNote{id: "steer-a", steer: &marotte.EntrySteer{}})
-			fx.frames = append(fx.frames, marotte.SteerQueuedPayload{SteerID: "steer-b"})
+		var wg sync.WaitGroup
+		wg.Go(func() {
+			s.recs.step(s.chat, true, func(_ *steerRecord, fx *steerFx) {
+				fx.notes = append(fx.notes, steerNote{id: "steer-a", steer: &marotte.EntrySteer{}})
+				fx.frames = append(fx.frames, marotte.SteerQueuedPayload{SteerID: "steer-b"})
+			})
 		})
-	})
-	<-entered
-	returned := make(chan struct{})
-	wg.Go(func() {
-		s.recs.beginTeardown(s.chat, nil)
-		log("teardown returned")
-		close(returned)
-	})
-	select {
-	case <-returned:
-		t.Fatal("BeginTeardown returned while an earlier step's note was still being written")
-	case <-time.After(20 * time.Millisecond):
-	}
-	close(release)
-	wg.Wait()
+		<-entered
+		returned := make(chan struct{})
+		wg.Go(func() {
+			s.recs.beginTeardown(s.chat, nil)
+			log("teardown returned")
+			close(returned)
+		})
+		// Every goroutine is blocked: the note on its release, the teardown on the step it waits for.
+		synctest.Wait()
+		select {
+		case <-returned:
+			t.Fatal("BeginTeardown returned while an earlier step's note was still being written")
+		default:
+		}
+		close(release)
+		wg.Wait()
 
-	if want := []string{"note steer-a", "teardown returned"}; !slices.Equal(order, want) {
-		t.Errorf("order = %v, want %v: the gone chat's frame must not be broadcast", order, want)
-	}
+		if want := []string{"note steer-a", "teardown returned"}; !slices.Equal(order, want) {
+			t.Errorf("order = %v, want %v: the gone chat's frame must not be broadcast", order, want)
+		}
+	})
 }
 
 // The connect replay lists every held row with its wire state, then a batch frame
