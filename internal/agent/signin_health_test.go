@@ -423,6 +423,9 @@ func TestSignInHealth_APIKeyReadsOnlyEngineRefusals(t *testing.T) {
 
 // However the moves interleave, the gauge reads the state the last move left.
 func TestSignInHealth_TheGaugeFollowsTheLastMove_Concurrent(t *testing.T) {
+	if !testsupport.Alone(t) {
+		return
+	}
 	s := newHealthHub(t, WithAPIKey(true))
 	for round := range 200 {
 		var wg sync.WaitGroup

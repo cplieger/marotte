@@ -16,15 +16,15 @@ const aloneEnv = "MAROTTE_TEST_ALONE"
 
 // Alone reports whether t's test owns its process, so the caller may change process-wide state such as GOMAXPROCS
 // or read process-wide counters such as runtime.MemStats. Otherwise it runs the test again in a child process of
-// the test binary, beside the package's other parallel tests and under the same -run subtest pattern, -skip and
-// -short, fails t with the child's output unless the child ran and passed it, and the caller returns. Call it from a
-// top-level test, after any skip.
+// the test binary under the same -run subtest pattern, -skip and -short, fails t with the child's output unless the
+// child ran and passed it, and the caller returns. The child starts at once and t is parallel: sharing no process
+// state, the child runs beside the package's serial tests as well as its parallel ones. Call it from a top-level
+// test, after any skip.
 func Alone(t *testing.T) bool {
 	t.Helper()
 	if os.Getenv(aloneEnv) == t.Name() {
 		return true
 	}
-	t.Parallel()
 	run := "^" + regexp.QuoteMeta(t.Name()) + "$"
 	if sub, ok := subtestPattern(flagValue("test.run")); ok {
 		run += "/" + sub
@@ -38,16 +38,22 @@ func Alone(t *testing.T) bool {
 	//nolint:gosec,nolintlint // G204, G702: argv[0] is the test binary itself and every flag is the parent's own
 	child := exec.CommandContext(t.Context(), os.Args[0], args...)
 	child.Env = testchild.Env(aloneEnv + "=" + t.Name())
-	out, err := child.CombinedOutput()
+	var out bytes.Buffer
+	child.Stdout, child.Stderr = &out, &out
+	err := child.Start()
+	t.Parallel()
+	if err == nil {
+		err = child.Wait()
+	}
 	// A pattern that matched nothing exits 0 too.
-	if err == nil && !bytes.Contains(out, []byte("--- PASS: "+t.Name()+" (")) {
+	if err == nil && !bytes.Contains(out.Bytes(), []byte("--- PASS: "+t.Name()+" (")) {
 		err = errors.New("the child did not pass the test")
 	}
 	if err != nil {
-		t.Fatalf("%s in its own process: %v\n%s", t.Name(), err, out)
+		t.Fatalf("%s in its own process: %v\n%s", t.Name(), err, out.Bytes())
 	}
 	if testing.Verbose() {
-		t.Logf("%s in its own process:\n%s", t.Name(), out)
+		t.Logf("%s in its own process:\n%s", t.Name(), out.Bytes())
 	}
 	return false
 }

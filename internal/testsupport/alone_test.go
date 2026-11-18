@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/testsupport/testchild"
 )
@@ -51,6 +52,21 @@ func TestAloneFixture(t *testing.T) {
 	}
 }
 
+// TestAloneFixtureSerial follows TestAloneFixture as a serial test of the fixture's parent process and waits for the
+// child to have run, which only a child started before the parallel phase can have done.
+func TestAloneFixtureSerial(t *testing.T) {
+	if os.Getenv(aloneFixtureMode) != "early" || os.Getenv(aloneEnv) != "" {
+		t.Skip("runs only under TestAlone_ReportsTheChildsVerdict")
+	}
+	for range 200 {
+		if ran, err := os.ReadFile(os.Getenv(aloneFixtureOut)); err == nil && bytes.HasSuffix(ran, []byte(" b")) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("the child had not run 10s into the serial tests after TestAloneFixture, want it started at once")
+}
+
 func TestAlone_ReportsTheChildsVerdict(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -63,6 +79,7 @@ func TestAlone_ReportsTheChildsVerdict(t *testing.T) {
 		{name: "a subtest filter", mode: "pass", run: "^TestAloneFixture$/^b$", wantPass: true, wantSubs: " b"},
 		{name: "a failure", mode: "fail", run: "^TestAloneFixture$", wantSubs: " a b"},
 		{name: "a child that runs nothing", mode: "skip", run: "^TestAloneFixture$"},
+		{name: "a child beside the serial tests", mode: "early", run: "^TestAloneFixture(Serial)?$", wantPass: true, wantSubs: " a b"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := filepath.Join(t.TempDir(), "ran")
