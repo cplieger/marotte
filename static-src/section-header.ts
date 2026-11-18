@@ -1,6 +1,6 @@
 // A sidebar section's header (`#tab-sections` > `.side-section` > `h2.side-section-h`): its fold
 // toggle, the count, and the dot that speaks for the rows a fold hides. Every section folds through
-// here; its rows are its owner's (tabs.ts, history-section.ts).
+// here; its rows are its owner's.
 
 import { sectionFolded, setSectionFolded } from "./device-view.js";
 import { slideBox } from "./disclosure-row.js";
@@ -14,7 +14,7 @@ export interface SidebarSection {
   readonly foldedByDefault: boolean;
   /** The count's word for a screen reader, made plural by an `s`. */
   readonly noun: "tab" | "chat";
-  /** What an empty section hides: Open's list holds the boot skeleton, so only its header goes. */
+  /** What an empty section hides: the whole section, or only its header. */
   readonly emptyHides: "section" | "header";
 }
 
@@ -38,6 +38,18 @@ export function sectionToggle(list: HTMLElement): HTMLButtonElement | null {
 /** The stored fold of `s`, its default when none is stored. */
 export function isSectionFolded(s: SidebarSection): boolean {
   return sectionFolded(s.key, s.foldedByDefault);
+}
+
+/** Hide `rows` for `folded`, all but the `selected` one: a folded section still shows the row
+ *  you are on, so its slide closes on that row. */
+export function foldRows(
+  rows: Iterable<HTMLElement>,
+  folded: boolean,
+  selected: (row: HTMLElement) => boolean,
+): void {
+  for (const row of rows) {
+    row.hidden = folded && !selected(row);
+  }
 }
 
 /** Wire the toggle once: a press stores the fold and slides the list through `paintRows(folded)`,

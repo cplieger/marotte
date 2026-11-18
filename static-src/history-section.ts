@@ -15,6 +15,7 @@ import { formatClock, formatShortDate, formatWeekdayStamp, watchClock } from "./
 import { isRetentionEnabled, onRetentionChange } from "./retention.js";
 import {
   bindSectionToggle,
+  foldRows,
   isSectionFolded,
   paintSectionHeader,
   sectionToggle,
@@ -25,6 +26,7 @@ import {
   focusHistoryEntry,
   focusTabRow,
   getActiveTabId,
+  historyPaneTab,
   recentClosed,
   refreshActiveView,
   showHistoryView,
@@ -195,12 +197,16 @@ export function initHistorySection(): void {
     }
   };
 
-  /** Hide every row and More when `folded`, unless a running slide owns them, and paint the header. */
+  /** Hide the rows when `folded`, More too unless its page shows, unless a running slide owns
+   *  them, and paint the header. Reads the page's signal first, so the effect tracks it. */
   const paintFold = (folded: boolean, slideOwnsRows = false): void => {
+    const moreSelected = historyPaneTab() !== null;
     if (!slideOwnsRows) {
-      for (const li of list.querySelectorAll<HTMLElement>(":scope > li")) {
-        li.hidden = folded;
-      }
+      foldRows(
+        list.querySelectorAll<HTMLElement>(":scope > li"),
+        folded,
+        (li) => moreSelected && li.contains($.historyMore),
+      );
     }
     paintSectionHeader(fold, { count: order.length, dot: null });
   };

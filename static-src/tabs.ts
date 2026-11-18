@@ -97,6 +97,7 @@ import { $, maybeEl, queryEl, setAttr, setText } from "./dom.js";
 import { historyLoadError } from "./history-note.js";
 import {
   bindSectionToggle,
+  foldRows,
   isSectionFolded,
   paintSectionHeader,
   sectionToggle,
@@ -2765,9 +2766,9 @@ function syncHistoryRow(on: boolean): void {
   }
 }
 
-/** Focus More, else, when no closed chat draws it or its section is folded, the shown History
- *  page's pill, with the ring of `press` (`focusAs`). False when neither is in sight, so the caller
- *  lands focus elsewhere. */
+/** Focus More, else, when no closed chat draws its section, the shown History page's pill, with
+ *  the ring of `press` (`focusAs`). False when neither is in sight, so the caller lands focus
+ *  elsewhere. */
 export function focusHistoryEntry(press?: Press | null): boolean {
   const pill = queryEl<HTMLElement>(HISTORY_VIEW)?.querySelector<HTMLElement>(
     '[data-history-tab][aria-selected="true"]',
@@ -2898,6 +2899,7 @@ function watchStripGestures(list: HTMLElement): void {
 function sectionLists(): readonly (SidebarSection & { readonly key: SectionKey })[] {
   const tab = { foldedByDefault: false, noun: "tab" } as const;
   return [
+    // Open's list holds the boot skeleton, so only its header hides.
     { ...tab, key: "open", list: $.tabList, emptyHides: "header" },
     { ...tab, key: "pinned", list: $.pinnedList, emptyHides: "section" },
   ];
@@ -3109,8 +3111,8 @@ function seatRow(
 function paintFold(s: SidebarSection, folded: boolean, slideOwnsRows = false): void {
   const rows = liveRows(s.list);
   if (!slideOwnsRows) {
+    foldRows(rows, folded, (n) => n.dataset["tabId"] === selectedTabId());
     for (const node of rows) {
-      node.hidden = folded && node.dataset["tabId"] !== selectedTabId();
       if (node.hidden) {
         // A row seated hidden never starts its entry, so no animation event clears the class.
         node.classList.remove("entering");

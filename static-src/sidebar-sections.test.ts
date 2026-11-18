@@ -363,17 +363,17 @@ async function press(key: string): Promise<void> {
 }
 
 describe("the stored folds", () => {
-  it("reads every tab section open when nothing is stored", () => {
-    expect(deviceView.sectionFolded("open")).toBe(false);
-    expect(deviceView.sectionFolded("pinned")).toBe(false);
+  it("reads each section's default when nothing is stored", () => {
+    expect(deviceView.sectionFolded("open", false)).toBe(false);
+    expect(deviceView.sectionFolded("history", true)).toBe(true);
   });
 
   it("reads back what it wrote, per key", () => {
     deviceView.setSectionFolded("pinned", true);
-    expect(deviceView.sectionFolded("pinned")).toBe(true);
-    expect(deviceView.sectionFolded("open")).toBe(false);
+    expect(deviceView.sectionFolded("pinned", false)).toBe(true);
+    expect(deviceView.sectionFolded("open", false)).toBe(false);
     deviceView.setSectionFolded("pinned", false);
-    expect(deviceView.sectionFolded("pinned")).toBe(false);
+    expect(deviceView.sectionFolded("pinned", false)).toBe(false);
   });
 
   it.each([
@@ -383,8 +383,8 @@ describe("the stored folds", () => {
     { desc: "null", folds: null },
   ])("reads $desc as the default", ({ folds }) => {
     localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ sidebar_folds: folds }));
-    expect(deviceView.sectionFolded("open")).toBe(false);
-    expect(deviceView.sectionFolded("pinned")).toBe(false);
+    expect(deviceView.sectionFolded("open", true)).toBe(true);
+    expect(deviceView.sectionFolded("pinned", false)).toBe(false);
   });
 
   it("keeps a key this build does not know, and the blob's other fields, on a write", () => {

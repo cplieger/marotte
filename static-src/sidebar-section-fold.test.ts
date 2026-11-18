@@ -249,6 +249,37 @@ function hideableRow(s: Section): HTMLElement {
   return r;
 }
 
+/** Select a row of `s` and return it: a tab row by activating its tab, More by showing History. */
+async function selectIn(s: Section): Promise<HTMLElement> {
+  const tab = s.list.querySelector<HTMLElement>(":scope > [data-tab-id]");
+  const more = s.list.querySelector<HTMLElement>("#history-more");
+  if (tab !== null) {
+    await tabsModule.activateTab(tab.dataset["tabId"] ?? "");
+    tabsModule.flushActivationForTest();
+    await paint();
+    return tab;
+  }
+  if (more !== null) {
+    tabsModule.showHistoryView();
+    await paint();
+    return more;
+  }
+  throw new Error(`#${s.name} has no row to select`);
+}
+
+/** Select a tab row outside `s`, so nothing in `s` is selected. */
+async function selectElsewhere(s: Section): Promise<void> {
+  const other = [...shell.querySelectorAll<HTMLElement>("#tab-sections [data-tab-id]")].find(
+    (r) => !s.list.contains(r),
+  );
+  if (other === undefined) {
+    throw new Error(`no tab row outside #${s.name}`);
+  }
+  await tabsModule.activateTab(other.dataset["tabId"] ?? "");
+  tabsModule.flushActivationForTest();
+  await paint();
+}
+
 describe("every sidebar section's fold", () => {
   it("covers the Open, Pinned and History sections", () => {
     expect(sections().map((s) => s.name)).toEqual(
@@ -368,6 +399,32 @@ describe("every sidebar section's fold", () => {
       for (const m of ["setPointerCapture", "releasePointerCapture", "hasPointerCapture"]) {
         Reflect.deleteProperty(list, m);
       }
+    }
+  });
+
+  it("keeps the selected row through a fold and closes the slide on it", async () => {
+    await everySectionShown();
+    for (const s of sections()) {
+      const row = await selectIn(s);
+      expect(row.classList.contains("active"), `${s.name}: the row is selected`).toBe(true);
+      s.toggle.click();
+      const [shut] = s.list.getAnimations();
+      await slideEnd(s.list);
+      expect(row.checkVisibility(), `${s.name}: the selected row stays`).toBe(true);
+      expect(hideableRow(s).checkVisibility(), `${s.name}: the other rows hide`).toBe(false);
+      const end = parseFloat(String(blockSizes(shut).at(-1)));
+      expect(end, `${s.name}: the slide closes on the selected row`).toBeGreaterThanOrEqual(
+        row.getBoundingClientRect().height,
+      );
+
+      await selectElsewhere(s);
+      expect(row.checkVisibility(), `${s.name}: leaving the row hides it under the fold`).toBe(
+        false,
+      );
+      await selectIn(s);
+      expect(row.checkVisibility(), `${s.name}: selecting it again shows it`).toBe(true);
+      s.toggle.click();
+      await slideEnd(s.list);
     }
   });
 
