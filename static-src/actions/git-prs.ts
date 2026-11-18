@@ -146,9 +146,10 @@ export const reopenPR = apiAction<PRArgs>({
   retry: RETRY_STANDARD,
 });
 
-/** Re-run the failed CI of the head the row's red chip shows; the server refuses a moved branch,
- *  and unpinned re-runs the live head. Not optimistic, no toast: an instance that cannot re-run
- *  answers `capability_unsupported` with the evidence that becomes its message. */
+/** Re-run the CI (the failed jobs, or Forgejo's whole run) of the head the row's red chip shows;
+ *  the server refuses a moved branch, and unpinned re-runs the live head. Not optimistic, no
+ *  toast: an instance that cannot re-run answers `capability_unsupported` with the evidence that
+ *  becomes its message. */
 export const rerunChecks = apiAction<PinnedPRArgs>({
   name: "git.rerun_checks",
   scope: (args) => "git:" + args.forge_id + ":" + args.owner + "/" + args.name,

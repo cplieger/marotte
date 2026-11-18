@@ -339,11 +339,12 @@ func (h *HTTPHandler) handlePRAction(w http.ResponseWriter, r *http.Request, rh 
 	httpserver.WriteJSON(w, PRChanged{PR: prWire(&row), CycleID: cycle})
 }
 
-// handlePRRerun re-runs a PR's failed CI pinned to `?head_sha=`, the head the
-// caller's row displayed: a re-run can trigger a deployment, so the library
-// refuses one for any other commit. No pin re-runs the head as it is now. A
-// re-run changes no forge object, so it evicts nothing; the checks it restarts
-// are the cycle's to read.
+// handlePRRerun re-runs a PR's failed CI (on Forgejo 17 and later its whole
+// run, passed jobs included) pinned to `?head_sha=`, the head the caller's row
+// displayed: a re-run can trigger a deployment, so the library refuses one for
+// any other commit. No pin re-runs the head as it is now. A re-run changes no
+// forge object, so it evicts nothing; the checks it restarts are the cycle's to
+// read.
 func (h *HTTPHandler) handlePRRerun(w http.ResponseWriter, r *http.Request, rh *readHandle, ref forgeapi.RepoRef, pr forgeapi.PRRef) {
 	if err := rh.core.RerunFailedChecks(r.Context(), ref, pr, r.URL.Query().Get(fieldHeadSHA)); err != nil {
 		writeOpsError(w, r, err)
