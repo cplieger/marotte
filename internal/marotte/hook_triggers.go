@@ -2,8 +2,8 @@ package marotte
 
 import "strings"
 
-// The hook trigger vocabulary: which trigger names KAS loads, their canonical spelling, and what
-// each matcher tests.
+// The hook trigger vocabulary: the fifteen canonical trigger names, the spellings marotte accepts
+// for each (case-folded), and what each trigger's matcher tests.
 
 // HookMatcherSubject is what a trigger's matcher is tested against, and it is
 // the fact that decides whether a matcher means anything for that trigger.

@@ -150,7 +150,7 @@ Rewind and supervised review cover the agent's file-editing tool. Changes made t
 
 ## MCP servers
 
-Add, edit and remove servers, local ones or remote ones over HTTP or SSE. Each server can block individual tools, reconnects live, and lets you browse its prompts and resources.
+Add, edit and remove servers, local ones or remote ones over HTTP or SSE. Each server can block individual tools, reconnects live, and lets you browse its prompts and resources. After **Paste JSON** connects the pasted servers, the box lists each key it did not take as pasted, in paste order, with what Kiro does instead.
 
 For a server that needs OAuth, marotte registers itself automatically or takes a client ID you already have. A server waiting for you to sign in has a **Sign in** button, which replaces the credentials the server has stored. The server then shows **Signing in**, an **Open sign-in page** link and a box for pasting the address of a page that fails to load. Finish within the server's connection timeout: 60 seconds unless its timeout is set higher, up to 10 minutes. Several servers can sign in at the same time. A Google sign-in asks for offline access, so Google shows its consent screen each time and the sign-in keeps working past its first hour.
 

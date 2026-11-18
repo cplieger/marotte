@@ -48,8 +48,10 @@ var (
 	memoryOptOutRe = regexp.MustCompile(`function (` + jsIdent + `)\((` + jsIdent + `)\)\{return typeof (` + jsIdent +
 		`)!="object"\|\|(` + jsIdent + `)===null\|\|!Object\.hasOwn\((` + jsIdent + `),"userMemoryOptIn"\)\?!1:!` + jsIdent +
 		`\((` + jsIdent + `),"userMemoryOptIn"\)\}`)
-	memoryChoiceOrderRe = regexp.MustCompile(`if\((` + jsIdent + `)\.source==="explicit"\)return\{[^;]*origin:"request"\};if\((` +
-		jsIdent + `)\.optsOut\)return\{choice:\{config:` + jsIdent + `\(\{\.\.\.` + jsIdent + `\.config,mode:"disabled"\}\),source:"explicit"\},origin:"optOut"`)
+	memoryChoiceOrderRe = regexp.MustCompile(`function ` + jsIdent + `\((` + jsIdent + `),(` + jsIdent + `)\)\{if\((` + jsIdent +
+		`)\.source==="explicit"\)return\{[^;]*origin:"request"\};if\((` + jsIdent + `)\.optsOut\)return\{choice:\{config:` + jsIdent +
+		`\(\{\.\.\.(` + jsIdent + `)\.config,mode:"disabled"\}\),source:"explicit"\},origin:"optOut"\};let (` + jsIdent + `)=` +
+		jsIdent + `\(await (` + jsIdent + `)\.read\(\)\);return\{choice:(` + jsIdent + `),origin:`)
 	memoryOptInVetoRe = regexp.MustCompile(`userOptIn:(` + jsIdent + `)\}=` + jsIdent + `;return ` + jsIdent + `\(\{treatment:` +
 		jsIdent + `,` + jsIdent + `:` + jsIdent + `\}\)\?(` + jsIdent + `)===!1\?\(` + jsIdent + `\("disabledByOptOut"\),!1\):\(` +
 		jsIdent + `\("enabled"\),!0\)`)
@@ -321,9 +323,10 @@ func TestKnowledgeTuningMatchesTheBundle(t *testing.T) {
 	})
 }
 
-// TestUserMemoryOptInIsALegacyVeto pins why userMemoryOptIn stays withheld with no Settings row: KAS reads it from the
-// initialize settings only for a session whose memory source is legacy, a session request carrying settings.memory
-// (marotte's memory row) is explicit, true grants nothing because eligibility is the memory experiment's, and the
+// TestUserMemoryOptInIsALegacyVeto pins why userMemoryOptIn stays withheld with no Settings row. A chat or run session
+// sends no settings.memory, so captureMemoryConfig marks it legacy and chooseSessionMemory reaches the opt-out, where
+// false would replace the device Memory choice with disabled, before the device read. True grants nothing:
+// resolveMemoryEnabled reads the key for a legacy source only as false, after the experiment's eligibility. The
 // sessionless _kiro/memory gate the Memories tab passes resolves as legacy, so false would refuse that tab.
 func TestUserMemoryOptInIsALegacyVeto(t *testing.T) {
 	forEachBundle(t, func(t *testing.T, b bundle) {
@@ -334,16 +337,18 @@ func TestUserMemoryOptInIsALegacyVeto(t *testing.T) {
 		}
 		if !read {
 			t.Error(`resolveMemoryEnabled no longer reads userMemoryOptIn from clientMeta.settings only when the source is "legacy", ` +
-				"and only as false when the key is present and off; re-read whether a marotte session (explicit) now reads it")
+				"and only as false when the key is present and off; re-read what the key now does to a marotte chat, which is legacy")
 		}
 
 		ordered := false
 		for _, m := range findAround(memoryChoiceOrderRe, `origin:"optOut"`, b.src) {
-			ordered = ordered || b.src[m[2]:m[3]] == b.src[m[4]:m[5]]
+			request, device := b.src[m[2]:m[3]], b.src[m[4]:m[5]]
+			ordered = ordered || (b.src[m[6]:m[7]] == request && b.src[m[8]:m[9]] == request && b.src[m[10]:m[11]] == request &&
+				b.src[m[14]:m[15]] == device && b.src[m[12]:m[13]] == b.src[m[16]:m[17]])
 		}
 		if !ordered {
-			t.Error("the session memory choice no longer takes an explicit request before the userMemoryOptIn opt-out; " +
-				"re-read whether the opt-out now overrides marotte's memory row")
+			t.Error("chooseSessionMemory no longer takes the userMemoryOptIn opt-out after an explicit request and before the " +
+				"device Memory choice; re-read whether the opt-out still overrides the device choice a marotte chat reaches")
 		}
 
 		veto := false
@@ -364,8 +369,8 @@ func TestUserMemoryOptInIsALegacyVeto(t *testing.T) {
 				b.src[m[20]:m[21]] == hasPref && b.src[m[22]:m[23]] == request)
 		}
 		if !explicit {
-			t.Error("captureMemoryConfig no longer marks a request whose settings.memory has a mode as explicit; marotte's " +
-				"memory row may no longer stop KAS reading userMemoryOptIn")
+			t.Error("captureMemoryConfig no longer marks the source explicit only for a settings.memory with a preference; " +
+				"re-read whether a marotte chat, which sends none, still resolves as legacy")
 		}
 
 		if len(findAround(sessionlessMemoryGateRe, `("Memory is not enabled.")`, b.src)) != 1 {
