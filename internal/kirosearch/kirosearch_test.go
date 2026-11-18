@@ -784,44 +784,159 @@ func TestText_IncludeThroughASymlinkRunsNoSearch(t *testing.T) {
 }
 
 // A literal leading folder that cannot be resolved skips the root, whatever the stat error; only a
-// pattern with no literal leading folder searches the whole root.
+// pattern with no literal leading folder searches the whole root, and a root-anchored one-segment
+// pattern searches only the root's own entries (depth 1).
 func TestScope(t *testing.T) {
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{"go.mod": "module x\n", "repo/internal/a.go": "x"})
 	if err := os.Symlink("loop", filepath.Join(root, "loop")); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Symlink("repo", filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
 	tests := map[string]struct {
-		glob    string
-		wantDir string
-		wantOK  bool
+		globs     []string
+		wantDir   string
+		wantDepth int
+		wantOK    bool
 	}{
-		"literal folder":                  {"repo/internal/**/*.go", filepath.Join("repo", "internal"), true},
-		"glob-led":                        {"**/internal/*.go", ".", true},
-		"no folder":                       {"*.go", ".", true},
-		"missing folder":                  {"absent/**/*.go", "", false},
-		"prefix through a file (ENOTDIR)": {"go.mod/x/*.go", "", false},
-		"prefix over PATH_MAX":            {"deadset/" + strings.Repeat("a/", 2200) + "x", "", false},
-		"NUL in the prefix (EINVAL)":      {"a\x00b/x", "", false},
-		"prefix through a symlink loop":   {"loop/x/*.go", "", false},
-		"prefix is a file":                {"go.mod/*.go", "", false},
-		"root-anchored folder":            {"/repo/internal/*.go", filepath.Join("repo", "internal"), true},
-		"root-anchored, no folder":        {"/*.go", ".", true},
-		"led by ..":                       {"../x/*.go", "", false},
-		".. after a folder":               {"repo/../x/*.go", "", false},
-		".. after a glob":                 {"**/../x/*.go", "", false},
-		"bare folder":                     {"repo/internal", filepath.Join("repo", "internal"), true},
-		"bare top folder":                 {"repo", "repo", true},
-		"bare file":                       {"repo/internal/a.go", filepath.Join("repo", "internal"), true},
-		"bare top file":                   {"go.mod", ".", true},
+		"literal folder":                  {[]string{"repo/internal/**/*.go"}, filepath.Join("repo", "internal"), 0, true},
+		"glob-led":                        {[]string{"**/internal/*.go"}, ".", 0, true},
+		"no folder":                       {[]string{"*.go"}, ".", 0, true},
+		"missing folder":                  {[]string{"absent/**/*.go"}, "", 0, false},
+		"prefix through a file (ENOTDIR)": {[]string{"go.mod/x/*.go"}, "", 0, false},
+		"prefix over PATH_MAX":            {[]string{"deadset/" + strings.Repeat("a/", 2200) + "x"}, "", 0, false},
+		"NUL in the prefix (EINVAL)":      {[]string{"a\x00b/x"}, "", 0, false},
+		"prefix through a symlink loop":   {[]string{"loop/x/*.go"}, "", 0, false},
+		"prefix is a file":                {[]string{"go.mod/*.go"}, "", 0, false},
+		"root-anchored folder":            {[]string{"/repo/internal/*.go"}, filepath.Join("repo", "internal"), 0, true},
+		"root-anchored, no folder":        {[]string{"/*.go"}, ".", 1, true},
+		"root-anchored with a companion":  {[]string{"/re*", "/re*/**"}, ".", 0, true},
+		"root-anchored file":              {[]string{"/go.mod", "/go.mod/**"}, ".", 1, true},
+		"root-anchored folder, bare":      {[]string{"/repo", "/repo/**"}, "repo", 0, true},
+		"root-anchored missing (ENOENT)":  {[]string{"/missing", "/missing/**"}, "", 0, false},
+		"root-anchored symlinked folder":  {[]string{"/link", "/link/**"}, "", 0, false},
+		"root-anchored symlink loop":      {[]string{"/loop", "/loop/**"}, "", 0, false},
+		"root-anchored NUL (EINVAL)":      {[]string{"/a\x00b", "/a\x00b/**"}, "", 0, false},
+		"led by ..":                       {[]string{"../x/*.go"}, "", 0, false},
+		".. after a folder":               {[]string{"repo/../x/*.go"}, "", 0, false},
+		".. after a glob":                 {[]string{"**/../x/*.go"}, "", 0, false},
+		"bare folder":                     {[]string{"repo/internal", "repo/internal/**"}, filepath.Join("repo", "internal"), 0, true},
+		"bare top folder":                 {[]string{"repo", "repo/**"}, "repo", 0, true},
+		"bare file":                       {[]string{"repo/internal/a.go", "repo/internal/a.go/**"}, filepath.Join("repo", "internal"), 0, true},
+		"bare top file":                   {[]string{"go.mod", "go.mod/**"}, ".", 0, true},
+		"no glob":                         {nil, ".", 0, true},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			dir, ok := scope(root, tc.glob)
-			if dir != tc.wantDir || ok != tc.wantOK {
-				t.Errorf("scope(%.60q) = (%q, %v), want (%q, %v)", tc.glob, dir, ok, tc.wantDir, tc.wantOK)
+			dir, depth, ok := scope(root, tc.globs)
+			if dir != tc.wantDir || depth != tc.wantDepth || ok != tc.wantOK {
+				t.Errorf("scope(%.60q) = (%q, %d, %v), want (%q, %d, %v)", tc.globs, dir, depth, ok, tc.wantDir, tc.wantDepth, tc.wantOK)
 			}
 		})
+	}
+}
+
+// A root-anchored one-segment include can match only the root's own entries, so rg reads no deeper.
+func TestText_RootEntryIncludeSearchesOnlyTheRootsOwnEntries(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"top.md": "x", "sub/b.md": "x"})
+	for name, include := range map[string]string{
+		"root-anchored": "/*.md",
+		"dot-led":       "./*.md",
+		"absolute":      root + "/*.md",
+		"root file":     "/top.md",
+	} {
+		t.Run(name, func(t *testing.T) {
+			argsFile := filepath.Join(t.TempDir(), "args")
+			bin := fakeRG(t, `printf '%s\n' "$@" > `+argsFile)
+
+			Searcher{Bin: bin}.Text(t.Context(), []string{root}, TextQuery{Pattern: "x", IncludePattern: include})
+
+			raw, err := os.ReadFile(argsFile)
+			if err != nil {
+				t.Fatalf("rg was not run: %v", err)
+			}
+			args := strings.Split(strings.TrimSpace(string(raw)), "\n")
+			if i := slices.Index(args, "--max-depth"); i < 0 || i+1 >= len(args) || args[i+1] != "1" {
+				t.Errorf("args %q do not limit rg to depth 1", args)
+			}
+			if got := args[len(args)-1]; got != "." {
+				t.Errorf("search path = %q, want .", got)
+			}
+		})
+	}
+}
+
+func TestText_RealRGRootEntryIncludeFindsOnlyTheRootsOwnEntries(t *testing.T) {
+	bin := realRG(t)
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"top.md": "hit\n", "sub/b.md": "hit\n", "sub/top.md": "hit\n"})
+	want := []Match{{FilePath: "top.md", LineNumber: 1, LineText: "hit"}}
+	for _, include := range []string{"/*.md", "/top.md", root + "/top.md"} {
+		t.Run(include, func(t *testing.T) {
+			got := Searcher{Bin: bin}.Text(t.Context(), []string{root}, TextQuery{Pattern: "hit", IncludePattern: include})
+			if !slices.Equal(got, want) {
+				t.Errorf("Text(include %q) = %+v, want %+v", include, got, want)
+			}
+		})
+	}
+}
+
+// KAS turns a plain file_search query "kiro" into "**/*kiro*", which its own rg matches against file
+// names: a folder whose name holds the query does not list its files.
+func TestFiles_RealRGNameQueryListsOnlyTheNamesItMatches(t *testing.T) {
+	bin := realRG(t)
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"a/b/kiro.go": "", "kirosearch/kirosearch.go": "", "kirosearch/doc.go": "", "src/kiro-docs/one.md": "", "top.go": "",
+	})
+
+	got := Searcher{Bin: bin}.Files(t.Context(), []string{root}, FilesQuery{Pattern: "**/*kiro*", MaxResults: 11})
+
+	slices.Sort(got)
+	if want := []string{"a/b/kiro.go", "kirosearch/kirosearch.go"}; !slices.Equal(got, want) {
+		t.Errorf("Files = %q, want %q", got, want)
+	}
+}
+
+// An include whose last segment is a name glob selects files by name, as in rg: a folder whose name
+// it matches does not add its files.
+func TestText_RealRGNameIncludesSearchOnlyTheNamesTheyMatch(t *testing.T) {
+	bin := realRG(t)
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"a.go": "hit\n", "pkg/a_test.go": "hit\n", "dir.go/nested/notgo.txt": "hit\n", "testdata/x.txt": "hit\n",
+	})
+	match := func(path string) Match { return Match{FilePath: path, LineNumber: 1, LineText: "hit"} }
+	for include, want := range map[string][]Match{
+		"*.go":       {match("a.go"), match("pkg/a_test.go")},
+		"**/*.go":    {match("a.go"), match("pkg/a_test.go")},
+		"**/*test*":  {match("pkg/a_test.go")},
+		"pkg/*test*": {match("pkg/a_test.go")},
+	} {
+		t.Run(include, func(t *testing.T) {
+			got := Searcher{Bin: bin}.Text(t.Context(), []string{root}, TextQuery{Pattern: "hit", IncludePattern: include})
+			if !slices.Equal(got, want) {
+				t.Errorf("Text(include %q) = %+v, want %+v", include, got, want)
+			}
+		})
+	}
+}
+
+// KAS turns the file_search query "^READ" into "READ*", and "^" anchors it at the path's start: the
+// root's README and the files of a folder whose path starts so, never a deeper README.
+func TestFiles_RealRGStartAnchoredQueryFindsFromTheRoot(t *testing.T) {
+	bin := realRG(t)
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"README.md": "", "READMEdir/x.go": "", "docs/README.md": ""})
+
+	got := Searcher{Bin: bin}.Files(t.Context(), []string{root}, FilesQuery{Pattern: "READ*", MaxResults: 11})
+
+	slices.Sort(got)
+	if want := []string{"README.md", "READMEdir/x.go"}; !slices.Equal(got, want) {
+		t.Errorf("Files = %q, want %q", got, want)
 	}
 }
 

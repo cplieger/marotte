@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -154,11 +155,14 @@ func (s Searcher) Text(ctx context.Context, roots []string, q TextQuery) []Match
 // textArgs is rg's command line searching root for q; ok is false when no file under root can match.
 func textArgs(root string, q TextQuery) (args []string, ok bool) {
 	include := includeGlobs(root, q.IncludePattern)
-	dir, ok := scope(root, cmp.Or(include...))
+	dir, depth, ok := scope(root, include)
 	if !ok {
 		return nil, false
 	}
 	args = []string{"--json", "--engine", "auto", "-C", "2", "--max-count", maxCountArg, "--max-filesize", "1M", "--hidden", "--no-require-git", "--glob", "!.git"}
+	if depth > 0 {
+		args = append(args, "--max-depth", strconv.Itoa(depth))
+	}
 	if !q.CaseSensitive {
 		args = append(args, "--ignore-case")
 	}
@@ -362,12 +366,16 @@ func (f *filesSearch) partial() bool {
 // filesArgs is rg's command line listing root's files for q; ok is false when no file under root
 // can match.
 func filesArgs(root string, q FilesQuery) (args []string, ok bool) {
-	globs := includeGlobs(root, q.Pattern)
-	dir, ok := scope(root, cmp.Or(globs...))
+	globs := fileGlobs(root, q.Pattern)
+	dir, depth, ok := scope(root, globs)
 	if !ok {
 		return nil, false
 	}
-	args = []string{"--files", "--max-depth", maxDepthArg, "--hidden", "--no-require-git", "--glob", "!.git"}
+	maxDepth := maxDepthArg
+	if depth > 0 {
+		maxDepth = strconv.Itoa(depth)
+	}
+	args = []string{"--files", "--max-depth", maxDepth, "--hidden", "--no-require-git", "--glob", "!.git"}
 	if cmp.Or(globs...) != "**/*" {
 		for _, g := range globs {
 			args = append(args, "--glob", g)
@@ -557,9 +565,9 @@ func rootGlob(root, glob string) string {
 }
 
 // includeGlobs is rootGlob for a glob that selects files, as rg's whitelist globs. rg matches a
-// glob only against files, so a glob that names a folder ("repo/internal", "repo/internal/", or
-// KAS's "repo/internal*" for the file_search "^repo/internal") also selects "glob/**". The first is
-// the one scope reads; nil selects every file.
+// glob only against files, so a glob that names a folder, its last segment literal
+// ("repo/internal") or ending in "/", also selects "glob/**"; a name glob ("*.go", "**/*test*")
+// selects files by name only. The first is the one scope reads; nil selects every file.
 func includeGlobs(root, glob string) []string {
 	glob = rootGlob(root, glob)
 	switch {
@@ -567,41 +575,78 @@ func includeGlobs(root, glob string) []string {
 		return nil
 	case strings.HasSuffix(glob, "/"):
 		return []string{glob + "**"}
-	case glob == "**" || strings.HasSuffix(glob, "/**"):
-		return []string{glob}
+	case literal(glob[strings.LastIndex(glob, "/")+1:]):
+		return []string{glob, glob + "/**"}
 	}
-	return []string{glob, glob + "/**"}
+	return []string{glob}
 }
 
-// scope is the directory, relative to root, rg searches for glob: the glob's leading literal
-// directories, so rg skips every other subtree (a --glob filters names but still descends every
-// directory), or the whole glob when it is literal and names a directory. A leading "/" anchors
-// glob at root, as in rg. ok is false when no file under root can match: a ".." segment (rg's paths
-// have none), or a directory that is absent, cannot be resolved (any stat error), or is reached
-// through a symlink: a walk of root does not follow it, but rg given it as the start path does,
-// outside root included. Only a glob with no literal leading directory searches all of root.
-func scope(root, glob string) (dir string, ok bool) {
-	glob = strings.TrimPrefix(glob, "/")
+// fileGlobs is includeGlobs for a find_files pattern. KAS writes the query "^p" as "p*" and every
+// other query as "**/*q*" or "**/*q" (getFileSearchPattern in acp-server.js), and "^" anchors p at
+// the path's start: a pattern not led by "**" is root-anchored, and one whose p is literal is a
+// path prefix, so it also selects the files under a folder it names ("p*/**").
+func fileGlobs(root, pattern string) []string {
+	globs := includeGlobs(root, pattern)
+	if len(globs) != 1 || strings.HasPrefix(globs[0], "**") {
+		return globs
+	}
+	g := "/" + strings.TrimPrefix(globs[0], "/")
+	if p, ok := strings.CutSuffix(g, "*"); ok && literal(p) {
+		return []string{g, g + "/**"}
+	}
+	return []string{g}
+}
+
+// literal reports whether s holds no glob metacharacter.
+func literal(s string) bool {
+	return !strings.ContainsAny(s, `*?[]{}\!`)
+}
+
+// scope is where rg searches root for globs, as a directory relative to root and a --max-depth
+// (0: none). It is the first glob's leading literal directories, so rg skips every other subtree (a
+// --glob filters names but still descends every directory), or the whole glob when it is literal
+// and names a directory; a root-anchored ("/") one-segment glob can match only root's own entries.
+// ok is false when no file under root can match: a ".." segment (rg's paths have none), or a named
+// entry that is absent, cannot be resolved (any stat error), or is a symlink, which a walk of root
+// does not follow but rg given it as the start path does, outside root included. Only a glob with
+// no literal leading directory searches all of root.
+func scope(root string, globs []string) (dir string, depth int, ok bool) {
+	glob, anchored := strings.CutPrefix(cmp.Or(globs...), "/")
 	if glob == "" {
-		return ".", true
+		return ".", 0, true
 	}
 	segs := strings.Split(glob, "/")
 	if slices.Contains(segs, "..") {
-		return "", false
+		return "", 0, false
 	}
 	lit := 0
-	for lit < len(segs) && !strings.ContainsAny(segs[lit], `*?[]{}\!`) {
+	for lit < len(segs) && literal(segs[lit]) {
 		lit++
 	}
 	if lit == len(segs) {
-		if dir, ok := realDir(root, segs); ok {
-			return dir, true
+		if dir, ok = realDir(root, segs); ok {
+			return dir, 0, true
 		}
 	}
-	if lit = min(lit, len(segs)-1); lit == 0 {
-		return ".", true
+	switch {
+	case len(segs) > 1:
+		if lit = min(lit, len(segs)-1); lit == 0 {
+			return ".", 0, true
+		}
+		dir, ok = realDir(root, segs[:lit])
+		return dir, 0, ok
+	case !anchored:
+		return ".", 0, true
+	case lit == 1:
+		// Its "glob/**" companion can match only under a folder of that name, which realDir refused.
+		if info, err := os.Lstat(filepath.Join(root, glob)); err != nil || !info.Mode().IsRegular() {
+			return "", 0, false
+		}
+		return ".", 1, true
+	case len(globs) == 1:
+		return ".", 1, true
 	}
-	return realDir(root, segs[:lit])
+	return ".", 0, true
 }
 
 // realDir is the folder segs name under root, relative to root, when it is a directory reached
