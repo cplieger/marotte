@@ -1684,15 +1684,33 @@ func (k *kasRun) failsEntryRead(method string) bool {
 // callStack is the calling goroutine's function names, innermost first.
 func callStack() []string {
 	pcs := make([]uintptr, 128)
-	frames := runtime.CallersFrames(pcs[:runtime.Callers(3, pcs)])
 	var out []string
+	for _, pc := range pcs[:runtime.Callers(3, pcs)] {
+		out = append(out, framesAt(pc)...)
+	}
+	return out
+}
+
+// pcFrames caches framesAt: the fakes ask for the stack on every engine call, and resolving a PC costs more than the
+// rest of the call.
+var pcFrames sync.Map
+
+// framesAt is the function names at return address pc, innermost first, the functions inlined there included.
+func framesAt(pc uintptr) []string {
+	if v, ok := pcFrames.Load(pc); ok {
+		return v.([]string)
+	}
+	var names []string
+	frames := runtime.CallersFrames([]uintptr{pc})
 	for {
 		f, more := frames.Next()
-		out = append(out, f.Function)
+		names = append(names, f.Function)
 		if !more {
-			return out
+			break
 		}
 	}
+	pcFrames.Store(pc, names)
+	return names
 }
 
 // innermostOf is the first of suffixes that ends a function name on the calling goroutine's stack, innermost frame

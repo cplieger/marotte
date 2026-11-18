@@ -81,6 +81,10 @@ func awaitBootPowersSync(h *Runtime) {
 
 func powersChangedSent(h *Runtime) bool {
 	for _, e := range h.bus.fanout.Snapshot() {
+		// The waits poll every millisecond over the whole replay: decode only an event that can be one.
+		if !bytes.Contains(e.Event.Data, []byte(marotte.EventPowersChanged)) {
+			continue
+		}
 		var msg marotte.ServerEvent
 		if json.Unmarshal(e.Event.Data, &msg) == nil && msg.Type == marotte.EventPowersChanged {
 			return true
