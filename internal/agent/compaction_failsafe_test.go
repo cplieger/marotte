@@ -230,6 +230,7 @@ func openedPrompts(t *testing.T, cs *testChatStore) []marotte.EntryPrompt {
 // A reading at 95% inside a running turn stops it with one session/cancel, compacts the chat, then sends the resume
 // as marotte's own prompt before the rows the reader queued; the stopped turn's close says why it stopped.
 func TestFailsafe_CancelsCompactsThenResumesBeforeTheQueuedRows(t *testing.T) {
+	t.Parallel()
 	fc := newFailsafeChat(t, true)
 	fc.compactsWith(96)
 
@@ -290,6 +291,7 @@ func TestFailsafe_CancelsCompactsThenResumesBeforeTheQueuedRows(t *testing.T) {
 
 // The failsafe point is 95%: a reading under it only lists the point's compaction for the turn's end.
 func TestFailsafe_FiresAtNinetyFiveNotBelow(t *testing.T) {
+	t.Parallel()
 	fc := newFailsafeChat(t, true)
 
 	fc.respond(94.9)
@@ -320,6 +322,7 @@ func (fc *failsafeChat) answerAsk(t *testing.T, id int64) {
 // comes only after the next model call, the one that would overflow. So a reading at 95% while an ask is open stops
 // nothing then, and the turn is stopped as soon as the ask settles, with no further frame.
 func TestFailsafe_AReadingWhileAnAskIsOpenStopsTheTurnOnceTheAskSettles(t *testing.T) {
+	t.Parallel()
 	settle := []struct {
 		name string
 		fn   func(t *testing.T, fc *failsafeChat, id int64)
@@ -356,6 +359,7 @@ func TestFailsafe_AReadingWhileAnAskIsOpenStopsTheTurnOnceTheAskSettles(t *testi
 
 // The owed stop waits for the chat session's last open ask: answering one of two stops nothing.
 func TestFailsafe_AnOwedStopWaitsForTheLastOpenAsk(t *testing.T) {
+	t.Parallel()
 	fc := newFailsafeChat(t, true)
 	first := addPermission(t, fc.h, fc.br, 7, "")
 	second := addPermission(t, fc.h, fc.br, 8, "")
@@ -376,6 +380,7 @@ func TestFailsafe_AnOwedStopWaitsForTheLastOpenAsk(t *testing.T) {
 // call, then the pair). The twin is the same reading, not a later one, so the stop the plain frame owed while the
 // tool's ask was open still fires once the ask is answered.
 func TestFailsafe_TheReadingsBreakdownTwinKeepsAnOwedStop(t *testing.T) {
+	t.Parallel()
 	fc := newFailsafeChat(t, true)
 	id := addPermission(t, fc.h, fc.br, 7, "")
 	fc.br.deliver(toolCallMsg())
@@ -394,6 +399,7 @@ func TestFailsafe_TheReadingsBreakdownTwinKeepsAnOwedStop(t *testing.T) {
 // the twin can land after the next response's tool call. It is not that response's reading: the response's own
 // reading at 96% still stops the turn.
 func TestFailsafe_ALateBreakdownTwinIsNotTheNextResponsesReading(t *testing.T) {
+	t.Parallel()
 	fc := newFailsafeChat(t, true)
 	fc.br.deliver(toolCallMsg())
 	fc.br.deliver(liveReadingMsg(60))
@@ -410,6 +416,7 @@ func TestFailsafe_ALateBreakdownTwinIsNotTheNextResponsesReading(t *testing.T) {
 // A later response's reading decides on its own: a response that called a tool at 92% after the owed reading
 // replaces the owed stop, so the ask's answer stops nothing.
 func TestFailsafe_ALaterResponsesReadingReplacesAnOwedStop(t *testing.T) {
+	t.Parallel()
 	fc := newFailsafeChat(t, true)
 	id := addPermission(t, fc.h, fc.br, 7, "")
 	fc.respond(96)
@@ -425,6 +432,7 @@ func TestFailsafe_ALaterResponsesReadingReplacesAnOwedStop(t *testing.T) {
 // An owed stop belongs to its turn: once that turn has closed, the ask's answer stops nothing, not even the next
 // turn running alone.
 func TestFailsafe_AnOwedStopLapsesWhenItsTurnClosesFirst(t *testing.T) {
+	t.Parallel()
 	fc := newFailsafeChat(t, true)
 	fc.mu.Lock()
 	fc.mAStop = "end_turn"
@@ -445,6 +453,7 @@ func TestFailsafe_AnOwedStopLapsesWhenItsTurnClosesFirst(t *testing.T) {
 // A reader's Cancel while a stop is owed answers the open ask and stops the turn once; the owed stop the answer
 // releases finds the turn already stopping and adds nothing.
 func TestFailsafe_AReaderCancelWhileAStopIsOwedStopsOnce(t *testing.T) {
+	t.Parallel()
 	fc := newFailsafeChat(t, true)
 	addPermission(t, fc.h, fc.br, 7, "")
 	fc.respond(96)
@@ -466,6 +475,7 @@ func TestFailsafe_AReaderCancelWhileAStopIsOwedStopsOnce(t *testing.T) {
 // The reader's Cancel while marotte is stopping the turn asks for the work to stop: the compaction still runs, but no
 // resume is sent and the rows wait for the reader.
 func TestFailsafe_AReaderCancelBeforeTheResumeStartsSendsNoResume(t *testing.T) {
+	t.Parallel()
 	fc := newFailsafeChat(t, true)
 	fc.compactsWith(40)
 	fc.respond(96)
@@ -492,6 +502,7 @@ func TestFailsafe_AReaderCancelBeforeTheResumeStartsSendsNoResume(t *testing.T) 
 
 // With Auto-compaction off nothing compacts a chat until the reader asks, so the failsafe stops nothing either.
 func TestFailsafe_OffWhenAutoCompactionIsOff(t *testing.T) {
+	t.Parallel()
 	fc := newFailsafeChat(t, false)
 
 	fc.respond(99)
@@ -505,6 +516,7 @@ func TestFailsafe_OffWhenAutoCompactionIsOff(t *testing.T) {
 // A failsafe compaction kiro-cli refuses continues nothing: no resume is sent, the rows stay paused, and the toast
 // says the stopped turn was not continued and the next turn end tries again.
 func TestFailsafe_ARefusedCompactionsToastSaysTheTurnWasNotContinued(t *testing.T) {
+	t.Parallel()
 	fc := newFailsafeChat(t, true)
 	fc.br.setCallResult(marotte.MethodSessionCompact, json.RawMessage(`{"success":false}`))
 
@@ -531,6 +543,7 @@ func TestFailsafe_ARefusedCompactionsToastSaysTheTurnWasNotContinued(t *testing.
 // would only interrupt a turn whose end compacts anyway, so it stops nothing and the point's compaction stays listed
 // for that end. The same reading from a response that called a tool stops the turn.
 func TestFailsafe_OnlyAResponseThatCalledAToolStopsTheTurn(t *testing.T) {
+	t.Parallel()
 	fc := newFailsafeChat(t, true)
 
 	fc.respond(50)
@@ -551,6 +564,7 @@ func TestFailsafe_OnlyAResponseThatCalledAToolStopsTheTurn(t *testing.T) {
 // session load seeds it from the last persisted reading) until its next live reading: that figure stops nothing,
 // lists nothing and is not shown, while a fresh reading at 95% in the resumed turn still stops it.
 func TestFailsafe_KASRepublishingItsPreSummaryFigureStopsNothing(t *testing.T) {
+	t.Parallel()
 	fc := newFailsafeChat(t, true)
 	fc.compactsWith(96)
 	releaseResume := fc.hold(t, "stopped your task mid-turn")
@@ -590,6 +604,7 @@ func TestFailsafe_KASRepublishingItsPreSummaryFigureStopsNothing(t *testing.T) {
 // The same holds after a compaction at the point: the next turn is not stopped or compacted for the figure KAS
 // republishes, only for its own readings.
 func TestFailsafe_KASRepublishingItsFigureAfterAPointCompactionStopsNothing(t *testing.T) {
+	t.Parallel()
 	fc := newFailsafeChat(t, true)
 	fc.compactsWith(92)
 	fc.mu.Lock()
@@ -623,6 +638,7 @@ func TestFailsafe_KASRepublishingItsFigureAfterAPointCompactionStopsNothing(t *t
 // A resume that fills the context again is stopped and compacted, but marotte sends no second resume: the reader is
 // told to send a message and the rows stay paused until they do.
 func TestFailsafe_ASecondFillStopsAndCompactsButSendsNoSecondResume(t *testing.T) {
+	t.Parallel()
 	fc := newFailsafeChat(t, true)
 	fc.compactsWith(96)
 	releaseResume := fc.hold(t, "stopped your task mid-turn")

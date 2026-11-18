@@ -38,6 +38,7 @@ func stateFor(t *testing.T, states []sse.State, kind subject.Kind, ref string) s
 }
 
 func TestResolveDigest_OneStatePerHeldFromTheRegistry(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "x"; return true }); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -80,6 +81,7 @@ func TestResolveDigest_OneStatePerHeldFromTheRegistry(t *testing.T) {
 }
 
 func TestResolveDigest_ChatWhoseRecordIsGoneAnswersGone(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	if _, err := cs.Mutate(t.Context(), "kept", func(c *marotte.Chat, _ bool) bool { c.Name = "x"; return true }); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -99,6 +101,7 @@ func TestResolveDigest_ChatWhoseRecordIsGoneAnswersGone(t *testing.T) {
 
 // A header the store cannot stat is a fault, not a deletion: a waking device keeps the chat.
 func TestResolveDigest_ChatWhoseHeaderIsUnstattableIsNotGone(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "x"; return true }); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -122,6 +125,7 @@ func TestResolveDigest_ChatWhoseHeaderIsUnstattableIsNotGone(t *testing.T) {
 }
 
 func TestResolveDigest_LiveTurnFollowsTheTurnRegistry(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	states, err := h.resolveDigest(t.Context(), []sse.Held{held(subject.KindLiveTurn, "t-never-opened")})
@@ -167,6 +171,7 @@ func TestResolveDigest_LiveTurnFollowsTheTurnRegistry(t *testing.T) {
 }
 
 func TestResolveDigest_RunTurnFollowsTheRunRegistry(t *testing.T) {
+	t.Parallel()
 	h := newBudgetRuntime(t)
 	turn, _, err := h.runs.log.open(t.Context(), &translate.RunStep{RunID: "wf-1", NodePath: "wf-1/step", SessionID: "sess-step"}, "c1")
 	if err != nil {
@@ -194,6 +199,7 @@ func TestResolveDigest_RunTurnFollowsTheRunRegistry(t *testing.T) {
 }
 
 func TestResolveDigest_TabsIsTheStoresCollectionVersion(t *testing.T) {
+	t.Parallel()
 	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("tabs store: %v", err)
@@ -214,6 +220,7 @@ func TestResolveDigest_TabsIsTheStoresCollectionVersion(t *testing.T) {
 }
 
 func TestResolveDigest_ForgeInventorySubjectResolves(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	h.versions.BumpCounter(subject.KindForgeInventory, "github:github.com")
 	h.versions.BumpCounter(subject.KindForgeInventory, "github:github.com")
@@ -235,6 +242,7 @@ func TestResolveDigest_ForgeInventorySubjectResolves(t *testing.T) {
 }
 
 func TestResolveDigest_UnknownKindIsGone(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	states, err := h.resolveDigest(t.Context(), []sse.Held{{Kind: "weather", Ref: "x"}})
 	if err != nil {
@@ -247,6 +255,7 @@ func TestResolveDigest_UnknownKindIsGone(t *testing.T) {
 
 // Five concurrent requests hold at most four resolutions at once.
 func TestResolveDigest_AtMostFourResolutionsAtOnce(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	var inside, peak atomic.Int32
 	release := make(chan struct{})
@@ -288,6 +297,7 @@ func TestResolveDigest_AtMostFourResolutionsAtOnce(t *testing.T) {
 }
 
 func TestResolveDigest_ContextExpiryWhileWaitingReturnsCtxErr(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	for range digestConcurrency {
 		if err := h.digestSlots.acquire(t.Context()); err != nil {
@@ -307,6 +317,7 @@ func TestResolveDigest_ContextExpiryWhileWaitingReturnsCtxErr(t *testing.T) {
 
 // Method and content type are the library handler's refusals, asserted once through the mux.
 func TestSyncRoute_RefusesWrongMethodAndContentType(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)

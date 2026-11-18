@@ -103,6 +103,7 @@ func opensInOrder(t *testing.T, cs *testChatStore, ids ...string) bool {
 // kiro-cli aborts a running compaction on session/cancel, so the up arrow on a row the stopped turn left waiting
 // sends none during that turn's compaction: the row stays marked, and it goes first once the compaction ends.
 func TestSendQueuedNow_DuringAStoppedTurnsCompactionLetsItFinish(t *testing.T) {
+	t.Parallel()
 	h, cs, br, release := stoppedTurnCompaction(t, nil)
 
 	rec := postCmd(t, h, marotte.ClientCommand{
@@ -126,6 +127,7 @@ func TestSendQueuedNow_DuringAStoppedTurnsCompactionLetsItFinish(t *testing.T) {
 // A message queued under a stopped turn's KAS hold before that turn's compaction starts goes when the compaction
 // ends, so the header says the compaction's end sends a row, above the row the stop paused.
 func TestCompaction_AStoppedTurnsCompactionSaysItSendsTheRowQueuedUnderTheHold(t *testing.T) {
+	t.Parallel()
 	_, cs, _, release := stoppedTurnCompaction(t, func(h *Runtime) {
 		queueTextDuring(t, h, "m-q1", "sent after the stop")
 	})
@@ -145,6 +147,7 @@ func TestCompaction_AStoppedTurnsCompactionSaysItSendsTheRowQueuedUnderTheHold(t
 // A /compact pressed under a stopped turn's KAS hold runs once the hold is released; a message queued under the hold
 // goes when that compaction ends, which the header says while it runs.
 func TestCompaction_OneTheHoldsReleaseRunsSaysItSendsTheRowQueuedUnderTheHold(t *testing.T) {
+	t.Parallel()
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	release := holdCall(t, br, marotte.MethodSessionCompact)
 	t.Cleanup(release)
@@ -175,6 +178,7 @@ func TestCompaction_OneTheHoldsReleaseRunsSaysItSendsTheRowQueuedUnderTheHold(t 
 // A user's prompt that reaches the server during a stopped turn's compaction (another device, a stale page) is queued
 // at once behind it, above the row the stop paused, and goes first when the compaction ends.
 func TestPrompt_DuringAStoppedTurnsCompactionIsQueuedBehindIt(t *testing.T) {
+	t.Parallel()
 	h, cs, _, release := stoppedTurnCompaction(t, nil)
 
 	answered := postAsync(h, promptCmd("m-p1", "sent during the compaction"))

@@ -52,6 +52,7 @@ func TestAbandonInFlightTurn_SealsThePartial(t *testing.T) {
 // TestAbandonInFlightTurn_ClosesATurnThatNeverStreamed covers a refusal before the first
 // chunk: the close still carries the outcome and reason, and no empty text entry is written.
 func TestAbandonInFlightTurn_ClosesATurnThatNeverStreamed(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 
@@ -74,6 +75,7 @@ func TestAbandonInFlightTurn_ClosesATurnThatNeverStreamed(t *testing.T) {
 
 // TestAbandonInFlightTurn_CarriesTheCallersReason pins the turn_close as where the reason survives a reload.
 func TestAbandonInFlightTurn_CarriesTheCallersReason(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 
@@ -91,6 +93,7 @@ func TestAbandonInFlightTurn_CarriesTheCallersReason(t *testing.T) {
 // TestAbandonInFlightTurn_StashedReasonBeatsTheCallers pins that a cause already stashed on the
 // turn (an engine restart's) wins over the caller's fallout error.
 func TestAbandonInFlightTurn_StashedReasonBeatsTheCallers(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 
@@ -119,6 +122,7 @@ func TestAbandonInFlightTurn_StashedReasonBeatsTheCallers(t *testing.T) {
 // TestAbandonInFlightTurn_AnnouncesATurnThatNeverStreamed pins the live broadcast: only
 // turn_closed clears `thinking` and restores Send.
 func TestAbandonInFlightTurn_AnnouncesATurnThatNeverStreamed(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	ctx := t.Context()
 
@@ -142,6 +146,7 @@ func TestAbandonInFlightTurn_AnnouncesATurnThatNeverStreamed(t *testing.T) {
 
 // TestAbandonInFlightTurn_StampsTheFailureKind pins that a classified failure kind reaches the turn_close, and an unclassified one carries none.
 func TestAbandonInFlightTurn_StampsTheFailureKind(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []marotte.FailureKind{marotte.FailureKindContextLimit, ""} {
 		h, cs, _ := newTestHub()
 		id, _ := h.stagePromptTurn(t, "c1")

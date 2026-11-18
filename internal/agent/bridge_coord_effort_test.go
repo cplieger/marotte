@@ -527,6 +527,7 @@ func catalogModel(t *testing.T, id, meta string) marotte.SessionModel {
 // never the old model's: fake-model's session reports thinking on and tiers topping out at medium.
 // The record keeps the uncapped level for when thinking comes back on.
 func TestApplyPendingModel_CapsTheSwitchLevelForThinkingOff(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeEffortSeed(t, dir, map[string]string{"m2": "max"})
 	h, cs, br := newTestHub(WithConfigDir(dir))
@@ -684,6 +685,7 @@ func TestModelMove_TheOldModelsTierReachesNoLaterSession(t *testing.T) {
 // A session that opened on another model than the record's (a withheld one's backend default) leaves
 // none of the record's model's tier on the record.
 func TestPersistNewSessionMetadata_AnotherModelDropsTheOldModelsTier(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	br.mu.Lock()
 	br.modelID = "m-default"

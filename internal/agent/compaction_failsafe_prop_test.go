@@ -132,6 +132,7 @@ func (w *windowWorld) step() {
 // reader makes there means the resume never starts. A walk with no reader stop does start it, so the walks reach the
 // resume's take.
 func TestFailsafe_NoResumeStartsAfterAReaderStop(t *testing.T) {
+	t.Parallel()
 	reached := map[string]int{}
 	for seed := range uint64(400) {
 		t.Run("seed "+strconv.FormatUint(seed, 10), func(t *testing.T) {

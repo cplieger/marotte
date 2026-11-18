@@ -95,6 +95,7 @@ func countCompactions(h *Runtime, pct int, enabled bool) *compactCalls {
 
 // A turn whose end reads the context at the point compacts once at that end.
 func TestAutoCompact_ATurnEndAtThePointCompactsOnce(t *testing.T) {
+	t.Parallel()
 	h, _, _, tails := idleAfterFirstTurn(t, "/tmp/work")
 	calls := onCompactor(h, 85, true, 88)
 	id, _ := h.stagePromptTurn(t, "c1")
@@ -105,6 +106,7 @@ func TestAutoCompact_ATurnEndAtThePointCompactsOnce(t *testing.T) {
 
 // A turn the model refused for the context's size compacts at its end whatever the stored reading.
 func TestAutoCompact_AContextLimitTurnEndCompactsWhateverTheReading(t *testing.T) {
+	t.Parallel()
 	h, _, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 	calls := onCompactor(h, 90, true, 50)
 	id, _ := h.stagePromptTurn(t, "c1")
@@ -114,6 +116,7 @@ func TestAutoCompact_AContextLimitTurnEndCompactsWhateverTheReading(t *testing.T
 
 // With the switch off, a turn end at the point compacts nothing; the reader's press still does.
 func TestAutoCompact_TheSwitchOffCompactsOnlyWhatTheReaderAsks(t *testing.T) {
+	t.Parallel()
 	h, _, _, tails := idleAfterFirstTurn(t, "/tmp/work")
 	calls := onCompactor(h, 90, false, 95)
 	id, _ := h.stagePromptTurn(t, "c1")
@@ -130,6 +133,7 @@ func TestAutoCompact_TheSwitchOffCompactsOnlyWhatTheReaderAsks(t *testing.T) {
 // A reading at the point during a turn lists one compaction on the record behind that turn; its end runs it before
 // any queued row, and a second reading in the same turn lists no second one.
 func TestAutoCompact_AReadingDuringATurnListsOneCompactionRunAtItsEnd(t *testing.T) {
+	t.Parallel()
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	open := promptGates(t, br)
 	calls := onCompactor(h, 90, true, 0)
@@ -156,6 +160,7 @@ func TestAutoCompact_AReadingDuringATurnListsOneCompactionRunAtItsEnd(t *testing
 
 // A compaction that did not run at a turn end over the point is attempted again at the next turn's end.
 func TestAutoCompact_AFailedCompactionIsAttemptedAgainAtTheNextTurnEnd(t *testing.T) {
+	t.Parallel()
 	h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 	calls := onCompactor(h, 90, true, 95)
 	calls.setRefuse(true)
@@ -170,6 +175,7 @@ func TestAutoCompact_AFailedCompactionIsAttemptedAgainAtTheNextTurnEnd(t *testin
 // Every turn end over the point attempts a compaction until one succeeds; the test then sets the reading a success
 // leaves (0), which compacts nothing.
 func TestAutoCompact_EveryTurnEndOverThePointAttemptsUntilOneSucceeds(t *testing.T) {
+	t.Parallel()
 	h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 	calls := onCompactor(h, 90, true, 95)
 	calls.setRefuse(true)
@@ -192,6 +198,7 @@ func TestAutoCompact_EveryTurnEndOverThePointAttemptsUntilOneSucceeds(t *testing
 
 // Once the reading is back under the point, a turn end after a failure attempts nothing.
 func TestAutoCompact_UnderThePointAfterAFailureAttemptsNothing(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 		calls := onCompactor(h, 90, true, 95)
@@ -213,6 +220,7 @@ func TestAutoCompact_UnderThePointAfterAFailureAttemptsNothing(t *testing.T) {
 
 // A failure starts no attempt while the next turn runs; that turn's end does.
 func TestAutoCompact_NoAttemptStartsMidTurnAfterAFailure(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		calls := onCompactor(h, 90, true, 95)
@@ -238,6 +246,7 @@ func TestAutoCompact_NoAttemptStartsMidTurnAfterAFailure(t *testing.T) {
 
 // An idle chat two hours after a failure has listed and called nothing more: the next attempt waits for a turn end.
 func TestAutoCompact_AnIdleChatAfterAFailureStartsNothing(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 		calls := onCompactor(h, 90, true, 95)
@@ -294,6 +303,7 @@ func TestAutoCompact_ARestartBetweenTheFailureAndTheNextTurnEndStillAttempts(t *
 // The reader's cancel of a listed compaction takes it off and the turn's end compacts nothing unasked; the next
 // turn's end, still over the point, attempts again.
 func TestAutoCompact_ACancelEndsOnlyThatAttempt(t *testing.T) {
+	t.Parallel()
 	h, cs, _, tails := idleAfterFirstTurn(t, "/tmp/work")
 	calls := onCompactor(h, 90, true, 95)
 	id, _ := h.stagePromptTurn(t, "c1")
@@ -325,6 +335,7 @@ func TestAutoCompact_ACancelEndsOnlyThatAttempt(t *testing.T) {
 // The reader's cancel of a running compaction ends that call with no toast; the next turn's end, still over the
 // point, attempts again.
 func TestAutoCompact_ACancelledRunningCompactionIsAttemptedAgainAtTheNextTurnEnd(t *testing.T) {
+	t.Parallel()
 	h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 	calls := onCompactor(h, 90, true, 95)
 	gate := make(chan struct{})
@@ -362,6 +373,7 @@ func TestAutoCompact_ACancelledRunningCompactionIsAttemptedAgainAtTheNextTurnEnd
 
 // A compaction kiro-cli refuses with no turn beside it is dropped and reported once.
 func TestAutoCompact_ARefusedTurnEndCompactionIsDroppedAndReported(t *testing.T) {
+	t.Parallel()
 	h, cs, _, tails := idleAfterFirstTurn(t, "/tmp/work")
 	calls := onCompactor(h, 90, true, 95)
 	calls.refuse = true
@@ -378,6 +390,7 @@ func TestAutoCompact_ARefusedTurnEndCompactionIsDroppedAndReported(t *testing.T)
 
 // A queued press refused on a chat under the point says nothing of a retry: no turn end will try again.
 func TestAutoCompact_AFailedPressUnderThePointSaysNothingOfARetry(t *testing.T) {
+	t.Parallel()
 	h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 	calls := onCompactor(h, 90, true, 30)
 	calls.setRefuse(true)
@@ -397,6 +410,7 @@ func TestAutoCompact_AFailedPressUnderThePointSaysNothingOfARetry(t *testing.T) 
 // The page clips a toast past its MAX_TOAST_CHARS, so a longer compaction toast would lose its last words, the retry
 // sentence among them.
 func TestCompactionToasts_FitThePagesToastCap(t *testing.T) {
+	t.Parallel()
 	const page = "../../static-src/failure-notice.ts"
 	src, err := os.ReadFile(page)
 	if err != nil {
@@ -444,6 +458,7 @@ func TestCompactionToasts_FitThePagesToastCap(t *testing.T) {
 // A press refused over the point answers that the next turn end tries again, and it does; under the point it
 // answers a plain refusal, and the next turn end attempts nothing.
 func TestCompactRequest_AFailedPressIsAttemptedAgainAtTheNextTurnEnd(t *testing.T) {
+	t.Parallel()
 	t.Run("over the point", func(t *testing.T) {
 		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 		calls := onCompactor(h, 90, true, 95)
@@ -475,6 +490,7 @@ func TestCompactRequest_AFailedPressIsAttemptedAgainAtTheNextTurnEnd(t *testing.
 // The reader's press while a turn runs is listed for that turn's end and answers queued; one on an idle chat runs
 // now and answers accepted; a second press joins the listed one.
 func TestCompactRequest_QueuedBehindATurnAndRunAtOnceWhenIdle(t *testing.T) {
+	t.Parallel()
 	h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 	calls := onCompactor(h, 90, true, 10)
 	id, _ := h.stagePromptTurn(t, "c1")
@@ -499,6 +515,7 @@ func TestCompactRequest_QueuedBehindATurnAndRunAtOnceWhenIdle(t *testing.T) {
 
 // A press on a chat with no live session compacts nothing.
 func TestCompactRequest_NoSessionCompactsNothing(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	if out, err := h.RequestCompact(t.Context(), "c-none"); err != nil || out != command.CompactNoSession {
 		t.Errorf("press with no session = (%v, %v), want no session", out, err)
@@ -507,6 +524,7 @@ func TestCompactRequest_NoSessionCompactsNothing(t *testing.T) {
 
 // compactTurn names the open turn while it runs, then the finished one.
 func TestCompactTurn_NamesTheOpenTurnThenTheFinishedOne(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	if id, live := h.coord.turns.compactTurn("c1"); id != "" || live {
 		t.Errorf("before any turn: (%q, %v), want (\"\", false)", id, live)
@@ -524,6 +542,7 @@ func TestCompactTurn_NamesTheOpenTurnThenTheFinishedOne(t *testing.T) {
 
 // marotte's own compaction follows the last readable config.json.
 func TestUnreadableConfig_MarottesCompactorKeepsTheLastReadablePolicy(t *testing.T) {
+	t.Parallel()
 	dir := writeSettings(t, `{"auto_compaction_enabled":false,"auto_compact_pct":90}`)
 	h := reopenFixtureIn(t, dir, nil)
 	awaitBoot(h)
@@ -638,6 +657,7 @@ func failedRows(t *testing.T, cs *testChatStore, chatID marotte.ChatID) []string
 // A refused attempt leaves one durable "Compaction failed" row; over the point it says the next turn end tries
 // again, under it it does not.
 func TestAutoCompact_ARefusalLeavesOneFailedRow(t *testing.T) {
+	t.Parallel()
 	t.Run("over the point", func(t *testing.T) {
 		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 		calls := onCompactor(h, 90, true, 95)
@@ -686,6 +706,7 @@ func TestAutoCompact_ARefusalLeavesOneFailedRow(t *testing.T) {
 
 // A summary kiro-cli reports failed, then refuses, is one attempt: one row, with kiro-cli's reason and the retry.
 func TestAutoCompact_ASummaryKiroCliReportsFailedLeavesOneRow(t *testing.T) {
+	t.Parallel()
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	ac := h.coord.autoCompact
 	ac.policy = func(context.Context) (bool, int) { return true, 90 }
@@ -758,6 +779,7 @@ func TestAutoCompact_ASuccessBesideATurnEndListsNothing(t *testing.T) {
 // An attempt requeued behind kiro-cli's turn after kiro-cli reported its summary failed is a new attempt: its own
 // bare refusal leaves its own row, after kiro-cli's.
 func TestAutoCompact_ARequeuedAttemptAfterAReportedFailureLeavesItsOwnRow(t *testing.T) {
+	t.Parallel()
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	calls := onCompactor(h, 90, true, 95)
 	release := holdCall(t, br, marotte.MethodSessionCompact)
@@ -1033,6 +1055,7 @@ func turnBesideAFailedAttempt(t *testing.T, callErr error, open, shut attemptSlo
 // A cancel of a running call declines the turn ends that came before it, never one after: a kiro-cli turn that
 // closed beside the call before the cancel gets no attempt when the call ends, one that closed after it does.
 func TestAutoCompact_ACancelDeclinesOnlyTheTurnEndsBeforeIt(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name        string
 		closeFirst  bool

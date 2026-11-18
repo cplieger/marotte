@@ -177,6 +177,7 @@ func assertStartedOnTheLastReadable(t *testing.T, h *Runtime, src *fakeEngineSou
 }
 
 func TestUnreadableConfig_ACrashRespawnStartsOnTheLastReadableSettings(t *testing.T) {
+	t.Parallel()
 	h, src := lastReadableHub(t)
 
 	src.current().crash()
@@ -187,6 +188,7 @@ func TestUnreadableConfig_ACrashRespawnStartsOnTheLastReadableSettings(t *testin
 }
 
 func TestUnreadableConfig_AConfirmedRestartWithNothingQueuedStartsOnTheLastReadableSettings(t *testing.T) {
+	t.Parallel()
 	h, src := lastReadableHub(t)
 	if h.engine.restartPending() {
 		t.Fatalf("Setup: reasons = %v before the restart, want none", h.engine.status().Restart.Reasons)

@@ -98,6 +98,7 @@ func TestPersistedToolCall_CarriesTerminalOutputAndSpans(t *testing.T) {
 // the real turn registry: a failure that lands after the reader's stop persists as `aborted`,
 // one that landed before it stays `failed`.
 func TestPersistedToolCall_KASsFailedAfterTheReadersStopRecordsAborted(t *testing.T) {
+	t.Parallel()
 	const failed = `{"sessionUpdate":"tool_call_update","toolCallId":"tc-1","status":"failed",` +
 		`"rawOutput":"This tool was interrupted before it reported a result, so it may or may not have taken effect."}`
 	for _, tt := range []struct {

@@ -52,6 +52,7 @@ func entryOrigin(w *tableWorld, id string) marotte.RunEntryOrigin {
 // The fire stops the turn as the reader's Cancel does (the rows behind it paused) and lists, at the front of what
 // waits, the compaction and then the resume that continues the stopped work.
 func TestFailsafe_AReadingAt95StopsTheTurnAndListsTheCompactionThenTheResume(t *testing.T) {
+	t.Parallel()
 	w := firedOn(t)
 
 	if got, want := w.order(), "m-a:stopping compact-1:pending m-resume:pending m-q1:paused"; got != want {
@@ -73,6 +74,7 @@ func TestFailsafe_AReadingAt95StopsTheTurnAndListsTheCompactionThenTheResume(t *
 // One fire per turn: a second reading while the turn is stopping, and a reading after an undone stop put it back
 // running, stop nothing and list nothing more.
 func TestFailsafe_FiresOncePerTurn(t *testing.T) {
+	t.Parallel()
 	t.Run("a second reading while the turn stops", func(t *testing.T) {
 		w := firedOn(t)
 		if plan := w.fire("m-a", 2); plan.arm != stopNothing {
@@ -97,6 +99,7 @@ func TestFailsafe_FiresOncePerTurn(t *testing.T) {
 // A compaction already listed for the turn (the point's crossing, a press) is the one the failsafe runs: one
 // compaction, one resume.
 func TestFailsafe_TakesOverTheQueuedCompaction(t *testing.T) {
+	t.Parallel()
 	for _, origin := range []marotte.RunEntryOrigin{marotte.RunFromThreshold, marotte.RunFromRequest} {
 		t.Run(string(origin), func(t *testing.T) {
 			w := newTableWorld()
@@ -119,6 +122,7 @@ func TestFailsafe_TakesOverTheQueuedCompaction(t *testing.T) {
 
 // A turn whose compaction the reader cancelled compacts nothing unasked, so the failsafe does not fire in it.
 func TestFailsafe_ADeclinedTurnDoesNotFire(t *testing.T) {
+	t.Parallel()
 	w := newTableWorld()
 	w.send("m-a", marotte.SendPlain, "")
 	w.running("m-a")
@@ -135,6 +139,7 @@ func TestFailsafe_ADeclinedTurnDoesNotFire(t *testing.T) {
 
 // Only a lone running turn with a turn to resume fires: nothing else on the list is stopped or gets a resume.
 func TestFailsafe_OnlyALoneRunningTurnFires(t *testing.T) {
+	t.Parallel()
 	type row struct {
 		setup func(w *tableWorld) (target string)
 		name  string
@@ -224,6 +229,7 @@ func TestFailsafe_OnlyALoneRunningTurnFires(t *testing.T) {
 // The whole sequence on the list: the stopped turn's close, the compaction, the resume, then the rows the stop
 // paused, in that order.
 func TestFailsafe_TheResumeRunsAfterTheCompactionAndBeforeTheQueuedRows(t *testing.T) {
+	t.Parallel()
 	w := firedOn(t)
 	w.closed("m-a", listClose{})
 	if got, want := w.order(), "compact-1:starting m-resume:pending m-q1:paused"; got != want {
@@ -245,6 +251,7 @@ func TestFailsafe_TheResumeRunsAfterTheCompactionAndBeforeTheQueuedRows(t *testi
 // A compaction that failed or that kiro-cli refused with no turn of its own beside it continues nothing: the resume
 // goes, the rows stay paused and the reader is told.
 func TestFailsafe_AFailedOrRefusedCompactionSendsNoResume(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		err  error
 		name string
@@ -270,6 +277,7 @@ func TestFailsafe_AFailedOrRefusedCompactionSendsNoResume(t *testing.T) {
 // kiro-cli refusing the compaction because its own turn ran beside it requeues the compaction behind that turn; the
 // resume stays behind the compaction.
 func TestFailsafe_ARefusalKiroCLICausedKeepsTheResumeBehindTheRequeue(t *testing.T) {
+	t.Parallel()
 	w := firedOn(t)
 	w.closed("m-a", listClose{})
 	w.l.compactionStart("compact-1", w.facts())
@@ -283,6 +291,7 @@ func TestFailsafe_ARefusalKiroCLICausedKeepsTheResumeBehindTheRequeue(t *testing
 // The reader's cancel of the failsafe compaction while it waits withdraws the resume, and holds for the turn: its
 // end compacts nothing, even refused for the context's size.
 func TestFailsafe_CancellingThePendingCompactionSendsNoResumeAndHoldsForTheTurn(t *testing.T) {
+	t.Parallel()
 	w := firedOn(t)
 	w.l.cancelCompaction("compact-1")
 	if got, want := w.order(), "m-a:stopping m-q1:paused"; got != want {
@@ -296,6 +305,7 @@ func TestFailsafe_CancellingThePendingCompactionSendsNoResumeAndHoldsForTheTurn(
 
 // A running compaction cannot be stopped, but the reader's cancel of it means the stopped work is not continued.
 func TestFailsafe_CancellingTheRunningCompactionSendsNoResume(t *testing.T) {
+	t.Parallel()
 	w := firedOn(t)
 	w.closed("m-a", listClose{})
 	w.l.compactionStart("compact-1", w.facts())
@@ -310,6 +320,7 @@ func TestFailsafe_CancellingTheRunningCompactionSendsNoResume(t *testing.T) {
 // A failsafe compaction that did not bring the context under the point gets no second failsafe until a reading
 // under the point shows the context freed.
 func TestFailsafe_NoSecondFailsafeUntilAReadingUnderThePoint(t *testing.T) {
+	t.Parallel()
 	w := firedOn(t)
 	w.compacted(t)
 	w.running("m-resume")
@@ -324,6 +335,7 @@ func TestFailsafe_NoSecondFailsafeUntilAReadingUnderThePoint(t *testing.T) {
 
 // The send-now arrow puts its row next behind the compaction and drops the resume: the reader chose what runs after.
 func TestFailsafe_ASendNowPressGoesAfterTheCompactionAndDropsTheResume(t *testing.T) {
+	t.Parallel()
 	w := firedOn(t)
 	h, err := w.l.sendNow("m-q1", "", false)
 	if h != nil || err != nil {
@@ -336,6 +348,7 @@ func TestFailsafe_ASendNowPressGoesAfterTheCompactionAndDropsTheResume(t *testin
 
 // A message sent during the sequence waits behind the resume and ahead of the rows the stop paused.
 func TestFailsafe_AMessageSentDuringTheSequenceRunsAfterTheResume(t *testing.T) {
+	t.Parallel()
 	t.Run("while the turn stops", func(t *testing.T) {
 		w := firedOn(t)
 		w.send("m-new", marotte.SendPlain, "")
@@ -363,6 +376,7 @@ func TestFailsafe_AMessageSentDuringTheSequenceRunsAfterTheResume(t *testing.T) 
 
 // A press of Compact during the sequence joins the failsafe's compaction.
 func TestFailsafe_ACompactPressJoinsTheFailsafeCompaction(t *testing.T) {
+	t.Parallel()
 	w := firedOn(t)
 	c, joined := w.l.requestCompaction(marotte.RunFromRequest, "t-m-a")
 	if !joined || c.id != "compact-1" || c.origin != marotte.RunFromFailsafe {
@@ -376,6 +390,7 @@ func TestFailsafe_ACompactPressJoinsTheFailsafeCompaction(t *testing.T) {
 // Steers the stopped turn left unread were written for the task it ran: they are sent after the compaction and
 // before the resume.
 func TestFailsafe_UnreadSteersGoAfterTheCompactionAndBeforeTheResume(t *testing.T) {
+	t.Parallel()
 	w := firedOnWithASteer(t)
 	_, e := w.l.find("m-a")
 	w.l.turnClosed(listClose{turnID: e.turnID, seq: w.nextSeq}, w.facts())
@@ -412,6 +427,7 @@ func firedOnWithASteer(t *testing.T) *tableWorld {
 // as the point's again (no stopped task to speak of), with no resume, and the rows go after it as a clean end lets
 // them.
 func TestFailsafe_ATurnThatFinishedBeforeTheCancelGetsNoResume(t *testing.T) {
+	t.Parallel()
 	w := firedOn(t)
 	w.closed("m-a", listClose{clean: true, completed: true})
 	if got, want := w.order(), "compact-1:starting m-q1:pending"; got != want {
@@ -425,6 +441,7 @@ func TestFailsafe_ATurnThatFinishedBeforeTheCancelGetsNoResume(t *testing.T) {
 // A close graded clean only because nothing watched it end (KAS's idle report after a lost turn_end) is no finished
 // reply: the stopped turn is still continued and the rows still wait for the continued turn.
 func TestFailsafe_AnUnattendedCloseOfTheStoppedTurnKeepsTheResume(t *testing.T) {
+	t.Parallel()
 	w := firedOn(t)
 	w.closed("m-a", listClose{clean: true})
 	if got, want := w.order(), "compact-1:starting m-resume:pending m-q1:paused"; got != want {
@@ -435,6 +452,7 @@ func TestFailsafe_AnUnattendedCloseOfTheStoppedTurnKeepsTheResume(t *testing.T) 
 // A failsafe compaction that fails while a /compact waits on it still toasts, since the toast is the only word that
 // the stopped turn was not continued, and the resume goes with it.
 func TestFailsafe_AFailedCompactionAJoinedWaiterWaitsOnStillToasts(t *testing.T) {
+	t.Parallel()
 	w := firedOn(t)
 	c, joined := w.l.requestCompaction(marotte.RunFromRequest, "t-m-a")
 	if !joined {
@@ -458,6 +476,7 @@ func TestFailsafe_AFailedCompactionAJoinedWaiterWaitsOnStillToasts(t *testing.T)
 // A failsafe stop whose session/cancel was not delivered leaves the turn running: the resume goes and the compaction
 // it took over is the point's again, for the turn's end.
 func TestFailsafe_AnUndeliveredCancelWithdrawsTheResume(t *testing.T) {
+	t.Parallel()
 	w := newTableWorld()
 	w.send("m-a", marotte.SendPlain, "")
 	w.running("m-a")
@@ -480,6 +499,7 @@ func TestFailsafe_AnUndeliveredCancelWithdrawsTheResume(t *testing.T) {
 // before the cancel landed, as after any stop of the reader's; during the resume it stops the resume, whose rows
 // then wait for the next clean end.
 func TestFailsafe_AReaderCancelDuringTheSequence(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		close listClose
@@ -560,6 +580,7 @@ func (w *tableWorld) toRest(t *testing.T) (taken []string) {
 // reader. Each window is a turn that can run there (the stopped turn, kiro-cli's re-prompt after the cancel, the
 // stopped turn's unread steers, kiro-cli's turn under the compaction) or none; each stop is one the reader can make.
 func TestFailsafe_AReaderStopBeforeTheResumeStartsWithdrawsIt(t *testing.T) {
+	t.Parallel()
 	windows := []struct {
 		setup func(t *testing.T, w *tableWorld)
 		name  string
@@ -661,6 +682,7 @@ func TestFailsafe_AReaderStopBeforeTheResumeStartsWithdrawsIt(t *testing.T) {
 // Closing the chat ends its list's life: an ended list takes nothing, so a waiting resume never starts, and the list
 // the next life starts from keeps only the reader's rows.
 func TestFailsafe_ClosingTheChatDropsAWaitingResume(t *testing.T) {
+	t.Parallel()
 	w := firedOn(t)
 	w.closed("m-a", listClose{})
 	w.l.compactionStart("compact-1", w.facts())
@@ -691,6 +713,7 @@ func TestFailsafe_ClosingTheChatDropsAWaitingResume(t *testing.T) {
 // A wire turn kiro-cli opens after the cancel (its re-prompt of what the cancel cleared) runs first; a reading at
 // 95% in it stops it too and joins the listed compaction and resume.
 func TestFailsafe_AWireTurnOpenedAfterTheCancelRunsFirst(t *testing.T) {
+	t.Parallel()
 	w := firedOn(t)
 	_, e := w.l.find("m-a")
 	w.l.turnClosed(listClose{turnID: e.turnID, seq: w.nextSeq}, w.facts())
@@ -708,6 +731,7 @@ func TestFailsafe_AWireTurnOpenedAfterTheCancelRunsFirst(t *testing.T) {
 
 // The reader can take the resume off the dock; the compaction still runs.
 func TestFailsafe_RemovingTheResumeKeepsTheCompaction(t *testing.T) {
+	t.Parallel()
 	w := firedOn(t)
 	if err := w.l.unqueue("m-resume"); err != nil {
 		t.Errorf("unqueue the resume = %v", err)
@@ -719,6 +743,7 @@ func TestFailsafe_RemovingTheResumeKeepsTheCompaction(t *testing.T) {
 
 // A rewind's revert taken while the resume waits removes the work the resume would continue, so the resume goes.
 func TestFailsafe_ARewindDropsTheResume(t *testing.T) {
+	t.Parallel()
 	w := firedOn(t)
 	w.closed("m-a", listClose{})
 	w.l.compactionStart("compact-1", w.facts())
@@ -741,6 +766,7 @@ func TestFailsafe_ARewindDropsTheResume(t *testing.T) {
 // A close graded clean only because nothing watched it end is clean for the rows behind it, but only a completed
 // outcome says a stopped turn's reply finished before its cancel landed.
 func TestListCloseOf_CompletedIsTheOutcomesOwnGrade(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	for _, tc := range []struct {
@@ -791,6 +817,7 @@ func resumeRunning(t *testing.T) *tableWorld {
 // is stopped and compacted (stopping at 95% still beats running out), but nothing continues it, the rows stay
 // paused and the reader is told to send a message.
 func TestFailsafe_AResumeThatFillsTheContextAgainIsStoppedAndCompactedButNotResumed(t *testing.T) {
+	t.Parallel()
 	w := firedOn(t)
 	w.compacted(t)
 	w.running("m-resume")
@@ -822,6 +849,7 @@ func TestFailsafe_AResumeThatFillsTheContextAgainIsStoppedAndCompactedButNotResu
 // before the cancel landed lets the rows run, a cancel not delivered leaves the turn running, and a stop of the
 // reader's own makes the stop theirs.
 func TestFailsafe_TheResumeLimitsNoticeWaitsForTheStopToHold(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		after func(w *tableWorld)
 		name  string
@@ -866,6 +894,7 @@ func TestFailsafe_TheResumeLimitsNoticeWaitsForTheStopToHold(t *testing.T) {
 // A turn the reader sent (a message, or the steers the reader sent that the turn left unread) allows the next
 // resume again; kiro-cli's own turn does not.
 func TestFailsafe_ATurnTheReaderSentAllowsTheNextResume(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		turn    func(w *tableWorld) (entry string)
 		name    string
@@ -924,6 +953,7 @@ func TestFailsafe_ATurnTheReaderSentAllowsTheNextResume(t *testing.T) {
 // lists its compaction ahead of that resume, which waits on behind it: one resume, never two. Undoing the new stop
 // leaves the resume, which belongs to the first stop.
 func TestFailsafe_AFireAheadOfAWaitingResumeKeepsOneResume(t *testing.T) {
+	t.Parallel()
 	w := firedOn(t)
 	w.closed("m-a", listClose{})
 	w.l.compactionStart("compact-1", w.facts())
@@ -954,6 +984,7 @@ func TestFailsafe_AFireAheadOfAWaitingResumeKeepsOneResume(t *testing.T) {
 // A resume whose launch is refused continues nothing: it goes from the dock, the rows stay paused and the reader is
 // told, unless a stop withdrew it or the chat's life ended.
 func TestFailsafe_ARefusedResumeLaunchTellsTheReader(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		want    []string
@@ -990,6 +1021,7 @@ func TestFailsafe_ARefusedResumeLaunchTellsTheReader(t *testing.T) {
 // The failsafe's stop pauses the rows only until its resume's turn closes clean, so the queue does not read as the
 // reader's paused queue; once the reader takes over (the resume withdrawn), it does.
 func TestFailsafe_RowsItPausedAreNotTheReadersPausedQueue(t *testing.T) {
+	t.Parallel()
 	w := firedOn(t)
 	stopPausedRows := func() (out []string) {
 		for _, e := range w.l.project() {
@@ -1011,6 +1043,7 @@ func TestFailsafe_RowsItPausedAreNotTheReadersPausedQueue(t *testing.T) {
 // A stopped turn the failsafe does not continue leaves the rows for the reader, as its notice says ("Send a message to
 // go on"): a turn kiro-cli then runs by itself and ends clean sends none of them.
 func TestFailsafe_ATurnNotContinuedHoldsTheRowsForTheReader(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		end  func(t *testing.T, w *tableWorld)

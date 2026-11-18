@@ -119,6 +119,7 @@ func (p *blockingPush) Raise(context.Context, marotte.ChatID, *marotte.Notificat
 }
 
 func TestNotify_OnceShutdownBeganStillPushesWithoutJoiningInflight(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	p := &blockingPush{entered: make(chan struct{}), release: make(chan struct{})}
@@ -159,6 +160,7 @@ func TestTurnClose_OnceShutdownBeganLeavesAParkedModelPickParked(t *testing.T) {
 // A frame pump Shutdown does not join (a host relay's) answers through it, so once Shutdown began
 // a request it would answer on inflight is answered at once.
 func TestAnswerConnectionRequest_OnceShutdownBeganAnswersAtOnceWithoutJoiningInflight(t *testing.T) {
+	t.Parallel()
 	h, src := declRuntime(t, &declBackend{callback: "_test/auth/token"})
 	e := src.current()
 	before := len(src.lane.answeredIDs())
@@ -212,6 +214,7 @@ func TestAnswerConnectionRequest_OnceShutdownBeganAnswersASignInAskWithTheCreden
 // wait short, with the vault's unreachable refusal, and the provider is not marked unreachable: the ask gave up, the
 // provider did not. In a bubble, whose clock passes the bound at once.
 func TestAnswerConnectionRequest_OnceShutdownBeganCutsAHangingRenewalShortAtTheBound(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		g := newGateRun(t, filemodetest.NewDisk())
 		g.signIn(t)
@@ -246,6 +249,7 @@ func TestAnswerConnectionRequest_OnceShutdownBeganCutsAHangingRenewalShortAtTheB
 }
 
 func TestRunMutations_TheRuntimesCeilingInspectsNothingOnceShutdownBegan(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	m := h.runs.mutations
@@ -338,6 +342,7 @@ func TestShutdown_ALaneJoinThatTimesOutStartsNoInflightWait(t *testing.T) {
 }
 
 func TestLaunchScheduled_LaunchesNothingOnceShutdownBegan(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	launchableRecipe(br, "wf_sched")
@@ -357,6 +362,7 @@ func TestLaunchScheduled_LaunchesNothingOnceShutdownBegan(t *testing.T) {
 }
 
 func TestBootSweep_SweepsNothingOnceShutdownBegan(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	beginDraining(h)

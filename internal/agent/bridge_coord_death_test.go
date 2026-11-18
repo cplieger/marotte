@@ -156,6 +156,7 @@ func TestBridgeEnd_RetiresTheAsksItCarriedAsEnded(t *testing.T) {
 // Closing or deleting a tab ends its bridge, and that end is what retires the bridge's asks: each
 // card is told it went because its session ended, exactly once.
 func TestChatTeardown_RetiresTheBridgesAsksAsEnded(t *testing.T) {
+	t.Parallel()
 	teardowns := map[string]func(h *Runtime){
 		"close":  func(h *Runtime) { h.CloseChatState(t.Context(), "c1", nil) },
 		"delete": func(h *Runtime) { h.DeleteChatStateByChain(t.Context(), "c1", nil, command.RunStopTabClosed) },

@@ -34,6 +34,7 @@ func peerWakeFrames(t *testing.T, h *Runtime, target string, askID int64) {
 // A peer message to a chat with no resident session makes that chat resident on its own session and hands it the
 // notify and the woken turn's frames, so the turn is the chat's and its ask waits for the reader.
 func TestEngineLane_APeerMessageMakesItsClosedChatResident(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -79,6 +80,7 @@ func TestEngineLane_APeerMessageMakesItsClosedChatResident(t *testing.T) {
 // A peer message to a session no chat records is dropped: its turn's ask is answered cancelled on the engine lane,
 // and no chat opens.
 func TestEngineLane_APeerMessageToAnUnknownSessionAnswersItsAsks(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 

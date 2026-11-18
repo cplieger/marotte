@@ -36,6 +36,7 @@ func rawParams(t *testing.T, v any) json.RawMessage {
 
 // TestSecretGetMissIsExplicitNull pins the wire contract: KAS reads null as no credential yet.
 func TestSecretGetMissIsExplicitNull(t *testing.T) {
+	t.Parallel()
 	store := newSecretStore(t)
 	got := secretGetResult(store, rawParams(t, map[string]string{"key": probeKey}))
 	if got.Value != nil {
@@ -53,6 +54,7 @@ func TestSecretGetMissIsExplicitNull(t *testing.T) {
 
 // TestSecretStoreThenGet is the round trip KAS relies on across a spawn.
 func TestSecretStoreThenGet(t *testing.T) {
+	t.Parallel()
 	store := newSecretStore(t)
 	ctx := t.Context()
 	blob := `{"client_id":"probe-client-1","client_secret":"s3cret"}`
@@ -73,6 +75,7 @@ func TestSecretStoreThenGet(t *testing.T) {
 
 // TestSecretDelete covers delete, including the absent key KAS issues speculatively.
 func TestSecretDelete(t *testing.T) {
+	t.Parallel()
 	store := newSecretStore(t)
 	ctx := t.Context()
 	if err := store.Set(ctx, probeKey, "v"); err != nil {
@@ -91,6 +94,7 @@ func TestSecretDelete(t *testing.T) {
 
 // TestSecretStoreRejectsBadParams pins a JSON-RPC error rather than a store under an empty key.
 func TestSecretStoreRejectsBadParams(t *testing.T) {
+	t.Parallel()
 	store := newSecretStore(t)
 	ctx := t.Context()
 
@@ -127,6 +131,7 @@ func TestSecretStoreRejectsBadParams(t *testing.T) {
 
 // TestSecretNilStoreDegradesRatherThanFails pins that with no store a get reports absent so MCP OAuth re-registers per spawn.
 func TestSecretNilStoreDegradesRatherThanFails(t *testing.T) {
+	t.Parallel()
 	if got := secretGetResult(nil, rawParams(t, map[string]string{"key": probeKey})); got.Value != nil {
 		t.Errorf("Value = %q, want nil", *got.Value)
 	}
@@ -150,6 +155,7 @@ func TestSecretNilStoreDegradesRatherThanFails(t *testing.T) {
 
 // TestSecretDeleteRejectsMissingKey pins that a keyless delete is invalid-params, not a no-op success.
 func TestSecretDeleteRejectsMissingKey(t *testing.T) {
+	t.Parallel()
 	store := newSecretStore(t)
 	ctx := t.Context()
 
@@ -185,6 +191,7 @@ func TestSecretDeleteRejectsMissingKey(t *testing.T) {
 // TestHandleKiroSecretRequestClaimsOnlyItsOwnMethods pins the dispatch hop: a wrong claim
 // swallows a frame, a missed one wedges the turn.
 func TestHandleKiroSecretRequestClaimsOnlyItsOwnMethods(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	var id int64 = 1
 	cases := []struct {
@@ -212,6 +219,7 @@ func TestHandleKiroSecretRequestClaimsOnlyItsOwnMethods(t *testing.T) {
 
 // TestSecretStoreIsSharedAcrossSessions pins that one session's DCR result is visible to the next.
 func TestSecretStoreIsSharedAcrossSessions(t *testing.T) {
+	t.Parallel()
 	store := newSecretStore(t)
 	ctx := t.Context()
 
@@ -273,6 +281,7 @@ func startedChatEngine(t *testing.T, opts ...Option) *fakeEngine {
 // TestEngineSpawn_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore pins both directions:
 // declared without a store loses every credential; withheld with one re-runs OAuth.
 func TestEngineSpawn_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore(t *testing.T) {
+	t.Parallel()
 	t.Run("a runtime with a credential store declares the capability", func(t *testing.T) {
 		e := startedChatEngine(t, WithConfigDir(t.TempDir()))
 		if !e.opts.SecretStorage {
@@ -316,6 +325,7 @@ func gotSecret(t *testing.T, src *fakeEngineSource, id int64) *string {
 // TestSecretSignInStateDiesWithTheEngineGeneration pins that the runtime's own store answers the engine and that a
 // verifier stored by one engine generation is gone for the next, while the grant survives.
 func TestSecretSignInStateDiesWithTheEngineGeneration(t *testing.T) {
+	t.Parallel()
 	src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
 	cs := newTestChatStore()
 	h := newRuntimeOn(context.Background(), t.TempDir(), src, cs, WithConfigDir(t.TempDir()))

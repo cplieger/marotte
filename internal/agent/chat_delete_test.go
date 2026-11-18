@@ -293,6 +293,7 @@ func TestDeleteChatStateByChain_DeletesRunsBeforeSessions(t *testing.T) {
 }
 
 func TestDeleteChatStateByChain_ReapsWhenTheDeleteIsRefused(t *testing.T) {
+	t.Parallel()
 	sessionsDir := t.TempDir()
 	sessDir := filepath.Join(sessionsDir, "hash01", "sess_cur")
 	if err := os.MkdirAll(sessDir, 0o700); err != nil {

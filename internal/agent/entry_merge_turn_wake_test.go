@@ -10,6 +10,7 @@ import (
 // KAS's replay holds no turn_wake (it is marotte's record of what woke the turn), so the merge after a restart
 // keeps the record's, in its place at the head of the wake turn.
 func TestMergeEntries_AWakeTurnKeepsItsTurnWake(t *testing.T) {
+	t.Parallel()
 	wake := marotte.EntryTurnWake{
 		Reason: marotte.WakeReasonRunFinished, Run: "wf_7c3a9e1f0b2d4a58", RunName: "nightly-report",
 		RunStatus: marotte.RunStatusCompleted,
@@ -44,6 +45,7 @@ func TestMergeEntries_AWakeTurnKeepsItsTurnWake(t *testing.T) {
 }
 
 func TestMergeEntries_ARunNamedSurvivesTheReplayMerge(t *testing.T) {
+	t.Parallel()
 	named := marotte.EntryRunNamed{Run: "wf_7c3a9e1f0b2d4a58", Name: "nightly-report"}
 	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, nil),

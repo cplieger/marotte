@@ -15,6 +15,7 @@ import (
 )
 
 func TestTemplateToResponse(t *testing.T) {
+	t.Parallel()
 	raw := `{
 	  "modes": {
 	    "currentModeId": "vibe",
@@ -68,6 +69,7 @@ func TestTemplateToResponse(t *testing.T) {
 
 // KAS omits the `model` option when its cache is empty, so presence is the only "no catalog" signal.
 func TestTemplateToResponse_DistinguishesAnAbsentModelOptionFromAPopulatedOne(t *testing.T) {
+	t.Parallel()
 	const present = `{"configOptions": [
 	  {"id": "model", "currentValue": "m-1", "options": [{"value": "m-1", "name": "One"}]}
 	]}`
@@ -97,6 +99,7 @@ func TestTemplateToResponse_DistinguishesAnAbsentModelOptionFromAPopulatedOne(t 
 
 // The verdict is the option's presence, not len(Models), or an all-[Deprecated] catalog loops the client.
 func TestTemplateToResponse_APresentOptionWhoseEntriesAllFilterOutIsStillReady(t *testing.T) {
+	t.Parallel()
 	const raw = `{"configOptions": [
 	  {"id": "model", "currentValue": "m-old", "options": [
 	    {"value": "m-old", "name": "Old", "description": "[Deprecated] gone"}
@@ -130,6 +133,7 @@ const outputStyleTemplate = `{"configOptions": [
 ]}`
 
 func TestTemplateToResponse_ServesTheOutputStyleSelect(t *testing.T) {
+	t.Parallel()
 	var tpl kasConfigTemplate
 	if err := json.Unmarshal([]byte(outputStyleTemplate), &tpl); err != nil {
 		t.Fatalf("unmarshal fixture: %v", err)
@@ -148,6 +152,7 @@ func TestTemplateToResponse_ServesTheOutputStyleSelect(t *testing.T) {
 }
 
 func TestHandleConfigTemplate_ServesTheTemplatesOutputStylesBesideALiveCatalog(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroConfigTemplate: json.RawMessage(outputStyleTemplate)}
 	h.catalog.SetModels([]marotte.SessionModel{{ID: "m-live", Name: "Live"}})
@@ -160,6 +165,7 @@ func TestHandleConfigTemplate_ServesTheTemplatesOutputStylesBesideALiveCatalog(t
 }
 
 func TestTemplateToResponseEmpty(t *testing.T) {
+	t.Parallel()
 	got := withCatalogVerdict(templateToResponse(&kasConfigTemplate{}))
 	if got.DefaultModel != "" || len(got.Modes) != 0 || len(got.Models) != 0 {
 		t.Errorf("empty template must yield empty catalog: %+v", got)
@@ -389,6 +395,7 @@ func serveConfigTemplate(t *testing.T, h *Runtime) marotte.ConfigTemplateRespons
 }
 
 func TestConfigTemplate_CarriesWorkspaceAgentsBeforeAnySession(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroConfigTemplate:   json.RawMessage(templateWithReviewer),

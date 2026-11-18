@@ -11,6 +11,7 @@ import (
 // TestTerminalResponders_AnswerAnUndecodableRequest pins a fail-closed answer for every
 // declined request: KAS awaits these with no timeout, so a bare return wedges the batch.
 func TestTerminalResponders_AnswerAnUndecodableRequest(t *testing.T) {
+	t.Parallel()
 	for _, method := range []string{
 		methodTermOutput,
 		methodTermRelease,

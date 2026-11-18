@@ -38,6 +38,7 @@ func agentRewrite(t *testing.T, perm os.FileMode) os.FileMode {
 }
 
 func TestRespondFSWrite_KeepsAGroupReadableMode(t *testing.T) {
+	t.Parallel()
 	if got := agentRewrite(t, 0o640); got != 0o640 {
 		t.Errorf("rewriting a 0640 file left mode %#o, want 0640", got)
 	}
@@ -61,6 +62,7 @@ func TestRespondFSWrite_EnforcesAnOwnerOnlyModeWithoutAChmod(t *testing.T) {
 }
 
 func TestRespondFSWrite_KeepsANoPermissionMode(t *testing.T) {
+	t.Parallel()
 	if got := agentRewrite(t, 0); got != 0 {
 		t.Errorf("rewriting a 0000 file left mode %#o, want 0000", got)
 	}

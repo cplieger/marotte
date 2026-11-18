@@ -30,6 +30,7 @@ func oneTurn(t *testing.T, got []command.CloseTurn, want command.CloseTurn) {
 
 // Each kind of turn a close stops is named by the ids a page can know it by.
 func TestCloseImpact_NamesEachTurnByItsIds(t *testing.T) {
+	t.Parallel()
 	t.Run("an open prompt turn names its turn, prompt, admission and resends", func(t *testing.T) {
 		rt, cs, _ := newTestHub()
 		seedChat(t, cs, "c1")
@@ -136,6 +137,7 @@ func waitTurns(t *testing.T, rt *Runtime, n int) []command.CloseTurn {
 }
 
 func TestCloseImpact_NamesTheChatsAsksRunsAndQueuedRows(t *testing.T) {
+	t.Parallel()
 	rt, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
 	first := rt.bus.pendingPerms.add(10, permNeeded("c1", 0), nil)
@@ -172,6 +174,7 @@ func TestCloseImpact_NamesTheChatsAsksRunsAndQueuedRows(t *testing.T) {
 
 // A steer kiro-cli was handed is a dock row, named once under Steers: never also a queued row.
 func TestCloseImpact_ASteerTheAgentHoldsIsNoQueuedRow(t *testing.T) {
+	t.Parallel()
 	rt, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -203,6 +206,7 @@ func askIDString(t *testing.T, evt marotte.ServerEvent) string {
 
 // The steers a close names are the rows its teardown drops.
 func TestSteerRecords_UnreadKeysAreWhatTheTeardownDrops(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.bind()
 	s.steer("steer-a", "first")

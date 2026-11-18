@@ -14,6 +14,7 @@ func routedRow(id string) entryRow {
 }
 
 func TestMergeEntries_ModelRoutedPairsByOrdinalWithinTheTurn(t *testing.T) {
+	t.Parallel()
 	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, nil),
 		textRow("S", "", "first"),
@@ -44,6 +45,7 @@ func TestMergeEntries_ModelRoutedPairsByOrdinalWithinTheTurn(t *testing.T) {
 }
 
 func TestMergeEntries_AReplayOnlyModelRoutedIsInserted(t *testing.T) {
+	t.Parallel()
 	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, nil),
 		textRow("S", "", "first"),
@@ -74,6 +76,7 @@ func fallbackRow(id string) entryRow {
 // Each notice kind keeps its own ordinal, so two fallbacks interleaved with a route all pair and
 // a session/load duplicates none of them.
 func TestMergeEntries_ModelFallbackPairsByOrdinal(t *testing.T) {
+	t.Parallel()
 	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, nil),
 		textRow("S", "", "first"),

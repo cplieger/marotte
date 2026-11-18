@@ -40,6 +40,7 @@ func newAgentRootsFixture(t *testing.T) agentRootsFixture {
 }
 
 func TestSessionDoors_CarryTheGrantedAdditionalDirectories(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, session string }{
 		{"a new chat", ""},
 		{"a resumed chat", "sess_resume_probe"},
@@ -111,6 +112,7 @@ func TestSessionDoors_CarryTheGrantedAdditionalDirectories(t *testing.T) {
 // Removing the setting changes the chat door's fingerprint, so a resident chat reloads without
 // the directory at its next open, and every door after the removal carries none.
 func TestRemovingTheSetting_RevokesAccessForNewSessions_AtTheDoor(t *testing.T) {
+	t.Parallel()
 	f := newAgentRootsFixture(t)
 	cs := newTestChatStore()
 	h := newRuntimeOn(context.Background(), f.work,

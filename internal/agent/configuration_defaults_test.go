@@ -37,6 +37,7 @@ func settingsUpdatedCount(t *testing.T, h *Runtime) int {
 }
 
 func TestConfigurationState_TheEngineViewResolvesWorkValidationsDefault(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	dispatch := func(msg *marotte.RPCResponse) bool { return h.dispatchWorkspace(t.Context(), "c1", msg) }
@@ -89,6 +90,7 @@ func modelFallbackStateMsg(t *testing.T, view string) *marotte.RPCResponse {
 }
 
 func TestConfigurationState_ModelFallbacksAnnounceOnChange(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	dispatch := func(msg *marotte.RPCResponse) { h.dispatchWorkspace(t.Context(), "c1", msg) }

@@ -8,6 +8,7 @@ import (
 )
 
 func TestGetBridge_ReturnsNilForUnknown(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	if sb := h.coord.bridgeFor("no-such-chat"); sb != nil {
 		t.Errorf("getBridge returned %+v for missing chat", sb)
@@ -15,6 +16,7 @@ func TestGetBridge_ReturnsNilForUnknown(t *testing.T) {
 }
 
 func TestOpenBridge_ReusesExisting(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
@@ -32,6 +34,7 @@ func TestOpenBridge_ReusesExisting(t *testing.T) {
 }
 
 func TestOpenBridge_MissingChatIsError(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	_, err := h.coord.openReleased(t.Context(), "no-chat", "")
 	if err == nil {
@@ -43,6 +46,7 @@ func TestOpenBridge_MissingChatIsError(t *testing.T) {
 }
 
 func TestCloseBridge_RemovesAndClosesTheSession(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })

@@ -93,6 +93,7 @@ type managedSource struct {
 func (m managedSource) Installed() <-chan struct{} { return m.inst }
 
 func TestEngineOwner_ManagedStartsWhenInstalledCloses(t *testing.T) {
+	t.Parallel()
 	src := managedSource{fakeEngineSource: fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), inst: make(chan struct{})}
 	o := ownerFixture(t, src, engineHooks{})
 	o.start()
@@ -106,6 +107,7 @@ func TestEngineOwner_ManagedStartsWhenInstalledCloses(t *testing.T) {
 }
 
 func TestEngineOwner_UnmanagedStartsAtConstruction(t *testing.T) {
+	t.Parallel()
 	src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
 	o := ownerFixture(t, src, engineHooks{})
 	o.start()
@@ -114,6 +116,7 @@ func TestEngineOwner_UnmanagedStartsAtConstruction(t *testing.T) {
 }
 
 func TestEngineOwner_UnavailableNeverStartsAndAnswersTheReason(t *testing.T) {
+	t.Parallel()
 	o := ownerFixture(t, noEngine{}, engineHooks{})
 	o.start()
 	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
@@ -129,6 +132,7 @@ func TestEngineOwner_UnavailableNeverStartsAndAnswersTheReason(t *testing.T) {
 }
 
 func TestEngineStatus_VersionOrdersEverySnapshot(t *testing.T) {
+	t.Parallel()
 	before := time.Now().UnixMilli()
 	o := ownerFixture(t, noEngine{}, engineHooks{})
 	after := time.Now().UnixMilli()
@@ -147,6 +151,7 @@ func TestEngineStatus_VersionOrdersEverySnapshot(t *testing.T) {
 // A caller asking for a generation past one that ended but is not yet retired waits on the retirement itself, not
 // on the ended engine's already-closed Done channel, which would turn the wait into a spin.
 func TestEngineOwner_AnAcquirePastAnEndedGenerationWaitsForItsRetirement(t *testing.T) {
+	t.Parallel()
 	src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
 	retire := make(chan struct{})
 	src.exitGate = retire
@@ -185,6 +190,7 @@ func TestEngineOwner_AnAcquirePastAnEndedGenerationWaitsForItsRetirement(t *test
 }
 
 func TestEngineRespawn_BackoffAndReapBeforeSpawn(t *testing.T) {
+	t.Parallel()
 	src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
 	var (
 		mu     sync.Mutex
@@ -325,6 +331,7 @@ var presetExitCauses = testsupport.PresetLabelValues("marotte_engine_exits_total
 // exitCause's names are the counter's cause values, in both directions: a name the counter does not pre-set is
 // missed by increase() at its first exit, and a pre-set name exitCause never returns is a series no exit moves.
 func TestExitCause_NamesExactlyTheCountedCauses(t *testing.T) {
+	t.Parallel()
 	got := map[string]bool{}
 	for _, reason := range []bridge.ExitInfo{
 		{Reason: bridge.ExitEnded},
@@ -357,6 +364,7 @@ func TestExitCause_NamesExactlyTheCountedCauses(t *testing.T) {
 // The causes obs calls requested stops are exactly the names a stop marotte asked for gets, so a crash rule that
 // leaves them out stays quiet on every requested restart and on nothing else.
 func TestExitCause_RequestedStopsAreExactlyTheStopsMarotteSent(t *testing.T) {
+	t.Parallel()
 	stops, others := map[string]bool{}, map[string]bool{}
 	for _, end := range []bridge.ExitInfo{
 		{Reason: bridge.ExitEnded},
@@ -524,6 +532,7 @@ func TestEngineExit_RelayWriteTimeoutLineIsFlagged(t *testing.T) {
 
 // The account's promotion runs before the fingerprint is read, so the new engine's own spawn is not pending.
 func TestEngineSpawn_SpawnedWithIsComputedAfterPromotion(t *testing.T) {
+	t.Parallel()
 	var mu sync.Mutex
 	pending := true
 	src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
@@ -600,6 +609,7 @@ func declRuntime(t *testing.T, b *declBackend) (*Runtime, *fakeEngineSource) {
 }
 
 func TestEngineSpawn_UsesTheDeclarationNotTheBackendID(t *testing.T) {
+	t.Parallel()
 	_, src := declRuntime(t, &declBackend{callback: "_test/auth/token", args: []string{"--auth-method", "client"}})
 	e := src.current()
 	e.mu.Lock()
@@ -657,6 +667,7 @@ func awaitStart(t *testing.T, entered <-chan struct{}) {
 
 // Two reconciles store their diffs in resolve order, so the older one finishing last cannot drop the newer's reason.
 func TestEngineOwner_AnOlderResolveFinishingLastDropsNoReason(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		release := make(chan struct{})
 		var calls atomic.Int32
@@ -686,6 +697,7 @@ func TestEngineOwner_AnOlderResolveFinishingLastDropsNoReason(t *testing.T) {
 }
 
 func TestEngineOwner_AValueMovedDuringTheFirstStartIsQueuedAndApplied(t *testing.T) {
+	t.Parallel()
 	src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
 	spec := &scriptedSpec{value: "v1"}
 	o := ownerFixture(t, src, engineHooks{resolve: spec.resolve})
@@ -709,6 +721,7 @@ func TestEngineOwner_AValueMovedDuringTheFirstStartIsQueuedAndApplied(t *testing
 }
 
 func TestEngineOwner_AValueMovedDuringARespawnsStartIsQueuedAndApplied(t *testing.T) {
+	t.Parallel()
 	src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
 	spec := &scriptedSpec{value: "v1"}
 	o := ownerFixture(t, src, engineHooks{
@@ -1095,6 +1108,7 @@ func TestEngineOwner_AQueueComputedHeldIsReDiffedBeforeItApplies(t *testing.T) {
 
 // A confirmed restart whose request was cancelled still waits for the resolve lock and re-reads before it decides.
 func TestEngineOwner_ACancelledConfirmedRestartStillReReads(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
 		var l lastReadable
@@ -1141,6 +1155,7 @@ func TestEngineOwner_ACancelledConfirmedRestartStillReReads(t *testing.T) {
 
 // A run the ended engine interrupted is busy on the next one, so the post-spawn poke publishes instead of restarting.
 func TestEngineOwner_ThePostSpawnPokeWaitsForAResumedRun(t *testing.T) {
+	t.Parallel()
 	src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
 	spec := &scriptedSpec{value: "v1"}
 	var busy atomic.Bool
@@ -1211,6 +1226,7 @@ func waitDown(t *testing.T, o *engineOwner, src *fakeEngineSource, n int) {
 }
 
 func TestEngineOwner_AFailedStartKeepsTheQueue(t *testing.T) {
+	t.Parallel()
 	src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
 	spec := &scriptedSpec{value: "v1"}
 	o := ownerFixture(t, src, engineHooks{resolve: spec.resolve})

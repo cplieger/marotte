@@ -50,6 +50,7 @@ func liveEngine(t *testing.T, configDir string) (*Runtime, *fakeBridge) {
 
 // A settings write sends the ignore list once, on the engine, however many sessions are open.
 func TestSettingsWrite_SendsTheIgnoreListOnceOnTheEngine(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	h, lane := liveEngine(t, dir)
 	writeIgnoreFiles(t, dir, []string{".gitignore"})
@@ -104,6 +105,7 @@ func policyErrors(h *Runtime) []marotte.PolicyErrorItem {
 
 // The broadcast shows the reader why their edit did nothing, and what an engine started before the fix enforces.
 func TestSettingsWrite_TellsTheClientWhatARestartWouldEnforce(t *testing.T) {
+	t.Parallel()
 	const keeps = "keeps enforcing its previous list"
 	last := "enforces the last list marotte read"
 	floor := "enforces only " + settings.AgentIgnoreFloor
@@ -197,6 +199,7 @@ func spawnIgnoreRuntime(t *testing.T, body string) (*Runtime, string) {
 
 // The floor Warn fires only when the floor is what the spawn really sends. Serial: slog's default is process-global.
 func TestSpawnIgnoreFiles_LogsTheFloorOnlyWhenTheFloorIsSent(t *testing.T) {
+	t.Parallel()
 	const neverRead = "agent ignore files: config.json cannot be read and none was read since marotte started; this spawn enforces only the floor"
 	const invalid = "agent ignore files: the stored list does not decode; this spawn enforces only the floor"
 	floor := []string{settings.AgentIgnoreFloor}
@@ -235,6 +238,7 @@ func TestSpawnIgnoreFiles_LogsTheFloorOnlyWhenTheFloorIsSent(t *testing.T) {
 
 // The one engine build carries the ignore-list resolver, read at send time with the floor leading.
 func TestResolveEngine_CarriesTheIgnoreListResolver(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeIgnoreFiles(t, dir, []string{".gitignore"})
 	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil),
@@ -254,6 +258,7 @@ func TestResolveEngine_CarriesTheIgnoreListResolver(t *testing.T) {
 // A session door over a config.json never readable since boot grants no additional directory and says why.
 // Serial: slog's default is process-global.
 func TestSessionDirs_ANeverReadableDocumentGrantsNothingAndLogs(t *testing.T) {
+	t.Parallel()
 	h, _ := spawnIgnoreRuntime(t, "{not json")
 	rec := capture.Default(t)
 	if got := h.readSessionSettings(t.Context()).AdditionalDirectories; len(got) != 0 {
