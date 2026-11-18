@@ -138,14 +138,20 @@ func decodeOneMemory(raw json.RawMessage) (memoryRow, error) {
 	return rowFromKAS(res.Memory), nil
 }
 
-// writeMemoryErr answers a KAS refusal with KAS's text (409 coming_soon for import and export not yet served, 409
-// not_enabled, else 400) and anything else, an answer marotte could not read included, with a generic 502.
+// writeMemoryErr answers a KAS refusal with KAS's text (409 coming_soon for import and export not yet served, 503
+// while kiro-cli cannot read the settings yet, 409 not_enabled, else 400) and anything else, an answer marotte could
+// not read included, with a generic 502.
 func writeMemoryErr(w http.ResponseWriter, err error) {
 	if _, ok := errors.AsType[*marotte.RPCError](err); ok && !marotte.ReplyUnread(err) {
 		if m, typed := rpcerr.MappedOf(err); typed && m.ErrorType == memoryImportComingSoonClass {
 			httpserver.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSONWithCode(
 				"Memory import and export are not available for this account yet.", memoryImportComingSoonCode,
 			))
+			return
+		}
+		if configurationUnreadable(err) {
+			httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable,
+				httpreply.ErrorJSON("kiro-cli cannot read your settings yet. Try again in a moment."))
 			return
 		}
 		text := rpcerr.Text(err)

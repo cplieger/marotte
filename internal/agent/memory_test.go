@@ -144,6 +144,13 @@ func TestWriteMemoryErr_ClassifiesTheFailure(t *testing.T) {
 			http.StatusConflict, memoryImportComingSoonCode,
 		},
 		{
+			"settings KAS cannot read yet", &marotte.RPCError{
+				Code: -32000, Message: "The configuration cannot be read now",
+				Data: json.RawMessage(`{"errorType":"ConfigurationUnreadableError"}`),
+			},
+			http.StatusServiceUnavailable, "Try again in a moment",
+		},
+		{
 			"a KAS refusal keeps KAS's words", &marotte.RPCError{Code: -32602, Message: `no memory with id "m1" to delete.`},
 			http.StatusBadRequest, "no memory with id",
 		},

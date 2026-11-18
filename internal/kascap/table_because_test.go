@@ -39,6 +39,14 @@ into permission prompts — and free-form questions are SURFACED
 instead of silently skipped (without the capability KAS advances
 past them). Handled by translate/user_input.go; answered via the
 user_input_response command.`,
+	"capability.mcpElicitation": `WITHHELD: it gates only sessions KAS relays to a cloud sandbox. With it
+true, attachedClientChannelFor hands a relayed session a requestElicitation that
+forwards the sandbox's MCP elicitation to this client as _kiro/mcp/elicitation,
+and a relayed prompt carries mcpElicitationRespond; without it a relayed ask has
+no client and goes unanswered. marotte opens no relayed session, and a local
+session's elicitation reaches _kiro/mcp/elicitation ungated, which
+translate.HandleElicitationCreate answers, so true would claim a path marotte
+never hosts.`,
 	"capability.textSearch": `_meta.kiro.textSearch makes KAS send every grep_search to
 _kiro/search/text_search (agent/bridge_kiro_search.go, internal/kirosearch).
 Without it KAS runs its bundled rg, rejects rg's exit 2 (an unreadable path
@@ -46,8 +54,9 @@ anywhere) and its 30 s budget, and falls back to a Node walker with no time
 limit and no cancel, which held workflow steps for 20 to 142 minutes.`,
 	"capability.findFiles": `_meta.kiro.findFiles makes KAS send every file_search to
 _kiro/search/find_files, answered by marotte's bounded rg listing. Without it
-KAS's rg --files follows symlinks, fails on a dangling one or a loop, and falls
-back to the same unbounded Node walker as grep_search.`,
+KAS runs rg --files (no --follow) and keeps an exit 2 that still listed files;
+any other failure falls back to a Node walk that stops after 30 s and returns
+the partial listing it found.`,
 	"capability.backgroundProcesses": `_meta.kiro.backgroundProcesses opts into KAS's background-process tools
 (list_processes, get_process_output and a start/stop tool) over marotte's
 terminal handlers (agent/agent_terminal.go). From 2.28 each start holds
@@ -806,6 +815,11 @@ Subagent delegation v2; no marotte surface depends on which version runs.`,
 The consolidate_disclosures experiment (default off). On, load_resource replaces
 disclose_context, kiro_powers and tool_load in the tool belt; marotte's tool cards and
 environment steering read either belt.`,
+	"env.KIRO_FEATURE_KIRO_CREW_ORIGIN_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+The kiro_crew_origin experiment (default off). Its treatment stamps KIRO_CREW as the
+request origin only for a client whose clientInfo.name is "kirocrew"; marotte
+initializes as "marotte", so either value leaves its origin unchanged.`,
 	"env.KIRO_FEATURE_KIRO_INFRA_SAFETY_MONITOR_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 The Infrastructure-Safety monitor arm. The infraSafetyMonitor settings row
@@ -838,7 +852,7 @@ ranks the session's memory index by that score instead of by date, and applies r
 memory is saved.`,
 	"env.KIRO_FEATURE_MEMORY_SYNC_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
-The experiment value of the memorySync setting (memory_sync_enabled, default off), which
+The experiment value of the cloudMemory setting (memory_sync_enabled, default off), which
 syncs a signed-in user's memories to a cloud store when an endpoint is configured.`,
 	"env.KIRO_FEATURE_MODEL_FALLBACK_AUTO_REFUSAL_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
@@ -853,6 +867,16 @@ getModelFallbacks serves; marotte records the move as a model_fallback entry.`,
 in kiro-cli 3.2.0's FEATURES model_fallback_refusal) says; off must be explicit. Lets a turn whose model refused move to the next model of
 the chain getModelFallbacks serves, and KAS then pins the chat to that model unless the user
 picked a different one explicitly.`,
+	"env.KIRO_FEATURE_SANDBOX_ORG_SETTINGS_ENABLED": `Withheld because no marotte setting owns KAS's sandbox. KAS reads this arm from the
+environment alone at startup (sandbox_org_settings, default off); on, it reads the
+organization's sandbox settings and refuses client sandbox writes an org layer locks.
+marotte sends no sandbox config option, so unset keeps KAS's own default.`,
+	"env.KIRO_FEATURE_SANDBOX_UNIFIED_RULES_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+The sandbox_unified_rules experiment (default off), which picks the unified or the
+legacy session sandbox rule model and gates the sandboxFsMode config option.
+marotte sends no sandbox config option and opens no sandbox, so the arm changes
+nothing it drives.`,
 	"env.KIRO_FEATURE_SESSION_TITLE_LLM_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 The LLM session title; KIRO_DISABLE_SESSION_TITLE_LLM (withheld too) is its other
@@ -876,15 +900,20 @@ The 60s/300s stream-idle watchdog and its _kiro/system/notify text (default on).
 Un-gates the bundled default-v2 mode. The gate reads only the environment and the
 experiment, so this variable is the one client lever: _meta.kiro.settings.unifiedAgent,
 which the bundle's experiment-gate helper names as its settingKey, has no reader.`,
-	"env.KIRO_FEATURE_UNIVERSAL_BACKGROUND_TOOL_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
-(decision: pin only where a marotte setting owns the behaviour).
-The universal_background_tool experiment (default off). On, the job_list and
-job_cancel tools mount and KAS serves _kiro/job/cancel and _kiro/job/output and can
-send _kiro/job/update, none of which marotte renders or calls, but no tool call
-becomes a job: the job runtime's beginCall is called only by the backgrounding shell
-tool's job handoff, and nothing constructs that tool. Revisit when the tool belt
-constructs it or the experiment defaults on. The session setting of the same name
-is recorded unclaimed, so the ramp decides there too.`,
+	"env.KIRO_FEATURE_UNIVERSAL_BACKGROUND_TOOL_ENABLED": `SENT "false", kiro-cli's own default (universal_background_tool, default off),
+so AWS's experiment ramp cannot turn session jobs on. On, the tool belt builds the
+job shell tool in place of execute_bash and selectCommandHost answers "agent", so
+KAS hosts the session's commands and marotte's terminal/* handlers, process-group
+teardown and environment shaping do not apply; a ramp would take workflow steps'
+process tools with them. The job tools, _kiro/job/* and job-end-wake stay unused.
+The session row of the same name states off too, since KAS's per-session gate
+reads setting over persisted over this arm. Not settingOwned, since no Settings
+control decides it; ChildEnv's value is appended last, so it wins over an inherited one.`,
+	"setting.universalBackgroundTool": `SENT {"enabled": false} on both session doors. KAS resolves a session's
+jobs gate setting over persisted over the experiment registry (resolveSessionGate),
+so stating off on session/new and session/load keeps every session, a resumed one
+created under a ramp included, on marotte's terminal: the job shell and the agent
+command host stay off. Pairs with the environment arm of the same name.`,
 	"env.KIRO_FEATURE_USER_AGENT_REFACTORING_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 Backend user-agent shape; not pinned by decision.`,

@@ -49,7 +49,7 @@ interface SyncArgs {
   on: boolean;
 }
 
-/** Writes the account's memorySync choice; the section refetches on memory_sync_changed. */
+/** Writes the account's cloudMemory choice; the section refetches on memory_sync_changed. */
 export const setMemorySync = apiAction<SyncArgs>({
   name: "memory.sync",
   dedupe: () => "memory.sync",

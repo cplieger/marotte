@@ -44,8 +44,9 @@ func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID marot
 			return false
 		}
 		c.CompactionWatermark = id
-		// KAS republishes its pre-summary figure until its next live reading (handleCompact leaves
-		// lastContextUsagePct, and a session load seeds it from the last persisted reading).
+		// KAS's next published figure is the pre-summary one (handleCompact leaves lastContextUsagePct, and a
+		// session load seeds it from the last persisted reading) or, after a committed manual compaction, an
+		// estimate; never a model reading until its next live one.
 		c.Usage.ContextPct, c.Usage.HasRealData, c.Usage.ContextCompacted = 0, false, true
 		return true
 	})

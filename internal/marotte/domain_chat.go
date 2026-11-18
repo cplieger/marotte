@@ -250,6 +250,8 @@ const (
 	DenialNotLoaded DenialBasis = "not-loaded"
 	// DenialPermissionsInvalid is a permissions file that failed to parse.
 	DenialPermissionsInvalid DenialBasis = "permissions-invalid"
+	// DenialCheckFailed is a permission check that failed to evaluate, then went unapproved.
+	DenialCheckFailed DenialBasis = "check-failed"
 )
 
 // ToolDenialRule is the Cedar rule that produced a denial. Effect is "deny", "ask" (an
@@ -332,7 +334,7 @@ type Usage struct {
 	LastTurnMs    float64        `json:"last_turn_ms"`
 	HasRealData   bool           `json:"has_real_data"`
 	// ContextCompacted: a compaction committed and no live reading has come since, so a figure KAS
-	// publishes is the context before it and is not stored.
+	// publishes is not a model reading and is not stored.
 	ContextCompacted bool `json:"context_compacted,omitempty"`
 }
 

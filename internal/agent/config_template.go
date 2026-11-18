@@ -22,6 +22,11 @@ import (
 // together.
 const configTemplateTimeout = 45 * time.Second
 
+// workspaceAgentsTimeout bounds the custom-agent read, which has a fallback (the base modes), so an unreadable
+// getState never holds the catalog to configTemplateTimeout: KAS waits up to 10 s on the identity per getState,
+// and this covers one unreadable answer, the 1 s retry delay and a second attempt.
+const workspaceAgentsTimeout = 25 * time.Second
+
 // The model catalog is the "model" entry.
 type kasConfigTemplate struct {
 	Modes struct {
@@ -114,9 +119,11 @@ func (rt *Runtime) servedModels(ctx context.Context) ([]marotte.SessionModel, bo
 	return out.Models, out.Catalog == marotte.CatalogReady
 }
 
-// workspaceAgents is KAS's custom-agent list for workDir, or nil when getState fails: the catalog
-// then serves its base modes alone, under the same verdict.
+// workspaceAgents is KAS's custom-agent list for workDir, or nil when getState fails within
+// workspaceAgentsTimeout: the catalog then serves its base modes alone, under the same verdict.
 func workspaceAgents(ctx context.Context, o *engineOwner, workDir string) []marotte.SessionMode {
+	ctx, cancel := context.WithTimeout(ctx, workspaceAgentsTimeout)
+	defer cancel()
 	raw, err := o.workspaceConfigurationRaw(ctx, []string{workDir})
 	if err != nil {
 		slog.Warn("workspace configuration failed", "error", err)

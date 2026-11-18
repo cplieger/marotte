@@ -179,6 +179,12 @@ var table = []decl{
 		send:     true,
 	},
 	{
+		key:      "mcpElicitation",
+		door:     doorConnection,
+		resolver: resolverCapability,
+		send:     false,
+	},
+	{
 		key:      "backgroundProcesses",
 		door:     doorConnection,
 		resolver: resolverCapability,
@@ -310,6 +316,13 @@ var table = []decl{
 		door:     doorSession,
 		resolver: resolverSetting,
 		value:    enabled(),
+		send:     true,
+	},
+	{
+		key:      "universalBackgroundTool",
+		door:     doorSession,
+		resolver: resolverSetting,
+		value:    enabledIf(false),
 		send:     true,
 	},
 	{
@@ -578,6 +591,12 @@ var table = []decl{
 		send:     false,
 	},
 	{
+		key:      "KIRO_FEATURE_KIRO_CREW_ORIGIN_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+	},
+	{
 		key:      "KIRO_FEATURE_KIRO_INFRA_SAFETY_MONITOR_ENABLED",
 		door:     doorEnvironment,
 		resolver: resolverEnv,
@@ -642,6 +661,18 @@ var table = []decl{
 		settingOwned: true,
 	},
 	{
+		key:      "KIRO_FEATURE_SANDBOX_ORG_SETTINGS_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+	},
+	{
+		key:      "KIRO_FEATURE_SANDBOX_UNIFIED_RULES_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+	},
+	{
 		key:      "KIRO_FEATURE_SESSION_TITLE_LLM_ENABLED",
 		door:     doorEnvironment,
 		resolver: resolverEnv,
@@ -681,7 +712,8 @@ var table = []decl{
 		key:      "KIRO_FEATURE_UNIVERSAL_BACKGROUND_TOOL_ENABLED",
 		door:     doorEnvironment,
 		resolver: resolverEnv,
-		send:     false,
+		value:    "false",
+		send:     true,
 	},
 	{
 		key:      "KIRO_FEATURE_USER_AGENT_REFACTORING_ENABLED",

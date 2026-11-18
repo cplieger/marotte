@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -296,12 +297,13 @@ func TestMemoryRow_FailsClosedAndNeverVetoes(t *testing.T) {
 const classifierEnv = "KIRO_TRUST_CLASSIFIER_MODE=enforce"
 
 // TestChildEnv_PinsNoArmByDefault pins that a zero EngineSpawn writes no KIRO_FEATURE_* or KIRO_DISABLE_*
-// variable beyond the model fallback pair, which its switch decides in both positions, so every other arm
-// follows the experiment ramp unless a Settings control decides it.
+// variable beyond the model fallback pair, which its switch decides in both positions, and the session-jobs pin,
+// so every other arm follows the experiment ramp unless a Settings control decides it.
 func TestChildEnv_PinsNoArmByDefault(t *testing.T) {
 	want := []string{
 		"KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=false",
 		"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=false",
+		universalBackgroundToolOff,
 		classifierEnv,
 	}
 	if got := ChildEnv(&EngineSpawn{}); !reflect.DeepEqual(got, want) {
@@ -312,6 +314,35 @@ func TestChildEnv_PinsNoArmByDefault(t *testing.T) {
 			if strings.HasPrefix(kv, "KIRO_DISABLE_SESSION_TITLE_LLM=") {
 				t.Errorf("%s: ChildEnv writes %q; the switch has no per-session seat on one engine", tc.name, kv)
 			}
+		}
+	}
+}
+
+const universalBackgroundToolOff = "KIRO_FEATURE_UNIVERSAL_BACKGROUND_TOOL_ENABLED=false"
+
+// TestSessionJobs_PinnedOffOnEveryEngineAndSession pins session jobs off at both of KAS's gates, so an
+// experiment ramp cannot move a session's commands off marotte's terminal: the environment arm on every engine
+// (a setting no Settings control owns) and the session setting, which KAS reads first, on every session.
+func TestSessionJobs_PinnedOffOnEveryEngineAndSession(t *testing.T) {
+	spawns := map[string]*EngineSpawn{"zero": {}}
+	for i := range engineMatrix {
+		spawns[engineMatrix[i].name] = &engineMatrix[i].spawn
+	}
+	for name, spawn := range spawns {
+		if got := ChildEnv(spawn); !slices.Contains(got, universalBackgroundToolOff) {
+			t.Errorf("engine %s: ChildEnv = %q, want %q", name, got, universalBackgroundToolOff)
+		}
+	}
+	if OwnsEnv(universalBackgroundToolOff) {
+		t.Errorf("OwnsEnv(%q) = true; no setting decides the arm", universalBackgroundToolOff)
+	}
+	for _, tc := range append(sessionMatrix, struct {
+		name  string
+		spawn SessionSpawn
+	}{"zero", SessionSpawn{}}) {
+		settings, _ := SessionMeta(&tc.spawn)[settingsKey].(map[string]any)
+		if got, want := settings["universalBackgroundTool"], enabledIf(false); !reflect.DeepEqual(got, want) {
+			t.Errorf("session %s: universalBackgroundTool = %#v, want %#v", tc.name, got, want)
 		}
 	}
 }
@@ -350,6 +381,7 @@ func TestChildEnv_AutoModelChoicesFollowTheirSwitches(t *testing.T) {
 		{"", []string{
 			"KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=true",
 			"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=true",
+			universalBackgroundToolOff,
 			classifierEnv,
 		}},
 		{"on", []string{
@@ -357,6 +389,7 @@ func TestChildEnv_AutoModelChoicesFollowTheirSwitches(t *testing.T) {
 			`KIRO_FEATURE_DYNAMIC_DELEGATION_CONFIG={"delegationEnabled":true}`,
 			"KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=true",
 			"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=true",
+			universalBackgroundToolOff,
 			classifierEnv,
 		}},
 		{"off", []string{
@@ -364,6 +397,7 @@ func TestChildEnv_AutoModelChoicesFollowTheirSwitches(t *testing.T) {
 			`KIRO_FEATURE_DYNAMIC_DELEGATION_CONFIG={"delegationEnabled":false}`,
 			"KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=true",
 			"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=true",
+			universalBackgroundToolOff,
 			classifierEnv,
 		}},
 	} {
@@ -372,8 +406,8 @@ func TestChildEnv_AutoModelChoicesFollowTheirSwitches(t *testing.T) {
 			t.Errorf("ChildEnv(AutoRouting=AutoDelegation=%q) = %q, want %q", tc.choice, got, tc.want)
 		}
 	}
-	if got := ChildEnv(&EngineSpawn{AutoRouting: "on", ModelFallback: true}); len(got) != 4 || got[0] != `KIRO_FEATURE_CASCADE_CONFIG={"cascadeClientNotificationEnabled":true,"cascadeEnabled":true}` {
-		t.Errorf("ChildEnv(AutoRouting=on alone) = %q, want the cascade arm, the fallback pair and the classifier gate", got)
+	if got := ChildEnv(&EngineSpawn{AutoRouting: "on", ModelFallback: true}); len(got) != 5 || got[0] != `KIRO_FEATURE_CASCADE_CONFIG={"cascadeClientNotificationEnabled":true,"cascadeEnabled":true}` {
+		t.Errorf("ChildEnv(AutoRouting=on alone) = %q, want the cascade arm, the fallback pair, the session-jobs pin and the classifier gate", got)
 	}
 	for _, tc := range sessionMatrix {
 		if settings, _ := SessionMeta(&tc.spawn)[settingsKey].(map[string]any); settings["cascade"] != nil {
@@ -392,11 +426,13 @@ func TestChildEnv_ModelFallbackWritesBothFlagsEitherWay(t *testing.T) {
 		{on: false, want: []string{
 			"KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=false",
 			"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=false",
+			universalBackgroundToolOff,
 			classifierEnv,
 		}},
 		{on: true, want: []string{
 			"KIRO_FEATURE_MODEL_FALLBACK_AVAILABILITY_ENABLED=true",
 			"KIRO_FEATURE_MODEL_FALLBACK_REFUSAL_ENABLED=true",
+			universalBackgroundToolOff,
 			classifierEnv,
 		}},
 	} {

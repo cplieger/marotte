@@ -126,9 +126,9 @@ type acpTrustClassifier struct {
 // classifierAsksPerson is the acpTrustClassifier decision that hands the call to a person.
 const classifierAsksPerson = "prompt"
 
-// agentInitiatedReason is KAS's closed set of engine-turn causes (kiro-cli 2.32.0:
-// send-message-wake, workflow-complete-wake, notification-rewake). An unknown value is kept as
-// sent and matches no constant.
+// agentInitiatedReason is KAS's engine-turn cause from its closed set. job-end-wake (kiro-cli 3.4.0) wakes a
+// session with jobs on, an arm marotte pins off (kascap's universalBackgroundTool rows), so it maps to no constant;
+// an unknown value is kept as sent.
 type agentInitiatedReason string
 
 const (

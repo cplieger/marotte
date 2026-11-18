@@ -11,6 +11,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/rpcerr"
 )
 
 // rawCall is one connection-level request on the engine, its in-band refusal an error: callers must tell an unknown
@@ -61,13 +62,38 @@ func (o *engineOwner) configTemplateRaw(ctx context.Context) (json.RawMessage, e
 // workspaceConfigurationRaw asks KAS for its composed configuration as a workspace observer of roots: the agents,
 // steering and settings a session opened there would load.
 func (o *engineOwner) workspaceConfigurationRaw(ctx context.Context, roots []string) (json.RawMessage, error) {
-	return o.rawCall(ctx, "configuration getState call", methodKiroConfigurationGet,
-		map[string]any{"observer": "workspace", "roots": roots})
+	return o.configurationGetRaw(ctx, map[string]any{"observer": "workspace", "roots": roots})
 }
 
 // connectionConfigurationRaw issues getState for the connection's view, the account's and this host's settings.
 func (o *engineOwner) connectionConfigurationRaw(ctx context.Context) (json.RawMessage, error) {
-	return o.rawCall(ctx, "configuration getState call", methodKiroConfigurationGet, map[string]any{"observer": "connection"})
+	return o.configurationGetRaw(ctx, map[string]any{"observer": "connection"})
+}
+
+// configurationUnreadableClass is KAS's getState answer while its lookup of the signed-in user has not answered
+// after its own 10 s first-attempt wait: a slow or failing lookup, at engine start or after a token change.
+const configurationUnreadableClass = "ConfigurationUnreadableError"
+
+// configurationRetryDelay is the wait before getState attempt n+1 (1-based n) after an unreadable answer: 1 s
+// doubling to 8 s.
+func configurationRetryDelay(n int) time.Duration {
+	return time.Second << min(n-1, 3)
+}
+
+// configurationGetRaw issues getState, asking again while KAS answers it unreadable, until ctx ends; the last
+// unreadable answer is then the error.
+func (o *engineOwner) configurationGetRaw(ctx context.Context, params map[string]any) (json.RawMessage, error) {
+	for attempt := 1; ; attempt++ {
+		raw, err := o.rawCall(ctx, "configuration getState call", methodKiroConfigurationGet, params)
+		if !configurationUnreadable(err) || !o.sleep(ctx, configurationRetryDelay(attempt)) {
+			return raw, err
+		}
+	}
+}
+
+func configurationUnreadable(err error) bool {
+	m, typed := rpcerr.MappedOf(err)
+	return typed && m.ErrorType == configurationUnreadableClass
 }
 
 func (o *engineOwner) configurationSetRaw(ctx context.Context, krn string, value any, layer string) (json.RawMessage, error) {

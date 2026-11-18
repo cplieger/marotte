@@ -15,6 +15,7 @@ const (
 	permissionsInvalidRefusal = "Tool call denied: the user's permission file(s) failed to parse.\nYou cannot fix this yourself."
 	cedarRefusal              = "Tool call denied: Kiro's permission engine (cedar-wasm) could not be loaded, so this call could not be checked against the user's permission rules.\nWhile it is broken, every tool call it would check is denied."
 	notLoadedRefusal          = "Blocked by the permission policy (no policy loaded, so every call is denied); the user did not reject it."
+	checkFailedRefusal        = "Tool call denied: Kiro could not check this call against the permission rules. Ask the user to review the permission check failure."
 )
 
 func runCommandOutput(reason string) string { return "Output:\n" + reason + "\n\nExit Code: -1\n" }
@@ -46,6 +47,10 @@ func TestEngineRefusal(t *testing.T) {
 		{
 			name: "no policy loaded", status: marotte.ToolFailed, output: notLoadedRefusal,
 			want: &marotte.ToolDenial{Basis: marotte.DenialNotLoaded},
+		},
+		{
+			name: "a permission check that failed to evaluate", status: marotte.ToolFailed, output: checkFailedRefusal,
+			want: &marotte.ToolDenial{Basis: marotte.DenialCheckFailed},
 		},
 		{
 			name: "a rule's block, which policyDenial carries", status: marotte.ToolFailed,

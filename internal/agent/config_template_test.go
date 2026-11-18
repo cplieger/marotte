@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -428,4 +430,25 @@ func TestConfigTemplate_GetStateFailureServesBaseModes(t *testing.T) {
 	if out := logs.String(); !strings.Contains(out, `"msg":"workspace configuration failed"`) {
 		t.Errorf("a failed getState said nothing: %s", out)
 	}
+}
+
+// While KAS answers getState unreadable, the catalog serves its base modes once the agent read's own bound ends,
+// not at the template's deadline.
+func TestConfigTemplate_AnUnreadableGetStateServesBaseModesWithinTheAgentBound(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h, _, br := newTestHub()
+		t.Cleanup(func() { shutdownHub(t, h) })
+		br.setCallResult(methodKiroConfigTemplate, json.RawMessage(templateWithReviewer))
+		br.setCallRPCErr(methodKiroConfigurationGet, configurationUnreadableRefusal)
+		start := time.Now()
+
+		got := serveConfigTemplate(t, h)
+
+		if elapsed := time.Since(start); elapsed > workspaceAgentsTimeout {
+			t.Errorf("served after %v, want within %v", elapsed, workspaceAgentsTimeout)
+		}
+		if len(got.Modes) != 2 || got.Catalog != marotte.CatalogReady {
+			t.Errorf("modes = %+v, catalog %q; want the template's two modes, ready", got.Modes, got.Catalog)
+		}
+	})
 }

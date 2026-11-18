@@ -18,6 +18,7 @@ var engineRefusals = []struct {
 	{lead: "Tool call denied: the user's permission file(s) failed to parse.", basis: marotte.DenialPermissionsInvalid},
 	{lead: "Tool call denied: Kiro's permission engine (cedar-wasm) could not be loaded", basis: marotte.DenialCedarUnavailable},
 	{lead: "the permission policy (no policy loaded, so every call is denied)", basis: marotte.DenialNotLoaded},
+	{lead: "Tool call denied: Kiro could not check this call against the permission rules.", basis: marotte.DenialCheckFailed},
 }
 
 // engineRefusal is the denial a settled call's output states, nil unless the wire status

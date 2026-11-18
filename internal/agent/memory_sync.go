@@ -1,6 +1,6 @@
 package agent
 
-// The Memories tab's Cloud sync section: KAS's sync state and the memorySync choice, read as kiro-cli's own terminal
+// The Memories tab's Cloud sync section: KAS's sync state and the cloudMemory choice, read as kiro-cli's own terminal
 // UI reads them and written at the one layer KAS grants. KAS owns both, so marotte keeps no copy and refetches on
 // _kiro/memory/syncStatus.
 
@@ -15,7 +15,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-const memorySyncKRN = "krn:::setting/memorySync"
+const cloudMemoryKRN = "krn:::setting/cloudMemory"
 
 // memorySyncUnknown stands for a state or reason this build has no wording for.
 const memorySyncUnknown = "unknown"
@@ -46,7 +46,7 @@ type memorySyncLock struct {
 	Name  string `json:"name"`
 }
 
-// memorySyncChoice is the composed memorySync setting: Enabled is its value, Account whether the account's layer
+// memorySyncChoice is the composed cloudMemory setting: Enabled is its value, Account whether the account's layer
 // states it on.
 type memorySyncChoice struct {
 	Lock    *memorySyncLock `json:"lock,omitempty"`
@@ -112,14 +112,14 @@ func settingOn(raw json.RawMessage) bool {
 	return json.Unmarshal(raw, &v) == nil && v == "on"
 }
 
-// decodeMemorySyncChoice reads the memorySync row out of a getState answer; a view stating none reads off.
+// decodeMemorySyncChoice reads the cloudMemory row out of a getState answer; a view stating none reads off.
 func decodeMemorySyncChoice(raw json.RawMessage) (memorySyncChoice, error) {
 	var view kasView
 	if err := json.Unmarshal(raw, &view); err != nil {
 		return memorySyncChoice{}, err
 	}
 	for i := range view.Settings {
-		if view.Settings[i].KRN == memorySyncKRN {
+		if view.Settings[i].KRN == cloudMemoryKRN {
 			return memorySyncChoiceOf(&view.Settings[i], view.layerNames()), nil
 		}
 	}
@@ -178,7 +178,7 @@ func (st *Settings) getMemorySync(w http.ResponseWriter, r *http.Request) {
 func (st *Settings) setMemorySync(ctx context.Context, value string) engineReply {
 	cctx, cancel := st.engine.stallAware(ctx, memoryCallTimeout)
 	defer cancel()
-	raw, err := st.engine.configurationSetRaw(cctx, memorySyncKRN, value, configurationAccountLayer)
+	raw, err := st.engine.configurationSetRaw(cctx, cloudMemoryKRN, value, configurationAccountLayer)
 	if err != nil {
 		return engineReply{err: err, write: func(w http.ResponseWriter) { writeConfigurationSetErr(w, err, "memory sync") }}
 	}

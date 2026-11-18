@@ -20,7 +20,7 @@ export type ContextResetCause = "session_missing" | "load_failed" | "empty_retry
 
 export type DecisionKind = "permission" | "elicitation" | "user_input";
 
-export type DenialBasis = "unparseable" | "cedar-unavailable" | "not-loaded" | "permissions-invalid";
+export type DenialBasis = "unparseable" | "cedar-unavailable" | "not-loaded" | "permissions-invalid" | "check-failed";
 
 export type EngineState = "starting" | "ready" | "restarting" | "down";
 
@@ -5389,7 +5389,7 @@ export interface Usage {
   has_real_data: boolean;
   /**
    * ContextCompacted: a compaction committed and no live reading has come since, so a figure KAS
-   * publishes is the context before it and is not stored.
+   * publishes is not a model reading and is not stored.
    */
   context_compacted?: boolean;
 }
