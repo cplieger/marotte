@@ -44,7 +44,7 @@ const (
 	maxTextFiles   = 100
 	maxTextEntries = 100
 	maxCountArg    = "5"
-	maxDepthArg    = "50"
+	maxFileDepth   = 50
 	maxOutputBytes = 10 << 20
 )
 
@@ -134,7 +134,7 @@ func (s Searcher) Text(ctx context.Context, roots []string, q TextQuery) []Match
 	if deadlineCut(ctx, slices.Contains(cut, true)) {
 		out = append(out, Match{
 			FilePath:  partialNotice(),
-			LineText:  "Only part of the workspace was searched. Start includePattern with the folder to search, such as src/**/*.go, to search it whole.",
+			LineText:  "Only part of the workspace was searched. Start includePattern with the folder to search, such as src/**/*.go, and set no excludePattern, to search it whole.",
 			IsContext: true,
 		})
 	}
@@ -154,25 +154,30 @@ func (s Searcher) Text(ctx context.Context, roots []string, q TextQuery) []Match
 
 // textArgs is rg's command line searching root for q; ok is false when no file under root can match.
 func textArgs(root string, q TextQuery) (args []string, ok bool) {
-	include := includeGlobs(root, q.IncludePattern)
-	dir, depth, ok := scope(root, include)
+	include := rootGlob(root, q.IncludePattern)
+	dir, _, ok := startDir(root, include, q.ExcludePattern != "")
 	if !ok {
 		return nil, false
 	}
 	args = []string{"--json", "--engine", "auto", "-C", "2", "--max-count", maxCountArg, "--max-filesize", "1M", "--hidden", "--no-require-git", "--glob", "!.git"}
-	if depth > 0 {
-		args = append(args, "--max-depth", strconv.Itoa(depth))
-	}
 	if !q.CaseSensitive {
 		args = append(args, "--ignore-case")
 	}
-	for _, g := range include {
-		args = append(args, "--glob", g)
+	if include != "" {
+		args = append(args, "--glob", include)
 	}
 	if exclude := rootGlob(root, q.ExcludePattern); exclude != "" {
 		args = append(args, "--glob", "!"+exclude)
 	}
-	return append(args, "--", trimLoneQuote(q.Pattern), dir), true
+	return runnable(append(args, "--", trimLoneQuote(q.Pattern), dir))
+}
+
+// runnable is args with ok false when one holds a NUL, which exec refuses, so no rg can run.
+func runnable(args []string) (_ []string, ok bool) {
+	if slices.ContainsFunc(args, func(a string) bool { return strings.ContainsRune(a, 0) }) {
+		return nil, false
+	}
+	return args, true
 }
 
 type fileHits struct {
@@ -260,9 +265,10 @@ func logRefusal(root, stderr string) {
 }
 
 // Files lists the files under roots matching q.Pattern, at most q.MaxResults, the first root's
-// first, with paths in KAS's form. .gitignore is honoured and symlinks are not followed. Whatever
-// was found when ctx ends or the deadline passes is returned, and a deadline answer opens on a
-// notice entry saying it is partial. The result is never nil.
+// first, with paths in KAS's form. .gitignore is honoured below the folder the pattern names
+// (startDir) and symlinks are not followed. Whatever was found when ctx ends or the deadline
+// passes is returned, and a deadline answer opens on a notice entry saying it is partial. The
+// result is never nil.
 func (s Searcher) Files(ctx context.Context, roots []string, q FilesQuery) []string {
 	limit := q.MaxResults
 	if limit <= 0 {
@@ -303,7 +309,7 @@ func (s Searcher) Files(ctx context.Context, roots []string, q FilesQuery) []str
 
 	out := make([]string, 0, limit)
 	if deadlineCut(ctx, f.partial()) {
-		out = append(out, partialNotice()+": anchor the query to the folder to search, such as ^src/, to search it whole")
+		out = append(out, partialNotice()+": anchor the query to the folder to search, such as ^src/**/, and set no exclude, to search it whole")
 	}
 	for _, found := range f.found {
 		for _, abs := range found {
@@ -364,27 +370,22 @@ func (f *filesSearch) partial() bool {
 }
 
 // filesArgs is rg's command line listing root's files for q; ok is false when no file under root
-// can match.
+// can match. KAS's own rg lists at most maxFileDepth levels below the root and passes no --glob
+// for "**/*".
 func filesArgs(root string, q FilesQuery) (args []string, ok bool) {
-	globs := fileGlobs(root, q.Pattern)
-	dir, depth, ok := scope(root, globs)
-	if !ok {
+	glob := rootGlob(root, q.Pattern)
+	dir, depth, ok := startDir(root, glob, q.Exclude != "")
+	if !ok || depth >= maxFileDepth {
 		return nil, false
 	}
-	maxDepth := maxDepthArg
-	if depth > 0 {
-		maxDepth = strconv.Itoa(depth)
-	}
-	args = []string{"--files", "--max-depth", maxDepth, "--hidden", "--no-require-git", "--glob", "!.git"}
-	if cmp.Or(globs...) != "**/*" {
-		for _, g := range globs {
-			args = append(args, "--glob", g)
-		}
+	args = []string{"--files", "--max-depth", strconv.Itoa(maxFileDepth - depth), "--hidden", "--no-require-git", "--glob", "!.git"}
+	if glob != "" && glob != "**/*" {
+		args = append(args, "--glob", glob)
 	}
 	if exclude := rootGlob(root, q.Exclude); exclude != "" {
 		args = append(args, "--glob", "!"+exclude)
 	}
-	return append(args, "--", dir), true
+	return runnable(append(args, "--", dir))
 }
 
 func (s Searcher) filesRoot(ctx context.Context, root string, args []string, limit int) (found []string, cut bool) {
@@ -564,111 +565,55 @@ func rootGlob(root, glob string) string {
 	return glob
 }
 
-// includeGlobs is rootGlob for a glob that selects files, as rg's whitelist globs. rg matches a
-// glob only against files, so a glob that names a folder, its last segment literal
-// ("repo/internal") or ending in "/", also selects "glob/**"; a name glob ("*.go", "**/*test*")
-// selects files by name only. The first is the one scope reads; nil selects every file.
-func includeGlobs(root, glob string) []string {
-	glob = rootGlob(root, glob)
-	switch {
-	case glob == "":
-		return nil
-	case strings.HasSuffix(glob, "/"):
-		return []string{glob + "**"}
-	case literal(glob[strings.LastIndex(glob, "/")+1:]):
-		return []string{glob, glob + "/**"}
-	}
-	return []string{glob}
-}
-
-// fileGlobs is includeGlobs for a find_files pattern. KAS writes the query "^p" as "p*" and every
-// other query as "**/*q*" or "**/*q" (getFileSearchPattern in acp-server.js), and "^" anchors p at
-// the path's start: a single glob not led by "**" (KAS's "p*") is root-anchored, and one whose p is
-// literal is a path prefix, so it also selects the files under a folder it names ("p*/**").
-func fileGlobs(root, pattern string) []string {
-	globs := includeGlobs(root, pattern)
-	if len(globs) != 1 || strings.HasPrefix(globs[0], "**") {
-		return globs
-	}
-	g := "/" + strings.TrimPrefix(globs[0], "/")
-	if p, ok := strings.CutSuffix(g, "*"); ok && literal(p) {
-		return []string{g, g + "/**"}
-	}
-	return []string{g}
-}
-
 // literal reports whether s holds no glob metacharacter.
 func literal(s string) bool {
 	return !strings.ContainsAny(s, `*?[]{}\!`)
 }
 
-// scope is where rg searches root for globs, as a directory relative to root and a --max-depth
-// (0: none). It is the first glob's leading literal directories, so rg skips every other subtree (a
-// --glob filters names but still descends every directory), or the whole glob when it is literal
-// and names a directory; a root-anchored ("/") one-segment glob can match only root's own entries.
-// ok is false when no file under root can match: a ".." segment (rg's paths have none), or a named
-// entry that is absent, cannot be resolved (any stat error), or is a symlink, which a walk of root
-// does not follow but rg given it as the start path does, outside root included. Only a glob with
-// no literal leading directory searches all of root.
-func scope(root string, globs []string) (dir string, depth int, ok bool) {
-	glob, anchored := strings.CutPrefix(cmp.Or(globs...), "/")
-	if glob == "" {
-		return ".", 0, true
-	}
-	segs := strings.Split(glob, "/")
+// startDir is where rg, run in root, starts searching for glob (rootGlob's form): its literal
+// leading folders, so rg skips every other subtree (a --glob filters names but still descends every
+// folder), with their count; "." when it has none, when it has one segment and no "/" lead (rg
+// matches it at any depth), or when excluded, since rg applies ignore rules and an exclude only
+// below its start path, never to it or its ancestors. ok is false when no file under root can
+// match: a ".." segment, a ".git" folder (the !.git glob), or a leading folder realDir refuses.
+func startDir(root, glob string, excluded bool) (dir string, depth int, ok bool) {
+	rel, anchored := strings.CutPrefix(strings.TrimSuffix(glob, "/"), "/")
+	segs := strings.Split(rel, "/")
 	if slices.Contains(segs, "..") {
 		return "", 0, false
 	}
-	lit := 0
-	for lit < len(segs) && literal(segs[lit]) {
-		lit++
-	}
-	if lit == len(segs) {
-		if dir, ok = realDir(root, segs); ok {
-			return dir, 0, true
-		}
-	}
-	switch {
-	case len(segs) > 1:
-		if lit = min(lit, len(segs)-1); lit == 0 {
-			return ".", 0, true
-		}
-		dir, ok = realDir(root, segs[:lit])
-		return dir, 0, ok
-	case !anchored:
+	if excluded || !anchored && len(segs) == 1 {
 		return ".", 0, true
-	case lit == 1:
-		// Its "glob/**" companion can match only under a folder of that name, which realDir refused.
-		if info, err := os.Lstat(filepath.Join(root, glob)); err != nil || !info.Mode().IsRegular() {
-			return "", 0, false
-		}
-		return ".", 1, true
-	case len(globs) == 1:
-		return ".", 1, true
 	}
-	return ".", 0, true
+	for depth < len(segs)-1 && literal(segs[depth]) {
+		depth++
+	}
+	if depth == 0 {
+		return ".", 0, true
+	}
+	if slices.Contains(segs[:depth], ".git") {
+		return "", 0, false
+	}
+	dir = filepath.Join(segs[:depth]...)
+	if !realDir(root, dir) {
+		return "", 0, false
+	}
+	return dir, depth, true
 }
 
-// realDir is the folder segs name under root, relative to root, when it is a directory reached
-// through no symlink.
-func realDir(root string, segs []string) (dir string, ok bool) {
-	rel := filepath.Join(segs...)
+// realDir reports whether rel names a directory under root reached through no symlink: rg follows
+// a start path that is a symlink, outside root included. Every stat error refuses it.
+func realDir(root, rel string) bool {
 	want := filepath.Join(root, rel)
 	if info, err := os.Stat(want); err != nil || !info.IsDir() {
-		return "", false
+		return false
 	}
 	resolved, err := filepath.EvalSymlinks(want)
 	if err != nil {
-		return "", false
+		return false
 	}
 	realRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return "", false
-	}
-	if resolved != filepath.Join(realRoot, rel) {
-		return "", false
-	}
-	return rel, true
+	return err == nil && resolved == filepath.Join(realRoot, rel)
 }
 
 // trimLoneQuote drops a trailing double quote that is the pattern's only one, as KAS's zZu does
