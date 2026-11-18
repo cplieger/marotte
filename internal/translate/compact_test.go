@@ -469,6 +469,20 @@ func TestHandleCompactionFailed_OneEntryAndToastUntilASummaryLands(t *testing.T)
 			t.Errorf("toasts = %d, want 2", len(got))
 		}
 	})
+	t.Run("a failure after the streak was ended", func(t *testing.T) {
+		deps, events, _ := depsWithStore(t, "c1")
+		tr := New(rolesOf(deps))
+		deps.turns.chatTurn("c1")
+		fail(tr)
+		tr.EndSummaryStreak("c1")
+		fail(tr)
+		if got := compactionFailuresOf(t, deps.chatEntries("c1")); len(got) != 2 {
+			t.Errorf("compaction_failed entries = %d, want 2: an ended streak shows its next failure", len(got))
+		}
+		if got := errorPayloads(t, events); len(got) != 2 {
+			t.Errorf("toasts = %d, want 2", len(got))
+		}
+	})
 }
 
 // The header's Compacting mark follows kiro-cli's summary: set on its running frame, cleared after every outcome.

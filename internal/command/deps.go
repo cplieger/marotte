@@ -585,6 +585,11 @@ type compactRequester interface {
 	RequestCompact(ctx context.Context, chatID marotte.ChatID) (CompactOutcome, error)
 }
 
+// summaryStreakEnder forgets a chat's shown summary failure, so its next one is shown again.
+type summaryStreakEnder interface {
+	EndSummaryStreak(chatID marotte.ChatID)
+}
+
 // SteerRecorder is what the steer commands need of the steer ledger: record that
 // THIS server sent a steer under an id before the RPC, which is the only ordering
 // that beats KAS's own notification (see cmdSteer).
@@ -865,6 +870,8 @@ type Roles struct {
 	Status chatStatus
 	// Compactor takes the reader's compaction requests.
 	Compactor compactRequester
+	// SummaryStreaks ends a chat's shown summary failure after a rewind.
+	SummaryStreaks summaryStreakEnder
 	// SignIn tells an unreachable identity provider apart from a refused credential. Nil reads every
 	// credential failure as one a sign-in fixes.
 	SignIn signInReach

@@ -15,6 +15,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 // compactCallCount is how many _kiro/session/compact calls the bridge received.
@@ -318,6 +319,24 @@ func TestCompaction_AFailingStreakShowsOnceAndAPressStillToasts(t *testing.T) {
 	}
 	if got := failedRows(t, cs, "c1"); len(got) != 1 {
 		t.Errorf("compaction_failed rows = %q, want the streak's one", got)
+	}
+}
+
+// Deleting a chat ends its summary-failure streak, so the process keeps no state for a chat that is gone. The test
+// store keeps the record the delete's membership step would have erased, so a later failure shows what was kept.
+func TestCompaction_DeletingAChatEndsItsFailingStreak(t *testing.T) {
+	h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+	send(t, h, newTurnStartMsg(),
+		newSessionInfoMsg(map[string]any{"summarization": map[string]any{"status": "model error"}}),
+		newTurnEndMsg("end_turn"))
+	waitFor(t, func() bool { return len(failedRows(t, cs, "c1")) == 1 })
+
+	h.DeleteChatStateByChain(t.Context(), "c1", nil, command.RunStopChatDeleted)
+	failure := json.RawMessage(`{"_meta":{"kiro":{"summarization":{"status":"model error"}}}}`)
+	h.translator.HandleSessionInfoUpdate(t.Context(), "c1", failure, translate.FrameAttribution{})
+
+	if got := failedRows(t, cs, "c1"); len(got) != 2 {
+		t.Errorf("compaction_failed rows = %q, want 2: the deleted chat's streak was kept", got)
 	}
 }
 
