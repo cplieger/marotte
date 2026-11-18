@@ -305,6 +305,7 @@ func TestRunOrder_AnEmptyTurnsRetryNeverOvertakesQueuedRows(t *testing.T) {
 // A chat closed while a granted take's turn has not opened yet answers that POST chat_closed and leaves no entry for
 // its message, whatever stood beside or behind it.
 func TestRunOrder_AChatClosedDuringAGrantedTakeLeavesNoEntry(t *testing.T) {
+	t.Parallel()
 	for _, shape := range []string{"beside a fold-opened turn", "on an idle list"} {
 		inBubble(t, shape, func(t *testing.T) {
 			h, cs, br, tab := closeTabHub(t)

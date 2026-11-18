@@ -243,6 +243,7 @@ func TestRun_SendNowOnAnIdleChatSendsTheRowAtOnce(t *testing.T) {
 // Messages queued while kiro-cli runs with no turn here open no turn under it, then go after it, one per turn in the
 // order they were queued.
 func TestRun_RowsQueuedDuringKiroCLIsRunGoAfterItOneATurn(t *testing.T) {
+	t.Parallel()
 	h, cs, release := busyHub(t)
 	queueDuring(t, h, "m-q1", "m-q2")
 	if ids := promptIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-first"}) {
@@ -259,6 +260,7 @@ func TestRun_RowsQueuedDuringKiroCLIsRunGoAfterItOneATurn(t *testing.T) {
 
 // A prompt that reaches the server while kiro-cli runs with no turn here joins the list behind it and answers queued.
 func TestRun_APromptDuringKiroCLIsRunIsQueuedBehindIt(t *testing.T) {
+	t.Parallel()
 	h, cs, release := busyHub(t)
 
 	rec := postCmd(t, h, promptCmd("m-p1", "what changed?"))
@@ -278,6 +280,7 @@ func TestRun_APromptDuringKiroCLIsRunIsQueuedBehindIt(t *testing.T) {
 
 // Send now on a row waiting behind kiro-cli's run opens no turn under it, and the row goes first once the run ends.
 func TestRun_SendNowDuringKiroCLIsRunSendsTheRowFirstAfterIt(t *testing.T) {
+	t.Parallel()
 	h, cs, release := busyHub(t)
 	queueDuring(t, h, "m-q1", "m-q2")
 
@@ -300,6 +303,7 @@ func TestRun_SendNowDuringKiroCLIsRunSendsTheRowFirstAfterIt(t *testing.T) {
 
 // A message past the draft cap sent during kiro-cli's run is queued behind it and goes when the run ends.
 func TestRun_ARowPastTheDraftCapQueuesBehindKiroCLIsRun(t *testing.T) {
+	t.Parallel()
 	h, cs, release := busyHub(t)
 	long := strings.Repeat("x", marotte.MaxDraftBytes+1)
 
@@ -316,6 +320,7 @@ func TestRun_ARowPastTheDraftCapQueuesBehindKiroCLIsRun(t *testing.T) {
 
 // A context reference in a row queued behind kiro-cli's run is resolved when its turn opens, as a prompt's is.
 func TestRun_ARowBehindKiroCLIsRunResolvesAContextReference(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("remember the milk\n"), 0o600); err != nil {
 		t.Fatal(err)

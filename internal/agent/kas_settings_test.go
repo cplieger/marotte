@@ -242,6 +242,7 @@ func TestAutoCompactionPolicy_ReadsTheSettingAndFailsToTheDefault(t *testing.T) 
 // Both compaction settings ride the chat door, so moving either changes the door's fingerprint and an open chat
 // reloads onto the new value at its next message.
 func TestCompactionSettings_ChangeTheChatDoorFingerprint(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cs := newTestChatStore()
 	h := newRuntimeOn(t.Context(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs,
