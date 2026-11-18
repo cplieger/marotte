@@ -708,7 +708,12 @@ func checkCompactionFacts(t *testing.T, live []kasLine, log []marotte.Entry, d *
 	s, _ := done[0]["summarization"].(map[string]any)
 	sum, _ := s["summary"].(map[string]any)
 	want, _ := sum["conversationSummary"].(string)
-	want = string(rewriteWorkDir([]byte(want), d.workDir))
+	// The drive rewrites the work dir in the raw frame, where a quoted path inside the summary is escaped, so the
+	// expected summary goes through the same rewrite as JSON.
+	raw, err := json.Marshal(want)
+	if err != nil || json.Unmarshal(rewriteWorkDir(raw, d.workDir), &want) != nil {
+		t.Fatalf("rewrite the work dir in %q", want)
+	}
 	if want == "" {
 		t.Fatal("the captured frame carries no summarization.summary.conversationSummary")
 	}
