@@ -295,3 +295,71 @@ func TestHealKASConfig_LeavesAnUnreadableFileAlone(t *testing.T) {
 		t.Errorf("unreadable file was rewritten to %s", got)
 	}
 }
+
+// marotte owns identityProvider as it owns mcpServers, so another writer's version is put back and named.
+func TestHealKASConfig_IdentityProviderDrift(t *testing.T) {
+	const saved = `{"issuer":"https://idp.example.com","clientId":"marotte"}`
+	cases := []struct {
+		name, body, field string
+		stored            bool
+	}{
+		{"changed", `{"issuer":"https://evil.example.com","clientId":"marotte"}`, "identity_provider=changed", true},
+		{"missing", ``, "identity_provider=missing", true},
+		{"unexpected", `{"issuer":"https://idp.example.com","clientId":"x"}`, "identity_provider=unexpected", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, kas := newHealStore(t)
+			if tc.stored {
+				if err := s.setIdentityProvider(t.Context(), &identityProvider{Issuer: "https://idp.example.com", ClientID: "marotte"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			servers, _ := json.Marshal(wantRendered(t, s))
+			doc := `{"mcpServers": ` + string(servers)
+			if tc.body != "" {
+				doc += `, "identityProvider": ` + tc.body
+			}
+			writeKASFile(t, kas, doc+`}`)
+			logs := captureSlog(t)
+
+			healed, err := s.HealKASConfig(t.Context(), "poll")
+			if err != nil || !healed {
+				t.Fatalf("HealKASConfig = %v, %v; want true, nil", healed, err)
+			}
+			got, present := readKAS(t, kas)[kasIdentityProviderKey]
+			switch {
+			case tc.stored && !sameJSONValue(got, json.RawMessage(saved)):
+				t.Errorf("identityProvider after heal = %s, want %s", got, saved)
+			case !tc.stored && present:
+				t.Errorf("identityProvider after heal = %s, want the member removed", got)
+			}
+			for _, want := range []string{driftWarn, tc.field} {
+				if !strings.Contains(logs.String(), want) {
+					t.Errorf("drift log lacks %q:\n%s", want, logs)
+				}
+			}
+		})
+	}
+}
+
+// A stored oauth_mode is part of the render, so a heal keeps it and puts it back when another writer drops it.
+func TestHealKASConfig_KeepsOAuthMode(t *testing.T) {
+	s, kas := newIsolatedStore(t)
+	if _, err := s.Create(t.Context(), &Server{
+		Transport: transportHTTP, Name: "corp", Enabled: true, URL: "https://mcp.corp.example/mcp", OAuthMode: oauthModeAuto,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if healed, err := s.HealKASConfig(t.Context(), "poll"); err != nil || healed {
+		t.Fatalf("HealKASConfig over its own render = %v, %v; want false, nil", healed, err)
+	}
+
+	writeKASFile(t, kas, `{"mcpServers": {"corp": {"url": "https://mcp.corp.example/mcp"}}}`)
+	if healed, err := s.HealKASConfig(t.Context(), "poll"); err != nil || !healed {
+		t.Fatalf("HealKASConfig over a dropped mode = %v, %v; want true, nil", healed, err)
+	}
+	if oauth, _ := readKASServers(t, kas)["corp"]["oauth"].(map[string]any); oauth["mode"] != "auto" {
+		t.Errorf("oauth after heal = %v, want mode=auto", oauth)
+	}
+}

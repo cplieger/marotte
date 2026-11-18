@@ -60,11 +60,15 @@ func (in *inbound) respondKiroOpenExternalURL(ctx context.Context, origin acpRes
 	case consentOnRow:
 		slog.Info("v3 openExternalUrl: showing the consent page on the server signing in", "server", shown.server)
 		in.respondBridge(ctx, "", origin, msg, openedReply(), nil)
+	case consentOnCard:
+		slog.Info("v3 openExternalUrl: showing the organization sign-in page on its card")
+		in.respondBridge(ctx, "", origin, msg, openedReply(), nil)
 	case consentSeen:
 		slog.Debug("v3 openExternalUrl: answering a consent URL already anchored")
 		in.respondBridge(ctx, "", origin, msg, openedReply(), nil)
 	case consentBanner:
-		slog.Info("v3 openExternalUrl: showing a consent URL no standing Sign in took on every page", "server", p.Server)
+		slog.Info("v3 openExternalUrl: showing a consent URL no standing Sign in took on every page",
+			"server", p.Server, "identity_provider", p.IdentityProviderSignIn)
 		in.respondBridge(ctx, "", origin, msg, openedReply(), nil)
 	}
 }

@@ -14,12 +14,56 @@ import (
 
 // RegisterRoutes wires the MCP config endpoints: GET/POST /api/mcp (list masked with the count of
 // record entries that could not be read as `unreadable`, create), POST
-// /api/mcp/import (every server of a pasted README block), and GET (masked), PUT (keeps "***"
+// /api/mcp/import (every server of a pasted README block), GET/PUT/DELETE
+// /api/mcp/identity-provider (the organization sign-in's provider), and GET (masked), PUT (keeps "***"
 // values), PATCH ({"enabled": bool}) and DELETE on /api/mcp/{id}.
 func (s *Store) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mcp", s.handleCollection)
 	mux.HandleFunc("/api/mcp/import", s.handleImport)
+	// An exact path, or the "/api/mcp/" subtree reads "identity-provider" as a server id.
+	mux.HandleFunc("/api/mcp/identity-provider", s.handleIdentityProvider)
 	mux.HandleFunc("/api/mcp/", s.handleOne)
+}
+
+// identityProviderBody is GET /api/mcp/identity-provider's reply: the saved provider, null when none
+// is, and whether the record holds one marotte could not read, which a save replaces.
+type identityProviderBody struct {
+	IdentityProvider *identityProvider `json:"identity_provider"`
+	Unreadable       bool              `json:"unreadable"`
+}
+
+// handleIdentityProvider serves GET (the provider), PUT (save it: 400 naming each refused field) and
+// DELETE (clear it) on /api/mcp/identity-provider. A save reaches running sessions through KAS's
+// reload of its file.
+func (s *Store) handleIdentityProvider(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+	case http.MethodPut:
+		var in identityProvider
+		if !httpreply.DecodeJSON(w, r, &in) {
+			return
+		}
+		if err := s.setIdentityProvider(r.Context(), &in); err != nil {
+			s.writeErr(w, err)
+			return
+		}
+	case http.MethodDelete:
+		if err := s.setIdentityProvider(r.Context(), nil); err != nil {
+			s.writeErr(w, err)
+			return
+		}
+	default:
+		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPut, http.MethodDelete)
+		return
+	}
+	var body identityProviderBody
+	if idp, ok := s.savedIdentityProvider(); ok {
+		body.IdentityProvider = &idp
+	}
+	s.mu.RLock()
+	body.Unreadable = s.idpUnreadable != nil
+	s.mu.RUnlock()
+	httpserver.WriteJSON(w, body)
 }
 
 // handleImport handles POST /api/mcp/import: translate a pasted publisher block
@@ -48,6 +92,13 @@ func (s *Store) handleImport(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.writeErr(w, err)
 		return
+	}
+	// parseImportBody already held the provider to the save rule, so only a write failure is left here.
+	if req.identityProvider != nil {
+		if err := s.setIdentityProvider(r.Context(), req.identityProvider); err != nil {
+			s.writeErr(w, err)
+			return
+		}
 	}
 	httpserver.WriteJSON(w, map[string]any{"results": results, "notes": req.notes})
 }

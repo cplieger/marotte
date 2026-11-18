@@ -98,7 +98,8 @@ func sameSpec(a, b *Server) bool {
 		strings.TrimSpace(a.URL) != strings.TrimSpace(b.URL) ||
 		a.OAuthClientID != b.OAuthClientID ||
 		a.OAuthClientMetadataURL != b.OAuthClientMetadataURL ||
-		a.OAuthRedirectURI != b.OAuthRedirectURI {
+		a.OAuthRedirectURI != b.OAuthRedirectURI ||
+		a.OAuthMode != b.OAuthMode {
 		return false
 	}
 	if !slices.Equal(a.Args, b.Args) || !slices.Equal(sortedCopy(a.OAuthScopes), sortedCopy(b.OAuthScopes)) {

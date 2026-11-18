@@ -9,6 +9,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/subtle"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
@@ -27,9 +28,11 @@ type mcpServerState = marotte.MCPServerState
 const (
 	mcpStateConnected mcpServerState = "connected"
 	mcpStateOAuth     mcpServerState = "needs_auth"
-	mcpStateSigningIn mcpServerState = "signing_in"
-	mcpStateFailed    mcpServerState = "failed"
-	mcpStateDisabled  mcpServerState = "disabled"
+	// mcpStateNeedsOrgSignIn waits on the organization sign-in, never on its own: its remedy is the card's Sign in.
+	mcpStateNeedsOrgSignIn mcpServerState = "needs_org_sign_in"
+	mcpStateSigningIn      mcpServerState = "signing_in"
+	mcpStateFailed         mcpServerState = "failed"
+	mcpStateDisabled       mcpServerState = "disabled"
 )
 
 // signInTTL bounds a sign-in nobody ended: KAS's 600 s connect ceiling plus margin.
@@ -41,9 +44,9 @@ const lazySignInTTL = 300 * time.Second
 // maxConsentAnchors bounds the anchors no Sign in took: KAS runs one re-auth per server.
 const maxConsentAnchors = 8
 
-// signInAnchor is a consent URL KAS opened, identified by its state. Only relayed changes after it is created, so
-// authURL is read without the lock. attempt is the Sign in it was attributed to, 0 when none; flowID is KAS's id
-// for a mid-session re-auth, "" otherwise.
+// signInAnchor is a consent URL KAS opened, identified by its state. authURL never changes after it is created, so
+// it is read without the lock. attempt is the Sign in it was attributed to, 0 when none; flowID is KAS's id for a
+// mid-session re-auth, "" otherwise; org marks the organization sign-in's URL.
 type signInAnchor struct {
 	expires time.Time
 	state   string
@@ -53,6 +56,7 @@ type signInAnchor struct {
 	// relayed is the anchor's single-use relay latch (mcp_oauth_relay.go), set on reservation and kept on
 	// delivery, so a resubmit gets "already relayed". A failed relay gives it back.
 	relayed bool
+	org     bool
 }
 
 // consentShowing is how anchorConsentURL decided and published the showing of a consent URL KAS opened.
@@ -63,6 +67,7 @@ const (
 	consentOnRow                         // attributed: the row is published signing_in with it
 	consentSeen                          // its state is already anchored: nothing new is shown
 	consentBanner                        // unattributed with a page connected: shown on every page
+	consentOnCard                        // the standing organization sign-in's: the card is published with it
 )
 
 type consentShown struct {
@@ -94,6 +99,7 @@ type mcpServerRuntime struct {
 	Prompts           []marotte.MCPPromptInfo
 	Resources         []marotte.MCPResourceInfo
 	ResourceTemplates []marotte.MCPResourceTemplateInfo
+	IgnoredFields     []string
 	// Relayed is the row's anchor's relay latch, filled by projectLocked; a stored record never holds it.
 	Relayed bool
 	Shadows bool
@@ -116,6 +122,11 @@ type mcpView struct {
 type viewSignInFailure struct {
 	server string
 	reason string
+}
+
+type ignoredFieldsDrift struct {
+	since  time.Time
+	fields []string
 }
 
 type mcpRegistry struct {
@@ -145,6 +156,8 @@ type mcpRegistry struct {
 	notifyCh chan struct{}
 	// launchResets counts each server's automatic resets since it last connected (resetFailedForLaunch).
 	launchResets map[string]int
+	// ignoredDrift is, per marotte-owned server, the ignored keys last logged and since when.
+	ignoredDrift map[string]ignoredFieldsDrift
 	// now reads the clock for the sign-ins' and the anchors' deadlines.
 	now func() time.Time
 	// views is in recording order; resolveServers picks the view that represents each name.
@@ -152,7 +165,16 @@ type mcpRegistry struct {
 	// anchors are engine-wide, oldest first, each added by anchorConsentURL: a consent URL names no session to
 	// file it under.
 	anchors []*signInAnchor
-	// signIns counts the sign-ins claimed, minting viewSignIn.attempt.
+	// orgStatus is the identity provider the last frame reported, nil for none: KAS sends the same engine-wide
+	// value in every local session's frame.
+	orgStatus *marotte.MCPIdentityProviderState `wiring:"optional"`
+	// orgSignIn is the organization sign-in started from marotte, the zero value while none stands.
+	orgSignIn orgSignIn
+	// orgFailure is why the engine refused the last organization sign-in, "" when it did not.
+	orgFailure string
+	// orgRow is the organization sign-in as last committed, the one GET /api/mcp/status serves.
+	orgRow marotte.MCPIdentityProviderStatus
+	// signIns counts the sign-ins claimed, the organization's included, minting their attempts.
 	signIns uint64
 	mu      sync.RWMutex
 }
@@ -213,13 +235,14 @@ func (reg *mcpRegistry) projectLocked() map[string]*marotte.MCPServerStatus {
 	return out
 }
 
-// commitLocked makes the projection the served rows. When any row changed it mints `mcp_status` once and broadcasts
-// one stamped mcp_status frame per changed or removed server before it returns, so frames go out in version order
-// and the GET never serves a version whose frames are not sent. Every write that can move the projection calls it
-// before releasing the write lock; a call that finds no change sends nothing. A committed row is never written again,
-// so a frame shares it.
+// commitLocked makes the projection the served rows and organization sign-in. When any changed it mints `mcp_status`
+// once and broadcasts one stamped mcp_status frame per changed or removed server, and one mcp_identity_provider frame
+// when the sign-in changed, before it returns, so frames go out in version order and the GET never serves a version
+// whose frames are not sent. Every write that can move the projection calls it before releasing the write lock; a call
+// that finds no change sends nothing. A committed row is never written again, so a frame shares it.
 func (reg *mcpRegistry) commitLocked() {
 	next := reg.projectLocked()
+	org := reg.projectOrgLocked()
 	var changed []string
 	for name, row := range next {
 		if old, ok := reg.rows[name]; !ok || !sameStatus(old, row) {
@@ -232,13 +255,20 @@ func (reg *mcpRegistry) commitLocked() {
 		}
 	}
 	reg.rows = next
-	if len(changed) == 0 {
+	orgChanged := !sameOrgStatus(&reg.orgRow, &org)
+	reg.orgRow = org
+	if len(changed) == 0 && !orgChanged {
 		return
 	}
 	slices.Sort(changed)
 	stamp := marotte.NewSubjectStamp(string(subject.KindMCPStatus), "", reg.versions.BumpCounter(subject.KindMCPStatus, ""))
 	for _, name := range changed {
 		ev := marotte.NewEvent(marotte.EventMCPStatus, "", marotte.MCPStatusPayload{Server: name, Status: next[name]})
+		ev.Subject = stamp
+		reg.bus.Broadcast(context.Background(), ev)
+	}
+	if orgChanged {
+		ev := marotte.NewEvent(marotte.EventMCPIdentityProvider, "", marotte.MCPIdentityProviderPayload{Status: org})
 		ev.Subject = stamp
 		reg.bus.Broadcast(context.Background(), ev)
 	}
@@ -256,6 +286,8 @@ func (reg *mcpRegistry) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mcp/pool", reg.handlePool)
 	mux.HandleFunc("/api/mcp/reconnect", reg.handleReconnect)
 	mux.HandleFunc("/api/mcp/sign-in", reg.handleSignIn)
+	mux.HandleFunc("/api/mcp/identity-provider/sign-in", reg.handleOrgSignIn)
+	mux.HandleFunc("/api/mcp/identity-provider/sign-out", reg.handleOrgSignOut)
 	// Registered here, or the "/api/mcp/" subtree reads "oauth-relay" as a server id and 404s.
 	mux.HandleFunc("/api/mcp/oauth-relay", reg.handleOAuthRelay)
 }
@@ -289,6 +321,7 @@ func (reg *mcpRegistry) RecordSessionStatus(ctx context.Context, sessionID marot
 	} else {
 		reg.views = append(reg.views, v)
 	}
+	reg.recordOrgLocked(status.IdentityProvider)
 	d := reg.deriveLocked(configured)
 	d.poolMoved = poolMoved
 	reg.mu.Unlock()
@@ -369,7 +402,7 @@ func resolveServers(views []mcpView) []mcpResolution {
 // connection, then the rest.
 func reportRank(state translate.MCPReportState) int {
 	switch state {
-	case translate.MCPReportNeedsAuth:
+	case translate.MCPReportNeedsAuth, translate.MCPReportNeedsOrgSignIn:
 		return 0
 	case translate.MCPReportFailed:
 		return 1
@@ -512,9 +545,39 @@ func (reg *mcpRegistry) deriveServerLocked(d *mcpDerived, next map[string]*mcpSe
 	if rec.State == mcpStateConnected {
 		delete(reg.launchResets, s.Name)
 	}
+	if rec.Origin == marotte.OriginUser {
+		reg.noteIgnoredFieldsLocked(rec)
+	}
 	next[s.Name] = rec
 	if old := reg.servers[s.Name]; old == nil || !sameRecord(old, rec) {
 		d.changed = true
+	}
+}
+
+// noteIgnoredFieldsLocked logs the standing state "kiro-cli ignores keys of marotte's own server": marotte rendered
+// every key it declares, so a reported one is a render KAS does not read. The state is kept by name, not on the
+// record, so a session closing and the next reporting the same keys is no new start.
+func (reg *mcpRegistry) noteIgnoredFieldsLocked(rec *mcpServerRuntime) {
+	was, standing := reg.ignoredDrift[rec.Name]
+	switch {
+	case len(rec.IgnoredFields) == 0:
+		if standing {
+			delete(reg.ignoredDrift, rec.Name)
+			slog.Info("mcp: kiro-cli now uses every key marotte writes for the server",
+				"server", rec.Name, "duration", reg.now().Sub(was.since).Round(time.Second))
+		}
+	case !standing || !slices.Equal(was.fields, rec.IgnoredFields):
+		since := reg.now()
+		if standing {
+			since = was.since
+		}
+		if reg.ignoredDrift == nil {
+			reg.ignoredDrift = map[string]ignoredFieldsDrift{}
+		}
+		reg.ignoredDrift[rec.Name] = ignoredFieldsDrift{since: since, fields: rec.IgnoredFields}
+		slog.Warn("mcp: kiro-cli ignores keys marotte writes for the server", "server", rec.Name,
+			"ignored_fields", rec.IgnoredFields,
+			"hint", "the server runs without those settings; edit or remove them in Settings > MCP")
 	}
 }
 
@@ -529,7 +592,8 @@ func sameRecord(a, b *mcpServerRuntime) bool {
 	return a.Name == b.Name && a.State == b.State && a.Origin == b.Origin && a.OriginRoot == b.OriginRoot &&
 		a.OriginPower == b.OriginPower && a.OAuthURL == b.OAuthURL && a.Error == b.Error && a.Shadows == b.Shadows &&
 		a.Relayed == b.Relayed && slices.Equal(a.Tools, b.Tools) && slices.Equal(a.Prompts, b.Prompts) &&
-		slices.Equal(a.Resources, b.Resources) && slices.Equal(a.ResourceTemplates, b.ResourceTemplates)
+		slices.Equal(a.Resources, b.Resources) && slices.Equal(a.ResourceTemplates, b.ResourceTemplates) &&
+		slices.Equal(a.IgnoredFields, b.IgnoredFields)
 }
 
 // recordFor is the record a report derives; ok is false for marotte's own server reported disabled, whose config
@@ -542,6 +606,8 @@ func (reg *mcpRegistry) recordFor(s *translate.MCPServerReport, configured map[s
 		state = mcpStateConnected
 	case translate.MCPReportNeedsAuth:
 		state = mcpStateOAuth
+	case translate.MCPReportNeedsOrgSignIn:
+		state = mcpStateNeedsOrgSignIn
 	case translate.MCPReportFailed:
 		state = mcpStateFailed
 	default:
@@ -555,6 +621,7 @@ func (reg *mcpRegistry) recordFor(s *translate.MCPServerReport, configured map[s
 	// Sign in can complete.
 	rec.Error = s.Error
 	rec.Tools, rec.Prompts, rec.Resources, rec.ResourceTemplates = s.Tools, s.Prompts, s.Resources, s.ResourceTemplates
+	rec.IgnoredFields = s.IgnoredFields
 	return rec, true
 }
 
@@ -684,8 +751,9 @@ func (reg *mcpRegistry) handlePool(w http.ResponseWriter, r *http.Request) {
 
 // anchorConsentURL is the one writer of new anchors, and decides how a consent URL KAS opened is shown. A state an
 // unexpired anchor holds is consentSeen whatever pageConnected says. A new anchor takes the standing Sign in for the
-// server KAS named only while that Sign in has none, so a later URL never rewrites its row. A URL with no state is
-// never an anchor: no paste could match it.
+// server KAS named, or the standing organization sign-in for an identityProviderSignIn URL, only while that sign-in
+// has none, so a later URL never rewrites its row or card. A URL with no state is never an anchor: no paste could
+// match it.
 func (reg *mcpRegistry) anchorConsentURL(ctx context.Context, req consentRequest, pageConnected bool) consentShown {
 	authURL := req.URL
 	state := consentState(authURL)
@@ -693,9 +761,18 @@ func (reg *mcpRegistry) anchorConsentURL(ctx context.Context, req consentRequest
 	reg.mu.Lock()
 	now := reg.now()
 	reg.pruneAnchorsLocked(now)
-	if state != "" && slices.ContainsFunc(reg.anchors, func(a *signInAnchor) bool { return a.state == state }) {
+	if i := slices.IndexFunc(reg.anchors, func(a *signInAnchor) bool { return a.state == state }); state != "" && i >= 0 {
+		shown := reg.seenConsentLocked(reg.anchors[i], req)
 		reg.mu.Unlock()
-		return consentShown{how: consentSeen}
+		return shown
+	}
+	if req.IdentityProviderSignIn && state != "" && reg.orgSignIn.attempt != 0 && reg.attemptAnchorLocked(reg.orgSignIn.attempt) == nil {
+		reg.addAnchorLocked(&signInAnchor{
+			expires: reg.orgSignIn.deadline, state: state, authURL: authURL, attempt: reg.orgSignIn.attempt, org: true,
+		})
+		reg.commitLocked()
+		reg.mu.Unlock()
+		return consentShown{how: consentOnCard}
 	}
 	standing := reg.standingSignInLocked(req.Server, now)
 	if state != "" && standing.attempt != 0 && reg.attemptAnchorLocked(standing.attempt) == nil {
@@ -711,15 +788,35 @@ func (reg *mcpRegistry) anchorConsentURL(ctx context.Context, req consentRequest
 		reg.mu.Unlock()
 		return consentShown{how: consentRefused}
 	}
-	expires := now.Add(lazySignInTTL)
+	ttl := lazySignInTTL
+	if req.IdentityProviderSignIn {
+		ttl = orgSignInTTL
+	}
+	expires := now.Add(ttl)
 	if state != "" {
-		reg.addAnchorLocked(&signInAnchor{expires: expires, state: state, authURL: authURL, flowID: req.FlowID})
+		reg.addAnchorLocked(&signInAnchor{
+			expires: expires, state: state, authURL: authURL, flowID: req.FlowID, org: req.IdentityProviderSignIn,
+		})
 	}
 	reg.mu.Unlock()
 	reg.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventOpenExternalURL, "", marotte.OpenExternalURLPayload{
 		URL: authURL, ExpiresAt: expires, Server: req.Server, FlowID: req.FlowID,
+		IdentityProviderSignIn: req.IdentityProviderSignIn,
 	}))
 	return consentShown{how: consentBanner}
+}
+
+// seenConsentLocked is the showing of a URL whose state a is already anchored under. KAS re-opens the organization
+// sign-in's URL for each caller that joins it, so an unattributed one is promoted to the card once the user's own
+// sign-in stands without one.
+func (reg *mcpRegistry) seenConsentLocked(a *signInAnchor, req consentRequest) consentShown {
+	if !req.IdentityProviderSignIn || !a.org || a.attempt != 0 || reg.orgSignIn.attempt == 0 ||
+		reg.attemptAnchorLocked(reg.orgSignIn.attempt) != nil {
+		return consentShown{how: consentSeen}
+	}
+	a.attempt, a.expires = reg.orgSignIn.attempt, reg.orgSignIn.deadline
+	reg.commitLocked()
+	return consentShown{how: consentOnCard}
 }
 
 // standingSignInLocked is the unexpired Sign in standing for server, the zero value when none does.
@@ -844,8 +941,8 @@ func (reg *mcpRegistry) releaseOAuthRelay(a oauthAttempt) {
 	reg.commitLocked()
 }
 
-// clearAll wipes every view (and so every sign-in), record and anchor when the engine ends, MCP subprocesses living
-// inside kiro-cli; its commit announces each wiped server gone.
+// clearAll wipes every view (and so every sign-in), record, anchor and the organization sign-in when the engine ends,
+// MCP subprocesses and the identity provider's session living inside kiro-cli; its commit announces each change.
 func (reg *mcpRegistry) clearAll() {
 	reg.mu.Lock()
 	had := len(reg.servers) > 0
@@ -854,6 +951,7 @@ func (reg *mcpRegistry) clearAll() {
 	hadPool := slices.ContainsFunc(reg.views, func(v mcpView) bool { return len(viewPool(v.servers)) > 0 })
 	reg.views = nil
 	reg.anchors = nil
+	reg.orgStatus, reg.orgSignIn, reg.orgFailure = nil, orgSignIn{}, ""
 	reg.commitLocked()
 	reg.mu.Unlock()
 	if hadPool {
@@ -916,26 +1014,31 @@ func (reg *mcpRegistry) originFor(name string, src marotte.MCPSource, configured
 	return p
 }
 
-// handleStatus serves GET /api/mcp/status: the committed rows and the `mcp_status` version they were committed at.
+// handleStatus serves GET /api/mcp/status: the committed rows and organization sign-in, and the `mcp_status` version
+// they were committed at.
 func (reg *mcpRegistry) handleStatus(w http.ResponseWriter, _ *http.Request) {
-	rows, version := reg.statusRowsStamped()
+	resp, version := reg.statusRowsStamped()
 	stamp := marotte.NewSubjectStamp(string(subject.KindMCPStatus), "", version)
 	stamp.Epoch = reg.epoch()
-	httpserver.WriteJSON(w, marotte.MCPStatusResponse{Servers: rows, Subject: stamp})
+	resp.Subject = stamp
+	httpserver.WriteJSON(w, resp)
 }
 
-// statusRowsStamped is the committed rows, sorted by name, and their version, read under one lock: a commit mints
-// under the write lock, so the pair is never torn.
-func (reg *mcpRegistry) statusRowsStamped() (rows []marotte.MCPServerStatus, version string) {
+// statusRowsStamped is the committed rows, sorted by name, the organization sign-in and their version, read under one
+// lock: a commit mints under the write lock, so the set is never torn.
+func (reg *mcpRegistry) statusRowsStamped() (resp marotte.MCPStatusResponse, version string) {
 	reg.mu.RLock()
-	rows = make([]marotte.MCPServerStatus, 0, len(reg.rows))
+	resp.Servers = make([]marotte.MCPServerStatus, 0, len(reg.rows))
 	for _, row := range reg.rows {
-		rows = append(rows, *row)
+		resp.Servers = append(resp.Servers, *row)
+	}
+	if org := reg.orgRow; !sameOrgStatus(&org, &marotte.MCPIdentityProviderStatus{}) {
+		resp.IdentityProvider = &org
 	}
 	version, _ = reg.versions.Current(subject.KindMCPStatus, "")
 	reg.mu.RUnlock()
-	slices.SortFunc(rows, func(a, b marotte.MCPServerStatus) int { return cmp.Compare(a.Name, b.Name) })
-	return rows, version
+	slices.SortFunc(resp.Servers, func(a, b marotte.MCPServerStatus) int { return cmp.Compare(a.Name, b.Name) })
+	return resp, version
 }
 
 // startNotifier runs the one goroutine that drains notifyCh and calls onChange after a short

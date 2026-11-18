@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -32,7 +33,7 @@ const (
 // the object, where a block carries it as the map key.
 var pasteServerKeys = []string{
 	"args", "command", "disabled", "disabledTools",
-	"env", "headers", "name", "oauth", "oauthScopes", "prewarm", "timeout", "type", "url",
+	"env", "headers", "name", "oauth", "oauthScopes", "prewarm", "timeout", "timeoutMs", "type", "url",
 	"versionNegotiation", "waitForReady",
 }
 
@@ -41,20 +42,22 @@ var pasteServerKeys = []string{
 // schema's: "no field for it" is actionable, "unknown key" would not be.
 var pasteServerIgnored = map[string]string{
 	"$schema":     "a schema pointer, not configuration",
-	"alwaysAllow": "marotte does not pre-approve MCP tools, so every call asks for permission",
-	"autoApprove": "marotte does not pre-approve MCP tools, so every call asks for permission",
+	"alwaysAllow": perServerApprovalIgnored,
+	"autoApprove": perServerApprovalIgnored,
 	"cwd":         "marotte has no working-directory field",
 	"description": "not stored, because the name is the label",
 	"icon":        "not stored",
 }
 
-// pasteOAuthKeys are the keys of a server's nested `oauth` object: KAS's closed
-// schema. A scope list is the sibling `oauthScopes`, a consumed server key.
+const perServerApprovalIgnored = "Kiro does not read a per-server approval list; your permission settings decide each call"
+
+// pasteOAuthKeys are the keys of a server's nested `oauth` object that KAS reads. A scope list may
+// sit there (`oauthScopes`, else `scopes`) or in the sibling server key `oauthScopes`, which wins.
 //
 // The nested object needs its own classification pass: encoding/json drops a
 // key with no matching field, so without one a misspelt `clientIdd` would be
 // accepted and discarded silently.
-var pasteOAuthKeys = []string{"clientId", "clientMetadataUrl", "redirectUri"}
+var pasteOAuthKeys = []string{"clientId", "clientMetadataUrl", "mode", "oauthScopes", "redirectUri", "scopes"}
 
 // pasteOAuthSecretKey is refused by name, before the typo pass: a confidential
 // client cannot authenticate through KAS, so the server would fail at its token
@@ -63,8 +66,12 @@ const pasteOAuthSecretKey = "clientSecret"
 
 const confidentialClientRefusal = "Kiro's v3 engine has no OAuth client secret, so it supports public pre-registered clients only"
 
-// Only the wrapper is consumed; a single-server object is detected by the wrapper's absence.
-var pasteTopKeys = []string{kasServerKey}
+// Besides the wrapper, a block an organization hands out may carry its identity provider, which the import saves.
+// A single-server object is detected by the wrapper's absence.
+var pasteTopKeys = []string{kasIdentityProviderKey, kasServerKey}
+
+// pasteIdentityProviderKeys are the keys of a pasted identityProvider: KAS's schema.
+var pasteIdentityProviderKeys = []string{"authorizationEndpoint", "clientId", "issuer", "name", "tokenEndpoint"}
 
 var pasteTopIgnored = map[string]string{
 	"$schema": "a schema pointer, not configuration",
@@ -72,17 +79,21 @@ var pasteTopIgnored = map[string]string{
 }
 
 // importRequest is one parsed paste: the records to create, in the order the
-// block declared them, plus the notes the translation produced (an unmodelled
-// key, a name that had to be adjusted).
+// block declared them, the identity provider to save when the block carries one,
+// plus the notes the translation produced (an unmodelled key, a name that had to be adjusted).
 type importRequest struct {
-	servers []*Server
-	notes   []string
+	identityProvider *identityProvider
+	servers          []*Server
+	notes            []string
 }
 
 type pasteOAuth struct {
-	ClientID          string `json:"clientId"`
-	ClientMetadataURL string `json:"clientMetadataUrl"`
-	RedirectURI       string `json:"redirectUri"`
+	ClientID          string   `json:"clientId"`
+	ClientMetadataURL string   `json:"clientMetadataUrl"`
+	RedirectURI       string   `json:"redirectUri"`
+	Mode              string   `json:"mode"`
+	OAuthScopes       []string `json:"oauthScopes"`
+	Scopes            []string `json:"scopes"`
 }
 
 // `env` and `headers` are absent on purpose: they are JSON records, and marotte stores ordered
@@ -98,6 +109,7 @@ type pasteServer struct {
 	Prewarm            *bool       `json:"prewarm"`
 	WaitForReady       *bool       `json:"waitForReady"`
 	Timeout            *int        `json:"timeout"`
+	TimeoutMs          *int        `json:"timeoutMs"`
 	Args               []string    `json:"args"`
 	DisabledTools      []string    `json:"disabledTools"`
 	OAuthScopes        []string    `json:"oauthScopes"`
@@ -123,7 +135,40 @@ func parseImportBody(data []byte) (*importRequest, error) {
 	if err := classifyKeys("", doc, pasteTopKeys, pasteTopIgnored, req); err != nil {
 		return nil, err
 	}
+	if err := parseIdentityProvider(doc[kasIdentityProviderKey], req); err != nil {
+		return nil, err
+	}
 	return parseServerBlock(block, req)
+}
+
+// parseIdentityProvider reads a block's identityProvider, refusing one KAS would refuse so the paste fails before
+// anything lands. A note says the import replaces the provider saved before it.
+func parseIdentityProvider(raw json.RawMessage, req *importRequest) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	const where = kasIdentityProviderKey + ": "
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
+		return fmt.Errorf("%q must be a JSON object", kasIdentityProviderKey)
+	}
+	if err := classifyKeys(where, obj, pasteIdentityProviderKeys, nil, req); err != nil {
+		return err
+	}
+	var p kasIdentityProvider
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return fmt.Errorf("%s%w", where, err)
+	}
+	idp, err := normalizedIdentityProvider(&identityProvider{
+		Issuer: p.Issuer, ClientID: p.ClientID, Name: p.Name,
+		AuthorizationEndpoint: p.AuthorizationEndpoint, TokenEndpoint: p.TokenEndpoint,
+	})
+	if err != nil {
+		return fmt.Errorf("%s%w", where, err)
+	}
+	req.identityProvider = idp
+	req.notes = append(req.notes, fmt.Sprintf("%q: organization sign-in now uses %s", kasIdentityProviderKey, idp.Issuer))
+	return nil
 }
 
 // parseSingleServer handles the one-object shape: the whole body is a server
@@ -212,9 +257,7 @@ func translateServer(rawName string, obj map[string]json.RawMessage, raw json.Ra
 		Enabled:      spec.Disabled == nil || !*spec.Disabled,
 		WaitForReady: spec.WaitForReady != nil && *spec.WaitForReady,
 	}
-	if spec.Timeout != nil {
-		sv.TimeoutMS = *spec.Timeout
-	}
+	sv.TimeoutMS = pastedTimeout(&spec, where, req)
 	if spec.VersionNegotiation != nil {
 		sv.VersionNegotiation = versionNegotiation(*spec.VersionNegotiation)
 	}
@@ -227,27 +270,70 @@ func translateServer(rawName string, obj map[string]json.RawMessage, raw json.Ra
 		sv.Prewarm = prewarmFor(&spec, sv.Command)
 		noteStdioOAuthKeys(where, obj, req)
 	case transportHTTP, transportSSE:
-		if err := fillRemote(sv, &spec, where, obj["headers"]); err != nil {
+		if err := fillRemote(sv, &spec, where, obj["headers"], req); err != nil {
 			return nil, err
 		}
 	}
 	return sv, nil
 }
 
+// pastedTimeout is KAS's precedence: `timeout`, else a `timeoutMs` of at least 1 (KAS's own
+// minimum), else none. A `timeoutMs` not taken is noted.
+func pastedTimeout(spec *pasteServer, where string, req *importRequest) int {
+	switch {
+	case spec.Timeout != nil:
+		if spec.TimeoutMs != nil {
+			req.notes = append(req.notes, where+`ignoring "timeoutMs": "timeout" is set`)
+		}
+		return *spec.Timeout
+	case spec.TimeoutMs == nil:
+		return 0
+	case *spec.TimeoutMs >= 1:
+		return *spec.TimeoutMs
+	default:
+		req.notes = append(req.notes, where+`ignoring "timeoutMs": below 1, so Kiro uses its default timeout`)
+		return 0
+	}
+}
+
 // fillRemote sets a url server's address, headers and OAuth client from its block.
-func fillRemote(sv *Server, spec *pasteServer, where string, headers json.RawMessage) error {
+func fillRemote(sv *Server, spec *pasteServer, where string, headers json.RawMessage, req *importRequest) error {
 	sv.URL = strings.TrimSpace(*spec.URL)
 	var err error
 	if sv.Headers, err = decodeOrderedPairs(where+"headers", headers); err != nil {
 		return err
 	}
+	scopes := spec.OAuthScopes
 	if spec.OAuth != nil {
 		sv.OAuthClientID = strings.TrimSpace(spec.OAuth.ClientID)
 		sv.OAuthClientMetadataURL = strings.TrimSpace(spec.OAuth.ClientMetadataURL)
 		sv.OAuthRedirectURI = strings.TrimSpace(spec.OAuth.RedirectURI)
+		sv.OAuthMode = oauthMode(spec.OAuth.Mode)
+		scopes = nestedScopes(spec, where, req)
 	}
-	sv.OAuthScopes = trimmedScopes(spec.OAuthScopes)
+	sv.OAuthScopes = trimmedScopes(scopes)
 	return nil
+}
+
+// nestedScopes is KAS's scope precedence: the server's `oauthScopes`, else `oauth.oauthScopes`,
+// else `oauth.scopes`. An explicit empty list counts as set, as KAS tests for undefined only;
+// each nested list not taken is noted.
+func nestedScopes(spec *pasteServer, where string, req *importRequest) []string {
+	winner := `"oauthScopes"`
+	scopes := spec.OAuthScopes
+	for _, c := range []struct {
+		key  string
+		list []string
+	}{{"oauth.oauthScopes", spec.OAuth.OAuthScopes}, {"oauth.scopes", spec.OAuth.Scopes}} {
+		switch {
+		case c.list == nil:
+		case scopes == nil:
+			scopes, winner = c.list, strconv.Quote(c.key)
+		default:
+			req.notes = append(req.notes, fmt.Sprintf("%signoring %q: %s is set", where, c.key, winner))
+		}
+	}
+	return scopes
 }
 
 // noteStdioOAuthKeys reports the OAuth keys a local server's block carries, which translateServer drops.

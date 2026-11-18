@@ -237,6 +237,12 @@ func TestImport_UnmodelledKeysAreAcceptedWithANote(t *testing.T) {
 	if got := len(s.list(t.Context())); got != 1 {
 		t.Errorf("stored = %d, want 1", got)
 	}
+
+	approval := decodeImport(t, postImport(t, mux, `{"mcpServers": {"x": {"command":"srv","autoApprove":["read"]}}}`))
+	if joined := strings.Join(approval.Notes, "\n"); !strings.Contains(joined, `ignoring "autoApprove": Kiro`) ||
+		!strings.Contains(joined, "permission settings") {
+		t.Errorf("notes = %q, want autoApprove's note to name Kiro and the permission settings", joined)
+	}
 }
 
 func TestImport_ConsumesWaitForReadyAndTimeout(t *testing.T) {
@@ -1101,5 +1107,142 @@ func TestImport_UnknownVersionNegotiationIsRefusedNamingTheField(t *testing.T) {
 	}
 	if n := len(s.list(t.Context())); n != 0 {
 		t.Errorf("stored = %d, want nothing installed", n)
+	}
+}
+
+// KAS reads `timeoutMs` when `timeout` is absent, so a block written for it installs with its timeout.
+func TestImport_TimeoutMsFillsTheTimeout(t *testing.T) {
+	s, mux := newRoutedStore(t)
+
+	got := decodeImport(t, postImport(t, mux, `{"mcpServers": {"x": {"command":"npx","timeoutMs":90000}}}`))
+	if len(got.Notes) != 0 {
+		t.Errorf("notes = %q, want none", got.Notes)
+	}
+	if stored := s.list(t.Context()); len(stored) != 1 || stored[0].TimeoutMS != 90_000 {
+		t.Errorf("stored = %+v, want timeout_ms 90000", stored)
+	}
+
+	below := decodeImport(t, postImport(t, mux, `{"mcpServers": {"y": {"command":"npx","timeoutMs":0}}}`))
+	if joined := strings.Join(below.Notes, "\n"); !strings.Contains(joined, `ignoring "timeoutMs"`) {
+		t.Errorf("notes = %q, want a timeoutMs below KAS's minimum of 1 noted as ignored", joined)
+	}
+	for _, sv := range s.list(t.Context()) {
+		if sv.Name == "y" && sv.TimeoutMS != 0 {
+			t.Errorf("y timeout_ms = %d, want none stored", sv.TimeoutMS)
+		}
+	}
+}
+
+func TestImport_TimeoutWinsOverTimeoutMs(t *testing.T) {
+	s, mux := newRoutedStore(t)
+
+	got := decodeImport(t, postImport(t, mux, `{"mcpServers": {"x": {"command":"npx","timeout":120000,"timeoutMs":90000}}}`))
+	if joined := strings.Join(got.Notes, "\n"); !strings.Contains(joined, `ignoring "timeoutMs": "timeout" is set`) {
+		t.Errorf("notes = %q, want timeoutMs noted as ignored", joined)
+	}
+	if stored := s.list(t.Context()); len(stored) != 1 || stored[0].TimeoutMS != 120_000 {
+		t.Errorf("stored = %+v, want timeout_ms 120000", stored)
+	}
+}
+
+// KAS takes the nested `oauth.oauthScopes`, else `oauth.scopes`, when the server has no `oauthScopes`.
+func TestImport_NestedOAuthScopesFillTheScopes(t *testing.T) {
+	for _, tc := range []struct {
+		name, oauth string
+		want        []string
+		noted       string
+	}{
+		{name: "oauthScopes outranks scopes", oauth: `{"oauthScopes":["a"],"scopes":["b"]}`, want: []string{"a"}, noted: `ignoring "oauth.scopes"`},
+		{name: "scopes alone", oauth: `{"scopes":["b"," c "]}`, want: []string{"b", "c"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, mux := newRoutedStore(t)
+			got := decodeImport(t, postImport(t, mux, `{"mcpServers": {"g": {"url":"https://mcp.example/mcp","oauth":`+tc.oauth+`}}}`))
+			joined := strings.Join(got.Notes, "\n")
+			if tc.noted != "" && !strings.Contains(joined, tc.noted) {
+				t.Errorf("notes = %q, want %s", joined, tc.noted)
+			}
+			if tc.noted == "" && len(got.Notes) != 0 {
+				t.Errorf("notes = %q, want none", joined)
+			}
+			if raw := s.enabledRaw(t.Context()); len(raw) != 1 || !slices.Equal(raw[0].OAuthScopes, tc.want) {
+				t.Errorf("stored = %+v, want oauth_scopes %q", raw, tc.want)
+			}
+		})
+	}
+}
+
+// The server's own `oauthScopes` wins over both nested lists, an explicit empty list included.
+func TestImport_TopLevelScopesWinOverNested(t *testing.T) {
+	for _, tc := range []struct {
+		name, top string
+		want      []string
+	}{
+		{name: "a list", top: `["top"]`, want: []string{"top"}},
+		{name: "an explicit empty list", top: `[]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, mux := newRoutedStore(t)
+			got := decodeImport(t, postImport(t, mux, `{"mcpServers": {"g": {"url":"https://mcp.example/mcp",
+			  "oauthScopes":`+tc.top+`,"oauth":{"scopes":["nested"]}}}}`))
+			if joined := strings.Join(got.Notes, "\n"); !strings.Contains(joined, `ignoring "oauth.scopes": "oauthScopes" is set`) {
+				t.Errorf("notes = %q, want oauth.scopes noted as ignored", joined)
+			}
+			if raw := s.enabledRaw(t.Context()); len(raw) != 1 || !slices.Equal(raw[0].OAuthScopes, tc.want) {
+				t.Errorf("stored = %+v, want oauth_scopes %q", raw, tc.want)
+			}
+		})
+	}
+}
+
+// A pasted oauth.mode is KAS's opt-in to the organization sign-in, so it reaches the record.
+func TestParseImportBody_OAuthMode(t *testing.T) {
+	s, mux := newRoutedStore(t)
+
+	got := decodeImport(t, postImport(t, mux, `{"mcpServers": {"corp": {"url":"https://mcp.corp.example/mcp","oauth":{"mode":"enterprise"}}}}`))
+	if len(got.Notes) != 0 {
+		t.Errorf("notes = %q, want none", got.Notes)
+	}
+	if raw := s.enabledRaw(t.Context()); len(raw) != 1 || raw[0].OAuthMode != oauthModeEnterprise {
+		t.Errorf("stored = %+v, want oauth_mode enterprise", raw)
+	}
+
+	rec := postImport(t, mux, `{"mcpServers": {"other": {"url":"https://mcp.example/mcp","oauth":{"mode":"corporate"}}}}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), fieldOAuthMode) {
+		t.Errorf("unknown mode = %d %s, want 400 naming oauth_mode", rec.Code, rec.Body.String())
+	}
+}
+
+// An organization's block may carry its identity provider beside the servers that use it; the import saves it.
+func TestParseImportBody_IdentityProvider(t *testing.T) {
+	s, mux := newRoutedStore(t)
+
+	got := decodeImport(t, postImport(t, mux, `{
+	  "identityProvider": {"issuer":"https://idp.example.com","clientId":"marotte","name":"Acme"},
+	  "mcpServers": {"corp": {"url":"https://mcp.corp.example/mcp","oauth":{"mode":"enterprise"}}}
+	}`))
+	if joined := strings.Join(got.Notes, "\n"); !strings.Contains(joined, `"identityProvider"`) || !strings.Contains(joined, "https://idp.example.com") {
+		t.Errorf("notes = %q, want one naming the provider's issuer", joined)
+	}
+	idp, ok := s.savedIdentityProvider()
+	if !ok || idp != (identityProvider{Issuer: "https://idp.example.com", ClientID: "marotte", Name: "Acme"}) {
+		t.Errorf("provider = %+v, %v; want the pasted one", idp, ok)
+	}
+
+	for _, tc := range []struct{ name, block, want string }{
+		{name: "refused by KAS's rule", block: `{"issuer":"http://idp.example.com","clientId":"x"}`, want: "issuer"},
+		{name: "a typo is named", block: `{"issuer":"https://idp.example.com","clientID":"x"}`, want: `did you mean \"clientId\"`},
+		{name: "not an object", block: `"https://idp.example.com"`, want: "identityProvider"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, mux := newRoutedStore(t)
+			rec := postImport(t, mux, `{"identityProvider": `+tc.block+`, "mcpServers": {"x": {"command":"npx"}}}`)
+			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), tc.want) {
+				t.Errorf("import = %d %s, want 400 containing %s", rec.Code, rec.Body.String(), tc.want)
+			}
+			if _, ok := s.savedIdentityProvider(); ok || len(s.list(t.Context())) != 0 {
+				t.Error("a refused paste saved something")
+			}
+		})
 	}
 }

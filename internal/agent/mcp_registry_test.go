@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -15,6 +16,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/go/sse/v2"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/subject"
@@ -1220,5 +1222,87 @@ func TestResolveServers(t *testing.T) {
 				t.Errorf("view %d is %s's, want the report's session %s", got.view, owner, got.session)
 			}
 		})
+	}
+}
+
+func ignoringMCP(r translate.MCPServerReport, fields ...string) translate.MCPServerReport {
+	r.IgnoredFields = fields
+	return r
+}
+
+// KAS's ignoredFields reach marotte's own rows and the read-only ones alike, on the GET and the frames.
+func TestMCPRegistry_IgnoredFieldsReachTheStatusRows(t *testing.T) {
+	h := newHubWithMCPConfig(t, enabledConfig("mine"))
+	before := h.bus.fanout.Position().Head
+	reportMCP(t, h, "s1",
+		ignoringMCP(connectedMCP("mine", marotte.MCPSource{Origin: "user"}), "timeoutMs"),
+		ignoringMCP(failedMCP("ws", marotte.MCPSource{Origin: "workspace", Root: "/workspace/app"}, "spawn ENOENT"), "autoApprove", "disabledTool"),
+	)
+
+	want := map[string][]string{"mine": {"timeoutMs"}, "ws": {"autoApprove", "disabledTool"}}
+	rows, _ := servedMCPStatus(t, h)
+	for name, fields := range want {
+		if got := rows[name].IgnoredFields; !slices.Equal(got, fields) {
+			t.Errorf("GET row %s ignored_fields = %q, want %q", name, got, fields)
+		}
+		frames := mcpStatusFrames(t, h, before, name)
+		if len(frames) != 1 || frames[0].Payload.Status == nil || !slices.Equal(frames[0].Payload.Status.IgnoredFields, fields) {
+			t.Errorf("mcp_status frames for %s = %+v, want one carrying %q", name, frames, fields)
+		}
+	}
+}
+
+// A frame that differs only in its ignored keys is a changed row, so the card updates.
+func TestMCPRegistry_IgnoredFieldsChangeAloneRebroadcasts(t *testing.T) {
+	h := newHubWithMCPConfig(t, nil)
+	reportMCP(t, h, "s1", ignoringMCP(connectedMCP("github", marotte.MCPSource{}), "autoApprove"))
+	before := h.bus.fanout.Position().Head
+	reportMCP(t, h, "s1", ignoringMCP(connectedMCP("github", marotte.MCPSource{}), "autoApprove", "disabledTool"))
+
+	frames := mcpStatusFrames(t, h, before, "github")
+	if len(frames) != 1 || frames[0].Payload.Status == nil ||
+		!slices.Equal(frames[0].Payload.Status.IgnoredFields, []string{"autoApprove", "disabledTool"}) {
+		t.Errorf("mcp_status frames = %+v, want one carrying the new list", frames)
+	}
+}
+
+// marotte renders its own servers' declarations, so a key KAS ignores there is a degraded state logged at its
+// start, change and end; a read-only row's keys are the card's alone.
+func TestMCPRegistry_WarnsWhenKiroIgnoresARenderedField(t *testing.T) {
+	const warnMsg, clearMsg = "kiro-cli ignores keys marotte writes", "kiro-cli now uses every key marotte writes"
+	h := newHubWithMCPConfig(t, enabledConfig("mine"))
+	logs := capture.Default(t)
+	foreign := ignoringMCP(connectedMCP("ws", marotte.MCPSource{Origin: "workspace"}), "autoApprove")
+	mine := connectedMCP("mine", marotte.MCPSource{Origin: "user"})
+
+	reportMCP(t, h, "s1", ignoringMCP(mine, "timeoutMs"), foreign)
+	if got := logs.CountLevel(slog.LevelWarn, warnMsg); got != 1 {
+		t.Fatalf("warns after the start = %d, want 1: %q", got, logs.Messages())
+	}
+	if !logs.HasAttr(warnMsg, "server", "mine") || !logs.AttrContains(warnMsg, "ignored_fields", "timeoutMs") {
+		t.Error("the warn does not name the server and its ignored keys")
+	}
+
+	reportMCP(t, h, "s1", ignoringMCP(mine, "timeoutMs"), foreign)
+	h.mcpRegistry.dropSession(t.Context(), "s1")
+	reportMCP(t, h, "s2", ignoringMCP(mine, "timeoutMs"), foreign)
+	if got := logs.CountLevel(slog.LevelWarn, warnMsg); got != 1 {
+		t.Errorf("warns after identical re-reports = %d, want still 1", got)
+	}
+
+	reportMCP(t, h, "s2", ignoringMCP(mine, "timeoutMs", "disabledTool"), foreign)
+	if got := logs.CountLevel(slog.LevelWarn, warnMsg); got != 2 {
+		t.Errorf("warns after the list changed = %d, want 2", got)
+	}
+
+	reportMCP(t, h, "s2", mine, foreign)
+	if got := logs.CountLevel(slog.LevelInfo, clearMsg); got != 1 {
+		t.Errorf("infos after the list cleared = %d, want 1", got)
+	}
+	if _, ok := logs.AttrValue(clearMsg, "duration"); !ok {
+		t.Error("the end line carries no duration")
+	}
+	if logs.HasAttr(warnMsg, "server", "ws") {
+		t.Error("a workspace row's ignored keys were logged")
 	}
 }

@@ -21,11 +21,36 @@ type v3MCPStatus struct {
 	SessionID marotte.SessionID `json:"sessionId"`
 	// Present only while the organization sets an MCP registry; "registry" mode drops every
 	// server that is not a registry entry.
-	AccessMode      string             `json:"accessMode"`
-	Servers         []v3MCPServer      `json:"servers"`
-	Filtered        []string           `json:"accessModeFilteredServers"`
-	Unresolved      []string           `json:"unresolvedRegistryServers"`
-	RegistryServers []v3RegistryServer `json:"registryServers"`
+	AccessMode string `json:"accessMode"`
+	// IdentityProvider is the organization sign-in, engine-wide and absent while none is configured.
+	IdentityProvider *v3IdentityProvider `json:"identityProvider"`
+	Servers          []v3MCPServer       `json:"servers"`
+	Filtered         []string            `json:"accessModeFilteredServers"`
+	Unresolved       []string            `json:"unresolvedRegistryServers"`
+	RegistryServers  []v3RegistryServer  `json:"registryServers"`
+}
+
+// v3IdentityProvider is _kiro/mcp/status's identityProvider: errorMessage only for invalid-config, account only
+// for signed-in.
+type v3IdentityProvider struct {
+	State        string `json:"state"`
+	Issuer       string `json:"issuer"`
+	DisplayName  string `json:"displayName"`
+	Account      string `json:"account"`
+	ErrorMessage string `json:"errorMessage"`
+}
+
+func (p *v3IdentityProvider) state() *marotte.MCPIdentityProviderState {
+	if p == nil || p.State == "" {
+		return nil
+	}
+	return &marotte.MCPIdentityProviderState{
+		State:        displayText(p.State),
+		Issuer:       displayText(p.Issuer),
+		DisplayName:  displayText(p.DisplayName),
+		Account:      displayText(p.Account),
+		ErrorMessage: displayText(p.ErrorMessage),
+	}
 }
 
 // Enabled reports whether it is running.
@@ -80,6 +105,7 @@ const credentialsRejectedReason = "the server rejected its credentials (check it
 // v3MCPServer is one entry in the _kiro/mcp/status servers list. connected carries the
 // tool, prompt and resource lists; failed carries errorMessage, failedAuthorization and,
 // for OAuth sign-in, authorizationUrl. KAS reports its internal "unavailable" as failed.
+// Every state may carry ignoredFields, the config keys KAS read and did not use.
 type v3MCPServer struct {
 	Meta             v3MCPServerMeta `json:"_meta"`
 	Name             string          `json:"name"`
@@ -89,10 +115,32 @@ type v3MCPServer struct {
 	Tools            []struct {
 		Name string `json:"name"`
 	} `json:"tools"`
-	Prompts             []v3MCPPrompt           `json:"prompts"`
-	Resources           []v3MCPResource         `json:"resources"`
-	ResourceTemplates   []v3MCPResourceTemplate `json:"resourceTemplates"`
-	FailedAuthorization bool                    `json:"failedAuthorization"`
+	IgnoredFields     []string                `json:"ignoredFields"`
+	Prompts           []v3MCPPrompt           `json:"prompts"`
+	Resources         []v3MCPResource         `json:"resources"`
+	ResourceTemplates []v3MCPResourceTemplate `json:"resourceTemplates"`
+	// EnterpriseAuthorization is set on a server that signs in through the organization: {} once connected
+	// through it, a reason when it could not.
+	EnterpriseAuthorization *v3EnterpriseAuthorization `json:"enterpriseAuthorization"`
+	FailedAuthorization     bool                       `json:"failedAuthorization"`
+}
+
+type v3EnterpriseAuthorization struct {
+	Reason string `json:"reason"`
+}
+
+// needsOrgSignIn reports whether the organization sign-in, not this server, is the remedy for its failure: the
+// two reasons KAS gives when the identity provider has no session.
+func (s *v3MCPServer) needsOrgSignIn() bool {
+	if s.EnterpriseAuthorization == nil {
+		return false
+	}
+	switch s.EnterpriseAuthorization.Reason {
+	case "idp-sign-in-required", "idp-session-expired":
+		return true
+	default:
+		return false
+	}
 }
 
 // v3MCPServerMeta is an entry's _meta.kiro.resource.source provenance stamp.
@@ -165,16 +213,20 @@ const (
 	MCPReportFailed
 	// MCPReportDisabled is a server KAS reports switched off.
 	MCPReportDisabled
+	// MCPReportNeedsOrgSignIn is a failed server waiting on the organization sign-in, its reason in Error.
+	MCPReportNeedsOrgSignIn
 )
 
 // MCPServerReport is one server as its session's frame reports it. Error is set for
-// MCPReportFailed, AuthorizationURL for MCPReportNeedsAuth, the four lists for MCPReportConnected.
+// MCPReportFailed and MCPReportNeedsOrgSignIn, AuthorizationURL for MCPReportNeedsAuth, the four lists for MCPReportConnected.
+// IgnoredFields, in any state, names the config keys KAS reported it did not use.
 type MCPServerReport struct {
 	Name              string
 	Source            marotte.MCPSource
 	Error             string
 	AuthorizationURL  string
 	Tools             []string
+	IgnoredFields     []string
 	Prompts           []marotte.MCPPromptInfo
 	Resources         []marotte.MCPResourceInfo
 	ResourceTemplates []marotte.MCPResourceTemplateInfo
@@ -186,7 +238,9 @@ type MCPServerReport struct {
 type MCPSessionStatus struct {
 	// Registry is nil outside registry mode.
 	Registry *marotte.GovernanceMCPRegistry
-	Servers  []MCPServerReport
+	// IdentityProvider is nil while no organization sign-in is configured.
+	IdentityProvider *marotte.MCPIdentityProviderState
+	Servers          []MCPServerReport
 }
 
 // HandleMCPStatus hands a session's _kiro/mcp/status frame to the recorder whole. Under
@@ -200,7 +254,9 @@ func (t *Translator) HandleMCPStatus(ctx context.Context, _ marotte.ChatID, msg 
 		slog.Debug("mcp/status with no sessionId, dropped")
 		return
 	}
-	status := MCPSessionStatus{Registry: p.registry(), Servers: make([]MCPServerReport, 0, len(p.Servers))}
+	status := MCPSessionStatus{
+		Registry: p.registry(), IdentityProvider: p.IdentityProvider.state(), Servers: make([]MCPServerReport, 0, len(p.Servers)),
+	}
 	for i := range p.Servers {
 		if r, ok := p.Servers[i].report(); ok {
 			status.Servers = append(status.Servers, r)
@@ -213,7 +269,7 @@ func (s *v3MCPServer) report() (MCPServerReport, bool) {
 	if s.Name == "" {
 		return MCPServerReport{}, false
 	}
-	r := MCPServerReport{Name: s.Name, Source: s.source()}
+	r := MCPServerReport{Name: s.Name, Source: s.source(), IgnoredFields: displayNames(s.IgnoredFields)}
 	switch s.Status {
 	case "connected":
 		r.State = MCPReportConnected
@@ -221,9 +277,12 @@ func (s *v3MCPServer) report() (MCPServerReport, bool) {
 		r.Resources, r.ResourceTemplates = mcpResources(s.Resources), mcpResourceTemplates(s.ResourceTemplates)
 	case "failed":
 		// The URL outranks failedAuthorization: an OAuth server needing sign-in carries both.
-		if s.AuthorizationURL != "" {
+		switch {
+		case s.needsOrgSignIn():
+			r.State, r.Error = MCPReportNeedsOrgSignIn, s.failureReason()
+		case s.AuthorizationURL != "":
 			r.State, r.AuthorizationURL = MCPReportNeedsAuth, s.AuthorizationURL
-		} else {
+		default:
 			r.State, r.Error = MCPReportFailed, s.failureReason()
 		}
 	case "disabled":
@@ -232,6 +291,18 @@ func (s *v3MCPServer) report() (MCPServerReport, bool) {
 		r.State = MCPReportConnecting
 	}
 	return r, true
+}
+
+// displayNames runs each name through displayText, dropping the ones left blank. KAS bounds
+// ignoredFields at 20 names of 64 characters, so no cap is added here.
+func displayNames(in []string) []string {
+	var out []string
+	for _, n := range in {
+		if n = strings.TrimSpace(displayText(n)); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 func mcpToolNames(tools []struct {

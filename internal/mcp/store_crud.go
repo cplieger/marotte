@@ -84,6 +84,7 @@ func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 		OAuthClientMetadataURL: strings.TrimSpace(in.OAuthClientMetadataURL),
 		OAuthRedirectURI:       strings.TrimSpace(in.OAuthRedirectURI),
 		OAuthScopes:            trimmedScopes(in.OAuthScopes),
+		OAuthMode:              in.OAuthMode,
 		Prewarm:                in.Prewarm,
 		Enabled:                in.Enabled,
 		WaitForReady:           in.WaitForReady,
@@ -309,6 +310,7 @@ func (s *Store) update(ctx context.Context, id serverID, in *Server) (*Server, e
 		OAuthClientMetadataURL: strings.TrimSpace(in.OAuthClientMetadataURL),
 		OAuthRedirectURI:       strings.TrimSpace(in.OAuthRedirectURI),
 		OAuthScopes:            trimmedScopes(in.OAuthScopes),
+		OAuthMode:              in.OAuthMode,
 		Prewarm:                in.Prewarm,
 		Enabled:                in.Enabled,
 		WaitForReady:           in.WaitForReady,
@@ -413,6 +415,78 @@ func (s *Store) delete(ctx context.Context, id serverID) error {
 	slog.Info("mcp: server deleted", "id", removed.ID)
 	s.notifyChange()
 	return nil
+}
+
+// savedIdentityProvider is a copy of the organization identity provider; false when none is set.
+func (s *Store) savedIdentityProvider() (identityProvider, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.idp == nil {
+		return identityProvider{}, false
+	}
+	return *s.idp, true
+}
+
+// setIdentityProvider saves the organization identity provider, or clears it when in is nil, and renders it into
+// KAS's file, which KAS hot-reloads. An unchanged provider writes no record but heals KAS's file.
+func (s *Store) setIdentityProvider(ctx context.Context, in *identityProvider) error {
+	var next *identityProvider
+	if in != nil {
+		var err error
+		if next, err = normalizedIdentityProvider(in); err != nil {
+			return err
+		}
+	}
+	if err := s.acquireWrite(ctx); err != nil {
+		return err
+	}
+	defer s.releaseWrite()
+	s.mu.Lock()
+	if s.sameIdentityProviderLocked(next) {
+		s.mu.Unlock()
+		_, err := s.healKASLocked(ctx, "identity provider")
+		return err
+	}
+	prev, prevRaw := s.idp, s.idpUnreadable
+	s.idp, s.idpUnreadable = next, nil
+	if err := s.persist(ctx); err != nil {
+		s.idp, s.idpUnreadable = prev, prevRaw
+		s.mu.Unlock()
+		return err
+	}
+	s.mu.Unlock()
+	if next == nil {
+		slog.Info("mcp: organization identity provider cleared")
+		return nil
+	}
+	slog.Info("mcp: organization identity provider saved", "issuer", logsafe.Field(next.Issuer))
+	return nil
+}
+
+// sameIdentityProviderLocked reports whether next is the provider the record already holds, nil meaning none.
+func (s *Store) sameIdentityProviderLocked(next *identityProvider) bool {
+	if s.idpUnreadable != nil {
+		return false
+	}
+	if next == nil || s.idp == nil {
+		return next == nil && s.idp == nil
+	}
+	return *next == *s.idp
+}
+
+// normalizedIdentityProvider is in with every field trimmed, or the save rule's refusal.
+func normalizedIdentityProvider(in *identityProvider) (*identityProvider, error) {
+	out := &identityProvider{
+		Issuer:                strings.TrimSpace(in.Issuer),
+		ClientID:              strings.TrimSpace(in.ClientID),
+		Name:                  strings.TrimSpace(in.Name),
+		AuthorizationEndpoint: strings.TrimSpace(in.AuthorizationEndpoint),
+		TokenEndpoint:         strings.TrimSpace(in.TokenEndpoint),
+	}
+	if err := validateIdentityProvider(out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // There is no SetKnownTools. A connected server's tool names arrive on the

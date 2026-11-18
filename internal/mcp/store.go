@@ -77,6 +77,36 @@ func (v versionNegotiation) valid() bool {
 	}
 }
 
+// oauthMode is KAS's per-server oauth.mode: how a remote server signs in. Unset is KAS's default, browser.
+type oauthMode string
+
+// The modes KAS accepts: its own browser sign-in, the organization's identity provider, or the identity
+// provider with the browser as fallback.
+const (
+	oauthModeBrowser    oauthMode = "browser"
+	oauthModeEnterprise oauthMode = "enterprise"
+	oauthModeAuto       oauthMode = "auto"
+)
+
+func (m oauthMode) valid() bool {
+	switch m {
+	case "", oauthModeBrowser, oauthModeEnterprise, oauthModeAuto:
+		return true
+	default:
+		return false
+	}
+}
+
+// identityProvider is the organization's OpenID provider KAS signs oauth_mode enterprise and auto servers in
+// through, rendered as the top-level identityProvider of KAS's file. KAS discovers an endpoint left empty.
+type identityProvider struct {
+	Issuer                string `json:"issuer"`
+	ClientID              string `json:"client_id"`
+	Name                  string `json:"name,omitempty"`
+	AuthorizationEndpoint string `json:"authorization_endpoint,omitempty"`
+	TokenEndpoint         string `json:"token_endpoint,omitempty"`
+}
+
 // secretMask references the shared marotte.secretMask constant.
 const secretMask = marotte.SecretMask
 
@@ -93,6 +123,7 @@ type Server struct {
 	// members (client-ID metadata document, pinned loopback redirect); not secrets.
 	OAuthClientMetadataURL string    `json:"oauth_client_metadata_url,omitempty"`
 	OAuthRedirectURI       string    `json:"oauth_redirect_uri,omitempty"`
+	OAuthMode              oauthMode `json:"oauth_mode,omitempty"`
 	ID                     serverID  `json:"id"`
 	Transport              Transport `json:"transport"`
 	// VersionNegotiation empty leaves KAS's `auto`, which starts a stdio server once to send
@@ -158,11 +189,15 @@ type Store struct {
 	// reported again; written on the write turn.
 	kasRefused string
 	servers    []*Server
+	// idp is the organization identity provider, nil when none is set; idpUnreadable is the record's
+	// identity_provider when load could not accept it, written back as read until a save replaces it.
+	idp           *identityProvider
+	idpUnreadable json.RawMessage
 	// unreadable are the record's entries load could not decode, which persist writes back. Set
 	// before New returns and never changed, so read without mu.
 	unreadable []json.RawMessage
 	callbacks  sync.WaitGroup
-	// mu guards servers and onChange; a writer of servers holds it only alongside the turn.
+	// mu guards servers, idp, idpUnreadable and onChange; a writer of any of them holds it only alongside the turn.
 	mu sync.RWMutex
 }
 

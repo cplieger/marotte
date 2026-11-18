@@ -723,3 +723,74 @@ func TestValidate_VersionNegotiation(t *testing.T) {
 		})
 	}
 }
+
+// KAS's rule for its identityProvider (parseMcpIdentityProviderConfig): an issuer, a non-empty clientId, a
+// non-empty name when one is given, and every URL https or on a loopback host.
+func TestValidate_IdentityProvider(t *testing.T) {
+	ok := identityProvider{Issuer: "https://idp.example.com", ClientID: "marotte"}
+	for _, tc := range []struct {
+		name  string
+		edit  func(p *identityProvider)
+		field string
+	}{
+		{name: "minimal", edit: func(*identityProvider) {}},
+		{name: "every field", edit: func(p *identityProvider) {
+			p.Name, p.AuthorizationEndpoint, p.TokenEndpoint = "Acme", "https://idp.example.com/authorize", "https://idp.example.com/token"
+		}},
+		{name: "a loopback issuer over http", edit: func(p *identityProvider) { p.Issuer = "http://localhost:8080/realms/test" }},
+		{name: "an ipv6 loopback issuer over http", edit: func(p *identityProvider) { p.Issuer = "http://[::1]:8080" }},
+		{name: "no issuer", edit: func(p *identityProvider) { p.Issuer = "" }, field: fieldIdPIssuer},
+		{name: "an http issuer off loopback", edit: func(p *identityProvider) { p.Issuer = "http://idp.example" }, field: fieldIdPIssuer},
+		{name: "a relative issuer", edit: func(p *identityProvider) { p.Issuer = "idp.example.com" }, field: fieldIdPIssuer},
+		{name: "an issuer with userinfo", edit: func(p *identityProvider) { p.Issuer = "https://u:p@idp.example.com" }, field: fieldIdPIssuer},
+		{name: "no client id", edit: func(p *identityProvider) { p.ClientID = "" }, field: fieldIdPClientID},
+		{name: "a blank name", edit: func(p *identityProvider) { p.Name = "  " }, field: fieldIdPName},
+		{name: "an http token endpoint off loopback", edit: func(p *identityProvider) { p.TokenEndpoint = "http://idp.example.com/token" }, field: fieldIdPTokenEndpoint},
+		{name: "an http authorization endpoint off loopback", edit: func(p *identityProvider) { p.AuthorizationEndpoint = "http://idp.example.com/a" }, field: fieldIdPAuthorizationEndpoint},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := ok
+			tc.edit(&p)
+			err := validateIdentityProvider(&p)
+			if tc.field == "" {
+				if err != nil {
+					t.Errorf("validateIdentityProvider(%+v) = %v, want nil", p, err)
+				}
+				return
+			}
+			if fields := fieldErrors(err); len(fields) != 1 || fields[0].Field != tc.field {
+				t.Errorf("validateIdentityProvider(%+v) fields = %+v, want one %q error", p, fields, tc.field)
+			}
+		})
+	}
+}
+
+// KAS's oauth.mode is closed (browser, enterprise, auto) and means something only for a remote server.
+func TestValidate_OAuthMode(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		srv     Server
+		wantErr bool
+	}{
+		{name: "absent", srv: Server{Transport: transportHTTP, URL: "https://mcp.example/mcp"}},
+		{name: "browser", srv: Server{Transport: transportHTTP, URL: "https://mcp.example/mcp", OAuthMode: "browser"}},
+		{name: "enterprise", srv: Server{Transport: transportSSE, URL: "https://mcp.example/mcp", OAuthMode: "enterprise"}},
+		{name: "auto", srv: Server{Transport: transportHTTP, URL: "https://mcp.example/mcp", OAuthMode: "auto"}},
+		{name: "unknown", srv: Server{Transport: transportHTTP, URL: "https://mcp.example/mcp", OAuthMode: "corporate"}, wantErr: true},
+		{name: "capitalised", srv: Server{Transport: transportHTTP, URL: "https://mcp.example/mcp", OAuthMode: "Enterprise"}, wantErr: true},
+		{name: "on a stdio server", srv: Server{Transport: TransportStdio, Command: "npx", OAuthMode: "enterprise"}, wantErr: true},
+		{name: "on a registry server", srv: Server{Transport: transportRegistry, OAuthMode: "enterprise"}, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := tc.srv
+			srv.Name = "ok"
+			err := validate(&srv)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validate(oauth_mode %q on %s) = %v, want error %t", srv.OAuthMode, srv.Transport, err, tc.wantErr)
+			}
+			if err != nil && (len(fieldErrors(err)) != 1 || fieldErrors(err)[0].Field != fieldOAuthMode) {
+				t.Errorf("fields = %+v, want one %q error", fieldErrors(err), fieldOAuthMode)
+			}
+		})
+	}
+}

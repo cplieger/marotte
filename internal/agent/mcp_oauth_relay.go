@@ -1,10 +1,10 @@
 package agent
 
 // The MCP OAuth loopback relay. KAS runs the flow and binds its redirect listener on
-// `http://localhost:<ephemeral>/oauth/callback` in the container, which a remote browser cannot reach. The user
+// `http://localhost:<port>/oauth/callback` in the container, which a remote browser cannot reach. The user
 // pastes the dead page's address and marotte replays the GET from inside, which completes only while that listener
-// waits: a Sign in (resetServer startOAuth) keeps one waiting, and so does a mid-session re-auth for 300 s; KAS sends
-// either consent URL over _kiro/openExternalUrl. The pasted address is untrusted; that URL is the anchor: the dial
+// waits: a Sign in (resetServer startOAuth) keeps one waiting, and so do a mid-session re-auth and the organization
+// sign-in, for 300 s each; KAS sends each consent URL over _kiro/openExternalUrl. The pasted address is untrusted; that URL is the anchor: the dial
 // target comes from its `redirect_uri` and `state` must match, or this unauthenticated route injects authorization
 // codes. Rewriting redirect_uri fails RFC 6749 §4.1.3.
 
@@ -29,7 +29,8 @@ import (
 const (
 	relayURLCap = 4096
 
-	// relayMinPort refuses a privileged port: KAS's listener is ephemeral.
+	// relayMinPort refuses a privileged port: KAS's listener is ephemeral for a server's browser sign-in, on a pinned
+	// redirectUri port (validated to this floor), or on one of the organization sign-in's fixed ports, 3128 and up.
 	relayMinPort = 1024
 
 	relayDialTimeout  = 3 * time.Second
@@ -154,7 +155,8 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 
 	slog.Info("mcp oauth relay: delivered a stranded callback to the loopback listener",
 		"pasted_under", body.Server, "port", target.Port(), "status", status)
-	// KAS ends a connect with the server's next _kiro/mcp/status and a mid-session re-auth with _kiro/mcp/oauthCompleted.
+	// KAS ends a connect with the server's next _kiro/mcp/status, a mid-session re-auth with _kiro/mcp/oauthCompleted,
+	// and the organization sign-in with the identityProvider it reports and its signIn reply.
 	httpserver.WriteJSON(w, mcpOAuthRelayResp{Status: status})
 }
 

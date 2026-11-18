@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -659,5 +660,127 @@ func TestRenderKASServers_CarriesVersionNegotiation(t *testing.T) {
 				t.Errorf("rendered versionNegotiation = %q, want %q", v, "legacy")
 			}
 		})
+	}
+}
+
+// oauth_mode is the switch that puts a remote server on the organization sign-in; KAS reads it as oauth.mode.
+func TestRenderKASServers_OAuthMode(t *testing.T) {
+	s, kas := newIsolatedStore(t)
+	if _, err := s.Create(t.Context(), &Server{
+		Transport: transportHTTP, Name: "corp", Enabled: true, URL: "https://mcp.corp.example/mcp", OAuthMode: oauthModeEnterprise,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	oauth, ok := readKASServers(t, kas)["corp"]["oauth"].(map[string]any)
+	if !ok || len(oauth) != 1 || oauth["mode"] != "enterprise" {
+		t.Errorf("oauth = %v, want exactly mode=enterprise", oauth)
+	}
+}
+
+func putIdentityProvider(t *testing.T, mux http.Handler, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	data, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPut, "/api/mcp/identity-provider", bytes.NewReader(data))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// The provider saved on the card is the top-level identityProvider KAS reads, in KAS's spelling; clearing it
+// removes the member, and a key marotte does not own survives both writes.
+func TestWriteKASConfig_IdentityProviderMember(t *testing.T) {
+	s, kas := newIsolatedStore(t)
+	writeKASFile(t, kas, `{"other": {"kept": true}}`)
+	mux := http.NewServeMux()
+	s.RegisterRoutes(mux)
+
+	rec := putIdentityProvider(t, mux, map[string]string{
+		"issuer": " https://idp.example.com ", "client_id": "marotte", "name": "Acme",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	doc := readKAS(t, kas)
+	want := `{"issuer":"https://idp.example.com","clientId":"marotte","name":"Acme"}`
+	if !sameJSONValue(doc[kasIdentityProviderKey], json.RawMessage(want)) {
+		t.Errorf("identityProvider = %s, want %s", doc[kasIdentityProviderKey], want)
+	}
+	if !sameJSONValue(doc["other"], json.RawMessage(`{"kept":true}`)) {
+		t.Errorf("foreign key after the save = %s, want it kept", doc["other"])
+	}
+
+	get := httptest.NewRecorder()
+	mux.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/api/mcp/identity-provider", nil))
+	var body identityProviderBody
+	if err := json.Unmarshal(get.Body.Bytes(), &body); err != nil || body.IdentityProvider == nil ||
+		body.IdentityProvider.Issuer != "https://idp.example.com" || body.Unreadable {
+		t.Errorf("GET = %s, want the saved provider", get.Body.String())
+	}
+	reopened, err := New(t.Context(), filepath.Dir(s.path), nil, withKASConfigPath(kas))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if idp, ok := reopened.savedIdentityProvider(); !ok || idp.ClientID != "marotte" {
+		t.Errorf("provider after a restart = %+v, %v; want it read back from the record", idp, ok)
+	}
+
+	del := httptest.NewRecorder()
+	mux.ServeHTTP(del, httptest.NewRequest(http.MethodDelete, "/api/mcp/identity-provider", nil))
+	if del.Code != http.StatusOK {
+		t.Fatalf("DELETE = %d %s, want 200", del.Code, del.Body.String())
+	}
+	doc = readKAS(t, kas)
+	if _, ok := doc[kasIdentityProviderKey]; ok {
+		t.Errorf("identityProvider after clearing = %s, want the member gone", doc[kasIdentityProviderKey])
+	}
+	if _, ok := doc["other"]; !ok {
+		t.Error("foreign key lost when the provider was cleared")
+	}
+}
+
+// A provider KAS would refuse is refused at the save, naming each field, and nothing is written.
+func TestWriteKASConfig_IdentityProviderRefusedNamingTheField(t *testing.T) {
+	s, kas := newIsolatedStore(t)
+	mux := http.NewServeMux()
+	s.RegisterRoutes(mux)
+
+	rec := putIdentityProvider(t, mux, map[string]string{"issuer": "http://idp.example.com"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT = %d %s, want 400", rec.Code, rec.Body.String())
+	}
+	var body validationErrorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	fields := map[string]bool{}
+	for _, f := range body.Fields {
+		fields[f.Field] = true
+	}
+	if !fields[fieldIdPIssuer] || !fields[fieldIdPClientID] {
+		t.Errorf("fields = %+v, want issuer and client_id named", body.Fields)
+	}
+	if _, ok := readKAS(t, kas)[kasIdentityProviderKey]; ok {
+		t.Error("a refused provider reached KAS's file")
+	}
+}
+
+// A Powers write over a file left with no document puts marotte's own members back, the identity provider included.
+func TestWritePowersServers_FreshFileGetsTheIdentityProviderBack(t *testing.T) {
+	s, kas := newIsolatedStore(t)
+	if err := s.setIdentityProvider(t.Context(), &identityProvider{Issuer: "https://idp.example.com", ClientID: "marotte"}); err != nil {
+		t.Fatal(err)
+	}
+	writeKASFile(t, kas, "\n")
+
+	if _, err := s.WritePowersServers(t.Context(), map[string]json.RawMessage{"docs": json.RawMessage(`{"command":"npx"}`)}); err != nil {
+		t.Fatalf("WritePowersServers: %v", err)
+	}
+	want := `{"issuer":"https://idp.example.com","clientId":"marotte"}`
+	if got := readKAS(t, kas)[kasIdentityProviderKey]; !sameJSONValue(got, json.RawMessage(want)) {
+		t.Errorf("identityProvider = %s, want %s", got, want)
 	}
 }

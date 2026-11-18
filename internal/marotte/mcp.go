@@ -1,5 +1,7 @@
 package marotte
 
+import "time"
+
 // MCP runtime types: the status rows and event payloads marotte derives from
 // kiro-cli's _kiro/mcp/status reports.
 //
@@ -69,6 +71,8 @@ type MCPServerStatus struct {
 	Prompts           []MCPPromptInfo           `json:"prompts,omitempty"`
 	Resources         []MCPResourceInfo         `json:"resources,omitempty"`
 	ResourceTemplates []MCPResourceTemplateInfo `json:"resource_templates,omitempty"`
+	// IgnoredFields is the config keys kiro-cli reported it did not use for this server.
+	IgnoredFields []string `json:"ignored_fields,omitempty"`
 	// Relayed stops a reload or second device offering the paste box for a spent code.
 	Relayed bool `json:"relayed,omitempty"`
 	// Shadows keeps the client from putting this status on marotte's config row.
@@ -85,8 +89,45 @@ type MCPStatusPayload struct {
 // MCPStatusResponse is GET /api/mcp/status's reply, sorted by server name.
 type MCPStatusResponse struct {
 	// Subject is the `mcp_status` digest stamp with the hub epoch, read with the rows.
-	Subject *SubjectStamp     `json:"subject,omitempty"`
-	Servers []MCPServerStatus `json:"servers"`
+	Subject *SubjectStamp `json:"subject,omitempty"`
+	// IdentityProvider is the organization sign-in at the same version as the rows, absent while no provider was
+	// reported and no sign-in stands.
+	IdentityProvider *MCPIdentityProviderStatus `json:"identity_provider,omitempty"`
+	Servers          []MCPServerStatus          `json:"servers"`
+}
+
+// MCPIdentityProviderState is the organization identity provider as kiro-cli last reported it on
+// _kiro/mcp/status. State is kiro-cli's word verbatim: signed-out, signing-in, signed-in,
+// session-expired, invalid-config (with ErrorMessage), or one it adds later. Account is set only
+// while signed in.
+type MCPIdentityProviderState struct {
+	State        string `json:"state"`
+	Issuer       string `json:"issuer,omitempty"`
+	DisplayName  string `json:"display_name,omitempty"`
+	Account      string `json:"account,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
+}
+
+// MCPIdentityProviderStatus is the organization sign-in's runtime state, beside the per-server rows;
+// its configuration is GET /api/mcp/identity-provider's.
+type MCPIdentityProviderStatus struct {
+	// Reported is nil before any session reported a provider, or while none is configured.
+	Reported *MCPIdentityProviderState `json:"reported,omitempty"`
+	// SignInDeadline is set while a sign-in started from marotte stands: when kiro-cli stops waiting
+	// for its browser callback.
+	SignInDeadline *time.Time `json:"sign_in_deadline,omitempty"`
+	// SignInURL is that sign-in's page once kiro-cli opened it.
+	SignInURL string `json:"sign_in_url,omitempty"`
+	// Error is why kiro-cli refused the last sign-in, until another starts or a report supersedes it.
+	Error string `json:"error,omitempty"`
+	// Relayed stops a reload or second device offering the paste box for a spent code.
+	Relayed bool `json:"relayed,omitempty"`
+}
+
+// MCPIdentityProviderPayload is the payload for type="mcp_identity_provider": the organization
+// sign-in changed, stamped with the `mcp_status` version.
+type MCPIdentityProviderPayload struct {
+	Status MCPIdentityProviderStatus `json:"status"`
 }
 
 // MCPPrewarmState is the phase of a prewarm install, for the servers one frame names.
@@ -145,7 +186,8 @@ type MCPResourceTemplateInfo struct {
 }
 
 // MCPServerState is the lifecycle status of one MCP server KAS reported: "idle", "connected",
-// "needs_auth", "signing_in", "failed" or "disabled", declared where produced (the runtime's mcpRegistry).
+// "needs_auth", "needs_org_sign_in", "signing_in", "failed" or "disabled", declared where produced (the
+// runtime's mcpRegistry).
 // "disabled" is recorded only for a server marotte did NOT configure; a configured one's off state
 // is its config row's `enabled: false`.
 type MCPServerState string

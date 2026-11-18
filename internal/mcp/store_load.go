@@ -49,6 +49,7 @@ func (s *Store) load() error {
 		s.moveAside(uErr)
 		return nil
 	}
+	s.loadIdentityProvider(f.IdentityProvider)
 	servers, unreadable, errs := decodeEntries(f.Servers)
 	if len(servers) == 0 && len(unreadable) > 0 {
 		s.moveAside(fmt.Errorf("entry at position %d: %w", errs[0].position, errs[0].err))
@@ -74,6 +75,26 @@ func (s *Store) load() error {
 	}
 	s.copyAside(raw)
 	return nil
+}
+
+// loadIdentityProvider takes the record's identity provider when the save rule accepts it. One it refuses is logged
+// and kept as read for persist, and KAS's file keeps the identityProvider it has until the user saves a provider.
+func (s *Store) loadIdentityProvider(raw json.RawMessage) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return
+	}
+	var idp identityProvider
+	err := json.Unmarshal(raw, &idp)
+	if err == nil {
+		err = validateIdentityProvider(&idp)
+	}
+	if err != nil {
+		s.idpUnreadable = raw
+		slog.Warn("mcp: the organization identity provider in mcp.json is unreadable; it stays in the file and kiro-cli does not get it until it is saved again",
+			"path", s.path, "error", err)
+		return
+	}
+	s.idp = &idp
 }
 
 // serverKeys is the nameKey of every stored server.
