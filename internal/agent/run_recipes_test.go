@@ -14,6 +14,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/schedule"
 )
@@ -110,6 +111,45 @@ func TestRecipeRoutes_RefuseASourceGoneSinceTheHold(t *testing.T) {
 			t.Errorf("POST /api/launch-rules = %d %s, want 400", rec.Code, rec.Body.String())
 		}
 	})
+}
+
+// A launch rule save waits on a fresh listing no longer than the answer budget: an unanswered one is 503 with a
+// Retry-After, which the browser reads before its own request budget aborts the save.
+func TestLaunchRuleSave_AnUnansweredListingAnswersWithinTheAnswerBudget(t *testing.T) {
+	answerBudgetOf(t, 50*time.Millisecond)
+	_, br, mux := runDefaultsHub(t)
+	holdCall(t, br, methodKiroWorkflowListRecipes)
+	const rule = `{"source":"bundled://publish","when":{"clock":{"freq":"daily","hour":2,"minute":0}},"enabled":true}`
+
+	rec := answeredWithin(t, func(w http.ResponseWriter) {
+		mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/launch-rules", strings.NewReader(rule)))
+	})
+	var reply struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &reply); err != nil || rec.Code != http.StatusServiceUnavailable ||
+		reply.Code != recipeListSlowCode || rec.Header().Get("Retry-After") == "" {
+		t.Errorf("POST /api/launch-rules = %d %s, want 503 %s with a Retry-After", rec.Code, rec.Body.String(), recipeListSlowCode)
+	}
+}
+
+// The held catalog answers a launch only when its recipe declares every input the launch names; otherwise a live
+// listing decides, so a schedule's input the recipe gained since the hold reaches workflow/new.
+func TestLaunch_AHeldRecipeMissingANamedInputIsReadLive(t *testing.T) {
+	h, _, br := newTestHub()
+	launchableRecipe(br, "wf_sched")
+	holdCatalog(t, h)
+	const declaresTag = `{"recipes":[{"name":"publish","source":"bundled://publish","inputs":{"tag":"the release tag"}}]}`
+	br.setCallResult(methodKiroWorkflowListRecipes, json.RawMessage(declaresTag))
+
+	if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", launchrule.Row{ID: "sched-1"},
+		map[string]string{"tag": "v1"}, marotte.RunDefaults{}, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("LaunchScheduled: %v", err)
+	}
+	inputs, _ := br.paramsFor(methodKiroWorkflowNew)["inputs"].(map[string]any)
+	if inputs["tag"] != "v1" {
+		t.Errorf("workflow/new inputs = %v, want tag=v1 kept", inputs)
+	}
 }
 
 // A launch whose engine does not answer before workflow/new (the recipe listing, the run list for the one-live-run

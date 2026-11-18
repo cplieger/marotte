@@ -14,6 +14,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/kirosession"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 )
@@ -78,6 +79,34 @@ func TestStopChatRuns_ReadsTheRunInventoryOnce(t *testing.T) {
 	}
 	if got := callsOf(br, methodKiroWorkflowList); got != 1 {
 		t.Errorf("`workflow/list` went out %d times to stop 2 runs, want 1", got)
+	}
+}
+
+// A close whose run list goes unanswered still stops the runs the chat launched that the run state KAS keeps on disk
+// shows live, not only the runs marotte leases: an unanswered list is not a chat that launched nothing.
+func TestStopChatRuns_AnUnansweredRunListStopsTheLiveRunsKASKeepsOnDisk(t *testing.T) {
+	setStopTiming(t, time.Hour, time.Hour)
+	sessionsDir := t.TempDir()
+	writeKASRunState(t, sessionsDir, "wf_disk", marotte.RunStatusRunning, "sess_owner")
+	writeKASRunState(t, sessionsDir, "wf_done", marotte.RunStatusCompleted, "sess_owner")
+	writeKASRunState(t, sessionsDir, "wf_foreign", marotte.RunStatusRunning, "sess_x")
+	h, cs, br := newTestHub(WithSessionReaper(kirosession.New(sessionsDir, testReaperWorkDir)))
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
+		methodKiroWorkflowInspect: inspectReply(t, "wf_other", "running", ""),
+	}
+	br.callErrs = map[string]error{methodKiroWorkflowList: errListUnanswered}
+	cs.seed(t, "c1", func(c *marotte.Chat) { c.RecordSession("sess_owner") })
+	h.insertBridgeNow("c1", testBridge(br, bridgeReady))
+
+	h.runs.stopChatRuns(t.Context(), "c1", &chat.Claim{})
+
+	if got := callsOf(br, methodKiroWorkflowCancel); got != 1 {
+		t.Fatalf("the cancel went out %d times, want once, for the one live run the chat launched", got)
+	}
+	if got := br.paramsFor(methodKiroWorkflowCancel)[keyWorkflowID]; got != "wf_disk" {
+		t.Errorf("the cancel named %v, want wf_disk", got)
 	}
 }
 

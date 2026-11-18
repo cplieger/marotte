@@ -854,7 +854,7 @@ func TestStopChatRuns_CancelsARunOnAnySessionOfTheChain(t *testing.T) {
 // record.
 func TestStopChatRuns_ReportsARunListItCouldNotRead(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
-	const wantLine = "close: the run list could not be read; stopping only the runs marotte leases"
+	const wantLine = "close: no run inventory could be read; stopping only the runs marotte leases"
 
 	t.Run("an unreadable run list is reported", func(t *testing.T) {
 		logs := captureLogs(t)

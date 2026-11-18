@@ -347,6 +347,15 @@ func (o *launchOrigin) sentInputs(inputs, declared map[string]string) (sent map[
 	return declaredInputs(inputs, declared)
 }
 
+func declaresEvery(declared, inputs map[string]string) bool {
+	for k := range inputs {
+		if _, ok := declared[k]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func declaredInputs(inputs, declared map[string]string) (kept map[string]string, dropped []string) {
 	kept = make(map[string]string, len(inputs))
 	for k, v := range inputs {
@@ -1135,14 +1144,16 @@ var agentNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 func isAgentSource(source string) bool { return strings.HasPrefix(source, agentSourcePrefix) }
 
-// launchRecipe resolves a recipe source, from the held catalog when it names the source and a live listing when it
-// does not, or an agent:// source. The launch needs only the recipe's name and declared inputs: KAS's workflow/new
-// validates the source itself. An agent run needs a prompt, and its recipe name is KAS's `agent-<name>`, so one live
-// run per agent. KAS refuses an unregistered agent.
+// launchRecipe resolves a recipe source, from the held catalog when it names the source and declares every input the
+// launch names, else from a live listing, or an agent:// source. The launch needs only the recipe's name and declared
+// inputs: KAS's workflow/new validates the source itself, and a scheduled launch drops an input its recipe does not
+// declare (sentInputs), which only a live listing may decide. An agent run needs a prompt, and its recipe name is
+// KAS's `agent-<name>`, so one live run per agent. KAS refuses an unregistered agent.
 func (rs *Runs) launchRecipe(ctx context.Context, source string, inputs map[string]string) (marotte.Recipe, error) {
 	if !isAgentSource(source) {
 		held := rs.recipes.heldCatalog()
-		if i := slices.IndexFunc(held, func(r marotte.Recipe) bool { return r.Source == source }); i >= 0 {
+		if i := slices.IndexFunc(held, func(r marotte.Recipe) bool { return r.Source == source }); i >= 0 &&
+			declaresEvery(held[i].Inputs, inputs) {
 			return held[i], nil
 		}
 		return rs.recipeBySource(ctx, source)
@@ -1763,6 +1774,26 @@ func (rs *Runs) listRaw(ctx context.Context) ([]kasWorkflowRun, error) {
 	return *list.Runs, nil
 }
 
+// runInventory answers every run with its launching session and status, for a teardown that must reach every run a
+// chat launched: KAS's run list, else the run state KAS keeps on disk, since KAS has no by-parent read and an
+// unanswered list is not a chat that launched nothing.
+func (rs *Runs) runInventory(ctx context.Context) ([]kasWorkflowRun, error) {
+	runs, err := rs.listRaw(ctx)
+	if err == nil || rs.runsOnDisk == nil {
+		return runs, err
+	}
+	states, dErr := rs.runsOnDisk()
+	if dErr != nil {
+		return nil, errors.Join(err, dErr)
+	}
+	slog.Warn("the run list could not be read; using the run state kiro-cli keeps on disk", "error", err, "runs", len(states))
+	out := make([]kasWorkflowRun, len(states))
+	for i := range states {
+		out[i] = kasWorkflowRun{WorkflowID: states[i].WorkflowID, Status: states[i].Status, ParentSessionID: states[i].ParentSessionID}
+	}
+	return out, nil
+}
+
 // deleteForSessions deletes every run these sessions launched, whatever its status: KAS refuses a session
 // delete while the session owns a live run.
 func (rs *Runs) deleteForSessions(ctx context.Context, chatID marotte.ChatID, sessionChain []string, stop runStop) {
@@ -1772,9 +1803,9 @@ func (rs *Runs) deleteForSessions(ctx context.Context, chatID marotte.ChatID, se
 	// The same test RunHolders attributes every run keep fact by, so this deletes exactly the runs whose facts
 	// would have kept the chat.
 	owners := chat.OwnersOfChain(chatID, sessionChain)
-	runs, err := rs.listRaw(ctx)
+	runs, err := rs.runInventory(ctx)
 	if err != nil {
-		slog.Warn("delete: run list unavailable, skipping run delete", "chat_id", chatID, "error", err)
+		slog.Warn("delete: no run inventory could be read, skipping run delete", "chat_id", chatID, "error", err)
 		return
 	}
 	for i := range runs {

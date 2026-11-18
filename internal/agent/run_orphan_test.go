@@ -37,6 +37,16 @@ func kasRuns(t *testing.T, rows ...map[string]any) json.RawMessage {
 }
 
 // inspectReply builds a KAS inspect reply. It takes the workflow id: the predicate refuses a reply naming another run.
+// inspectOfRow is KAS's inspect reply for a run whose state carries row's fields, as its list row shows them.
+func inspectOfRow(t *testing.T, row map[string]any) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{"workflowId": row["workflowId"], "state": row})
+	if err != nil {
+		t.Fatalf("Setup: marshal inspect: %v", err)
+	}
+	return raw
+}
+
 func inspectReply(t *testing.T, workflowID string, status marotte.RunStatus, reason string) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{

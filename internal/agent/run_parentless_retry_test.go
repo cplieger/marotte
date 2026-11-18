@@ -30,10 +30,10 @@ func unreadableChat(t *testing.T, cs *testChatStore, chatID string) {
 	}
 }
 
-// failedRunList is KAS's inventory naming one failed run launched from session.
-func failedRunList(workflowID, session string) json.RawMessage {
-	return json.RawMessage(`{"runs":[{"workflowId":"` + workflowID + `","name":"publish","workflowName":"publish",` +
-		`"status":"failed","parentSessionId":"` + session + `"}]}`)
+// failedRunInspect is KAS's inspect reply for one failed run launched from session.
+func failedRunInspect(workflowID, session string) json.RawMessage {
+	return json.RawMessage(`{"workflowId":"` + workflowID + `","state":{"workflowId":"` + workflowID + `",` +
+		`"workflowName":"publish","status":"failed","parentSessionId":"` + session + `"}}`)
 }
 
 // launchFailedParentless launches wf_1 parentless on h and fails it, releasing its lease, and answers its host session.
@@ -114,7 +114,7 @@ func TestRunOwner_AFailedParentlessRunIsParentlessWhileAChatFileIsUnreadable(t *
 	h, cs, br := newTestHub(WithConfigDir(dir))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	unreadableChat(t, cs, "c9")
-	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: failedRunList("wf_1", host)}
+	br.callResults = map[string]json.RawMessage{methodKiroWorkflowInspect: failedRunInspect("wf_1", host)}
 
 	got, err := h.runs.RunOwner(t.Context(), "wf_1")
 	if err != nil || got.Verdict != command.RunParentless {

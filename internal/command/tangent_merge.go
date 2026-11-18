@@ -19,14 +19,14 @@ var (
 	// chat any more.
 	ErrTangentParentGone = errors.New("the chat this tangent came from no longer exists")
 
-	errMergeTangentBusy = errors.New("this tangent is still working; merge it once its turn ends")
-	errMergeListFailed  = errors.New("couldn't read the session list to find the chat this tangent came from; try again")
+	errMergeTangentBusy  = errors.New("this tangent is still working; merge it once its turn ends")
+	errMergeParentUnread = errors.New("couldn't read the session list or a chat to find the chat this tangent came from; try again")
 )
 
 // TangentAccess is what a merge reads beyond the prompt path.
 type TangentAccess interface {
 	// TangentParent answers the chat the tangent chatID was forked from, ErrNotATangent or
-	// ErrTangentParentGone, or another error when KAS's session list could not be read.
+	// ErrTangentParentGone, or another error when KAS's session list or a chat could not be read.
 	TangentParent(ctx context.Context, chatID marotte.ChatID) (marotte.ChatID, error)
 	// TurnReply answers the main-lane text the agent wrote in one turn.
 	TurnReply(ctx context.Context, chatID marotte.ChatID, turnID string) (string, error)
@@ -109,7 +109,7 @@ func admitMerge(ctx context.Context, tangents TangentAccess, merges *tangentMerg
 		return "", "", StatusError(http.StatusNotFound, ErrTangentParentGone)
 	case err != nil:
 		slog.Warn("tangent merge: the parent could not be resolved", "chat_id", key.tangent, keyError, err)
-		return "", "", StatusError(http.StatusServiceUnavailable, errMergeListFailed)
+		return "", "", StatusError(http.StatusServiceUnavailable, errMergeParentUnread)
 	}
 	// Like the TUI, a busy tangent is refused rather than queued: the summary must be the
 	// next answer.

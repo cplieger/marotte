@@ -57,24 +57,20 @@ func RunHolders(parents []string, l *runlease.Lease, owners chat.SessionOwners) 
 }
 
 // RunOwner answers a run's owners by RunHolders (command.runOwner). A leased run answers from its lease and the
-// chats; an unleased one from KAS's inventory row, or its inspect reply when the inventory omits it, and the chats.
-// RunUnknown when no lease, row or reply names the run: the list leaves out a run whose state it could not read, so
-// an omission is not parentless. The error is an unreadable inventory, an owner scan that could not read every chat
-// and found no holder unless the parent is the run's recorded host (parentlessHost), or a run that names no launcher.
+// chats; an unleased one from its own inspect reply, read by key, and the chats. RunUnknown when kiro-cli answers it
+// does not know the run, or with a reply about another run. The error is a read kiro-cli refused or did not answer, an
+// owner scan that could not read every chat and found no holder unless the parent is the run's recorded host
+// (parentlessHost), or a run that names no launcher.
 func (rs *Runs) RunOwner(ctx context.Context, workflowID string) (command.RunOwner, error) {
 	if l, held := rs.lease(workflowID); held {
 		return rs.ownersOf(ctx, workflowID, []string{l.ParentSessionID}, &l)
 	}
-	runs, err := rs.listRaw(ctx)
-	if err != nil {
-		return command.RunOwner{}, fmt.Errorf("%w: reading the run inventory: %w", errRunHostStart, err)
-	}
-	if i := slices.IndexFunc(runs, func(r kasWorkflowRun) bool { return r.WorkflowID == workflowID }); i >= 0 {
-		return rs.ownersOf(ctx, workflowID, []string{runs[i].ParentSessionID}, nil)
-	}
 	raw, err := rs.rawInspect(ctx, workflowID)
-	if err != nil {
+	if workflowNotFound(err) {
 		return command.RunOwner{Verdict: command.RunUnknown}, nil
+	}
+	if err != nil {
+		return command.RunOwner{}, fmt.Errorf("%w: reading the run: %w", errRunHostStart, runReadErr(err))
 	}
 	var res inspectRunState
 	if json.Unmarshal(raw, &res) != nil || !res.names(workflowID) {

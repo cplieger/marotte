@@ -3,7 +3,9 @@ package agent
 // An agent-launched run KAS reconciles to paused on a read is parked, not stalled, and its chat's return resumes it.
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -120,6 +122,47 @@ func TestCancelExpired_ARunKASReportsPausedIsParked(t *testing.T) {
 	h.runs.cancelExpired(id, deadline)
 
 	wantParked(t, h, br, id)
+}
+
+// A read of the run kiro-cli did not answer leaves its pause unknown: the expiry refills the idle window rather than
+// stop, as stalled, a run its chat may resume.
+func TestCancelExpired_AnUnansweredReadRefillsTheWindow(t *testing.T) {
+	const id = "wf_1"
+	h, br := agentRunOnChat(t, id)
+	closeReviewStep(t, h, id)
+	br.mu.Lock()
+	br.callErrs = map[string]error{methodKiroWorkflowInspect: fmt.Errorf("workflow inspect call: %w", context.DeadlineExceeded)}
+	br.mu.Unlock()
+	deadline := stagedExpiry(t, h.runs, id, agentLaunch())
+
+	h.runs.cancelExpired(id, deadline)
+
+	if got := h.runs.endReason(id); got != "" {
+		t.Errorf("endReason = %q, want none: an unread run is not a stalled one", got)
+	}
+	if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
+		t.Errorf("a cancel went out for a run whose state went unread: %v", br.callLog())
+	}
+	if l, _ := h.runs.lease(id); !l.Deadline.After(time.Now()) {
+		t.Errorf("deadline = %v, want a refilled window ahead of now", l.Deadline)
+	}
+}
+
+// A run kiro-cli answers it does not know is settled: the expiry stops it as stalled.
+func TestCancelExpired_ARunKiroCLIDoesNotKnowIsAStall(t *testing.T) {
+	const id = "wf_1"
+	h, br := agentRunOnChat(t, id)
+	closeReviewStep(t, h, id)
+	br.mu.Lock()
+	br.callRPCErrs = map[string]*marotte.RPCError{methodKiroWorkflowInspect: workflowNotFoundErr()}
+	br.mu.Unlock()
+	deadline := stagedExpiry(t, h.runs, id, agentLaunch())
+
+	h.runs.cancelExpired(id, deadline)
+
+	if got := h.runs.endReason(id); got != runEndStalled {
+		t.Errorf("endReason = %q, want %q", got, runEndStalled)
+	}
 }
 
 // A park must not disarm a deadline a resume re-stamped after this expiry was armed.

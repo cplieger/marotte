@@ -270,6 +270,7 @@ func TestRetention_KeepState(t *testing.T) {
 			b := bootSeam(t, root, eng, logs, seamOpts{})
 			b.seed(t, "c-1", sess("c-1"))
 			eng.list(t, seamRow("wf_1", "completed", sess("c-1")))
+			eng.inspected(t, "wf_1", "completed", sess("c-1"))
 			b.loneRunTab(t, "c-1", "wf_1")
 			b.age(t, "c-1", seamIdle)
 			b.pass(t)
@@ -279,6 +280,7 @@ func TestRetention_KeepState(t *testing.T) {
 			b := bootSeam(t, root, eng, logs, seamOpts{})
 			b.seed(t, "c-1", sess("c-1"))
 			eng.list(t, seamRow("wf_1", "completed", sess("c-1")))
+			eng.inspected(t, "wf_1", "completed", sess("c-1"))
 			b.loneRunTab(t, "c-1", "wf_1")
 			b.closeTabID(t, b.runTabOf("wf_1"))
 			b.waitKey(t, "c-1", runTabKey("wf_1"), false)
@@ -463,6 +465,7 @@ func TestRetention_KeepState(t *testing.T) {
 			}
 			b.seed(t, "c-r", sess("c-r"))
 			eng.list(t, seamRow("wf_r", "completed", sess("c-r")))
+			eng.inspected(t, "wf_r", "completed", sess("c-r"))
 			if code, body := b.openTab(t, marotte.TabKindRun, "wf_r", parent); code != http.StatusOK {
 				t.Fatalf("Setup: nest the run tab = %d %v", code, body)
 			}
@@ -520,6 +523,7 @@ func TestRetention_KeepState(t *testing.T) {
 			b := bootSeam(t, root, eng, logs, seamOpts{})
 			b.seed(t, "c-1", sess("c-1"))
 			eng.list(t, seamRow("wf_1", "completed", sess("c-1")))
+			eng.inspected(t, "wf_1", "completed", sess("c-1"))
 			b.age(t, "c-1", seamIdle)
 			entered, release := eng.block(t, kasSessDel)
 			n := logs.count(seamPassLine)

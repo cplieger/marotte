@@ -50,7 +50,7 @@ func answeredWithin(t *testing.T, serve func(w http.ResponseWriter)) *httptest.R
 	case <-done:
 		return rec
 	case <-time.After(5 * time.Second):
-		t.Fatal("the handler is still waiting on the engine 5s in, want a still_applying answer at the answer budget")
+		t.Fatal("the handler is still waiting on the engine 5s in, want its answer at the answer budget")
 		return nil
 	}
 }
