@@ -534,19 +534,11 @@ func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testin
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowRetry: json.RawMessage(`{}`),
-		// The run list supplies a reloaded run's recipe.
-		methodKiroWorkflowList: json.RawMessage(
-			`{"runs":[{"workflowId":"wf_1","name":"nightly","workflowName":"nightly","status":"aborted",` +
-				`"parentSessionId":"` + testLaunchSession + `"}]}`,
-		),
 	}
 	held := make(chan struct{})
 	br.blockOn = map[string]chan struct{}{methodKiroWorkflowRetry: held}
 	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
-	if o := h.runs.originOf(t.Context(), id); o.recipe != "nightly" {
-		t.Fatalf("Setup: the run list resolves recipe %q, want nightly", o.recipe)
-	}
-	aff := h.runs.affordance(id, &runHead{Status: "aborted"})
+	aff := h.runs.affordance(id, launchedHead("aborted", testLaunchSession, "nightly"))
 
 	done := make(chan error, 1)
 	go func() {
@@ -590,25 +582,18 @@ func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testin
 	}
 }
 
-// TestRetry_ALoadedHostRunTakesItsRecipeFromTheRunList pins that the lease needs the recipe the single-run rule compares.
-func TestRetry_ALoadedHostRunTakesItsRecipeFromTheRunList(t *testing.T) {
+// TestRetry_AReloadedHostRunTakesItsRecipeFromItsState pins that the lease needs the recipe the single-run rule compares.
+func TestRetry_AReloadedHostRunTakesItsRecipeFromItsState(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowRetry: json.RawMessage(`{}`),
-		methodKiroWorkflowList: json.RawMessage(
-			`{"runs":[{"workflowId":"wf_1","name":"nightly","workflowName":"nightly","status":"aborted",` +
-				`"parentSessionId":"` + testLaunchSession + `"}]}`,
-		),
 	}
 	// No host session in the manager: the reload path.
 	if h.bridge.mgr.get(runChatID(id)) != nil {
 		t.Fatal("the fixture registered a bridge, so this exercises the wrong branch")
 	}
-	if o := h.runs.originOf(t.Context(), id); o.recipe != "nightly" {
-		t.Fatalf("Setup: the run list resolves recipe %q, want nightly", o.recipe)
-	}
-	aff := h.runs.affordance(id, &runHead{Status: "aborted"})
+	aff := h.runs.affordance(id, launchedHead("aborted", testLaunchSession, "nightly"))
 
 	if _, err := h.runs.retry(t.Context(), id, aff); err != nil {
 		t.Fatalf("Retry: %v", err)
@@ -618,7 +603,7 @@ func TestRetry_ALoadedHostRunTakesItsRecipeFromTheRunList(t *testing.T) {
 		t.Fatal("the reloaded run holds no lease, so nothing bounds it")
 	}
 	if l.Recipe != "nightly" {
-		t.Errorf("recipe = %q, want nightly off KAS's run list", l.Recipe)
+		t.Errorf("recipe = %q, want nightly off KAS's state of the run", l.Recipe)
 	}
 	if l.Origin != runlease.OriginManual {
 		t.Errorf("origin = %q, want manual: the user clicked Retry, so this run is the user's "+
@@ -633,15 +618,10 @@ func TestRetry_ALoadedHostRunTakesItsRecipeFromTheRunList(t *testing.T) {
 func TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
-	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowList: json.RawMessage(
-			`{"runs":[{"workflowId":"wf_1","name":"nightly","workflowName":"nightly","status":"aborted",` +
-				`"parentSessionId":"` + testLaunchSession + `"}]}`,
-		),
-	}
+	br.callResults = map[string]json.RawMessage{}
 	br.callErrs = map[string]error{methodKiroWorkflowRetry: errors.New("kas refused")}
 
-	_, err := h.runs.retry(t.Context(), id, h.runs.affordance(id, &runHead{Status: "aborted"}))
+	_, err := h.runs.retry(t.Context(), id, h.runs.affordance(id, launchedHead("aborted", testLaunchSession, "nightly")))
 	if !slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
 		t.Fatalf("Setup: the retry never reached KAS (err %v); calls were %v", err, br.callLog())
 	}
@@ -1675,7 +1655,7 @@ func triggeredRetryHubOn(t *testing.T, c TriggerConfirmer, dir string, o launchO
 
 func retryFailed(t *testing.T, h *Runtime) error {
 	t.Helper()
-	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "failed"}))
+	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", launchedHead("failed", testLaunchSession, "publish")))
 	return err
 }
 

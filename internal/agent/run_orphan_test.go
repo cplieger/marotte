@@ -49,6 +49,43 @@ func inspectReply(t *testing.T, workflowID string, status marotte.RunStatus, rea
 	return raw
 }
 
+// inspectLaunched is inspectReply for a run of recipe launched from parent, the origin a run verb hosts it from.
+func inspectLaunched(t *testing.T, workflowID string, status marotte.RunStatus, parent, recipe string) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{
+		"workflowId": workflowID,
+		"state":      map[string]any{"status": status, "parentSessionId": parent, "workflowName": recipe},
+	})
+	if err != nil {
+		t.Fatalf("marshal inspect: %v", err)
+	}
+	return raw
+}
+
+// fromParent is an inspect reply raw with its state naming parent as the run's launching session.
+func fromParent(t *testing.T, raw json.RawMessage, parent string) json.RawMessage {
+	t.Helper()
+	var reply map[string]any
+	if err := json.Unmarshal(raw, &reply); err != nil {
+		t.Fatalf("Setup: unmarshal inspect: %v", err)
+	}
+	state, _ := reply["state"].(map[string]any)
+	if state == nil {
+		t.Fatal("Setup: the inspect reply has no state")
+	}
+	state["parentSessionId"] = parent
+	out, err := json.Marshal(reply)
+	if err != nil {
+		t.Fatalf("Setup: marshal inspect: %v", err)
+	}
+	return out
+}
+
+// launchedHead is the gate's head for a run of recipe launched from parent.
+func launchedHead(status marotte.RunStatus, parent, recipe string) *runHead {
+	return &runHead{Status: string(status), ParentSessionID: parent, WorkflowName: recipe}
+}
+
 // inspectPaused is the ordinary positive shape: this run, paused, for this reason.
 func inspectPaused(t *testing.T, workflowID, reason string) json.RawMessage {
 	t.Helper()

@@ -14,6 +14,8 @@ import (
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/policyfile"
+	"github.com/cplieger/marotte/internal/settings"
 )
 
 // unreadableChat leaves a chat directory whose header does not decode, so every owner scan is incomplete.
@@ -63,12 +65,9 @@ func TestRetry_AFailedParentlessRunRetriesAcrossARestartWhileAChatFileIsUnreadab
 	h, cs, br := newTestHub(WithConfigDir(dir))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	unreadableChat(t, cs, "c9")
-	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowRetry: json.RawMessage(`{}`),
-		methodKiroWorkflowList:  failedRunList("wf_1", host),
-	}
+	br.callResults = map[string]json.RawMessage{methodKiroWorkflowRetry: json.RawMessage(`{}`)}
 
-	if _, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "failed"})); err != nil {
+	if _, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", launchedHead("failed", host, "publish"))); err != nil {
 		t.Fatalf("Retry of a parentless run with a chat file unreadable = %v, want it retried", err)
 	}
 	if !slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
@@ -81,12 +80,9 @@ func TestRetry_AChatLaunchedRunWhoseLauncherIsUnreadableIsRefused(t *testing.T) 
 	h, cs, br := newTestHub(WithConfigDir(t.TempDir()))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	unreadableChat(t, cs, "c9")
-	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowRetry: json.RawMessage(`{}`),
-		methodKiroWorkflowList:  failedRunList("wf_1", "sess_c9"),
-	}
+	br.callResults = map[string]json.RawMessage{methodKiroWorkflowRetry: json.RawMessage(`{}`)}
 
-	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "failed"}))
+	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", launchedHead("failed", "sess_c9", "publish")))
 	if code, _, _ := command.StatusOf(err); code != http.StatusServiceUnavailable || !errors.Is(err, errRetryChatUnread) {
 		t.Fatalf("Retry with the launcher unreadable = %v (status %d), want 503 errRetryChatUnread", err, code)
 	}
@@ -100,12 +96,9 @@ func TestRetry_ARunWhoseLaunchingChatIsInTeardownIsRefused(t *testing.T) {
 	h, cs, br := newTestHub(WithConfigDir(t.TempDir()))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	cs.tearDown("sess_c9")
-	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowRetry: json.RawMessage(`{}`),
-		methodKiroWorkflowList:  failedRunList("wf_1", "sess_c9"),
-	}
+	br.callResults = map[string]json.RawMessage{methodKiroWorkflowRetry: json.RawMessage(`{}`)}
 
-	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "failed"}))
+	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", launchedHead("failed", "sess_c9", "publish")))
 	if code, _, _ := command.StatusOf(err); code != http.StatusConflict || !errors.Is(err, errRetryChatPurging) {
 		t.Fatalf("Retry with the launching chat in teardown = %v (status %d), want 409 errRetryChatPurging", err, code)
 	}
@@ -181,11 +174,8 @@ func dirExists(path string) bool {
 func TestRetry_ARetriedChatLaunchedRunIsStillRefusedWhileAChatFileIsUnreadable(t *testing.T) {
 	h, cs, br := newTestHub(WithConfigDir(t.TempDir()))
 	t.Cleanup(func() { shutdownHub(t, h) })
-	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowRetry: json.RawMessage(`{}`),
-		methodKiroWorkflowList:  failedRunList("wf_1", "sess_c9"),
-	}
-	if _, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "failed"})); err != nil {
+	br.callResults = map[string]json.RawMessage{methodKiroWorkflowRetry: json.RawMessage(`{}`)}
+	if _, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", launchedHead("failed", "sess_c9", "publish"))); err != nil {
 		t.Fatalf("Setup: Retry with the launcher deleted = %v", err)
 	}
 	h.runs.observeComplete(t.Context(), runChatID("wf_1"), runCompleteFrame(t, "wf_1", "failed"))
@@ -194,7 +184,7 @@ func TestRetry_ARetriedChatLaunchedRunIsStillRefusedWhileAChatFileIsUnreadable(t
 	}
 	unreadableChat(t, cs, "c9")
 
-	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "failed"}))
+	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", launchedHead("failed", "sess_c9", "publish")))
 	if code, _, _ := command.StatusOf(err); code != http.StatusServiceUnavailable || !errors.Is(err, errRetryChatUnread) {
 		t.Fatalf("Second retry with a chat unreadable = %v (status %d), want 503 errRetryChatUnread", err, code)
 	}
@@ -375,7 +365,9 @@ func TestEnsureResident_AnUnleasedParentlessRunIsRefusedForItsLeaseWhileAChatFil
 	h, cs, br := newTestHub(WithConfigDir(dir))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	unreadableChat(t, cs, "c9")
-	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: failedRunList("wf_1", host)}
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowInspect: inspectLaunched(t, "wf_1", marotte.RunStatusFailed, host, "publish"),
+	}
 
 	_, release, err := h.runs.ensureResident(t.Context(), "wf_1")
 	release()
@@ -384,21 +376,60 @@ func TestEnsureResident_AnUnleasedParentlessRunIsRefusedForItsLeaseWhileAChatFil
 	}
 }
 
-// A retry of an unleased run whose inventory cannot be read answers that failure, minting no lease and sending no verb.
-func TestRetry_AnUnleasedRunWhoseInventoryIsUnreadableAnswersTheReadFailure(t *testing.T) {
+// A parentless run's retry after its terminal frame released its lease keeps the launch's host session and security
+// profile, so a profile changed since the launch never widens or narrows a retried run's permissions.
+func TestRetry_AParentlessRunKeepsItsLaunchProfileAfterItsLeaseIsReleased(t *testing.T) {
+	launched, _ := policyfile.ProfileFor(policyfile.ProfileUnrestricted)
+	now, _ := policyfile.ProfileFor(policyfile.ProfileGuarded)
+	if slices.Equal(launched.Presets, now.Presets) {
+		t.Fatal("Setup: the two profiles carry the same presets, so this proves nothing")
+	}
+	dir := t.TempDir()
+	writeSetting(t, dir, settings.KeySecurityProfile, policyfile.ProfileUnrestricted)
+	h, _, br := newTestHub(WithConfigDir(dir))
+	host := launchFailedParentless(t, h, br)
+	shutdownHub(t, h)
+	// The restart leaves the host session to reload, with whatever presets the retry gives it.
+	writeSetting(t, dir, settings.KeySecurityProfile, policyfile.ProfileGuarded)
+	h, _, br = newTestHub(WithConfigDir(dir))
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br.setCallResult(methodKiroWorkflowRetry, retryReply(t, "wf_1", "running", "n1"))
+
+	if _, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", launchedHead("failed", host, "publish"))); err != nil {
+		t.Fatalf("Retry = %v", err)
+	}
+
+	l, held := h.runs.lease("wf_1")
+	if !held || l.ParentSessionID != host {
+		t.Fatalf("lease = %+v held %v, want one naming the launch's host session %s", l, held, host)
+	}
+	if presets, err := l.HostPresets(); err != nil || !slices.Equal(presets, launched.Presets) {
+		t.Errorf("the retry's lease presets = %v, %v, want the launch's %v", presets, err, launched.Presets)
+	}
+	if so := br.lastSessionOpts(); so == nil || so.SessionID != host || !slices.Equal(so.Presets, launched.Presets) {
+		t.Errorf("the retry loaded %+v, want the host session %s with the launch's presets %v", so, host, launched.Presets)
+	}
+}
+
+// A run marotte launched parentless whose launch security is missing from disk is refused, sending nothing: any
+// profile would be a guess at its permissions.
+func TestRetry_AParentlessRunWithNoRecordedLaunchProfileIsRefused(t *testing.T) {
 	h, _, br := newTestHub(WithConfigDir(t.TempDir()))
 	t.Cleanup(func() { shutdownHub(t, h) })
-	br.setCallResult(methodKiroWorkflowRetry, json.RawMessage(`{}`))
-	br.setCallErr(methodKiroWorkflowList, errors.New("inventory unreadable"))
+	host := launchFailedParentless(t, h, br)
+	if err := os.Remove(filepath.Join(h.runs.log.root, "wf_1", hostSecurityFileName)); err != nil {
+		t.Fatalf("Setup: %s", err)
+	}
+	br.setCallResult(methodKiroWorkflowRetry, retryReply(t, "wf_1", "running", "n1"))
 
-	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "failed"}))
-	if !errors.Is(err, errRunHostStart) {
-		t.Fatalf("Retry with the inventory unreadable = %v, want errRunHostStart (500)", err)
+	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", launchedHead("failed", host, "publish")))
+	if !errors.Is(err, errLaunchSessionUnavailable) || !errors.Is(err, errHostSecurityUnrecorded) {
+		t.Fatalf("Retry = %v, want errLaunchSessionUnavailable naming errHostSecurityUnrecorded", err)
+	}
+	if br.called(methodKiroWorkflowRetry) {
+		t.Error("the retry verb was sent for a run whose launch profile is unknown")
 	}
 	if _, held := h.runs.lease("wf_1"); held {
 		t.Error("the refused retry left a lease")
-	}
-	if slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
-		t.Error("the retry verb was sent for a run whose launching session is unknown")
 	}
 }

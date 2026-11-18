@@ -682,11 +682,14 @@ func (rr *runRoutes) handleRetry(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "missing workflow id")
 		return
 	}
-	aff, ok := rr.permits(w, r, verbRetry, id)
+	// The gate's read sits inside the retry's own deadline, so the whole retry answers inside the client's budget.
+	ctx, cancel := context.WithTimeout(r.Context(), retryTimeout)
+	defer cancel()
+	aff, ok := rr.permits(w, r.WithContext(ctx), verbRetry, id)
 	if !ok {
 		return
 	}
-	out, err := rr.runs.retry(r.Context(), id, aff)
+	out, err := rr.runs.retry(ctx, id, aff)
 	if err != nil {
 		rr.writeControlErr(w, verbRetry, id, err)
 		return
@@ -900,9 +903,7 @@ func (rr *runRoutes) permits(
 ) (*runAffordance, bool) {
 	head, err := rr.head(r.Context(), id)
 	if err != nil {
-		slog.Warn("run control: status read failed",
-			"verb", verb, "workflow_id", logsafe.Field(id), "error", err, "detail", rpcerr.Details(err))
-		httpreply.InternalError(w, errors.New(verb+" failed"))
+		writeHeadErr(w, verb, id, err)
 		return nil, false
 	}
 	status := head.Status
@@ -931,15 +932,36 @@ const deleteUnconfirmedText = "The delete was sent, but its answer was lost. " +
 const controlUnreadText = "The run control was sent but its answer could not be read. " +
 	"Refresh the run to see where it is."
 
+// writeHeadErr answers a verb whose gate read of the run failed: 503 when kiro-cli did not answer it, since a later
+// try usually reads it, else 500.
+func writeHeadErr(w http.ResponseWriter, verb, id string, err error) {
+	slog.Warn("run control: status read failed",
+		"verb", verb, "workflow_id", logsafe.Field(id), "error", err, "detail", rpcerr.Details(err))
+	if rErr := runReadErr(err); errors.Is(rErr, errRunUnread) {
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(errRunUnread.Error()))
+		return
+	}
+	httpreply.InternalError(w, errors.New(verb+" failed"))
+}
+
+// gaveUpText is the sentence a verb that gave up waiting answers: on the run's read, else on its session or another
+// verb holding it.
+func gaveUpText(err error) string {
+	if errors.Is(err, errRunUnread) {
+		return errRunUnread.Error()
+	}
+	return errRunHostSlow.Error()
+}
+
 // writeControlErr answers a verb that reached KAS and failed: a refusal forwards KAS's actionable sentence;
 // InternalError is for faults that are not the reader's.
 func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err error) {
 	switch {
 	case writeStatusErr(w, err):
-	case errors.Is(err, errRunHostSlow):
+	case errors.Is(err, errRunHostSlow), errors.Is(err, errRunUnread):
 		slog.Warn("run control timed out waiting for the run, so nothing was sent",
-			"verb", verb, "workflow_id", logsafe.Field(id))
-		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
+			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(gaveUpText(err)))
 	case engineHoldsSession(err):
 		slog.Warn("run control refused: kiro-cli has not released the run's launching session",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
@@ -1040,9 +1062,7 @@ func (rr *runRoutes) controlHandler(w http.ResponseWriter, r *http.Request, verb
 		head, err := rr.head(r.Context(), id)
 		status := head.Status
 		if err != nil {
-			slog.Warn("run control: status read failed",
-				"verb", verb.name, "workflow_id", logsafe.Field(id), "error", err, "detail", rpcerr.Details(err))
-			httpreply.InternalError(w, errors.New(verb.name+" failed"))
+			writeHeadErr(w, verb.name, id, err)
 			return
 		}
 		if status == "" {

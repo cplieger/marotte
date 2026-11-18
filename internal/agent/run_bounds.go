@@ -665,7 +665,7 @@ func (rs *Runs) restartLife(ctx context.Context, workflowID string) {
 }
 
 // An already-hosted retry may still carry its old deadline; one after a terminal frame needs a new
-// lease, named from KAS's run list for the single-run rule. The slot stays zero.
+// lease, named from the gate's read of the run for the single-run rule. The slot stays zero.
 func (rs *Runs) rearmRetried(ctx context.Context, workflowID string, o *runOrigin, holders []marotte.ChatID) {
 	rs.clearEnd(workflowID)
 	rs.disarmDeadline(ctx, workflowID)

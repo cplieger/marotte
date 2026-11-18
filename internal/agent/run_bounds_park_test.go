@@ -203,7 +203,7 @@ func TestResumeInterruptedRuns_ReReadsAnOrphanKASStillListsRunning(t *testing.T)
 	defer shutdownHub(t, h)
 	h.coord.closeHostedRuns(t.Context(), parkChat, marotte.StopReasonInterrupted)
 	br.mu.Lock()
-	br.callResults[methodKiroWorkflowInspect] = inspectPaused(t, id, stalePauseReason)
+	br.callResults[methodKiroWorkflowInspect] = fromParent(t, inspectPaused(t, id, stalePauseReason), parkSession)
 	br.callResults[methodKiroWorkflowResume] = json.RawMessage(`{}`)
 	br.mu.Unlock()
 	listCount(t, br, id, func(n int32) string {

@@ -182,7 +182,7 @@ func TestRetryBehindAbandonedCancelTimesOut(t *testing.T) {
 	ctx, expire := expiringContext(t, t.Context())
 	retried := make(chan error, 1)
 	go func() {
-		_, err := h.runs.retry(ctx, "wf_1", h.runs.affordance("wf_1", &runHead{Status: "failed"}))
+		_, err := h.runs.retry(ctx, "wf_1", h.runs.affordance("wf_1", launchedHead("failed", testLaunchSession, "publish")))
 		retried <- err
 	}()
 	waitFor(t, func() bool { return ownerTurnUsers(h, "wf_1") == 2 })

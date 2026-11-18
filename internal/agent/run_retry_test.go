@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,12 +41,8 @@ func seedChatParentedRun(t *testing.T, openChat bool, nodes ...string) (*Runtime
 	t.Helper()
 	h, cs, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "aborted", ""),
-		methodKiroWorkflowList: kasRuns(t, map[string]any{
-			"workflowId": "wf_1", "name": "publish",
-			"status": "aborted", "parentSessionId": "sess_owned",
-		}),
-		methodKiroWorkflowRetry: retryReply(t, "wf_1", "running", nodes...),
+		methodKiroWorkflowInspect: inspectLaunched(t, "wf_1", "aborted", "sess_owned", "publish"),
+		methodKiroWorkflowRetry:   retryReply(t, "wf_1", "running", nodes...),
 	}
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "Findings cleanup"
@@ -62,16 +59,18 @@ func seedChatParentedRun(t *testing.T, openChat bool, nodes ...string) (*Runtime
 	return h, br
 }
 
+// gateAnswer is the retry gate's read of workflowID, as handleRetry takes it.
 func gateAnswer(t *testing.T, h *Runtime, workflowID string) *runAffordance {
 	t.Helper()
-	o := h.runs.originOf(t.Context(), workflowID)
-	if o.parent.chat != "c1" {
-		t.Fatalf("Setup: the run list resolves parent %q, want the launching chat c1", o.parent.chat)
+	head, err := h.runRoutes.head(t.Context(), workflowID)
+	if err != nil {
+		t.Fatalf("Setup: the gate's read = %v", err)
 	}
-	if o.recipe != "publish" {
-		t.Fatalf("Setup: the run list resolves recipe %q, want publish", o.recipe)
+	if head.ParentSessionID != "sess_owned" || head.WorkflowName != "publish" {
+		t.Fatalf("Setup: the gate read parent %q, recipe %q, want sess_owned and publish",
+			head.ParentSessionID, head.WorkflowName)
 	}
-	return h.runs.affordance(workflowID, &runHead{Status: "aborted"})
+	return h.runs.affordance(workflowID, &head)
 }
 
 // TestHandleRetry_AnswersTheOutcomeRatherThanOk pins that the reply carries KAS's status and reset node ids.
@@ -507,13 +506,11 @@ func TestHandleRetry_AnUnreadableOutcomeTellsTheReaderToRefresh(t *testing.T) {
 func TestRetry_KeepsTheParentItReadBeforeTheVerb(t *testing.T) {
 	h, br := seedChatParentedRun(t, true, "final-verify")
 	aff := gateAnswer(t, h, "wf_1")
-	// Once the verb is sent, the inventory forgets the run's parent session.
+	// Once the verb is sent, the run's state forgets its parent session.
 	br.mu.Lock()
 	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 		if method == methodKiroWorkflowRetry {
-			br.setCallResult(methodKiroWorkflowList, kasRuns(t, map[string]any{
-				"workflowId": "wf_1", "name": "publish", "status": "aborted",
-			}))
+			br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "aborted", ""))
 		}
 		return nil, nil, false
 	}
@@ -568,7 +565,7 @@ func TestRetry_ARunWhoseEndWasMissedStartsWithItsOwnBudgets(t *testing.T) {
 		t.Fatalf("stopAutoResume: %v", err)
 	}
 
-	if _, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "failed"})); err != nil {
+	if _, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", launchedHead("failed", testLaunchSession, "publish"))); err != nil {
 		t.Fatalf("Retry: %v", err)
 	}
 
@@ -611,4 +608,90 @@ func TestRetrySettlesTriggeredMissedEnd(t *testing.T) {
 			t.Errorf("calls = %q, want no outcome for a run its rule abandoned", fc.recorded())
 		}
 	})
+}
+
+// A gate read kiro-cli does not answer (its deadline passes or the engine ends) is a 503 naming the cause, never 409
+// "cannot be opened on this server" or 500: a later try usually reads the run. Nothing is sent and no lease minted.
+func TestHandleRetry_AnUnansweredReadOfTheRunIsTryAgain(t *testing.T) {
+	for name, cause := range map[string]error{
+		"a deadline":    fmt.Errorf("workflow inspect call: %w", context.DeadlineExceeded),
+		"an engine end": fmt.Errorf("workflow inspect call: %w", marotte.ErrBridgeExited),
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, _, br := newTestHub()
+			t.Cleanup(func() { shutdownHub(t, h) })
+			br.callResults = map[string]json.RawMessage{methodKiroWorkflowRetry: retryReply(t, "wf_1", "running", "n1")}
+			br.callErrs = map[string]error{methodKiroWorkflowInspect: cause}
+
+			rec := httptest.NewRecorder()
+			h.runRoutes.handleRetry(rec, retryReq("wf_1"))
+
+			if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), errRunUnread.Error()) {
+				t.Errorf("the retry = %d %s, want 503 %q", rec.Code, rec.Body.String(), errRunUnread)
+			}
+			if br.called(methodKiroWorkflowRetry) {
+				t.Error("the retry verb was sent on an unread run")
+			}
+			if _, held := h.runs.lease("wf_1"); held {
+				t.Error("the unanswered read left a lease")
+			}
+		})
+	}
+}
+
+// The retry reads the one run it retries: KAS's whole run inventory, which can take longer than the client waits,
+// is not on its path.
+func TestRetry_ReadsNoRunInventory(t *testing.T) {
+	h, br := seedChatParentedRun(t, true, "final-verify")
+	holdCall(t, br, methodKiroWorkflowList)
+
+	rec := answeredWithin(t, func(w http.ResponseWriter) { h.runRoutes.handleRetry(w, retryReq("wf_1")) })
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("the retry with the run inventory unanswered = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+}
+
+// Every read before the verb sits inside retryTimeout, so the retry answers before the client's request budget.
+func TestHandleRetry_TheRunReadIsBoundedByRetryTimeout(t *testing.T) {
+	prev := retryTimeout
+	retryTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { retryTimeout = prev })
+	h, br := seedChatParentedRun(t, true, "final-verify")
+	holdCall(t, br, methodKiroWorkflowInspect)
+
+	rec := answeredWithin(t, func(w http.ResponseWriter) { h.runRoutes.handleRetry(w, retryReq("wf_1")) })
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("the retry whose read outlasted retryTimeout = %d %s, want 503", rec.Code, rec.Body.String())
+	}
+	if br.called(methodKiroWorkflowRetry) {
+		t.Error("the retry verb was sent on an unread run")
+	}
+}
+
+// A person's verb whose status read kiro-cli did not answer is a 503 naming the cause, on every gated route.
+func TestRunControls_AnUnansweredStatusReadIsTryAgain(t *testing.T) {
+	routes := map[string]func(rr *runRoutes, w http.ResponseWriter, r *http.Request){
+		"resume": (*runRoutes).handleResume,
+		"pause":  (*runRoutes).handlePause,
+	}
+	for name, serve := range routes {
+		t.Run(name, func(t *testing.T) {
+			h, _, br := newTestHub()
+			t.Cleanup(func() { shutdownHub(t, h) })
+			br.callErrs = map[string]error{
+				methodKiroWorkflowInspect: fmt.Errorf("workflow inspect call: %w", context.DeadlineExceeded),
+			}
+			req := httptest.NewRequest(http.MethodPost, "/api/runs/wf_1/"+name, nil)
+			req.SetPathValue("id", "wf_1")
+
+			rec := httptest.NewRecorder()
+			serve(h.runRoutes, rec, req)
+
+			if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), errRunUnread.Error()) {
+				t.Errorf("%s = %d %s, want 503 %q", name, rec.Code, rec.Body.String(), errRunUnread)
+			}
+		})
+	}
 }

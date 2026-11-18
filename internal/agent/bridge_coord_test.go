@@ -1095,7 +1095,7 @@ func TestSessionLoad_HealsTheChatsRestartPausedRuns(t *testing.T) {
 		methodKiroWorkflowList: kasRuns(t, map[string]any{
 			"workflowId": "wf_1", "status": "paused", "parentSessionId": "sess_owned",
 		}),
-		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", stalePauseReason),
+		methodKiroWorkflowInspect: fromParent(t, inspectPaused(t, "wf_1", stalePauseReason), "sess_owned"),
 		methodKiroWorkflowResume:  json.RawMessage(`{}`),
 	}
 	if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {

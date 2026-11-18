@@ -266,7 +266,7 @@ func (rs *Runs) startLaunched(
 	}
 	parent := sb.SessionID()
 	rs.recordParentSession(ctx, wfID, string(parent))
-	rs.recordHost(ctx, wfID, string(parent))
+	rs.recordHost(ctx, wfID, string(parent), host)
 	// Visible to Route before invoke is written, so the run's first frame reaches the host's lane.
 	rs.router.registerOwner(wfID, parent)
 	if _, err := rs.write(ctx, a, sb, wfID, methodKiroWorkflowInvoke,
@@ -641,7 +641,8 @@ type kasRetryOutcome struct {
 	RetriedNodeIDs []string `json:"retriedNodeIds"`
 }
 
-// retry resets a failed or aborted run's failed work and reports what it reset, hosted from one read of the run's origin.
+// retry resets a failed or aborted run's failed work and reports what it reset, hosted from the origin the gate's read
+// of the run (aff) names. Every read before the verb runs inside retryTimeout.
 func (rs *Runs) retry(
 	ctx context.Context, workflowID string, aff *runAffordance,
 ) (out marotte.RunRetriedResponse, err error) {
@@ -654,22 +655,13 @@ func (rs *Runs) retry(
 		return out, command.StatusError(http.StatusConflict, errRetryRunDeleting)
 	}
 	defer lease.end()
-	// Read before the verb and reused throughout: nothing can learn it once the run re-drives, and two reads can disagree.
-	origin := rs.originOf(ctx, workflowID)
-	if uErr := rs.unroutableOrigin(workflowID, &origin); uErr != nil {
-		return out, uErr
-	}
 	cctx, cancel := context.WithTimeout(ctx, retryTimeout)
 	defer cancel()
-
-	recipe := origin.recipe
-	holders, launchers, err := rs.retryHolders(cctx, workflowID, &origin)
+	origin, holders, err := rs.retryOrigin(cctx, workflowID, aff)
 	if err != nil {
 		return out, err
 	}
-	if refused := rs.refuseClosedLauncher(workflowID, launchers); refused != nil {
-		return out, refused
-	}
+	recipe := origin.recipe
 	own, event, err := rs.ownForRetry(cctx, workflowID)
 	if err != nil {
 		return out, err
@@ -713,6 +705,28 @@ func (rs *Runs) retry(
 	return out, nil
 }
 
+// retryOrigin is the origin a retry hosts the run from and the chats holding its marks, from the gate's read (aff):
+// reused throughout, since nothing can learn it once the run re-drives, and two reads can disagree.
+func (rs *Runs) retryOrigin(
+	ctx context.Context, workflowID string, aff *runAffordance,
+) (runOrigin, []marotte.ChatID, error) {
+	origin := originOfHead(&aff.head)
+	if err := rs.unroutableOrigin(workflowID, &origin); err != nil {
+		return origin, nil, err
+	}
+	holders, launchers, err := rs.retryHolders(ctx, workflowID, &origin)
+	if err != nil {
+		return origin, nil, err
+	}
+	if err := rs.refuseClosedLauncher(workflowID, launchers); err != nil {
+		return origin, nil, err
+	}
+	if err := rs.retryHostSecurity(ctx, workflowID, &origin); err != nil {
+		return origin, nil, err
+	}
+	return origin, holders, nil
+}
+
 // ownForRetry makes the retry the run's owner (runOwners), then hands an abandoned run back to the person
 // (handBackAbandoned), answering a live attempt's event. release is nil exactly when err is not.
 func (rs *Runs) ownForRetry(
@@ -737,7 +751,7 @@ func (rs *Runs) leaseForRetry(
 	event *trigger.RetriedEvent,
 ) (minted bool) {
 	if l, held := rs.lease(workflowID); held && (l.ScheduleID != "" || l.RuleID != "") {
-		rs.settleMissedEnd(ctx, &l, aff.status)
+		rs.settleMissedEnd(ctx, &l, marotte.RunStatus(aff.head.Status))
 	}
 	if l, held := rs.lease(workflowID); held {
 		// A manual or agent lease is the one this origin would grant; the run under it is a new one all the same.
@@ -946,39 +960,73 @@ type runParent struct {
 	session string
 }
 
-// err says why parent cannot route a verb.
+// err says why parent cannot route a verb. host is the security a parentless retry's host session reloads with, nil
+// for the profile as it is now.
 type runOrigin struct {
 	err    error
+	host   *runlease.HostSecurity
 	parent runParent
 	recipe string
 }
 
-// An ownerless parent is trusted only after a complete chat scan, or as the run's recorded host (parentlessHost):
-// loading a chat's session as a run host replays that chat's transcript into the run.
-func (rs *Runs) originOf(ctx context.Context, workflowID string) runOrigin {
-	runs, err := rs.listRaw(ctx)
-	if err != nil {
-		slog.Warn("could not read the run inventory, so a run's parent chat and recipe are unknown",
-			"workflow_id", workflowID, "error", err)
-		return runOrigin{err: fmt.Errorf("%w: reading the run inventory: %w", errRunHostStart, err)}
+// originOfHead is the origin a run's inspect state names, its chat left for the caller's owner scan to resolve.
+func originOfHead(head *runHead) runOrigin {
+	o := runOrigin{recipe: head.WorkflowName, parent: runParent{session: head.ParentSessionID}}
+	if o.parent.session == "" {
+		o.err = fmt.Errorf("%w: kiro-cli names no launching session for the run", errLaunchSessionUnavailable)
 	}
-	i := slices.IndexFunc(runs, func(r kasWorkflowRun) bool { return r.WorkflowID == workflowID })
-	if i < 0 {
+	return o
+}
+
+// errRunUnread is a person's verb whose read of the run kiro-cli did not answer, before anything was sent. Answered
+// 503: a later try usually succeeds.
+var errRunUnread = errors.New("kiro-cli did not answer a read of this run in time, so nothing was sent to it. " +
+	"Try again in a moment")
+
+// runReadErr labels a failed read of a run errRunUnread when the engine did not answer it (a deadline, a cancel or an
+// engine end), else returns err itself.
+func runReadErr(err error) error {
+	if isCtxErr(err) || errors.Is(err, marotte.ErrBridgeExited) {
+		return fmt.Errorf("%w: %w", errRunUnread, err)
+	}
+	return err
+}
+
+// errLauncherUnread is a verb on an unleased run whose launching chat an unreadable chat file may hide. Answered 503.
+var errLauncherUnread = errors.New("a chat file could not be read, so which chat launched this run is unknown " +
+	"and nothing was sent to it. Try again")
+
+// originOf reads an unleased run's origin by key. An ownerless parent is trusted only after a complete chat scan, or
+// as the run's recorded host (parentlessHost): loading a chat's session as a run host replays that chat's transcript
+// into the run.
+func (rs *Runs) originOf(ctx context.Context, workflowID string) runOrigin {
+	raw, err := rs.rawInspect(ctx, workflowID)
+	if workflowNotFound(err) {
 		return runOrigin{err: errRunNotListed}
 	}
-	// WorkflowName is the recipe the single-run rule compares; Name is `runLabel ?? workflowName`.
-	o := runOrigin{
-		recipe: runs[i].WorkflowName, parent: runParent{session: runs[i].ParentSessionID},
+	if err != nil {
+		slog.Warn("could not read a run, so its parent chat and recipe are unknown",
+			"workflow_id", workflowID, "error", err)
+		if rErr := runReadErr(err); rErr != err {
+			return runOrigin{err: rErr}
+		}
+		return runOrigin{err: fmt.Errorf("%w: reading the run: %w", errRunHostStart, err)}
 	}
-	if o.parent.session == "" {
-		o.err = fmt.Errorf("%w: the run inventory names no launching session", errLaunchSessionUnavailable)
+	head, err := headOf(raw)
+	if err != nil {
+		return runOrigin{err: fmt.Errorf("%w: the run's state is undecodable: %w", errRunHostStart, err)}
+	}
+	if head.Status == "" {
+		return runOrigin{err: errRunNotListed}
+	}
+	o := originOfHead(&head)
+	if o.err != nil {
 		return o
 	}
 	var complete bool
 	o.parent.chat, complete = rs.chatForSession(ctx, o.parent.session)
 	if o.parent.chat == "" && !complete && !rs.parentlessHost(ctx, workflowID, o.parent.session) {
-		o.err = fmt.Errorf("%w: a chat file could not be read, so which chat launched the run is unknown",
-			errRunHostStart)
+		o.err = command.StatusError(http.StatusServiceUnavailable, errLauncherUnread)
 	}
 	return o
 }

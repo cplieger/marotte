@@ -389,7 +389,7 @@ func expiringContext(t *testing.T, parent context.Context) (ctx context.Context,
 }
 
 func failedAffordance(h *Runtime, workflowID string) *runAffordance {
-	return h.runs.affordance(workflowID, &runHead{Status: string(marotte.RunStatusFailed)})
+	return h.runs.affordance(workflowID, launchedHead(marotte.RunStatusFailed, "sess_host", "publish"))
 }
 
 // The purge judges a run on its list row and again, in full, on a fresh read under the delete's hold, so a retry
