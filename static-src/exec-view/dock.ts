@@ -207,12 +207,21 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
     onSelect: (seg) => {
       const moved = seg !== active;
       show(seg);
-      if (moved && seg === "steps" && ctl.isOpen) {
+      if (moved && ctl.isOpen) {
         reveal();
       }
     },
   });
+  /** Where the reader left the Timeline in the body both segments share; Steps lands on its focus
+   *  step instead (`revealSteps`). */
+  let timelineTop = 0;
+  function parkTimeline(): void {
+    if (active === "timeline" && open && body.getClientRects().length > 0) {
+      timelineTop = body.scrollTop;
+    }
+  }
   function show(seg: Segment): void {
+    parkTimeline();
     active = seg;
     paintBar(seg);
     for (const [key, panel] of panels) {
@@ -241,15 +250,16 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
   let closeGen = 0;
   const ctl = createDisclosure(toggle, region, {
     onToggle: (isOpen) => {
+      if (!isOpen) {
+        parkTimeline();
+      }
       open = isOpen;
       root.toggleAttribute("data-open", isOpen);
       opts.onPanel?.(isOpen);
       const gen = ++closeGen;
       if (isOpen) {
         seatPanes(true);
-        if (active === "steps") {
-          reveal();
-        }
+        reveal();
         return;
       }
       // The rows leave once the close has played, so the panel does not empty as it shuts.
@@ -262,14 +272,23 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
   });
 
   let revealGen = 0;
-  /** The panel's height opens from 0 and the pane shrinks with it, so a row centred now would be
-   *  centred in nothing: the reveal waits for the open to settle, and a reader who touches the tree
-   *  meanwhile, or a close or a segment change, calls it off. */
+  /** Land the shown segment: Steps on its focus step, the Timeline where the reader left it. The
+   *  panel's height opens from 0 and the pane shrinks with it, so a row centred now would be
+   *  centred in nothing: the landing waits for the open to settle, and a reader who touches the
+   *  pane meanwhile, or a close or a segment change, calls it off. */
   function reveal(): void {
     const gen = ++revealGen;
+    const seg = active;
+    const land = (): void => {
+      if (seg === "steps") {
+        opts.revealSteps(body);
+      } else {
+        body.scrollTop = timelineTop;
+      }
+    };
     const opening = region.getAnimations().map((a) => a.finished);
     if (opening.length === 0) {
-      opts.revealSteps(body);
+      land();
       return;
     }
     const off = (): void => {
@@ -282,8 +301,8 @@ export function buildExecDock(opts: ExecDockOpts): ExecDockView {
       for (const type of TAKEOVER) {
         body.removeEventListener(type, off);
       }
-      if (gen === revealGen && ctl.isOpen && active === "steps") {
-        opts.revealSteps(body);
+      if (gen === revealGen && ctl.isOpen && active === seg) {
+        land();
       }
     });
   }

@@ -1,8 +1,9 @@
 // Settings tab bar: paints the panel, the pill and the subtitle the Settings row's route names.
 
 import { computed, subscribe } from "@cplieger/reactive";
-import { $, queryAll } from "./dom.js";
+import { $, maybeEl, queryAll } from "./dom.js";
 import { swapViews } from "./view-swap.js";
+import { SharedScroll } from "./view-scroll.js";
 import type { SettingsTab } from "./route-path.js";
 import { getActiveTabRoute, setSettingsTab, subTabOf } from "./tabs.js";
 import { initSegmentedBar } from "./segmented-bar.js";
@@ -25,6 +26,12 @@ export const TAB_LABELS: Readonly<Record<SettingsTab, string>> = {
 /** Null while no Settings row is open; a computed, so a write that names the shown tab fires
  *  nothing. */
 const shownTab = computed(() => subTabOf("settings"));
+
+/** Every section's panel scrolls in `#settings-view`, so each section keeps its own offset. */
+const panelScroll = new SharedScroll(
+  () => maybeEl("settings-view"),
+  () => shownTab.peek() ?? "",
+);
 
 // Two doors reach a loader: the tab's own ACTIVATION, through `refreshSettingsPanel`, and a sub-tab
 // SWITCH, through the subscriber below. Both are gated there rather than latched here, because a
@@ -90,6 +97,7 @@ export function initSettingsTabs(loaders?: Partial<Record<SettingsTab, () => voi
       return active;
     };
     swapViews(swap);
+    panelScroll.restore(tab);
     // The title bar's subtitle names the active section. The bar's own segmented control names it
     // too, so 12-chat.css suppresses this while that control shows its labels and reveals it when
     // tab-bar-fit.ts drops them.

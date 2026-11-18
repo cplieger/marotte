@@ -123,9 +123,22 @@ export function bindFilesTab(ref: string): void {
     renderList({ transition: false });
   }
   // Restored on the same-tab path too: a hidden box keeps no offset.
+  restoreListScroll();
+}
+
+/** Put the shared scroller at the bound browser's offset. */
+function restoreListScroll(): void {
   const wrap = $.fbList.parentElement;
   if (wrap !== null) {
     wrap.scrollTop = cur().scrollTop;
+  }
+}
+
+/** A moved-to folder's first answer: the list lands at the offset the move reset. */
+function settleListScroll(st: FileBrowserState): void {
+  if (st.scrollOwed) {
+    st.scrollOwed = false;
+    restoreListScroll();
   }
 }
 
@@ -135,7 +148,7 @@ function trackListScroll(): void {
   wrap?.addEventListener(
     "scroll",
     () => {
-      if (boundRef !== "" && wrap.getClientRects().length > 0) {
+      if (boundRef !== "" && !cur().scrollOwed && wrap.getClientRects().length > 0) {
         cur().scrollTop = wrap.scrollTop;
       }
     },
@@ -386,6 +399,7 @@ function settle(path: string, d: DirResult, transition: boolean): void {
       st.listError = d.message;
       updateWriteButtons();
       renderList({ transition });
+      settleListScroll(st);
       return;
     case "ok": {
       publishPending(path);
@@ -398,6 +412,7 @@ function settle(path: string, d: DirResult, transition: boolean): void {
         st.selectEntry(reveal);
       }
       renderList({ transition });
+      settleListScroll(st);
       if (reveal !== "") {
         focusRow(reveal);
       }

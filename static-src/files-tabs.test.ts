@@ -468,6 +468,28 @@ describe("each browser keeps its own scroll position over the shared list", () =
       wrap.remove();
     }
   });
+
+  // A move is a new folder in the same scroller: the folder left behind's offset is not this one's.
+  it("lands a move from a read folder onto a long one at that folder's top", async () => {
+    vi.mocked(apiGetOrError).mockImplementation(() => Promise.resolve(okAnswer(tall()) as never));
+    const wrap = mountScroller();
+    initFileBrowser();
+    try {
+      await show("/a");
+      wrap.scrollTop = 600;
+      await frame();
+      pointFilesTab("/a", "/a/deeper");
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+      await frame();
+      expect(wrap.scrollHeight, "the folder moved to is long too").toBeGreaterThan(
+        600 + wrap.clientHeight,
+      );
+      expect(wrap.scrollTop).toBe(0);
+    } finally {
+      wrap.remove();
+    }
+  });
 });
 
 describe("the path field and the listing error", () => {

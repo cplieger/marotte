@@ -6,11 +6,18 @@ import { setGitTab, subTabOf } from "./tabs.js";
 import { initSegmentedBar, segmentId } from "./segmented-bar.js";
 import { setPageSubtitle } from "./page-title.js";
 import { maybeEl, queryAll } from "./dom.js";
+import { SharedScroll } from "./view-scroll.js";
 
 // GitTab lives in route-path.ts, the URL source of truth; re-exported for existing callers.
 export type { GitTab };
 
 const GIT_TABS: readonly GitTab[] = ["changes", "prs", "sources"] as const;
+
+/** Every sub-tab's panel scrolls in `#git-view`, so each sub-tab keeps its own offset. */
+const panelScroll = new SharedScroll(
+  () => maybeEl("git-view"),
+  () => shownTab.peek() ?? "",
+);
 
 const GIT_TAB_LABELS: Readonly<Record<GitTab, string>> = {
   changes: "Changes",
@@ -65,6 +72,7 @@ export function initGitTabs(): void {
       panel.id = `git-panel-${panelTab}`;
       panel.setAttribute("aria-labelledby", segmentId("git", panelTab));
     }
+    panelScroll.restore(tab);
     setPageSubtitle("git", GIT_TAB_LABELS[tab]);
   });
 }
