@@ -847,8 +847,20 @@ describe("on a short screen", () => {
     entry = { width: window.innerWidth, height: window.innerHeight };
   });
 
+  // The :root pointer tier `crowd` found, put back after each case.
+  let pointerFound: { readonly value: string | undefined } | null = null;
+
   afterEach(() => {
     el("sidebar").classList.remove("open");
+    if (pointerFound !== null) {
+      const { value } = pointerFound;
+      if (value === undefined) {
+        delete document.documentElement.dataset["pointer"];
+      } else {
+        document.documentElement.dataset["pointer"] = value;
+      }
+      pointerFound = null;
+    }
   });
 
   afterAll(async () => {
@@ -883,6 +895,7 @@ describe("on a short screen", () => {
       width,
       height,
     ]);
+    pointerFound ??= { value: document.documentElement.dataset["pointer"] };
     document.documentElement.dataset["pointer"] = pointer;
     el("sidebar").classList.add("open");
     for (let i = 0; i < 20; i++) {
@@ -919,38 +932,30 @@ describe("on a short screen", () => {
   ] as const) {
     for (const pointer of ["fine", "coarse"] as const) {
       it(`keeps Runs' header and first row, and Open's header and a whole tab, in view on ${posture} (${pointer})`, async () => {
-        try {
-          const middle = await crowd(width, height, pointer, `short-${String(width)}-${pointer}`);
+        const middle = await crowd(width, height, pointer, `short-${String(width)}-${pointer}`);
 
-          expect(middle.scrollHeight, "the middle itself never scrolls").toBe(middle.clientHeight);
-          expect(within(toggle(), section()), "Runs' header").toBe(true);
-          const list = el("runs-list");
-          expect(within(firstRun(), list), "Runs' first row").toBe(true);
+        expect(middle.scrollHeight, "the middle itself never scrolls").toBe(middle.clientHeight);
+        expect(within(toggle(), section()), "Runs' header").toBe(true);
+        const list = el("runs-list");
+        expect(within(firstRun(), list), "Runs' first row").toBe(true);
 
-          const sections = el("tab-sections");
-          // The open scrolled the newest tab into view; the floor is measured from the scroller's top.
-          sections.scrollTop = 0;
-          const header = shell.querySelector("#open-section > h2");
-          expect(header !== null && within(header, sections), "Open's header").toBe(true);
-          const tabRows = [
-            ...el("tab-list").querySelectorAll<HTMLElement>(":scope > [data-tab-id]"),
-          ];
-          expect(tabRows.filter((r) => within(r, sections)).length).toBeGreaterThanOrEqual(1);
+        const sections = el("tab-sections");
+        // The open scrolled the newest tab into view; the floor is measured from the scroller's top.
+        sections.scrollTop = 0;
+        const header = shell.querySelector("#open-section > h2");
+        expect(header !== null && within(header, sections), "Open's header").toBe(true);
+        const tabRows = [...el("tab-list").querySelectorAll<HTMLElement>(":scope > [data-tab-id]")];
+        expect(tabRows.filter((r) => within(r, sections)).length).toBeGreaterThanOrEqual(1);
 
-          for (const r of tabRows) {
-            r.focus();
-            expect(within(r, sections), `tab ${r.dataset["tabId"] ?? ""} scrolled into view`).toBe(
-              true,
-            );
-          }
-          for (const a of links()) {
-            a.focus();
-            expect(within(a, list), `${a.textContent ?? ""} scrolled into view on focus`).toBe(
-              true,
-            );
-          }
-        } finally {
-          delete document.documentElement.dataset["pointer"];
+        for (const r of tabRows) {
+          r.focus();
+          expect(within(r, sections), `tab ${r.dataset["tabId"] ?? ""} scrolled into view`).toBe(
+            true,
+          );
+        }
+        for (const a of links()) {
+          a.focus();
+          expect(within(a, list), `${a.textContent ?? ""} scrolled into view on focus`).toBe(true);
         }
       });
     }
@@ -958,15 +963,11 @@ describe("on a short screen", () => {
 
   // Below both floors (a small phone held sideways), the tab sections give theirs up before Runs'.
   it("keeps Runs' header and a row in view where the tab sections' floor no longer fits", async () => {
-    try {
-      const middle = await crowd(568, 320, "coarse", "shortest");
+    const middle = await crowd(568, 320, "coarse", "shortest");
 
-      expect(middle.scrollHeight, "the middle itself never scrolls").toBe(middle.clientHeight);
-      expect(within(toggle(), section()), "Runs' header").toBe(true);
-      const list = el("runs-list");
-      expect(within(firstRun(), list), "Runs' first row").toBe(true);
-    } finally {
-      delete document.documentElement.dataset["pointer"];
-    }
+    expect(middle.scrollHeight, "the middle itself never scrolls").toBe(middle.clientHeight);
+    expect(within(toggle(), section()), "Runs' header").toBe(true);
+    const list = el("runs-list");
+    expect(within(firstRun(), list), "Runs' first row").toBe(true);
   });
 });
