@@ -1494,11 +1494,15 @@ func (l *EntryLog) messagesLocked() marotte.WorkflowMessageFold {
 	return marotte.FoldWorkflowMessages(factsOf(l.messageFactsLocked()))
 }
 
-// messageFactsLocked is the surviving turns' workflow-message lines in file order, with their offsets.
+// messageFactsLocked is the surviving turns' workflow-message lines in file order, with their offsets. It walks
+// l.order in place rather than survivingOrderLocked's copy: every TurnRead takes this fold, and a copy of every turn
+// id would make a one-step read of a run cost the run's size.
 func (l *EntryLog) messageFactsLocked() []messageFact {
 	var facts []messageFact
-	for _, id := range l.survivingOrderLocked() {
-		facts = append(facts, l.turns[id].messages...)
+	for _, id := range l.order {
+		if st := l.turns[id]; !st.reverted {
+			facts = append(facts, st.messages...)
+		}
 	}
 	slices.SortFunc(facts, func(a, b messageFact) int { return cmp.Compare(a.at, b.at) })
 	return facts
@@ -1720,12 +1724,14 @@ func (l *EntryLog) readSetLocked(set []string) ([]marotte.Entry, error) {
 func decodeRanges(f *os.File, ranges []byteRange, want map[string]struct{}) ([]marotte.Entry, error) {
 	r := readEntries(f)
 	var out []marotte.Entry
+	// One buffer for every range: a read spans a range per turn, and a run's log holds a turn per started node.
+	br := bufio.NewReaderSize(nil, entryReadBuf)
 	for _, rng := range ranges {
-		entries, err := decodeEntryRange(io.NewSectionReader(r, rng.from, rng.to-rng.from), want)
-		if err != nil {
+		br.Reset(io.NewSectionReader(r, rng.from, rng.to-rng.from))
+		var err error
+		if out, err = decodeEntryRange(br, want, out); err != nil {
 			return nil, err
 		}
-		out = append(out, entries...)
 	}
 	return out, nil
 }
@@ -1743,9 +1749,8 @@ func (l *EntryLog) readSurvivingLocked(set []string) ([]marotte.Entry, error) {
 	return out, nil
 }
 
-func decodeEntryRange(r io.Reader, want map[string]struct{}) ([]marotte.Entry, error) {
-	var out []marotte.Entry
-	br := bufio.NewReaderSize(r, entryReadBuf)
+// decodeEntryRange appends br's lines of the turns in want to out.
+func decodeEntryRange(br *bufio.Reader, want map[string]struct{}, out []marotte.Entry) ([]marotte.Entry, error) {
 	for {
 		line, err := readEntryLine(br)
 		if len(line) == 0 {

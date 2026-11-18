@@ -1,0 +1,1 @@
+{"route":"GET /api/governance","url":"/api/governance","decoder":"GovernanceStatePayload","body":{"features":{"mcp_enabled":true,"web_tools_enabled":true,"usage_analytics":false,"content_collection":true,"prompt_logging":false,"code_reference_tracker":false,"autonomous_agents":true},"known":true}}

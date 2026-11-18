@@ -36,6 +36,30 @@ type launchOrigin struct {
 	origin runlease.Origin
 }
 
+// launchRequest is a launch a person waits on (POST /api/runs): how it answers before the run can exist. A nil
+// *launchRequest is a launch nobody waits on.
+type launchRequest struct {
+	// sent runs just before workflow/new is written, the first step that may create a run.
+	sent func()
+	// prepareBy bounds every step before workflow/new.
+	prepareBy time.Duration
+}
+
+// prepareContext bounds the steps before workflow/new by the request's prepareBy: a timeout there is an engine that
+// did not answer before anything was created (unanswered).
+func (q *launchRequest) prepareContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if q == nil {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, q.prepareBy)
+}
+
+func (q *launchRequest) markSent() {
+	if q != nil && q.sent != nil {
+		q.sent()
+	}
+}
+
 // triggerEvent is the queued event a triggered launch delivers, and the run label it sends before runLabelFor
 // shapes it.
 type triggerEvent struct {
@@ -68,12 +92,12 @@ func retryLaunch(o *runOrigin) launchOrigin {
 }
 
 // grantRetryLease leases a retried run from Retry's read of its origin, parent session included: the retry's run_start finds
-// the lease held and adds no chat to it. A parentless retry is a new launch decision, so its host session reloads
-// with the profile's presets as they are now, recorded here.
+// the lease held and adds no chat to it. A parentless retry's host session reloads with the security the origin
+// carries (retryHostSecurity), else with the profile's presets as they are now, recorded here.
 func (rs *Runs) grantRetryLease(ctx context.Context, workflowID string, o *runOrigin, holders []marotte.ChatID) {
 	var host *runlease.HostSecurity
 	if o.parent.chat == "" {
-		host = hostSecurityOf(rs.doorSettings(ctx).RunPresets)
+		host = rs.retrySecurity(ctx, o)
 	}
 	lo := retryLaunch(o)
 	rs.grantKeeping(ctx, workflowID, o.recipe, &lo, host, &leaseKeep{chats: chatIDs(holders)})
@@ -86,9 +110,18 @@ func (rs *Runs) grantEventRetryLease(
 	ctx context.Context, workflowID string, o *runOrigin, holders []marotte.ChatID, ev *trigger.RetriedEvent,
 ) {
 	lo := triggeredLaunch(ev.RuleID, ev.EventKey, ev.CoalesceKey, ev.Label)
-	host := hostSecurityOf(rs.doorSettings(ctx).RunPresets)
+	host := rs.retrySecurity(ctx, o)
 	rs.grantKeeping(ctx, workflowID, o.recipe, &lo, host, &leaseKeep{chats: chatIDs(holders)})
 	rs.recordParentSession(ctx, workflowID, o.parent.session)
+}
+
+// retrySecurity is the security a parentless retry's host session reloads with: the origin's, else the profile's
+// presets as they are now.
+func (rs *Runs) retrySecurity(ctx context.Context, o *runOrigin) *runlease.HostSecurity {
+	if o.host != nil {
+		return o.host
+	}
+	return hostSecurityOf(rs.doorSettings(ctx).RunPresets)
 }
 
 // settleMissedEnd ends a scheduled run whose terminal frame marotte missed, as observeComplete would have, before a

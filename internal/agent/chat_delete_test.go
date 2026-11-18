@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -116,7 +118,7 @@ func (r *deleteRig) methods() []string {
 	return out
 }
 
-func newDeleteRig(t *testing.T, runs json.RawMessage) (*Runtime, *testChatStore, *deleteRig) {
+func newDeleteRig(t *testing.T, runs json.RawMessage, opts ...Option) (*Runtime, *testChatStore, *deleteRig) {
 	t.Helper()
 	rig := &deleteRig{results: map[string]json.RawMessage{
 		methodKiroWorkflowList:      runs,
@@ -127,11 +129,38 @@ func newDeleteRig(t *testing.T, runs json.RawMessage) (*Runtime, *testChatStore,
 		methodKiroWorkflowInspect: inspectReply(t, "wf_other", "running", ""),
 	}}
 	cs := newTestChatStore()
-	h := newRuntimeOn(t.Context(), testReaperWorkDir, rig.engine(), cs)
+	h := newRuntimeOn(t.Context(), testReaperWorkDir, rig.engine(), cs, opts...)
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	awaitBoot(h)
 	return h, cs, rig
+}
+
+// writeKASRunState writes the state file KAS persists for a run, under sessionsDir's one bucket.
+func writeKASRunState(t *testing.T, sessionsDir, workflowID string, status marotte.RunStatus, parent string) {
+	t.Helper()
+	dir := filepath.Join(sessionsDir, "hash01", "workflows", workflowID)
+	mkdirAll(t, dir)
+	raw, err := json.Marshal(map[string]any{"workflowId": workflowID, "status": status, "parentSessionId": parent})
+	if err != nil {
+		t.Fatalf("Setup: marshal run state: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "workflow-state.json"), raw, 0o600); err != nil {
+		t.Fatalf("Setup: write run state: %v", err)
+	}
+}
+
+// errListUnanswered is a run list KAS did not answer in time, as on an engine busy walking its whole store.
+var errListUnanswered = fmt.Errorf("workflow list call: %w", context.DeadlineExceeded)
+
+// failList fails every workflow/list on rig with errListUnanswered.
+func failList(rig *deleteRig) {
+	rig.setAnswer(func(method string, _ map[string]any) (json.RawMessage, bool, error) {
+		if method != methodKiroWorkflowList {
+			return nil, false, nil
+		}
+		return nil, true, errListUnanswered
+	})
 }
 
 // engine is a fake engine whose sessions and connection calls both come from the rig, so every call is recorded.
@@ -224,6 +253,23 @@ func TestDeleteForSessions_DeletesEveryOwnedRunWhateverItsStatus(t *testing.T) {
 	}
 	if n := len(rig.of(methodKiroWorkflowList)); n != 1 {
 		t.Errorf("DeleteForSessions read the run inventory %d times, want 1", n)
+	}
+}
+
+// A chat delete whose run list goes unanswered still deletes every run the chain launched, read off the run state KAS
+// keeps on disk: an unanswered list is not a chat that launched nothing.
+func TestDeleteForSessions_AnUnansweredRunListDeletesTheRunsKASKeepsOnDisk(t *testing.T) {
+	sessionsDir := t.TempDir()
+	writeKASRunState(t, sessionsDir, "wf_done", marotte.RunStatusCompleted, "sess_cur")
+	writeKASRunState(t, sessionsDir, "wf_live", marotte.RunStatusRunning, "sess_old")
+	writeKASRunState(t, sessionsDir, "wf_foreign", marotte.RunStatusCompleted, "sess_x")
+	h, _, rig := newDeleteRig(t, noRuns(t), WithSessionReaper(kirosession.New(sessionsDir, testReaperWorkDir)))
+	failList(rig)
+
+	h.runs.deleteForSessions(t.Context(), "c1", []string{"sess_old", "sess_cur"}, runStop{})
+
+	if got, want := deletedRunIDs(rig), []string{"wf_done", "wf_live"}; !slices.Equal(got, want) {
+		t.Errorf("deleteForSessions deleted %v, want %v: the chain's runs as KAS's own state records them", got, want)
 	}
 }
 

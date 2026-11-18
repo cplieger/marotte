@@ -5,7 +5,7 @@
   "sseFixture": "..",
   "sseFixtureTags": "marotte_test",
   "cplieger": {
-    "vitestShards": 2
+    "vitestShards": 3
   },
   "scripts": {
     "pretest": "rm -rf node_modules/.vite",

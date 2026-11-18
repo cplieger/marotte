@@ -83,3 +83,28 @@ A timing cell over the guard shows `remeasure` in the "Status" column of "Guarde
 The `max_bytes` counts of `GET /api/settings`, `GET /api/tabs` and `GET /api/version` differ on your machine with no change of yours: those answers hold values of the machine the instance runs on, such as the instance's own directory, which lies under `RUNNER_TEMP` on the runner and under `TMPDIR` or `/tmp` on yours. The answer of `GET /api/engine` holds the time the engine last changed state and a sequence number, so its size moves with the clock on any machine, and `budgets.json` holds no entry for it. A count can also differ when a frame lands at a window's edge or a rep meets a race.
 
 `--only chat-long` keeps every `pr` cell of that scenario, so the plan also holds its WebKit cell, which measures only the `cold` window. Its `cpu_ms` and `rss_mb` cells have baselines, so a run that did not measure that cell lists them under "Failures" as cells "no shard measured", and the command exits 1. Those lines name cells CI measures, not a fault in the cell you measured.
+
+Two families of counts run with the ordinary test suites and need no calibration, because they come out the same on every machine.
+
+The read budgets in `static-src/perf/read-budget/` hold one file per browser scenario of `plan.json`. Each boots the whole app in Vitest Browser Mode against the recorded answers in `static-src/perf/canned/`, replays the recorded stream on a fake clock through the scenario's five windows (`cold`, `rest`, `live`, `away`, `back`), and counts each route's reads and its largest answer in each window. `static-src/perf/read-budgets.json` holds those counts, and a count that differs either way fails. A change that moves a read by design rewrites the entries, and its pull request names the counts that moved:
+
+```sh
+cd static-src && READ_BUDGET_RECORD=1 npx vitest --run perf/read-budget/
+```
+
+A scenario added to `perf/views.ts` needs its own file there and its own entry; `perf/read-budget.test.ts` fails until it has both.
+
+`static-src/perf/canned.test.ts` decodes each recorded answer with the generated decoder that `tests/perf/canned-routes.json` names for its route, and fails when the set is over 5 MiB, so a wire change that leaves the recording stale fails it. Record the set again from a fresh x1 instance, then rewrite the read budgets as above, since their counts come from the set:
+
+```sh
+tests/perf/build.sh /tmp/perf-build
+PERF_BUILD=/tmp/perf-build PERF_PORT=20151 tests/perf/record-canned.sh
+```
+
+The recorder refuses an answer from a route that `canned-routes.json` does not name. Add the route with the decoder its client read uses: a `wire/decoders.gen.ts` name, that name with `[]` for an array, a map of field names to decoders for an answer the client wraps in a local decoder, or `null` for a route with no generated type. A `null` route's answers are held in Go instead, by a test in the handler's package. A route whose handler writes a struct is held by `testsupport.HoldCannedShape`, which reads each answer into that struct and fails a field it lacks or writes differently. An answer the handler writes as a map literal is held the same way against a struct the test declares with the map's top-level keys, so only its nested types follow the server: a renamed top-level key needs the test's struct changed with it. The two run views, the three `204` reports, the `open_tab` answer of `POST /api/command` and the tools catalog are `testsupport.HoldCanned` holds with their own checks. `TestCannedRoutes_EveryNullRouteIsHeld` (`internal/testsupport`) fails a `null` route no Go test holds.
+
+The `*Cost_*` tests in `internal/chat`, `internal/agent`, `internal/filebrowse`, `internal/git` and `internal/server` hold what each server read costs per request, in allocations and bytes, at the x1 and x10 fixture sizes, within 5% either way. Their tables hold the `-race` build's costs, because CI runs Go tests only with `-race`, and the tests skip without it. A cost that moves by design rewrites its entry in the same diff. `-v` logs every entry's measured cost in the table's own form:
+
+```sh
+go test -race -run 'Cost_' -v ./internal/chat/
+```

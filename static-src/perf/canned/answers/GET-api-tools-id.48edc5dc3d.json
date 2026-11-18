@@ -1,0 +1,1 @@
+{"route":"GET /api/tools/{id}","url":"/api/tools/catalog","decoder":null,"body":{"refs":{"aqua":"v4.587.0","mise":"v2026.11.9"},"generated":"2026-11-16T11:11:04Z","source":"remote","url":"https://github.com/cplieger/tool-catalog/releases/latest/download/tool-catalog.json","entries":933,"unavailable":84,"fetched_at":1794925914326,"scheduled":true}}

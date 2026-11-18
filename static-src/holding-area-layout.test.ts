@@ -12,6 +12,7 @@ import {
   mountPane,
   mountView,
   openStack,
+  paintRuns,
   settle,
   unmountView,
   type Chat,
@@ -163,6 +164,31 @@ describe("the holding area", () => {
     expect(actions.right, "the actions end inside the row").toBeLessThanOrEqual(box.right + 0.5);
     expect(actions.left, "the actions follow the message").toBeGreaterThanOrEqual(text.right);
   });
+
+  // The area has no box while empty, so its first rows resize it and its pane; a cap or gutter
+  // written inside that delivery resizes the area again within it.
+  for (const [w, h] of VIEWPORTS) {
+    it(`takes its first rows with no ResizeObserver loop at ${String(w)}x${String(h)}`, async () => {
+      const loops: string[] = [];
+      const onError = (e: ErrorEvent): void => {
+        if (e.message.includes("ResizeObserver loop")) {
+          loops.push(e.message);
+          e.preventDefault();
+        }
+      };
+      window.addEventListener("error", onError);
+      try {
+        openStack(true);
+        const chat = await mountChat(w, h, 0, false, 0, 0);
+        paintRuns(chat.pane, 5, true);
+        await settle();
+        expect(loops).toEqual([]);
+        holds(chat, h - CHROME_PX);
+      } finally {
+        window.removeEventListener("error", onError);
+      }
+    });
+  }
 
   it("caps the area against the visual viewport when a keyboard is up", async () => {
     const vv = 464;

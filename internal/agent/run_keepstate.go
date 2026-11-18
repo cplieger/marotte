@@ -329,7 +329,8 @@ var (
 )
 
 // retryHolders names a retry's mark holders by RunHolders over one fresh owner scan, and its launchers: the lease's
-// ChatID and the chats owning the parent session, never a chat the lease keeps only in doubt. It refuses a run whose
+// ChatID and the chats owning the parent session, never a chat the lease keeps only in doubt. It sets o's parent chat
+// from the same scan. It refuses a run whose
 // launching session is in teardown, and one whose scan could not read every chat and found no launcher, unless the
 // parent session is the run's recorded host (parentlessHost), which no unread chat can own.
 func (rs *Runs) retryHolders(
@@ -340,6 +341,9 @@ func (rs *Runs) retryHolders(
 		return nil, nil, command.StatusError(http.StatusConflict, errRetryChatPurging)
 	}
 	scan := rs.chats.SessionOwners(ctx)
+	if owners := scan.Owners.Of(o.parent.session); len(owners) > 0 {
+		o.parent.chat = owners[0]
+	}
 	var lp *runlease.Lease
 	if l, held := rs.lease(workflowID); held {
 		lp = &l

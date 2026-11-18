@@ -76,8 +76,9 @@ type runAffordance struct {
 	// PauseNodeID is the repeat a maxIterations pause stopped at, "" otherwise; the
 	// extend and finish_loop verbs address it.
 	PauseNodeID string
-	// status is the gate's read of the run's status, the ending Retry records for a run whose end marotte missed.
-	status marotte.RunStatus
+	// head is the gate's read of the run: Retry records its status as the ending of a run whose end marotte missed,
+	// and hosts the run from its origin.
+	head runHead
 	// Verbs are the offered controls, in the order a row presents them.
 	Verbs []string
 }
@@ -143,12 +144,15 @@ func (f *runFacts) refusal(verb string) string {
 
 const pausePendingRefusal = "A pause is already requested; the run's current turn is being stopped."
 
-// runHead is the part of an inspect state the verbs are decided from. KAS's `workflow/list` row derives
-// its pausePending, pauseKind and pauseNodeId from these same fields, and costs a read of every run.
+// runHead is the part of an inspect state the verbs are decided from, and the origin a verb hosts the run from. KAS's
+// `workflow/list` row derives the same fields, and costs a read of every run.
 type runHead struct {
-	Status       string
-	PauseKind    string
-	PauseNodeID  string
+	Status          string
+	PauseKind       string
+	PauseNodeID     string
+	ParentSessionID string
+	// WorkflowName is the recipe the single-run rule compares.
+	WorkflowName string
 	PausePending bool
 }
 
@@ -157,16 +161,18 @@ type runHead struct {
 func headOf(raw json.RawMessage) (runHead, error) {
 	var res struct {
 		State struct {
-			Status       string          `json:"status"`
-			PausePending json.RawMessage `json:"pausePending"`
-			Pause        json.RawMessage `json:"pause"`
+			Status          string          `json:"status"`
+			ParentSessionID string          `json:"parentSessionId"`
+			WorkflowName    string          `json:"workflowName"`
+			PausePending    json.RawMessage `json:"pausePending"`
+			Pause           json.RawMessage `json:"pause"`
 		} `json:"state"`
 	}
 	if err := json.Unmarshal(raw, &res); err != nil {
 		return runHead{}, err
 	}
 	st := &res.State
-	head := runHead{Status: st.Status}
+	head := runHead{Status: st.Status, ParentSessionID: st.ParentSessionID, WorkflowName: st.WorkflowName}
 	switch string(st.PausePending) {
 	case "", "null", "false":
 	default:
@@ -190,7 +196,7 @@ func (rs *Runs) affordance(workflowID string, head *runHead) *runAffordance {
 		pauseKind: head.PauseKind, pauseNodeID: head.PauseNodeID,
 	}
 	aff := affordanceOf(&f)
-	aff.status = marotte.RunStatus(head.Status)
+	aff.head = *head
 	return &aff
 }
 

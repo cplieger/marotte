@@ -123,6 +123,21 @@ func TestTangentParent_AnUnreadableListIsNeitherAnswer(t *testing.T) {
 	}
 }
 
+// A chat whose file cannot be read may hold the forked-from session, so its parent is neither gone nor found.
+func TestTangentParent_AnUnreadableChatFileIsNeitherAnswer(t *testing.T) {
+	h, cs, br := newTestHub()
+	seedChain(t, cs, "c-tangent", "s-fork")
+	unreadableChat(t, cs, "c-parent")
+	br.callResults = map[string]json.RawMessage{
+		marotte.MethodSessionList: sessionRowsJSON(t, map[string]string{"s-fork": "s-parent"}),
+	}
+
+	_, err := h.TangentParent(t.Context(), "c-tangent")
+	if err == nil || errors.Is(err, command.ErrNotATangent) || errors.Is(err, command.ErrTangentParentGone) {
+		t.Errorf("TangentParent = %v, want the unread chat file, not a verdict", err)
+	}
+}
+
 func TestTurnReply_JoinsTheMainLaneSays(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()

@@ -31,10 +31,10 @@ var (
 	errMissingRecipeSource = errors.New("missing recipe source")
 )
 
-// recipeCatalog shares one listRecipes call among concurrent readers and holds its last answer for the recipe list a
-// person opens while a listing is slow. The hold is a display hint only: KAS 2.37.1 reports a catalog change only
-// through a session opened with workflows on, so a held name can be stale, and a decision (a launch, a schedule save,
-// the one-live-run rule) reads live.
+// recipeCatalog shares one listRecipes call among concurrent readers and holds its last answer. KAS reports a catalog
+// change (recipes_changed, which drops the hold) only through a session opened with workflows on, so a held entry can
+// be stale; a launch still reads its recipe from the hold (launchRecipe), because KAS's workflow/new validates the
+// source itself, while a schedule save reads live.
 type recipeCatalog struct {
 	flight *recipeListing
 	held   []marotte.Recipe
