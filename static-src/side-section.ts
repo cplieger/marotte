@@ -1,14 +1,20 @@
-// A sidebar section whose rows are its owner's, not tabs (History, Runs): its fold, its header, the
-// rows' seating and where focus goes when a repaint takes it away. Outside section-header.ts because
-// the focus chain reads tabs.ts, which imports section-header.ts.
+// A sidebar section whose rows are its owner's, not tabs (History, Runs): it folds through
+// section-header.ts as every section does, and seats its rows and puts focus back when a repaint takes
+// it away. Outside section-header.ts because the focus chain reads tabs.ts, which imports section-header.ts.
 
-import { sectionFolded, setSectionFolded } from "./device-view.js";
-import { isSliding, slideBox } from "./disclosure-row.js";
+import { isSliding } from "./disclosure-row.js";
 import { $, maybeEl } from "./dom.js";
 import { type Press, focusAs } from "./legacy-ui/scripted-focus.js";
-import { paintSectionHeader, type SectionHeaderView } from "./section-header.js";
+import {
+  bindSectionToggle,
+  foldRows,
+  isSectionFolded,
+  paintSectionHeader,
+  sectionToggle,
+  type SectionHeaderView,
+  type SidebarSection,
+} from "./section-header.js";
 import { focusHistoryEntry, focusTabRow, getActiveTabId } from "./tabs.js";
-import { dragOwnsStrip } from "./tabs-drag.js";
 
 /** One row as its owner draws it: `controls[0]` is the row's own control, the rest its others (Delete). */
 interface SectionRow {
@@ -27,22 +33,20 @@ export interface SideSectionOptions {
   readonly key: string;
   /** The fold a browser that never pressed the header sees. */
   readonly foldedByDefault: boolean;
-  readonly noun: SectionHeaderView["noun"];
+  readonly noun: SidebarSection["noun"];
   /** The controls after the rows, in the list's last item (History's More). */
   readonly tail: readonly HTMLElement[];
   /** The header's dot while folded: the first hidden row state, in the owner's precedence. */
   readonly foldDot: () => SectionHeaderView["dot"];
+  /** The item a fold still shows, or null. Read on every paint, so a signal it reads repaints the fold. */
+  readonly kept: () => HTMLElement | null;
 }
 
 export interface SideSection {
-  readonly toggle: HTMLButtonElement;
-  folded(): boolean;
   noteFocus(): SectionFocus | null;
-  /** Draw `rows` in this order: drop the others, seat each only when out of place, then paint the
-   *  header and hide the section while empty. A re-seat blurs the focused row: `restoreFocus` after. */
+  /** Draw `rows` in this order before the tail: drop the others, seat each only when out of place,
+   *  then paint the fold and the header. A re-seat blurs the focused row: `restoreFocus` after. */
   seat(rows: readonly SectionRow[]): void;
-  /** Repaint the header from the rows as last seated, for a state change that moved no row. */
-  paintHeader(): void;
   /** When focus is lost (on the body or hidden) after it was at `mark`: the same control, the rows
    *  after it, before it, the tail, the header, the Open section's first row, History's entry, the
    *  composer, else the active tab's row, with the ring of `press`. Focus anywhere shown is left alone. */
@@ -57,23 +61,28 @@ function isShown(e: Element | null | undefined): e is HTMLElement {
 export function sideSection(id: string, listId: string, o: SideSectionOptions): SideSection | null {
   const section = maybeEl(id);
   const list = maybeEl(listId);
-  const header = section?.querySelector<HTMLElement>(":scope > h2.side-section-h") ?? null;
-  const toggle = header?.querySelector<HTMLButtonElement>(".side-section-toggle") ?? null;
-  if (section === null || list === null || header === null || toggle === null) {
+  const toggle = list === null ? null : sectionToggle(list);
+  if (section === null || list === null || toggle === null) {
     return null;
   }
+  const s: SidebarSection = {
+    key: o.key,
+    list,
+    foldedByDefault: o.foldedByDefault,
+    noun: o.noun,
+    emptyHides: "section",
+  };
   let seated = new Map<string, SectionRow>();
   let order: readonly string[] = [];
-  const folded = (): boolean => sectionFolded(o.key, o.foldedByDefault);
 
-  const paintHeader = (): void => {
-    const f = folded();
-    paintSectionHeader(list, {
-      noun: o.noun,
-      count: order.length,
-      folded: f,
-      dot: f ? o.foldDot() : null,
-    });
+  /** Hide the items `folded` hides unless a running slide owns them, and paint the header. Reads
+   *  `kept` first, so the caller's effect tracks it. */
+  const paintFold = (folded: boolean, slideOwnsRows = false): void => {
+    const kept = o.kept();
+    if (!slideOwnsRows) {
+      foldRows(list.querySelectorAll<HTMLElement>(":scope > li"), folded, (li) => li === kept);
+    }
+    paintSectionHeader(s, { count: order.length, dot: folded ? o.foldDot() : null });
   };
 
   const noteFocus = (): SectionFocus | null => {
@@ -147,39 +156,12 @@ export function sideSection(id: string, listId: string, o: SideSectionOptions): 
     }
     seated = next;
     order = rows.map((r) => r.ref);
-    section.hidden = rows.length === 0;
-    paintHeader();
-    if (!isSliding(section)) {
-      list.hidden = folded();
-    }
+    paintFold(isSectionFolded(s), isSliding(list));
   };
 
-  toggle.addEventListener("click", () => {
-    if (dragOwnsStrip()) {
-      return;
-    }
-    const fold = !folded();
-    setSectionFolded(o.key, fold);
-    paintHeader();
-    // The section less its list is its height while the list is hidden, so the close needs no measuring layout.
-    const closed = fold
-      ? {
-          closedHeight:
-            section.getBoundingClientRect().height - list.getBoundingClientRect().height,
-        }
-      : {};
-    // A click that moves no focus (WebKit) leaves it on a row the fold hides.
-    const mark = noteFocus();
-    slideBox(
-      section,
-      !fold,
-      (open) => {
-        list.hidden = !open;
-        restoreFocus(mark);
-      },
-      closed,
-    );
+  bindSectionToggle(s, (folded) => {
+    paintFold(folded);
   });
 
-  return { toggle, folded, noteFocus, seat, paintHeader, restoreFocus };
+  return { noteFocus, seat, restoreFocus };
 }

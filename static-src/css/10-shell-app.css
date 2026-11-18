@@ -209,8 +209,10 @@ body.sidebar-resizing {
    tab sections take the rest, down to the Open header and one tab row, and give even that up before
    Runs' floor. Only the tab scroller and Runs' own list scroll, never the middle. */
 .sidebar-middle {
-  /* Runs' padding, its hairline, its header, its list's inset and one row. */
-  --runs-floor: calc(3 * var(--sp-1) + var(--hairline) + var(--row-tap-dense) + var(--tab-row-h));
+  /* Runs around its list: its padding, its hairline and its header. */
+  --runs-chrome: calc(2 * var(--sp-1) + var(--hairline) + var(--row-tap-dense));
+  /* Runs with its list's inset and one row. */
+  --runs-floor: calc(var(--runs-chrome) + var(--sp-1) + var(--tab-row-h));
 
   /* The rows each tab section shows, up to three, and whether its header shows: the rules below set them. */
   --open-head: 0;
@@ -221,7 +223,8 @@ body.sidebar-resizing {
   --history-n: 0;
 
   /* The tab sections' height with those rows: the Open list's inset and header, Pinned's and History's
-     gap, header and inset while shown, every counted row, and the scroller's end padding. */
+     gap, header and inset while shown (a folded list keeps its inset), every counted row, and the
+     scroller's end padding. */
   --tabs-need: calc(
     2 * var(--sp-1) + var(--open-head) * var(--row-tap-dense) + var(--open-n) * var(--tab-row-h) +
       max(0, var(--open-n) - 1) * var(--sp-05) + var(--pinned-on) *
@@ -231,8 +234,8 @@ body.sidebar-resizing {
       ) +
       var(--history-on) *
       (
-        var(--sp-1) + var(--row-tap-dense) + min(1, var(--history-n)) * var(--sp-1) +
-          var(--history-n) * var(--tab-row-h) + max(0, var(--history-n) - 1) * var(--sp-05)
+        2 * var(--sp-1) + var(--row-tap-dense) + var(--history-n) * var(--tab-row-h) +
+          max(0, var(--history-n) - 1) * var(--sp-05)
       )
   );
 
@@ -255,8 +258,10 @@ body.sidebar-resizing {
     auto;
   overflow: clip;
 
-  /* Open and Pinned show their header while they hold a row, and every row unfolded; folded, only the
-     shown tab's row (tabs.ts `paintFold`). The folded rules come last at the same specificity, so they win. */
+  /* Each section shows its header while it holds a row, and every row unfolded; folded, only the row
+     you are on (section-header.ts `foldRows`). `data-folded` is the stored fold, set at the press, so a
+     count moves with the slide's start both ways. The folded rules come last at the same specificity,
+     so they win. */
   &:has([id="tab-list"] > .tab) {
     --open-head: 1;
     --open-n: 1;
@@ -302,21 +307,29 @@ body.sidebar-resizing {
     --pinned-n: 1;
   }
 
-  /* Folded, History hides its whole list. */
+  /* History's row you are on is More, while its page shows. */
   &:has([id="history-section"]:not([hidden])) {
     --history-on: 1;
   }
 
-  &:has([id="history-list"]:not([hidden]) > li) {
+  &:has([id="history-list"] > li) {
     --history-n: 1;
   }
 
-  &:has([id="history-list"]:not([hidden]) > :nth-child(2 of li)) {
+  &:has([id="history-list"] > :nth-child(2 of li)) {
     --history-n: 2;
   }
 
-  &:has([id="history-list"]:not([hidden]) > :nth-child(3 of li)) {
+  &:has([id="history-list"] > :nth-child(3 of li)) {
     --history-n: 3;
+  }
+
+  &:has([id="history-list"][data-folded] > li) {
+    --history-n: 0;
+  }
+
+  &:has([id="history-list"][data-folded] > li > .active) {
+    --history-n: 1;
   }
 }
 

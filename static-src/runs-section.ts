@@ -160,6 +160,7 @@ export function initRunsSection(): void {
     noun: "run",
     tail: [],
     foldDot,
+    kept: () => null,
   });
   if (side === null) {
     return;

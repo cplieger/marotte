@@ -1,6 +1,6 @@
-// A sidebar section's header (`#tab-sections` > `.side-section` > `h2.side-section-h`): its fold
-// toggle, the count, and the dot that speaks for the rows a fold hides. Every section folds through
-// here; its rows are its owner's.
+// A sidebar section's header (`.side-section` > `h2.side-section-h`): its fold toggle, the count,
+// and the dot that speaks for the rows a fold hides. Every section folds through here; its rows are
+// its owner's.
 
 import { sectionFolded, setSectionFolded } from "./device-view.js";
 import { slideBox } from "./disclosure-row.js";

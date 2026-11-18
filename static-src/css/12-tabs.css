@@ -1130,32 +1130,39 @@
 }
 
 /* Runs is docked under the scrolling sections (10-shell-app.css `.sidebar-middle`, which owns
-   `--runs-floor` and `--tabs-keep`), so a run that wants you shows at any tab count. Unfolded, it keeps
-   its header and one row however short the sidebar and three rows when there is room, its list
-   scrolling past them; the order puts the runs that want you first. The flex column is what lets the
-   list give up height, so `[hidden]` must out-rank its display. */
+   `--runs-chrome`, `--runs-floor` and `--tabs-keep`), so a run that wants you shows at any tab count.
+   Unfolded, it keeps its header and one row however short the sidebar and three rows when there is
+   room, its list scrolling past them; the order puts the runs that want you first. The flex column is
+   what lets the list give up height, so `[hidden]` must out-rank its display. */
 .runs-section {
   display: flex;
   flex-direction: column;
   padding-block: var(--sp-1);
   border-block-start: var(--hairline) solid var(--c-border);
+  /* Zero, not its automatic minimum, so the list's floor and cap below are the whole claim. */
+  min-block-size: 0;
 
   &[hidden] {
     display: none;
   }
-
-  /* Folded, it keeps its header and its own padding. */
-  &:has(> .runs-list:not([hidden])) {
-    min-block-size: var(--runs-floor);
-    /* Where this falls below the floor, the floor wins (CSS 2.1 §10.7). */
-    max-block-size: calc(100cqb - var(--tabs-keep));
-  }
 }
 
+/* The floor and the cap sit on the list, the box the fold slides (disclosure-row.ts `slideBox` lifts
+   both for the slide's length), so neither holds the slide and snaps at its end. The cap moves with a
+   neighbour's fold at that slide's tween, so Runs gives and takes height in step with it. */
 .runs-list {
-  max-block-size: calc(var(--sp-1) + 3 * var(--tab-row-h) + 2 * var(--sp-05));
   overflow-y: auto;
   overscroll-behavior: contain;
+  transition: max-block-size var(--uip-disclosure-duration) var(--uip-disclosure-easing);
+
+  &:not([data-folded]) {
+    min-block-size: calc(var(--runs-floor) - var(--runs-chrome));
+    /* Where this falls below the floor, the floor wins (CSS 2.1 §10.7). */
+    max-block-size: min(
+      var(--sp-1) + 3 * var(--tab-row-h) + 2 * var(--sp-05),
+      100cqb - var(--tabs-keep) - var(--runs-chrome)
+    );
+  }
 }
 
 .history-row-name,
