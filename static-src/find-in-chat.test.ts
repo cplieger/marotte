@@ -748,6 +748,13 @@ describe("server-hit navigation", () => {
     }
   }
 
+  /** The first landing has said its verdict, so its pipeline no longer drops the next Enter (`navBusy`). */
+  async function landed(notice: string): Promise<void> {
+    await vi.waitFor(() => {
+      expect(countText()).toBe(`1 of 1 \u00b7 ${notice}`);
+    });
+  }
+
   // The cut is reported twice: the counter carries the whole-chat count, the note the sentence.
 
   it("reports a cut answer as the whole-chat count and the note's sentence", async () => {
@@ -1012,6 +1019,7 @@ describe("server-hit navigation", () => {
   it("releases next/prev on a hidden page, which gets no frame for the re-walk", async () => {
     stageUnreachableHit();
     await openAndSearch("retry");
+    await landed("not in rendered text");
 
     vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
     vi.stubGlobal("requestAnimationFrame", () => 0);
@@ -1025,6 +1033,7 @@ describe("server-hit navigation", () => {
   it("releases next/prev when the page hides while the re-walk waits for its frame", async () => {
     stageUnreachableHit();
     await openAndSearch("retry");
+    await landed("not in rendered text");
 
     vi.stubGlobal("requestAnimationFrame", () => 0);
     const jumps = vi.mocked(scroll.jumpTo).mock.calls.length;
@@ -1768,6 +1777,7 @@ describe("server-hit navigation", () => {
       }),
     ]);
     await openAndSearch("retry");
+    await landed("not in the shown hunks, so open the diff");
 
     vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
     vi.stubGlobal("requestAnimationFrame", () => 0);
