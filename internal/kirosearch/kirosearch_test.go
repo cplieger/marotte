@@ -346,8 +346,7 @@ func TestFiles_DeadlineAnswerSaysItIsPartial(t *testing.T) {
 	awaitGone(t, pidFile)
 }
 
-// KAS reruns a search answered after its 30 s client wait on a walker with no deadline, and a loaded
-// host spent up to 17.3 s outside marotte (searchDeadline's measurement).
+// searchDeadline's doc owns the budget this pins.
 func TestSearchDeadline_AnswersWithinKASsClientWait(t *testing.T) {
 	const kasWait, outside = 30 * time.Second, 17300 * time.Millisecond
 	if total := searchDeadline + killWait + outside; total >= kasWait {
