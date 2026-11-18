@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/creds"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/creds"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -300,7 +300,7 @@ func (*fakeCore) BudgetState() forgeapi.BudgetState {
 	return forgeapi.BudgetState{Remaining: forgeapi.BudgetRemainingUnknown}
 }
 
-func (f *fakeCore) ReadPR(_ context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error) {
+func (f *fakeCore) ReadPR(_ context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, _ ...forgeapi.ReadOption) (forgeapi.PullRequest, error) {
 	for _, p := range f.prs {
 		if p.Ref.Number == pr.Number && strings.EqualFold(p.Repo.Selector, repo.Selector) {
 			return p, nil

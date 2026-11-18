@@ -8,6 +8,7 @@ import {
   movedRepository,
   rerunControl,
   rerunRefusal,
+  refusalWords,
   queueText,
   canArmAutoMerge,
 } from "./git-pr-status.js";
@@ -342,76 +343,174 @@ describe("rerunControl", () => {
 
   it("is enabled where the connection says it can re-run checks", () => {
     for (const kind of ["github", "gitlab", "gitea", "codeberg"] as const) {
-      expect(rerunControl(kind, cap("yes"), undefined), kind).toEqual({ offer: true, reason: "" });
+      expect(rerunControl(kind, cap("yes"), undefined, false), kind).toEqual({
+        offer: true,
+        reason: "",
+        whole: false,
+      });
     }
   });
 
   it("is not offered where the connection says it cannot", () => {
     for (const kind of ["github", "gitlab", "gitea", "codeberg"] as const) {
-      expect(rerunControl(kind, cap("no"), undefined), kind).toEqual({ offer: false });
+      expect(rerunControl(kind, cap("no"), undefined, false), kind).toEqual({ offer: false });
     }
   });
 
   // GitHub decides re-runs per repository and no connection read can say, so the control stays enabled.
   it("stays enabled on GitHub when the capability is unknown or not read yet", () => {
-    expect(rerunControl("github", cap("unknown"), undefined)).toEqual({ offer: true, reason: "" });
-    expect(rerunControl("github", undefined, undefined)).toEqual({ offer: true, reason: "" });
+    expect(rerunControl("github", cap("unknown"), undefined, false)).toEqual({
+      offer: true,
+      reason: "",
+      whole: false,
+    });
+    expect(rerunControl("github", undefined, undefined, false)).toEqual({
+      offer: true,
+      reason: "",
+      whole: false,
+    });
   });
 
   // Elsewhere the server refuses a re-run on an unknown capability, so the control says so before the press.
   it("is disabled with the evidence where another family reads unknown", () => {
     expect(
-      rerunControl("gitea", cap("unknown", "no swagger document on this instance"), undefined),
+      rerunControl(
+        "gitea",
+        cap("unknown", "no swagger document on this instance"),
+        undefined,
+        false,
+      ),
     ).toEqual({
       offer: true,
       reason:
         "the forge could not establish that it can re-run checks (no swagger document on this instance).",
+      whole: false,
     });
-    expect(rerunControl("gitlab", cap("maybe"), undefined)).toEqual({
+    expect(rerunControl("gitlab", cap("maybe"), undefined, false)).toEqual({
       offer: true,
       reason: "the forge could not establish that it can re-run checks.",
+      whole: false,
     });
   });
 
   it("waits for the capability before offering it on another family", () => {
-    expect(rerunControl("gitlab", undefined, undefined)).toEqual({ offer: false });
+    expect(rerunControl("gitlab", undefined, undefined, false)).toEqual({ offer: false });
   });
 
   // A failed read is no verdict: the press is offered, and a refusal disables it.
   it("is enabled when the capability could not be read", () => {
-    expect(rerunControl("gitea", null, undefined)).toEqual({ offer: true, reason: "" });
+    expect(rerunControl("gitea", null, undefined, false)).toEqual({
+      offer: true,
+      reason: "",
+      whole: false,
+    });
   });
 
   it("is disabled with the refusal's reason, whatever the capability says", () => {
     for (const kind of ["github", "gitlab"] as const) {
-      expect(rerunControl(kind, cap("yes"), "the token lacks a permission."), kind).toEqual({
+      expect(rerunControl(kind, cap("yes"), "the token lacks a permission.", false), kind).toEqual({
         offer: true,
         reason: "the token lacks a permission.",
+        whole: false,
+      });
+    }
+  });
+
+  // Forgejo has no failed-jobs route, so its re-run starts the whole finished run.
+  it("says when the press re-runs the whole run", () => {
+    expect(rerunControl("gitea", cap("yes"), undefined, true)).toEqual({
+      offer: true,
+      reason: "",
+      whole: true,
+    });
+    expect(rerunControl("codeberg", cap("yes"), undefined, false)).toEqual({
+      offer: true,
+      reason: "",
+      whole: false,
+    });
+  });
+
+  // Only the capabilities answer names the product, so a Gitea-family row without one cannot say either way.
+  it("leaves the whole run unknown where no capabilities answer named the product", () => {
+    for (const kind of ["gitea", "codeberg"] as const) {
+      expect(rerunControl(kind, null, undefined, undefined), kind).toEqual({
+        offer: true,
+        reason: "",
+        whole: undefined,
+      });
+    }
+    expect(rerunControl("gitea", cap("yes"), "the token lacks a permission.", undefined)).toEqual({
+      offer: true,
+      reason: "the token lacks a permission.",
+      whole: undefined,
+    });
+  });
+
+  it("knows GitHub and GitLab re-run the failed jobs before any answer", () => {
+    for (const kind of ["github", "gitlab"] as const) {
+      expect(rerunControl(kind, null, undefined, undefined), kind).toEqual({
+        offer: true,
+        reason: "",
+        whole: false,
       });
     }
   });
 });
 
+describe("refusalWords", () => {
+  it("says what to do about a missing permission, naming it when the forge did", () => {
+    expect(
+      refusalWords({
+        code: "scope_insufficient",
+        message: "Resource not accessible",
+        cause: { needs: "contents=write" },
+      }),
+    ).toBe(
+      "the token is missing a permission this needs: contents=write. Add it to the token on the forge. Resource not accessible",
+    );
+    expect(
+      refusalWords({ code: "scope_insufficient", message: "denied", cause: { needs: 7 } }),
+    ).toBe(
+      "the token is missing a permission this needs. Add it to the token on the forge. denied",
+    );
+  });
+
+  it("keeps the server's words for any other refusal", () => {
+    expect(refusalWords({ code: "conflict", message: "Base branch was modified" })).toBe(
+      "Base branch was modified",
+    );
+  });
+});
+
 describe("rerunRefusal", () => {
   it("names what the instance lacks for an unsupported capability", () => {
-    expect(rerunRefusal("capability_unsupported", "swagger declares no rerun verb")).toBe(
-      "this forge cannot re-run checks for this repository (swagger declares no rerun verb).",
-    );
-    expect(rerunRefusal("capability_unsupported", "")).toBe(
+    expect(
+      rerunRefusal({ code: "capability_unsupported", message: "swagger declares no rerun verb" }),
+    ).toBe("this forge cannot re-run checks for this repository (swagger declares no rerun verb).");
+    expect(rerunRefusal({ code: "capability_unsupported", message: "" })).toBe(
       "this forge cannot re-run checks for this repository.",
     );
   });
 
   it("names the missing permission for an insufficient scope", () => {
-    expect(rerunRefusal("scope_insufficient", "needs the workflow scope")).toBe(
+    expect(rerunRefusal({ code: "scope_insufficient", message: "needs the workflow scope" })).toBe(
       "the token is missing a permission this needs. Add it to the token on the forge. needs the workflow scope",
+    );
+    expect(
+      rerunRefusal({
+        code: "scope_insufficient",
+        message: "Resource not accessible",
+        cause: { needs: "actions=write" },
+      }),
+    ).toBe(
+      "the token is missing a permission this needs: actions=write. Add it to the token on the forge. Resource not accessible",
     );
   });
 
   // Only these two codes say every later press is refused too.
   it("is no refusal for any other code", () => {
     for (const code of [undefined, "", "rate_limited", "head_moved", "not_supported"]) {
-      expect(rerunRefusal(code, "nope"), String(code)).toBeUndefined();
+      expect(rerunRefusal({ code, message: "nope" }), String(code)).toBeUndefined();
     }
   });
 });

@@ -4,7 +4,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // A rule's first poll after it is created, or after its connection, repo or kind changed, takes a baseline and

@@ -230,7 +230,7 @@ describe("PRs tab over the inventory", () => {
     serve(
       entry(githubForge, "3", [pr(1, 0)], {
         state: "failed",
-        error: { code: "scope_insufficient", kind: "forbidden" },
+        error: { code: "scope_insufficient", kind: "forbidden", needs: "pull_requests=read" },
       }),
       entry(gitlabForge, "3", [pr(2, 1)]),
     );
@@ -239,7 +239,9 @@ describe("PRs tab over the inventory", () => {
 
     const err = mount().querySelector(".git-prs-connection .git-multirepo-error");
     expect(err?.textContent).toContain("github.com");
-    expect(err?.textContent).toContain("missing a permission");
+    expect(err?.textContent).toContain(
+      "Could not list pull requests on github.com. The token is missing a permission this list needs: pull_requests=read. Add it to the token on the forge.",
+    );
     expect(mount().querySelector('[data-repo="cplieger/one"]')).toBeNull();
     expect(mount().querySelector('[data-repo="cplieger/two"]')).not.toBeNull();
   });

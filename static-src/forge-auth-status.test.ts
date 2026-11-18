@@ -42,6 +42,19 @@ describe("what each status says and offers", () => {
     expect(st.control).toBe("check");
   });
 
+  it("names the permission the forge said the token lacks", () => {
+    const st = rowStatus(
+      forgeRow({
+        status: "refused",
+        error: { message: "[User: Read]", code: "scope_insufficient", needs: "read:user" },
+      }),
+      T,
+    );
+    expect(st.line).toBe(
+      "The token is missing a permission this needs: read:user. Add it to the token on the forge, then check again. [User: Read]",
+    );
+  });
+
   it("offers a reconnect row only Reconnect, with the server's reason", () => {
     expect(
       rowStatus(forgeRow({ status: "reconnect", error: { message: "no stored credential." } }), T),

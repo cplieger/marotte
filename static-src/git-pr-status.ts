@@ -223,27 +223,33 @@ const QUEUE_WORDS: ReadonlyMap<string, string> = new Map([
 ]);
 
 /** Whether a row offers Re-run, and if so whether it is enabled (`reason` "")
- *  or why not. */
-export type RerunControl = { offer: false } | { offer: true; reason: string };
+ *  or why not, and whether a press starts the whole run rather than its failed jobs
+ *  (undefined: no capabilities answer has said). */
+export type RerunControl =
+  { offer: false } | { offer: true; reason: string; whole: boolean | undefined };
 
 /**
  * The Re-run control of a failing row, from the connection's `rerun_checks` capability (undefined: not answered;
- * null: the read failed) and any coded refusal on its repository. GitHub decides per repository, so its control stays
- * enabled until a refusal; elsewhere anything but `yes` is disabled with the evidence.
+ * null: the read failed), its `rerun_whole_run` (undefined without a usable answer) and any coded refusal on its
+ * repository. GitHub decides per repository, so its control stays enabled until a refusal; elsewhere anything but
+ * `yes` is disabled with the evidence.
  */
 export function rerunControl(
   kind: ForgeKind,
   cap: Affordance | null | undefined,
   refusal: string | undefined,
+  answered: boolean | undefined,
 ): RerunControl {
+  // Only a Gitea-family connection can be Forgejo.
+  const whole = kind === "github" || kind === "gitlab" ? false : answered;
   if (refusal !== undefined) {
-    return { offer: true, reason: refusal };
+    return { offer: true, reason: refusal, whole };
   }
   if (cap?.support === "no") {
     return { offer: false };
   }
   if (kind === "github" || cap === null || cap?.support === "yes") {
-    return { offer: true, reason: "" };
+    return { offer: true, reason: "", whole };
   }
   if (cap === undefined) {
     return { offer: false };
@@ -252,20 +258,43 @@ export function rerunControl(
   return {
     offer: true,
     reason: `the forge could not establish that it can re-run checks${detail}.`,
+    whole,
   };
+}
+
+/** A refused PR action, as the action layer hands it over: a scope refusal keeps
+ *  the server's body as its cause, which names what the token lacks. */
+interface Refusal {
+  readonly code?: string | undefined;
+  readonly message: string;
+  readonly cause?: unknown;
+}
+
+/** The server's words for a refusal, led by what to do when the token lacks a
+ *  permission, naming the permission when the forge did. */
+export function refusalWords(err: Refusal): string {
+  if (err.code !== "scope_insufficient") {
+    return err.message;
+  }
+  const needs =
+    typeof err.cause === "object" && err.cause !== null
+      ? (err.cause as Record<string, unknown>)["needs"]
+      : undefined;
+  const named = typeof needs === "string" && needs !== "" ? `: ${needs}` : "";
+  return `the token is missing a permission this needs${named}. Add it to the token on the forge. ${err.message}`;
 }
 
 /** The reason a re-run refusal leaves on its repository's Re-run, or undefined
  *  for a refusal of the one press: only these two codes say every later press
  *  is refused too. */
-export function rerunRefusal(code: string | undefined, message: string): string | undefined {
-  switch (code) {
+export function rerunRefusal(err: Refusal): string | undefined {
+  switch (err.code) {
     case "capability_unsupported":
-      return message === ""
+      return err.message === ""
         ? "this forge cannot re-run checks for this repository."
-        : `this forge cannot re-run checks for this repository (${message}).`;
+        : `this forge cannot re-run checks for this repository (${err.message}).`;
     case "scope_insufficient":
-      return `the token is missing a permission this needs. Add it to the token on the forge. ${message}`;
+      return refusalWords(err);
     default:
       return undefined;
   }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/marotte/internal/trigger"
 )
 
@@ -45,7 +45,7 @@ func (s feedSource) OpenPRs(ctx context.Context, f trigger.Feed, after forgeapi.
 	if err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
-	return h.core.ListPRs(ctx, ref, forgeapi.WithState(forgeapi.ListStateOpen), forgeapi.WithAfter(after))
+	return h.core.ListPRs(ctx, ref, prListOptions(forgeapi.WithState(forgeapi.ListStateOpen), forgeapi.WithAfter(after))...)
 }
 
 func (s feedSource) Runs(ctx context.Context, f trigger.Feed, since time.Time, after forgeapi.Cursor) (forgeapi.Page[forgeapi.Run], error) {

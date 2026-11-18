@@ -11,11 +11,12 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/go/keyenc"
 	"golang.org/x/sync/semaphore"
 	"golang.org/x/sync/singleflight"
@@ -454,9 +455,19 @@ func repoFill(h *readHandle, opts []forgeapi.ListOption) func(context.Context) (
 
 func firstRepoPage(h *readHandle) cacheKey { return listKey(h.id, h.account, "", "repos", "") }
 
+// noReviews goes on every pull request list and read: no PR wire type carries a
+// review count, and on Gitea and Forgejo each pull request's reviews cost a request.
+var noReviews = forgeapi.WithReviews(false)
+
+// Clip: opts can be the caller's own slice (req.opts...), and the append must
+// not write into its spare capacity.
+func prListOptions(opts ...forgeapi.ListOption) []forgeapi.ListOption {
+	return append(slices.Clip(opts), noReviews)
+}
+
 func (m *Manager) prPage(ctx context.Context, h *readHandle, ref forgeapi.RepoRef, req *listRequest, force bool) (PRList, error) {
 	fill := func(ctx context.Context) (PRList, error) {
-		page, err := h.core.ListPRs(ctx, ref, req.opts...)
+		page, err := h.core.ListPRs(ctx, ref, prListOptions(req.opts...)...)
 		if err != nil {
 			return PRList{}, err
 		}

@@ -10,7 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/subject"
 )
@@ -145,7 +146,9 @@ func inventoryError(err error) *InventoryError {
 	if !ok {
 		return &InventoryError{Kind: forgeapi.KindUnknown.String()}
 	}
-	return &InventoryError{Code: fe.Code, Kind: fe.Kind.String(), DiagID: fe.DiagID, RetryAfterS: retryAfterSeconds(fe)}
+	return &InventoryError{
+		Code: fe.Code, Kind: fe.Kind.String(), DiagID: fe.DiagID, Needs: logsafe.Field(fe.Needs), RetryAfterS: retryAfterSeconds(fe),
+	}
 }
 
 type heldEntry struct {

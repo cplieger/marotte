@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // The embedded Core is nil, so any other method panics.
@@ -34,6 +34,8 @@ type pagedCore struct {
 	states     []forgeapi.ListState
 	refs       []string
 	prReads    []forgeapi.PRRef
+	prSets     []forgeapi.ListSettings
+	readSets   []forgeapi.ReadSettings
 	mu         sync.Mutex
 }
 
@@ -57,6 +59,9 @@ func (c *pagedCore) ListPRs(_ context.Context, repo forgeapi.RepoRef, opts ...fo
 	if err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
+	c.mu.Lock()
+	c.prSets = append(c.prSets, set)
+	c.mu.Unlock()
 	return c.prPages[set.After], nil
 }
 
@@ -84,11 +89,12 @@ func (c *pagedCore) CommitStatus(_ context.Context, repo forgeapi.RepoRef, ref s
 	return c.checks, c.checksErr
 }
 
-func (c *pagedCore) ReadPR(_ context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error) {
+func (c *pagedCore) ReadPR(_ context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, opts ...forgeapi.ReadOption) (forgeapi.PullRequest, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.asked = append(c.asked, repo)
 	c.prReads = append(c.prReads, pr)
+	c.readSets = append(c.readSets, forgeapi.ResolveRead(opts...))
 	return c.read, c.readErr
 }
 
@@ -427,6 +433,39 @@ func TestIssueList_StateMapsAndAnUnknownStateIs400(t *testing.T) {
 	})
 }
 
+func TestListRoute_ReadsNoReviews(t *testing.T) {
+	core := &pagedCore{prPages: onePRPage(1)}
+	mux := repoRoutes(recordManager(t, core))
+	for _, tail := range []string{"prs", "prs?after=c1"} {
+		if rec := getRoute(t, mux, githubRepoPath("v1.6f2f72", tail)); rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d %s, want 200", tail, rec.Code, rec.Body)
+		}
+	}
+	core.mu.Lock()
+	defer core.mu.Unlock()
+	if len(core.prSets) != 2 {
+		t.Fatalf("ListPRs calls = %d, want 2", len(core.prSets))
+	}
+	for i, set := range core.prSets {
+		if !set.ReviewsSet || set.Reviews {
+			t.Errorf("ListPRs call %d: reviews set %v, read %v; want WithReviews(false)", i, set.ReviewsSet, set.Reviews)
+		}
+	}
+}
+
+func TestPRDetailRoute_ReadsNoReviews(t *testing.T) {
+	core := &pagedCore{read: seedPR(seedHead)}
+	mux := repoRoutes(recordManager(t, core))
+	if rec := getRoute(t, mux, githubRepoPath("v1.6f2f72", "prs/15")); rec.Code != http.StatusOK {
+		t.Fatalf("GET prs/15 = %d %s, want 200", rec.Code, rec.Body)
+	}
+	core.mu.Lock()
+	defer core.mu.Unlock()
+	if len(core.readSets) != 1 || core.readSets[0].Reviews {
+		t.Errorf("ReadPR settings = %+v, want one read with WithReviews(false)", core.readSets)
+	}
+}
+
 func TestReadRoutes_AStateOnAStatelessListIsTheLibrarysRefusal(t *testing.T) {
 	wire := aliceWire()
 	h := patGitHub(t, wire)
@@ -442,15 +481,13 @@ func TestReadRoutes_AStateOnAStatelessListIsTheLibrarysRefusal(t *testing.T) {
 	}
 }
 
-func TestReleaseAndLabelRoutes_AbsentRoleIs501(t *testing.T) {
-	t.Run("a client with neither role", func(t *testing.T) {
+func TestReleaseAndLabelRoutes_ServeTheRoleOr501(t *testing.T) {
+	t.Run("a client without the releases role", func(t *testing.T) {
 		core := &pagedCore{}
 		mux := repoRoutes(recordManager(t, core))
-		for _, tail := range []string{"releases", "labels"} {
-			rec := getRoute(t, mux, githubRepoPath("v1.6f2f72", tail))
-			if rec.Code != http.StatusNotImplemented || decodeBody(t, rec)["code"] != "not_supported" {
-				t.Errorf("GET %s = %d %s, want 501 not_supported", tail, rec.Code, rec.Body)
-			}
+		rec := getRoute(t, mux, githubRepoPath("v1.6f2f72", "releases"))
+		if rec.Code != http.StatusNotImplemented || decodeBody(t, rec)["code"] != "not_supported" {
+			t.Errorf("GET releases = %d %s, want 501 not_supported", rec.Code, rec.Body)
 		}
 		if asked, _, _ := core.calls(); len(asked) != 0 {
 			t.Errorf("the library was asked %+v, want nothing", asked)

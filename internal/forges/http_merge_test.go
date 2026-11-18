@@ -15,7 +15,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 const mergeHead = "aaaa1111bbbb2222cccc3333dddd4444eeee5555"

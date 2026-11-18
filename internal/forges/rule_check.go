@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/go/keyenc"
 	"github.com/cplieger/marotte/internal/launchrule"
 )
@@ -38,7 +38,7 @@ func (m *Manager) CheckEventRule(ctx context.Context, ev *launchrule.EventSpec) 
 		}
 		_, err = h.core.ListIssues(ctx, ref, forgeapi.WithPageBound(1))
 	case launchrule.KindPRLabeled, launchrule.KindPROpened:
-		_, err = h.core.ListPRs(ctx, ref, forgeapi.WithPageBound(1))
+		_, err = h.core.ListPRs(ctx, ref, prListOptions(forgeapi.WithPageBound(1))...)
 	default:
 		_, err = h.core.ListRuns(ctx, ref, forgeapi.WithSince(time.Now().Add(-time.Hour)), forgeapi.WithPageBound(1))
 	}
@@ -66,6 +66,12 @@ func checkRefusal(host, repo string, err error, affordances bool) error {
 		return &launchrule.ForgeCheckError{Text: host + " is limiting requests; try again later", Unavailable: true}
 	case fe.Retryable || fe.Kind == forgeapi.KindTransient:
 		return &launchrule.ForgeCheckError{Text: host + " did not answer; try again", Unavailable: true}
+	case fe.Code == forgeapi.CodeScopeInsufficient:
+		missing := "a permission this rule needs"
+		if fe.Needs != "" {
+			missing += ": " + fe.Needs
+		}
+		return &launchrule.ForgeCheckError{Text: host + ": the token is missing " + missing + ". Add it to the token on the forge"}
 	case affordances && (fe.Kind == forgeapi.KindNotFound || fe.Kind == forgeapi.KindForbidden ||
 		fe.Code == forgeapi.CodeRepoOrPRNotVisible):
 		return &launchrule.ForgeCheckError{Text: host + " can't read " + repo}

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/marotte/internal/logsafe"
 )
 
@@ -133,6 +133,23 @@ func TestErrorEnvelope_CarriesCodeDiagIDRetryAfterSuccessorCapability(t *testing
 			t.Errorf("retry_after_s present on an error with no wait: %v", body)
 		}
 	})
+}
+
+func TestErrorEnvelope_NamesTheMissingPermission(t *testing.T) {
+	w, body := writeError(t, &forgeapi.Error{
+		Op: "MergePR", Kind: forgeapi.KindForbidden, Code: forgeapi.CodeScopeInsufficient, Status: 403,
+		Message: "Resource not accessible by personal access token", Needs: "contents=write",
+	})
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", w.Code)
+	}
+	if got := body["needs"]; got != "contents=write" {
+		t.Errorf("needs = %v, want the permission the forge named", got)
+	}
+	_, body = writeError(t, &forgeapi.Error{Kind: forgeapi.KindForbidden, Status: 403})
+	if _, ok := body["needs"]; ok {
+		t.Errorf("needs present on a refusal that names none: %v", body)
+	}
 }
 
 func TestErrorEnvelope_BoundsUpstreamText(t *testing.T) {

@@ -14,7 +14,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 const (
@@ -581,6 +581,30 @@ func TestCapabilitiesRoute_CarriesEvidence(t *testing.T) {
 	}
 }
 
+func TestCapabilitiesRoute_SaysWhereARerunStartsTheWholeRun(t *testing.T) {
+	cases := map[forgeapi.Product]bool{
+		forgeapi.ProductForgejo: true,
+		forgeapi.ProductGitea:   false,
+		forgeapi.ProductGitHub:  false,
+		forgeapi.ProductGitLab:  false,
+	}
+	for product, want := range cases {
+		t.Run(product.String(), func(t *testing.T) {
+			core := &capsCore{conn: forgeapi.ConnectionCaps{
+				Caps:    map[forgeapi.Capability]forgeapi.Support{forgeapi.CapRerunChecks: forgeapi.SupportYes},
+				Product: product,
+			}}
+			rec := getRoute(t, repoRoutes(recordManager(t, core)), githubCapsPath)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET %s = %d %s, want 200", githubCapsPath, rec.Code, rec.Body)
+			}
+			if got := decodeBody(t, rec)["rerun_whole_run"]; got != want {
+				t.Errorf("GET %s rerun_whole_run = %v, want %v", githubCapsPath, got, want)
+			}
+		})
+	}
+}
+
 func TestCapabilitiesRoute_UnknownIsItsOwnSpelling(t *testing.T) {
 	core := &capsCore{
 		conn: forgeapi.ConnectionCaps{
@@ -609,6 +633,7 @@ func TestCapabilitiesRoute_UnknownIsItsOwnSpelling(t *testing.T) {
 		"grant": map[string]any{
 			"read_merge_state": map[string]any{"support": "unknown", "source": "unknown", "detail": ""},
 		},
+		"rerun_whole_run": false,
 	}
 	if got := decodeBody(t, rec); !reflect.DeepEqual(got, want) {
 		t.Errorf("GET %s = %v, want %v", githubCapsPath, got, want)

@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/go/slogx/capture"
 )
 
@@ -29,7 +29,7 @@ func newFillCore() *fillCore {
 	return &fillCore{scopeCore: newScopeCore(), reads: map[string]forgeapi.PullRequest{}, errs: map[string]error{}}
 }
 
-func (c *fillCore) ReadPR(_ context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error) {
+func (c *fillCore) ReadPR(_ context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, _ ...forgeapi.ReadOption) (forgeapi.PullRequest, error) {
 	key := readKey(repo.Selector, pr.Number)
 	c.asked = append(c.asked, key)
 	if err := c.errs[key]; err != nil {

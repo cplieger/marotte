@@ -14,7 +14,7 @@ On the **Workflows** panel of the `/docs` page, open **Run when…** on the work
 6. **Inputs**: a fixed value for each input the workflow declares, and the list of inputs the event sets.
 7. The model and effort picks, as for a schedule.
 
-Saving checks that the connection can read the repository and the list the rule watches. When it cannot, the form shows the forge's reason and saves nothing. A new rule takes a baseline at its first check: what is already there when you save it never starts a run. An issue that already has the label, an item opened before the save, or a CI run that started before the save launches nothing.
+Saving checks that the connection can read the repository and the list the rule watches. When it cannot, the form shows the forge's reason and saves nothing. When the token lacks a permission the rule needs, the reason says so and names the permission when the forge does. A new rule takes a baseline at its first check: what is already there when you save it never starts a run. An issue that already has the label, an item opened before the save, or a CI run that started before the save launches nothing.
 
 Each rule is one line under **Run when…**, with a switch that pauses it, **Edit** and **Delete**. The line says what starts the run, the last event that started one and that run's outcome, and the rule's state, such as "watching, checked 13:55" or "1 event waiting".
 

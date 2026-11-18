@@ -506,8 +506,9 @@ const arbModel = fc.letrec<{
       connection: fc.dictionary(fc.string(), tie("Affordance"), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
       grant: fc.dictionary(fc.string(), tie("Affordance"), { maxKeys: 2, size: "small", depthIdentifier: "wiregen" }),
       account: fc.string(),
+      rerun_whole_run: fc.boolean(),
     },
-    { requiredKeys: ["connection", "grant", "account"] },
+    { requiredKeys: ["connection", "grant", "account", "rerun_whole_run"] },
   ),
   CatalogInfo: fc.record(
     {
@@ -1396,6 +1397,7 @@ const arbModel = fc.letrec<{
       message: fc.string(),
       code: fc.string(),
       kind: fc.string(),
+      needs: fc.string(),
       retry_at: fc.double({ noNaN: true, noDefaultInfinity: true }),
     },
     { requiredKeys: ["message"] },
@@ -1506,6 +1508,7 @@ const arbModel = fc.letrec<{
       code: fc.string(),
       kind: fc.string(),
       diag_id: fc.string(),
+      needs: fc.string(),
       retry_after_s: fc.double({ noNaN: true, noDefaultInfinity: true }),
     },
     { requiredKeys: ["code", "kind"] },

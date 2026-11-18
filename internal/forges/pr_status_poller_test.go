@@ -20,7 +20,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -682,6 +682,15 @@ func TestProviderCheckVerdicts_MatchTheStatedScope(t *testing.T) {
 		if got := sortedBodies(sent); !slices.Equal(got, want) {
 			t.Errorf("Gitea notices = %q and verdicts %v, want %q: each tracked row's read folds its head's statuses (the forge saw %q)",
 				got, held, want, wire.requests())
+		}
+		var reviews []string
+		for _, req := range wire.requests() {
+			if strings.HasSuffix(req, "/reviews") {
+				reviews = append(reviews, req)
+			}
+		}
+		if len(reviews) != 0 {
+			t.Errorf("the poller read reviews %q, want none: no PR wire type carries a review count", reviews)
 		}
 	})
 }

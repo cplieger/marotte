@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -40,6 +40,9 @@ type ForgeError struct {
 	Message string `json:"message"`
 	Code    string `json:"code,omitempty"`
 	Kind    string `json:"kind,omitempty"`
+	// Needs is the permission the forge said the credential lacks, as the
+	// forge spells it; absent when it named none.
+	Needs string `json:"needs,omitempty"`
 	// RetryAt is when the forge's rate limit lets a request through again, in
 	// Unix milliseconds; absent when the forge named no wait.
 	RetryAt int64 `json:"retry_at,omitempty"`
@@ -184,6 +187,10 @@ type Capabilities struct {
 	Grant      map[string]Affordance `json:"grant"`
 	// Account is the sign-in the answer was read through.
 	Account string `json:"account"`
+	// RerunWholeRun is whether this instance's re-run starts the whole finished
+	// run, its passed jobs included, rather than its failed jobs: forgeapi's
+	// Forgejo departure on RerunFailedChecks.
+	RerunWholeRun bool `json:"rerun_whole_run"`
 }
 
 // Repo is a repository the connection reaches.
@@ -296,6 +303,7 @@ type InventoryError struct {
 	Code        string `json:"code"`
 	Kind        string `json:"kind"`
 	DiagID      string `json:"diag_id,omitempty"`
+	Needs       string `json:"needs,omitempty"`
 	RetryAfterS int64  `json:"retry_after_s,omitempty"`
 }
 
@@ -528,8 +536,9 @@ var (
 
 func capabilitiesOf(conn forgeapi.ConnectionCaps, grant forgeapi.GrantCaps) Capabilities {
 	return Capabilities{
-		Connection: scopeOf(connectionScope, conn.Caps, conn.Ev),
-		Grant:      scopeOf(grantScope, grant.Caps, grant.Ev),
+		Connection:    scopeOf(connectionScope, conn.Caps, conn.Ev),
+		Grant:         scopeOf(grantScope, grant.Caps, grant.Ev),
+		RerunWholeRun: conn.Product == forgeapi.ProductForgejo,
 	}
 }
 

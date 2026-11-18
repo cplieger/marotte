@@ -329,17 +329,18 @@ describe("rerunChecks", () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 
-  it("keeps the server's words for a refusal with no capability", async () => {
-    mockFetch.mockResolvedValue(
-      new Response(
-        JSON.stringify({ error: "needs the workflow scope", code: "scope_insufficient" }),
-        { status: 403 },
-      ),
-    );
+  it("keeps the server's words and the permission it names for a scope refusal", async () => {
+    const body = {
+      error: "needs the workflow scope",
+      code: "scope_insufficient",
+      needs: "workflow",
+    };
+    mockFetch.mockResolvedValue(new Response(JSON.stringify(body), { status: 403 }));
     const o = await rerunChecks.dispatch(rerunArgs).outcome;
     expect(o.status === "error" && o.error).toMatchObject({
       code: "scope_insufficient",
       message: "needs the workflow scope",
+      cause: body,
     });
   });
 });
@@ -401,6 +402,7 @@ describe("readCapabilities", () => {
       },
       grant: { read_merge_state: { support: "yes", source: "probe", detail: "" } },
       account: "a1",
+      rerun_whole_run: true,
     };
     mockFetch.mockResolvedValue(new Response(JSON.stringify(caps), { status: 200 }));
     expect(await readCapabilities.dispatch({ forge_id: "gh1" })).toEqual(caps);
@@ -410,7 +412,12 @@ describe("readCapabilities", () => {
 
   // An ask after the connection changed must reach the server, not join the read issued before the change.
   it("sends each ask, one in flight or not", async () => {
-    const body = JSON.stringify({ connection: {}, grant: {}, account: "a1" });
+    const body = JSON.stringify({
+      connection: {},
+      grant: {},
+      account: "a1",
+      rerun_whole_run: false,
+    });
     mockFetch.mockImplementation(() => Promise.resolve(new Response(body, { status: 200 })));
     await Promise.all([
       readCapabilities.dispatch({ forge_id: "gh1" }),
@@ -503,6 +510,16 @@ describe("createPR", () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ number: 42 }), { status: 200 }));
     const o = await createPR.dispatch(createArgs).outcome;
     expect(o.status).toBe("error");
+  });
+
+  it("keeps the permission a scope refusal names", async () => {
+    const body = { error: "denied", code: "scope_insufficient", needs: "pull_requests=write" };
+    mockFetch.mockResolvedValue(new Response(JSON.stringify(body), { status: 403 }));
+    const o = await createPR.dispatch(createArgs).outcome;
+    expect(o.status === "error" && o.error).toMatchObject({
+      code: "scope_insufficient",
+      cause: body,
+    });
   });
 
   it("does not toast on failure (error: false — the create dialog shows inline status)", async () => {

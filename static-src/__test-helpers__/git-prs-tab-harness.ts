@@ -336,11 +336,17 @@ export function refuses(code: string, message: string): unknown {
 }
 
 /** The capability route's answer: `rerun_checks` reads `support`. */
-export function capabilities(support: string, detail = "", account = "acct-github"): unknown {
+export function capabilities(
+  support: string,
+  detail = "",
+  account = "acct-github",
+  wholeRun = false,
+): unknown {
   return {
     connection: { rerun_checks: { support, source: "version", detail } },
     grant: {},
     account,
+    rerun_whole_run: wholeRun,
   };
 }
 

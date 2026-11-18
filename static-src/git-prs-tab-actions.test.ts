@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type * as ModPRs from "./git-prs-tab.js";
+import { confirm as confirmDialog } from "./confirm.js";
 import { prIdentity } from "./push-subject.js";
 import type { Forge } from "./__test-helpers__/git-prs-tab-harness.js";
 import {
@@ -337,6 +338,12 @@ describe("the pull-request row's action state", () => {
     );
   }
 
+  function giteaRow(): HTMLElement | null {
+    return mount().querySelector<HTMLElement>(
+      `[data-pr="${CSS.escape(prIdentity(giteaForge.id, repos[0]?.repo_id ?? "", 7))}"]`,
+    );
+  }
+
   /** Read with any spinner beside it. */
   function buttonOf(r: HTMLElement | null, label: string): HTMLButtonElement | undefined {
     return [...(r?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
@@ -513,6 +520,68 @@ describe("the pull-request row's action state", () => {
     );
   });
 
+  // forgeapi: Forgejo 17 and later re-run the whole finished run, its passed jobs included.
+  it("says Re-run starts the whole run where the instance re-runs whole runs", async () => {
+    const { readCapabilities } = await actions();
+    vi.mocked(readCapabilities.dispatch).mockImplementation(
+      () =>
+        succeeds(capabilities("yes", "swagger declares rerun", giteaForge.account, true)) as never,
+    );
+    await shown([pr(7, 0, {}, failing)], giteaForge);
+    const rerun = buttonOf(giteaRow(), "Re-run");
+
+    expect(rerun?.getAttribute("data-tooltip")).toBe(
+      "Re-run the whole CI run, its passed jobs included",
+    );
+    rerun?.click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.mocked(confirmDialog)).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Re-run the whole CI run on PR #7?" }),
+    );
+    expect(statusOf(giteaRow())).toBe("Re-run of the whole run started.");
+  });
+
+  it("says Re-run starts the failed jobs elsewhere", async () => {
+    const { readCapabilities } = await actions();
+    vi.mocked(readCapabilities.dispatch).mockImplementation(
+      () => succeeds(capabilities("yes", "", giteaForge.account, false)) as never,
+    );
+    await shown([pr(7, 0, {}, failing)], giteaForge);
+    const rerun = buttonOf(giteaRow(), "Re-run");
+
+    expect(rerun?.getAttribute("data-tooltip")).toBe("Re-run the failed CI jobs");
+    rerun?.click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.mocked(confirmDialog)).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Re-run failed checks on PR #7?" }),
+    );
+    expect(statusOf(giteaRow())).toBe("Re-run started.");
+  });
+
+  // Without a usable capabilities answer the row cannot tell Gitea from Forgejo, so it promises neither.
+  for (const [name, answer] of [
+    ["could not be read", () => succeeds(null)],
+    ["answered for another account", () => succeeds(capabilities("yes", "", "acct-other", true))],
+  ] as const) {
+    it(`words Re-run for either behaviour when the capabilities ${name}`, async () => {
+      const { readCapabilities } = await actions();
+      vi.mocked(readCapabilities.dispatch).mockImplementation(answer as never);
+      await shown([pr(7, 0, {}, failing)], giteaForge);
+      const rerun = buttonOf(giteaRow(), "Re-run");
+
+      expect(rerun?.disabled).toBe(false);
+      expect(rerun?.getAttribute("data-tooltip")).toBe(
+        "Re-run CI: the failed jobs, or on Forgejo the whole run, its passed jobs included",
+      );
+      rerun?.click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(vi.mocked(confirmDialog)).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Re-run CI on PR #7?" }),
+      );
+      expect(statusOf(giteaRow())).toBe("Re-run started.");
+    });
+  }
+
   it("hides Re-run where the connection says it cannot re-run checks", async () => {
     const { readCapabilities } = await actions();
     vi.mocked(readCapabilities.dispatch).mockImplementation(
@@ -667,6 +736,31 @@ describe("the pull-request row's action state", () => {
     expect(buttonOf(row(7), "Merge")?.disabled).toBe(false);
     expect(buttonOf(row(7), "Merge")?.getAttribute("aria-busy")).toBeNull();
     expect(statusOf(row(7))).toBe("");
+  });
+
+  it("names the permission a refused merge's token lacks", async () => {
+    const { mergePR } = await actions();
+    vi.mocked(mergePR.dispatch).mockImplementationOnce(
+      () =>
+        handle(
+          Promise.resolve({
+            status: "error",
+            error: {
+              message: "Resource not accessible",
+              code: "scope_insufficient",
+              status: 403,
+              cause: { needs: "contents=write" },
+            },
+          }),
+        ) as never,
+    );
+    await shown([pr(7, 0, {}, { merge_blocked: "none" })]);
+
+    buttonOf(row(7), "Merge")?.click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(statusOf(row(7))).toBe(
+      "Could not merge. The token is missing a permission this needs: contents=write. Add it to the token on the forge. Resource not accessible",
+    );
   });
 
   it("shows a refused merge's reason in its row, and clears it at the next press", async () => {
