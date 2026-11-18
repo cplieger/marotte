@@ -1,7 +1,8 @@
 // The sidebar's Runs section over the shipped markup and stylesheet, fed through the real live-run
-// inventory, run store and tab projection: which runs it lists, when a row leaves, what its dot says
-// and where the dot sits.
+// inventory, run store and tab projection: which runs it lists, when a row leaves, what its dot says,
+// where the dot sits and where focus goes.
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
+import { userEvent } from "vitest/browser";
 
 import indexHtml from "../static/index.html?raw";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -269,12 +270,25 @@ describe("which runs the section lists", () => {
     });
   });
 
-  it("does not list a run a chat launched", async () => {
+  it("does not list a run a chat launched while that chat's tab is open, and lists it once it closes", async () => {
+    await openTab({ kind: "chat", ref: "c1" });
+    await settleTabs();
     launched("wf_agent", "from-a-chat", { chat: "c1" });
     await settle();
-
     expect(names()).toEqual([]);
     expect(section().hidden).toBe(true);
+
+    tabServer.closeRemotely(tabIdFor("chat", "c1"));
+    await settleTabs();
+    await settle();
+    expect(names()).toEqual(["from-a-chat"]);
+  });
+
+  it("lists a run whose launching chat has no tab open", async () => {
+    launched("wf_orphan", "orphaned-run", { chat: "c-closed" });
+    await settle();
+
+    expect(names()).toEqual(["orphaned-run"]);
   });
 
   it("orders the rows by name, the same on every device", async () => {
@@ -284,6 +298,26 @@ describe("which runs the section lists", () => {
     await settle();
 
     expect(names()).toEqual(["Alpha", "beta", "gamma"]);
+  });
+
+  it("orders the rows the same whatever language the browser uses", async () => {
+    // A Swedish browser sorts ä after z; the rows keep English order there.
+    const sv = new Intl.Collator("sv");
+    const compare = vi.spyOn(String.prototype, "localeCompare").mockImplementation(function (
+      this: string,
+      that: string,
+    ) {
+      return sv.compare(this, that);
+    });
+    try {
+      launched("wf_z", "zebra");
+      launched("wf_ae", "äpple");
+      await settle();
+
+      expect(names()).toEqual(["äpple", "zebra"]);
+    } finally {
+      compare.mockRestore();
+    }
   });
 
   it("follows a run's state as it moves", async () => {
@@ -512,5 +546,106 @@ describe("where a row draws its dot", () => {
     await settle();
     expect(dot.dataset["status"]).toBe("working");
     expect(Math.abs(name.getBoundingClientRect().left - blank)).toBeLessThan(0.5);
+  });
+});
+
+describe("where focus goes", () => {
+  /** The open tab row holding focus, by tab id, or "" when focus is not on one. */
+  const focusedTab = (): string =>
+    document.activeElement?.closest<HTMLElement>("[data-tab-id]")?.dataset["tabId"] ?? "";
+
+  it("moves from a row that leaves to the next row, then the previous one, then the open tab", async () => {
+    await openTab({ kind: "chat", ref: "c-here" });
+    await settleTabs();
+    launched("wf_r1", "r-one");
+    launched("wf_r2", "r-two");
+    launched("wf_r3", "r-zed");
+    await settle();
+
+    link("r-two").focus();
+    frame("wf_r2", null);
+    await settle();
+    expect(document.activeElement).toBe(link("r-zed"));
+
+    frame("wf_r3", null);
+    await settle();
+    expect(document.activeElement).toBe(link("r-one"));
+
+    frame("wf_r1", null);
+    await settle();
+    expect(section().hidden).toBe(true);
+    expect(focusedTab()).toBe(tabIdFor("chat", "c-here"));
+  });
+
+  it("keeps focus on a row a rename moves up the list", async () => {
+    launched("wf_m1", "alpha");
+    launched("wf_m2", "beta");
+    await settle();
+    link("beta").focus();
+
+    h.headers.set("wf_m2", { status: "running", name: "aardvark" });
+    reviseRun("wf_m2");
+    await settle();
+
+    expect(names()).toEqual(["aardvark", "alpha"]);
+    expect(document.activeElement).toBe(link("aardvark"));
+  });
+
+  it("moves focus to the run's new tab row on Enter at desktop width", async () => {
+    launched("wf_key", "keyed-run");
+    await settle();
+    link("keyed-run").focus();
+
+    await userEvent.keyboard("{Enter}");
+    await settleTabs();
+    await settle();
+
+    expect(tabIdFor("run", "wf_key")).not.toBe("");
+    expect(focusedTab()).toBe(tabIdFor("run", "wf_key"));
+  });
+
+  it("leaves focus off the tab row at phone width, where the open closes the drawer", async () => {
+    launched("wf_phone", "phone-run");
+    await settle();
+    link("phone-run").focus();
+    vi.stubGlobal(
+      "matchMedia",
+      (q: string): MediaQueryList =>
+        ({
+          matches: q.includes("48rem"),
+          media: q,
+          onchange: null,
+          addEventListener: () => undefined,
+          removeEventListener: () => undefined,
+          addListener: () => undefined,
+          removeListener: () => undefined,
+          dispatchEvent: () => false,
+        }) as MediaQueryList,
+    );
+    try {
+      await userEvent.keyboard("{Enter}");
+      await settleTabs();
+      await settle();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(tabIdFor("run", "wf_phone")).not.toBe("");
+    expect(focusedTab()).toBe("");
+  });
+
+  it("puts focus back on the row when the open is refused at the tab limit", async () => {
+    launched("wf_full", "capped-run");
+    await settle();
+    link("capped-run").focus();
+    tabServer.failNext("open_tab", 409, "too many tabs", "tabs_full");
+
+    await userEvent.keyboard("{Enter}");
+    await settleTabs();
+    await settle();
+
+    expect(tabIdFor("run", "wf_full")).toBe("");
+    expect(names()).toEqual(["capped-run"]);
+    expect(document.activeElement).toBe(link("capped-run"));
   });
 });

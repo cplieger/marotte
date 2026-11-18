@@ -1706,7 +1706,7 @@ interface LiveRunRow {
 /** A row handed OUT, carrying the workflow id the map holds it under. The id is the map's KEY
  *  rather than a field of the row, so a reader given the row alone cannot name the run it
  *  describes. */
-interface LiveRunEntry extends LiveRunRow {
+export interface LiveRunEntry extends LiveRunRow {
   readonly id: string;
 }
 
@@ -1783,7 +1783,7 @@ export function hasLiveRunForChat(chatID: string): boolean {
 }
 
 /** The live runs this chat launched, in the order they were recorded. Parked runs are INCLUDED
- *  like `hasLiveRunForChat`; parentless ones are EXCLUDED, `parentlessLiveRuns` reads them. */
+ *  like `hasLiveRunForChat`; parentless ones are EXCLUDED. */
 export function liveRunsForChat(chatID: string): LiveRunEntry[] {
   const entries = liveRuns.entries();
   if (chatID === "") {
@@ -1798,13 +1798,10 @@ export function liveRunsForChat(chatID: string): LiveRunEntry[] {
   return out;
 }
 
-/** The live runs no chat launched, parked ones included: a lease's chat is empty exactly for a
- *  parentless run (`LiveRun.chat_id`). Subscribes to the inventory. */
-export function parentlessLiveRuns(): LiveRunEntry[] {
-  return liveRuns
-    .entries()
-    .filter(([, r]) => r.chat === "")
-    .map(([id, r]) => ({ id, ...r }));
+/** Every live run, parked ones included; `chat` is empty exactly for a parentless run
+ *  (`LiveRun.chat_id`). Subscribes to the inventory. */
+export function liveRunList(): LiveRunEntry[] {
+  return liveRuns.entries().map(([id, r]) => ({ id, ...r }));
 }
 
 /** This run's live row WITHOUT subscribing, or `undefined` when nothing holds it live.
