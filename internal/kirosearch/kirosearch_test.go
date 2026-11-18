@@ -105,6 +105,103 @@ func TestText_RealRGRootedIncludeFindsOnlyThatSubtree(t *testing.T) {
 	}
 }
 
+// An absolute include under one root names nothing under another, which is not searched.
+func TestText_RealRGAbsoluteIncludeSearchesOnlyItsRoot(t *testing.T) {
+	bin := realRG(t)
+	first, second := t.TempDir(), t.TempDir()
+	writeTree(t, first, map[string]string{"repo/a.go": "hit\n"})
+	writeTree(t, second, map[string]string{"repo/a.go": "hit\n"})
+
+	got := Searcher{Bin: bin}.Text(t.Context(), []string{first, second}, TextQuery{Pattern: "hit", IncludePattern: first + "/repo/*.go"})
+
+	want := []Match{{FilePath: "repo/a.go", LineNumber: 1, LineText: "hit"}}
+	if !slices.Equal(got, want) {
+		t.Errorf("Text = %+v, want %+v", got, want)
+	}
+}
+
+func TestText_RealRGExcludeFormsLeaveOutTheFolderTheyName(t *testing.T) {
+	bin := realRG(t)
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"repo/internal/a.go": "hit\n", "keep/b.go": "hit\n"})
+	want := []Match{{FilePath: "keep/b.go", LineNumber: 1, LineText: "hit"}}
+	for name, exclude := range map[string]string{
+		"relative":               "repo/internal/**",
+		"absolute":               root + "/repo/internal/**",
+		"dot-led":                "./repo/internal/**",
+		"trailing slash":         "repo/internal/",
+		"bare folder":            "repo/internal",
+		"dot segment":            "repo/./internal/**",
+		"doubled slash":          "repo//internal/**",
+		"doubled leading slash":  "//repo/internal/**",
+		"led by slash-dot":       "/./repo/internal/**",
+		"doubled trailing slash": "repo/internal//",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := Searcher{Bin: bin}.Text(t.Context(), []string{root}, TextQuery{Pattern: "hit", ExcludePattern: exclude})
+			if !slices.Equal(got, want) {
+				t.Errorf("Text(exclude %q) = %+v, want %+v", exclude, got, want)
+			}
+		})
+	}
+}
+
+// KAS turns a file_search query "^<path>" into the pattern "<path>*", absolute when the model wrote
+// an absolute path.
+func TestFiles_RealRGAbsoluteAndDotLedPatternsFindUnderTheRoot(t *testing.T) {
+	bin := realRG(t)
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"repo/internal/build.go": "", "other/build.go": ""})
+	for name, pattern := range map[string]string{
+		"absolute": root + "/repo/internal/build*",
+		"dot-led":  "./repo/internal/build*",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := Searcher{Bin: bin}.Files(t.Context(), []string{root}, FilesQuery{Pattern: pattern, MaxResults: 11})
+			if want := []string{"repo/internal/build.go"}; !slices.Equal(got, want) {
+				t.Errorf("Files(%q) = %q, want %q", pattern, got, want)
+			}
+		})
+	}
+}
+
+// A path written from the root ("./x.go", "<root>/x.go") names the root's own file, not every file
+// of that name in the tree.
+func TestText_RealRGRootFileFormsFindOnlyTheRootFile(t *testing.T) {
+	bin := realRG(t)
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"x.go": "hit\n", "sub/x.go": "hit\n"})
+	want := []Match{{FilePath: "x.go", LineNumber: 1, LineText: "hit"}}
+	for name, include := range map[string]string{
+		"root-anchored": "/x.go",
+		"dot-led":       "./x.go",
+		"absolute":      root + "/x.go",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := Searcher{Bin: bin}.Text(t.Context(), []string{root}, TextQuery{Pattern: "hit", IncludePattern: include})
+			if !slices.Equal(got, want) {
+				t.Errorf("Text(include %q) = %+v, want %+v", include, got, want)
+			}
+		})
+	}
+}
+
+// An include naming the root itself searches all of it.
+func TestText_RealRGRootIncludeFormsSearchTheWholeRoot(t *testing.T) {
+	bin := realRG(t)
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"a.go": "hit\n"})
+	want := []Match{{FilePath: "a.go", LineNumber: 1, LineText: "hit"}}
+	for name, include := range map[string]string{"dot": ".", "dot slash": "./", "slash": "/", "absolute": root, "absolute, slash": root + "/"} {
+		t.Run(name, func(t *testing.T) {
+			got := Searcher{Bin: bin}.Text(t.Context(), []string{root}, TextQuery{Pattern: "hit", IncludePattern: include})
+			if !slices.Equal(got, want) {
+				t.Errorf("Text(include %q) = %+v, want %+v", include, got, want)
+			}
+		})
+	}
+}
+
 func TestText_IncludeUnderAMissingDirectoryRunsNoSearch(t *testing.T) {
 	root := t.TempDir()
 	argsFile := filepath.Join(t.TempDir(), "args")
@@ -200,9 +297,7 @@ func TestText_DeadlineReturnsThePartialResultAndKillsTheSession(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "pid")
 	bin := slowRG(t, matchLine("./a.go", "hit", 1), pidFile)
 	const deadline = 300 * time.Millisecond
-	prev := searchDeadline
-	searchDeadline = deadline
-	t.Cleanup(func() { searchDeadline = prev })
+	shortDeadline(t, deadline)
 
 	start := time.Now()
 	got := Searcher{Bin: bin}.Text(t.Context(), []string{root}, TextQuery{Pattern: "hit"})
@@ -211,9 +306,246 @@ func TestText_DeadlineReturnsThePartialResultAndKillsTheSession(t *testing.T) {
 	if took > deadline+killWait {
 		t.Errorf("Text took %v, want at most the deadline %v plus %v", took, deadline, killWait)
 	}
+	if len(got) == 0 || !isPartialNotice(got[0].FilePath) {
+		t.Fatalf("Text = %+v, want it to open on a notice that the results are partial", got)
+	}
 	want := []Match{{FilePath: "a.go", LineNumber: 1, LineText: "hit"}}
-	if !slices.Equal(got, want) {
-		t.Errorf("Text = %+v, want the partial result %+v", got, want)
+	if !slices.Equal(got[1:], want) {
+		t.Errorf("Text after the notice = %+v, want the partial result %+v", got[1:], want)
+	}
+	awaitGone(t, pidFile)
+}
+
+// isPartialNotice reports whether an answer entry is the notice of a search the deadline cut short.
+func isPartialNotice(s string) bool {
+	return strings.Contains(s, "partial") && strings.Contains(s, searchDeadline.String())
+}
+
+func shortDeadline(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := searchDeadline
+	searchDeadline = d
+	t.Cleanup(func() { searchDeadline = prev })
+}
+
+func TestFiles_DeadlineAnswerSaysItIsPartial(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	bin := slowRG(t, "./a.go", pidFile)
+	const deadline = 300 * time.Millisecond
+	shortDeadline(t, deadline)
+
+	start := time.Now()
+	got := Searcher{Bin: bin}.Files(t.Context(), []string{t.TempDir()}, FilesQuery{Pattern: "**/*a.go*", MaxResults: 11})
+
+	if took := time.Since(start); took > deadline+killWait {
+		t.Errorf("Files took %v, want at most the deadline %v plus %v", took, deadline, killWait)
+	}
+	if len(got) != 2 || !isPartialNotice(got[0]) || got[1] != "a.go" {
+		t.Errorf("Files = %q, want the partial notice and then a.go", got)
+	}
+	awaitGone(t, pidFile)
+}
+
+// searchDeadline's doc owns the budget this pins.
+func TestSearchDeadline_AnswersWithinKASsClientWait(t *testing.T) {
+	const kasWait, outside = 30 * time.Second, 17300 * time.Millisecond
+	if total := searchDeadline + killWait + outside; total >= kasWait {
+		t.Errorf("deadline %v + kill wait %v + %v outside = %v, want under KAS's %v wait", searchDeadline, killWait, outside, total, kasWait)
+	}
+}
+
+// A caller's own deadline ends the search like a cancel, with no notice: the notice names
+// searchDeadline.
+func TestText_CallerDeadlineAddsNoPartialNotice(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	bin := slowRG(t, matchLine("./a.go", "hit", 1), pidFile)
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancel()
+
+	got := Searcher{Bin: bin}.Text(ctx, []string{t.TempDir()}, TextQuery{Pattern: "hit"})
+
+	if want := []Match{{FilePath: "a.go", LineNumber: 1, LineText: "hit"}}; !slices.Equal(got, want) {
+		t.Errorf("Text = %+v, want the partial result %+v and no notice", got, want)
+	}
+	awaitGone(t, pidFile)
+}
+
+// A search that ends before its deadline is whole, and its answer carries no notice.
+func TestText_WholeAnswerCarriesNoPartialNotice(t *testing.T) {
+	bin := fakeRG(t, `printf '%s\n' '`+matchLine("./a.go", "hit", 1)+`'`)
+
+	got := Searcher{Bin: bin}.Text(t.Context(), []string{t.TempDir()}, TextQuery{Pattern: "hit"})
+
+	if want := []Match{{FilePath: "a.go", LineNumber: 1, LineText: "hit"}}; !slices.Equal(got, want) {
+		t.Errorf("Text = %+v, want %+v", got, want)
+	}
+}
+
+// The answer is capped at maxTextEntries with the notice counted, so the notice is never the entry
+// a cap drops.
+func TestText_PartialNoticeCountsTowardTheEntryCap(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	var lines strings.Builder
+	for i := range maxTextEntries + 5 {
+		lines.WriteString(matchLine("./f"+strconv.Itoa(i)+".go", "hit", 1) + "\n")
+	}
+	bin := fakeRG(t, `printf '%s' '`+lines.String()+`'
+/bin/sleep 60 &
+echo $! > `+pidFile+`
+wait`)
+	shortDeadline(t, 300*time.Millisecond)
+
+	got := Searcher{Bin: bin}.Text(t.Context(), []string{t.TempDir()}, TextQuery{Pattern: "hit"})
+
+	if len(got) != maxTextEntries || !isPartialNotice(got[0].FilePath) {
+		t.Errorf("Text gave %d entries opening on %q, want %d opening on the partial notice", len(got), got[0].FilePath, maxTextEntries)
+	}
+	awaitGone(t, pidFile)
+}
+
+// escapedRG prints one result, then leaves a child that called setsid holding rg's output, which the
+// session kill does not reach, and runs end. The child is killed by pid when the test ends.
+func escapedRG(t *testing.T, firstLine, end string) string {
+	t.Helper()
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	t.Cleanup(func() {
+		if raw, err := os.ReadFile(pidFile); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	})
+	return fakeRG(t, `printf '%s\n' '`+firstLine+`'
+/usr/bin/setsid /bin/sleep 30 &
+echo $! > `+pidFile+`
+`+end)
+}
+
+func TestText_DeadlineEndsTheReadWhenAChildOutsideTheSessionHoldsTheOutput(t *testing.T) {
+	bin := escapedRG(t, matchLine("./a.go", "hit", 1), "wait")
+	const deadline = 300 * time.Millisecond
+	shortDeadline(t, deadline)
+
+	start := time.Now()
+	got := Searcher{Bin: bin}.Text(t.Context(), []string{t.TempDir()}, TextQuery{Pattern: "hit"})
+
+	if took := time.Since(start); took > deadline+killWait+time.Second {
+		t.Errorf("Text took %v, want the deadline %v plus at most %v", took, deadline, killWait+time.Second)
+	}
+	if len(got) != 2 || !isPartialNotice(got[0].FilePath) || got[1].FilePath != "a.go" {
+		t.Errorf("Text = %+v, want the partial notice and then a.go", got)
+	}
+}
+
+// rg exiting on its own wrote every result, so the answer is whole even when the deadline passes
+// before the search reads that exit, here because a child outside rg's session holds the output.
+func TestSearch_RGExitingBeforeTheDeadlineAnswersWhole(t *testing.T) {
+	shortDeadline(t, 300*time.Millisecond)
+	for _, code := range []string{"0", "1", "2"} {
+		t.Run("exit "+code, func(t *testing.T) {
+			textRG := Searcher{Bin: escapedRG(t, matchLine("./a.go", "hit", 1), "exit "+code)}
+			text := textRG.Text(t.Context(), []string{t.TempDir()}, TextQuery{Pattern: "hit"})
+			if want := []Match{{FilePath: "a.go", LineNumber: 1, LineText: "hit"}}; !slices.Equal(text, want) {
+				t.Errorf("Text = %+v, want %+v with no partial notice", text, want)
+			}
+			filesRG := Searcher{Bin: escapedRG(t, "./a.go", "exit "+code)}
+			files := filesRG.Files(t.Context(), []string{t.TempDir()}, FilesQuery{Pattern: "**/*", MaxResults: 11})
+			if want := []string{"a.go"}; !slices.Equal(files, want) {
+				t.Errorf("Files = %q, want %q with no partial notice", files, want)
+			}
+		})
+	}
+}
+
+// twoRootRG lists n files in a root holding a "fast" file, and in any other root lists nothing until
+// it is killed, leaving a child whose pid it writes to pidFile.
+func twoRootRG(t *testing.T, n int, pidFile string) string {
+	t.Helper()
+	return fakeRG(t, `if [ -e fast ]; then
+  i=0; while [ $i -lt `+strconv.Itoa(n)+` ]; do echo ./f$i.go; i=$((i+1)); done
+else
+  /bin/sleep 60 &
+  echo $! > `+pidFile+`
+  wait
+fi`)
+}
+
+// Files shows the first root's files first, so once the first root alone fills maxResults a slow
+// later root can add nothing: the answer comes without waiting for it, and it is whole.
+func TestFiles_FirstRootFillingTheLimitEndsTheSearchWhole(t *testing.T) {
+	first, second := t.TempDir(), t.TempDir()
+	writeTree(t, first, map[string]string{"fast": ""})
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	bin := twoRootRG(t, 20, pidFile)
+	const deadline = 5 * time.Second
+	shortDeadline(t, deadline)
+
+	start := time.Now()
+	got := Searcher{Bin: bin}.Files(t.Context(), []string{first, second}, FilesQuery{Pattern: "**/*.go*", MaxResults: 11})
+
+	if took := time.Since(start); took > deadline/2 {
+		t.Errorf("Files took %v, want the answer well before the %v deadline", took, deadline)
+	}
+	if len(got) != 11 || slices.ContainsFunc(got, isPartialNotice) {
+		t.Errorf("Files = %q, want 11 files and no partial notice", got)
+	}
+	if _, err := os.Stat(pidFile); err == nil {
+		awaitGone(t, pidFile)
+	}
+}
+
+// A later root the deadline cut still makes the answer partial while the earlier roots left room.
+func TestFiles_LaterRootCutWithRoomLeftIsPartial(t *testing.T) {
+	first, second := t.TempDir(), t.TempDir()
+	writeTree(t, first, map[string]string{"fast": ""})
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	bin := twoRootRG(t, 3, pidFile)
+	shortDeadline(t, 300*time.Millisecond)
+
+	got := Searcher{Bin: bin}.Files(t.Context(), []string{first, second}, FilesQuery{Pattern: "**/*.go*", MaxResults: 11})
+
+	if len(got) != 4 || !isPartialNotice(got[0]) {
+		t.Errorf("Files = %q, want the partial notice and the first root's 3 files", got)
+	}
+	awaitGone(t, pidFile)
+}
+
+// The first root's files come first, so the deadline cutting it leaves the answer partial even when
+// a later root alone fills maxResults.
+func TestFiles_FirstRootCutIsPartialWhenALaterRootFillsTheLimit(t *testing.T) {
+	slow, fast := t.TempDir(), t.TempDir()
+	writeTree(t, fast, map[string]string{"fast": ""})
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	bin := twoRootRG(t, 20, pidFile)
+	shortDeadline(t, 300*time.Millisecond)
+
+	got := Searcher{Bin: bin}.Files(t.Context(), []string{slow, fast}, FilesQuery{Pattern: "**/*.go*", MaxResults: 11})
+
+	if len(got) != 11 || !isPartialNotice(got[0]) {
+		t.Errorf("Files = %q, want the partial notice and 10 of the later root's files", got)
+	}
+	awaitGone(t, pidFile)
+}
+
+// The notice counts toward maxResults, so the cap drops a file, never the notice.
+func TestFiles_PartialNoticeCountsTowardMaxResults(t *testing.T) {
+	first, second := t.TempDir(), t.TempDir()
+	writeTree(t, first, map[string]string{"fast": ""})
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	bin := fakeRG(t, `if [ -e fast ]; then
+  i=0; while [ $i -lt 5 ]; do echo ./f$i.go; i=$((i+1)); done
+else
+  i=0; while [ $i -lt 8 ]; do echo ./g$i.go; i=$((i+1)); done
+  /bin/sleep 60 &
+  echo $! > `+pidFile+`
+  wait
+fi`)
+	shortDeadline(t, 300*time.Millisecond)
+
+	got := Searcher{Bin: bin}.Files(t.Context(), []string{first, second}, FilesQuery{Pattern: "**/*.go*", MaxResults: 11})
+
+	if len(got) != 11 || !isPartialNotice(got[0]) || got[5] != "f4.go" || got[10] != filepath.Base(second)+"/g4.go" {
+		t.Errorf("Files = %q, want the partial notice, the first root's 5 files and 5 of the second's", got)
 	}
 	awaitGone(t, pidFile)
 }
@@ -314,7 +646,7 @@ exit 2`)
 }
 
 // A --files walk that finds no file writes nothing, so its exit 2 with no output is a refusal only
-// when rg names a bad glob; otherwise it met unreadable paths. The stderr lines are rg 14.1.1's.
+// when rg names a bad glob; otherwise it met unreadable paths. The stderr lines are rg 15.2.0's.
 func TestFiles_ExitTwoWithNoOutputWarnsOnlyForARefusal(t *testing.T) {
 	tests := map[string]struct {
 		stderr string
@@ -374,6 +706,57 @@ func TestText_OutputCapLogsNoWarning(t *testing.T) {
 	}
 }
 
+// isCapNotice reports whether an answer entry is the notice of a search the 10 MiB output cap cut
+// short.
+func isCapNotice(s string) bool {
+	return strings.Contains(s, "partial") && strings.Contains(s, "10 MiB output cap")
+}
+
+// capRG writes more than the output cap of match lines for ./a.go, then waits on a child.
+func capRG(t *testing.T) string {
+	t.Helper()
+	return fakeRG(t, `/usr/bin/yes '`+matchLine("./a.go", "hit", 1)+`' | /usr/bin/head -c `+strconv.Itoa(maxOutputBytes+1<<20)+`
+/bin/sleep 60`)
+}
+
+// Text ranks files by match count, so output the cap left unread can change the answer.
+func TestText_OutputCapAnswerSaysItIsPartial(t *testing.T) {
+	got := Searcher{Bin: capRG(t)}.Text(t.Context(), []string{t.TempDir()}, TextQuery{Pattern: "hit"})
+
+	if len(got) < 2 || !isCapNotice(got[0].FilePath) || !got[0].IsContext {
+		t.Fatalf("Text = %+v, want it to open on a context notice naming the output cap", got[:min(len(got), 2)])
+	}
+	if want := (Match{FilePath: "a.go", LineNumber: 1, LineText: "hit"}); got[1] != want {
+		t.Errorf("Text after the notice = %+v, want %+v", got[1], want)
+	}
+}
+
+// One root at the output cap and another at the deadline open the answer on one notice, the
+// deadline's.
+func TestText_DeadlineNoticeWinsOverTheOutputCap(t *testing.T) {
+	base := t.TempDir()
+	capped, slow := filepath.Join(base, "capped"), filepath.Join(base, "slow")
+	writeTree(t, base, map[string]string{"capped/x": "", "slow/x": ""})
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	bin := fakeRG(t, `case "$(/bin/pwd)" in
+*/capped) /usr/bin/yes '`+matchLine("./a.go", "hit", 1)+`' | /usr/bin/head -c `+strconv.Itoa(maxOutputBytes+1<<20)+` ;;
+*) printf '%s\n' '`+matchLine("./b.go", "hit", 1)+`'; /bin/sleep 60 & echo $! > `+pidFile+`; wait ;;
+esac`)
+	shortDeadline(t, 300*time.Millisecond)
+
+	got := Searcher{Bin: bin}.Text(t.Context(), []string{capped, slow}, TextQuery{Pattern: "hit"})
+
+	if len(got) == 0 || !isPartialNotice(got[0].FilePath) {
+		t.Fatalf("Text opens on %+v, want the deadline's notice", got[:min(len(got), 1)])
+	}
+	for _, m := range got[1:] {
+		if isPartialNotice(m.FilePath) || isCapNotice(m.FilePath) {
+			t.Errorf("Text holds a second notice %+v, want one", m)
+		}
+	}
+	awaitGone(t, pidFile)
+}
+
 func TestText_EndedContextLogsNoWarning(t *testing.T) {
 	logs := capture.Default(t)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -414,7 +797,8 @@ func TestFiles_RealRGReadsAFlagShapedDirectoryAsAPath(t *testing.T) {
 	}
 }
 
-// rg does not follow a symlink, so no file under a linked prefix can match.
+// A linked prefix is never rg's start path: rg follows a start path that is a symlink, outside the
+// root included.
 func TestText_IncludeThroughASymlinkRunsNoSearch(t *testing.T) {
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{"real/a.go": "x"})
@@ -431,6 +815,62 @@ func TestText_IncludeThroughASymlinkRunsNoSearch(t *testing.T) {
 	}
 	if _, err := os.Stat(argsFile); err == nil {
 		t.Errorf("rg walked the root for a prefix it cannot enter")
+	}
+}
+
+func TestText_RealRGRootEntryIncludeFindsOnlyTheRootsOwnEntries(t *testing.T) {
+	bin := realRG(t)
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"top.md": "hit\n", "sub/b.md": "hit\n", "sub/top.md": "hit\n"})
+	want := []Match{{FilePath: "top.md", LineNumber: 1, LineText: "hit"}}
+	for _, include := range []string{"/*.md", "/top.md", root + "/top.md"} {
+		t.Run(include, func(t *testing.T) {
+			got := Searcher{Bin: bin}.Text(t.Context(), []string{root}, TextQuery{Pattern: "hit", IncludePattern: include})
+			if !slices.Equal(got, want) {
+				t.Errorf("Text(include %q) = %+v, want %+v", include, got, want)
+			}
+		})
+	}
+}
+
+// KAS turns a plain file_search query "kiro" into "**/*kiro*", which its own rg matches against file
+// names: a folder whose name holds the query does not list its files.
+func TestFiles_RealRGNameQueryListsOnlyTheNamesItMatches(t *testing.T) {
+	bin := realRG(t)
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"a/b/kiro.go": "", "kirosearch/kirosearch.go": "", "kirosearch/doc.go": "", "src/kiro-docs/one.md": "", "top.go": "",
+	})
+
+	got := Searcher{Bin: bin}.Files(t.Context(), []string{root}, FilesQuery{Pattern: "**/*kiro*", MaxResults: 11})
+
+	slices.Sort(got)
+	if want := []string{"a/b/kiro.go", "kirosearch/kirosearch.go"}; !slices.Equal(got, want) {
+		t.Errorf("Files = %q, want %q", got, want)
+	}
+}
+
+// An include whose last segment is a name glob selects files by name, as in rg: a folder whose name
+// it matches does not add its files.
+func TestText_RealRGNameIncludesSearchOnlyTheNamesTheyMatch(t *testing.T) {
+	bin := realRG(t)
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"a.go": "hit\n", "pkg/a_test.go": "hit\n", "dir.go/nested/notgo.txt": "hit\n", "testdata/x.txt": "hit\n",
+	})
+	match := func(path string) Match { return Match{FilePath: path, LineNumber: 1, LineText: "hit"} }
+	for include, want := range map[string][]Match{
+		"*.go":       {match("a.go"), match("pkg/a_test.go")},
+		"**/*.go":    {match("a.go"), match("pkg/a_test.go")},
+		"**/*test*":  {match("pkg/a_test.go")},
+		"pkg/*test*": {match("pkg/a_test.go")},
+	} {
+		t.Run(include, func(t *testing.T) {
+			got := Searcher{Bin: bin}.Text(t.Context(), []string{root}, TextQuery{Pattern: "hit", IncludePattern: include})
+			if !slices.Equal(got, want) {
+				t.Errorf("Text(include %q) = %+v, want %+v", include, got, want)
+			}
+		})
 	}
 }
 

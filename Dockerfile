@@ -1,12 +1,58 @@
 # check=error=true
 
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS ripgrep
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# hadolint ignore=DL3008
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl && rm -rf /var/lib/apt/lists/*
+
+# marotte's search starts rg in the folder a pattern names, which matches a
+# whole-root walk only from ripgrep 15.0.0: 14.x drops an ancestor .gitignore's
+# anchored rules when the walk starts in a subfolder (BurntSushi/ripgrep#829,
+# fixed in 15.0.0). Debian trixie ships 14.1.1.
+# renovate: datasource=github-releases depName=BurntSushi/ripgrep
+ARG RIPGREP_VERSION=15.2.0
+# repin: dep=BurntSushi/ripgrep url=https://github.com/BurntSushi/ripgrep/releases/download/{version}/ripgrep-{version}-x86_64-unknown-linux-musl.tar.gz
+ARG RIPGREP_AMD64_SHA256=33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c
+# repin: dep=BurntSushi/ripgrep url=https://github.com/BurntSushi/ripgrep/releases/download/{version}/ripgrep-{version}-aarch64-unknown-linux-gnu.tar.gz
+ARG RIPGREP_ARM64_SHA256=a740b91c82eaf9914cfedd353572f2791cbe0162c84101ee0951058f4dcbc90d
+# The release tarballs ship ripgrep's own licence only; the texts of everything the binaries
+# link are committed, for the version the MANIFEST's first line names.
+COPY licenses/crates/ /licenses/crates/
+RUN set -e; \
+    if [ "$(head -n 1 /licenses/crates/MANIFEST)" != "ripgrep ${RIPGREP_VERSION}" ]; then \
+      echo "ERROR ripgrep-licenses: licenses/crates/MANIFEST is for $(head -n 1 /licenses/crates/MANIFEST), not ripgrep ${RIPGREP_VERSION}; run sh scripts/vendor-crate-licenses.sh and commit the result" >&2; \
+      exit 1; \
+    fi; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) rg_target=x86_64-unknown-linux-musl; rg_sha="$RIPGREP_AMD64_SHA256" ;; \
+      arm64) rg_target=aarch64-unknown-linux-gnu; rg_sha="$RIPGREP_ARM64_SHA256" ;; \
+      *) echo "ERROR ripgrep-arch: no ripgrep build for $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    name="ripgrep-${RIPGREP_VERSION}-${rg_target}"; \
+    url="https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${name}.tar.gz"; \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL \
+      -o /tmp/rg.tar.gz "$url"; \
+    printf '%s  /tmp/rg.tar.gz\n' "$rg_sha" | sha256sum -c -; \
+    tar -xzf /tmp/rg.tar.gz -C /tmp; \
+    mkdir -p /out/usr/bin /out/usr/share/licenses/ripgrep /out/usr/share/sbom; \
+    install -m 755 "/tmp/${name}/rg" /out/usr/bin/rg; \
+    /out/usr/bin/rg --version; \
+    cp "/tmp/${name}/LICENSE-MIT" "/tmp/${name}/UNLICENSE" "/tmp/${name}/COPYING" /out/usr/share/licenses/ripgrep/; \
+    for dir in /licenses/crates/*/; do cp -R "$dir" /out/usr/share/licenses/; done; \
+    printf '{"bomFormat":"CycloneDX","specVersion":"1.5","version":1,"components":[{"bom-ref":"ripgrep@%s","type":"application","name":"ripgrep","version":"%s","purl":"pkg:cargo/ripgrep@%s?download_url=%s&checksum=sha256:%s"}]}\n' \
+      "$RIPGREP_VERSION" "$RIPGREP_VERSION" "$RIPGREP_VERSION" "$url" "$rg_sha" > /out/usr/share/sbom/ripgrep.cdx.json
+
 FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS builder
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl ripgrep && rm -rf /var/lib/apt/lists/*
+    ca-certificates curl && rm -rf /var/lib/apt/lists/*
+COPY --from=ripgrep /out/usr/bin/rg /usr/bin/rg
 
 # renovate: datasource=golang-version depName=golang
 ARG GO_VERSION=1.27.4
@@ -31,8 +77,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . ./
 
-# The real-ripgrep search tests run here against Debian's rg, the one the final
-# stage installs: the CI test runner has no rg and skips them.
+# The real-ripgrep search tests run here against the rg the final stage ships: the
+# CI test runner has no rg and skips them.
 RUN CGO_ENABLED=0 KIROSEARCH_REQUIRE_RG=1 GOPROXY=off \
     go test -count=1 -run RealRG ./internal/kirosearch/
 
@@ -233,7 +279,6 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
     jq \
     libatomic1 \
     openssh-client \
-    ripgrep \
     tini \
     unzip \
     xz-utils \
@@ -277,6 +322,7 @@ RUN sed -i 's|^root:x:0:0:root:/root:|root:x:0:0:root:/config/home:|' /etc/passw
 
 COPY --from=builder /app /app
 COPY --from=builder /out/usr/share/licenses /usr/share/licenses
+COPY --from=ripgrep /out/ /
 
 # kiro-cli's TUI in the Shell panel reports a copy only when a clipboard tool succeeds; this
 # one writes it to the terminal as OSC 52, which the browser puts on its clipboard.

@@ -1,6 +1,6 @@
 // KAS's `_kiro/search/text_search` and `_kiro/search/find_files`, gated on
 // clientCapabilities._meta.kiro.textSearch and findFiles: grep_search and file_search run here,
-// through internal/kirosearch, instead of in KAS's rg and Node walker fallback.
+// through internal/kirosearch.
 
 package agent
 
@@ -87,9 +87,9 @@ func (in *inbound) searchRun(chatID marotte.ChatID, sessionID marotte.SessionID)
 }
 
 // answerKiroSearch never answers with an error, a malformed request and a panic included: KAS
-// 3.0.0 reruns a search whose client answer is an error or lacks its matches or files member with
-// its own Node walker, which has no time limit, ignores includePattern while walking and cannot
-// be cancelled.
+// reruns a search whose client answer is an error or lacks its matches or files member (3.0.0),
+// or arrives after its 30 s wait (from 3.4.0), with its own Node walker, which ignores
+// includePattern while walking, cannot be cancelled and has no time limit for a text search.
 func (in *inbound) answerKiroSearch(ctx, searchCtx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) {
 	defer func() {
 		if r := recover(); r != nil {
