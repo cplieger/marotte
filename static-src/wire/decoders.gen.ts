@@ -947,6 +947,7 @@ export const decodeEffectiveSettings: Decoder<EffectiveSettings> = (v) => {
     chat_awareness_enabled: reqBool(o, "chat_awareness_enabled", "$.effective_settings"),
     supervised_default: reqBool(o, "supervised_default", "$.effective_settings"),
     scheduled_auto_approve: reqBool(o, "scheduled_auto_approve", "$.effective_settings"),
+    bot_auto_approve: reqBool(o, "bot_auto_approve", "$.effective_settings"),
     debug_logs: reqBool(o, "debug_logs", "$.effective_settings"),
     high_throughput_optimizations: reqBool(o, "high_throughput_optimizations", "$.effective_settings"),
     model_fallback_enabled: reqBool(o, "model_fallback_enabled", "$.effective_settings"),

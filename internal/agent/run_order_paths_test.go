@@ -445,7 +445,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 
 	t.Run("a subagent's wake hold changes nothing and refuses no take", func(t *testing.T) {
 		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
-		h.coord.turns.holdWake("c1", "wf-1")
+		h.coord.turns.holdWake("c1", "wf-1", nil)
 		if got := runStates(t, cs, "c1"); len(got) != 0 {
 			t.Errorf("list after the wake hold = %v, want empty", got)
 		}

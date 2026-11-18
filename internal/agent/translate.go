@@ -28,8 +28,10 @@ func ignoreAttribution(fn func(context.Context, marotte.ChatID, json.RawMessage)
 func (rt *Runtime) initDispatch() {
 	// The request-shaped asks, behind both doors (routeInboundRequest, dispatchRequest).
 	rt.askHandlers = map[string]askHandler{
-		// Refused on a short budget for a scheduled run.
-		marotte.MethodRequestPermission: rt.runs.permissionWithUnattendedFloor(rt.askReportsStepProgress(rt.translator.HandlePermissionRequest)),
+		// Answered on a short budget for a scheduled run and in an automatic Bot turn.
+		marotte.MethodRequestPermission: rt.permissionWithBotFloor(
+			rt.runs.permissionWithUnattendedFloor(rt.askReportsStepProgress(rt.translator.HandlePermissionRequest)),
+		),
 		marotte.MethodElicitationCreate: rt.askReportsStepProgress(rt.translator.HandleElicitationCreate),
 		// Gated on the _meta.kiro.userInput initialize capability (bridge.go).
 		marotte.MethodKiroUserInput: rt.askReportsStepProgress(rt.translator.HandleUserInput),

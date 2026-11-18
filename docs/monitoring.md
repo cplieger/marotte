@@ -38,6 +38,7 @@ Labels carry fixed values only, with one exception. `rule_id` is the random id m
 | `marotte_schedule_slots_not_started_total` | counter | `event` | Schedule slots that started no run, by `launch_failed`, `signin_held` or `engine_busy` |
 | `marotte_unattended_run_failures_total` | counter | `origin`, `reason` | Scheduled and triggered runs that failed with nobody watching. `origin` is `scheduled` or `triggered`. `reason` is `needs_approval`, `overran`, `stalled`, `paused`, `orphaned` or `cancel_given_up` |
 | `marotte_unattended_approvals_total` | counter | `origin` | Tool requests of scheduled and triggered runs approved with nobody watching |
+| `marotte_bot_unattended_answers_total` | counter | `answer` | Tool requests in Bot turns nobody watched (a turn a rule's prompt started, or the turn after a run such a turn launched) that marotte answered after 3 minutes, by `refused` or `approved` |
 | `marotte_trigger_rule_blocked` | gauge | `rule_id`, `reason` | 1 while an enabled event rule launches nothing until someone acts, else 0, for each `reason`: `launch_failed`, `unnamed_run`, `too_many_items`, `state_unreadable` or `state_unwritten` |
 | `marotte_trigger_queue_full` | gauge | `rule_id` | 1 while an enabled event rule's last poll left an event at the forge because its queue was full, else 0 |
 | `marotte_trigger_poll_failures` | gauge | `rule_id` | Consecutive polls in which an enabled event rule's read of its repository failed. A good read resets it to 0, and a rate limit leaves it as it is |
@@ -84,6 +85,8 @@ Load [`alerts/promql.yaml`](../alerts/promql.yaml) into Prometheus, Mimir or vma
 | `MarotteUnattendedRunStopped` | marotte stopped an unattended run that overran its slot, stalled, paused or was orphaned, in the last 24 hours | warning |
 | `MarotteUnattendedRunCancelFailed` | kiro-cli refused every cancel of an unattended run in the last 24 hours | critical |
 | `MarotteUnattendedRunSelfApproved` | A tool request of an unattended run was approved with nobody watching in the last 24 hours | warning |
+| `MarotteBotTurnNeedsApproval` | marotte refused a tool request in a Bot turn nobody watched in the last 24 hours | warning |
+| `MarotteBotTurnSelfApproved` | marotte approved a tool request in a Bot turn nobody watched in the last 24 hours | warning |
 | `MarotteTriggerRuleBlocked` | An event rule launches nothing until someone acts: its launches kept failing, a run it has no record of holds its workflow, it matches more than 5,000 open items, or its saved state does not load | warning |
 | `MarotteLaunchRulesNotWritten` | marotte cannot write an event rule's saved state | critical |
 | `MarotteTriggerQueueFull` | An event rule's last poll left events at the forge because its queue was full | warning |

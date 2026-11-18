@@ -303,13 +303,26 @@ func carryUnread(l *command.EntryLaunch, lead *runEntry) {
 // once; kiro-cli's answer, the read and a turn end reach the list as the steer record's fates (runFactsChanged).
 // Caller holds lc.mu.
 func (bc *bridgeCoordinator) steerEntry(lc *chatLifecycle, e *runEntry) {
+	var offeredTo string
+	if lc.own != nil {
+		offeredTo = lc.own.ID
+	}
 	s := &command.EntrySteer{Entry: e.id, Text: e.row.Text, Caller: e.row.Caller, Offer: e.offer, Resent: e.resent}
 	bc.spawnRun(func() {
-		refuse := command.SteerRefuseNoTurn
+		refuse, accepted := command.SteerRefuseNoTurn, false
 		if bc.sendEntrySteer != nil {
-			refuse = bc.sendEntrySteer(context.Background(), lc.chatID, s)
+			refuse, accepted = bc.sendEntrySteer(context.Background(), lc.chatID, s)
 		}
 		if refuse == "" {
+			if accepted && s.Caller == nil {
+				lc.mu.Lock()
+				// kiro-cli queued a person's steer into the turn, so its asks wait for them; a steer it dropped, one
+				// never sent and a failed call reached nobody.
+				if t := lc.own; t != nil && t.ID == offeredTo {
+					t.unattended = false
+				}
+				lc.mu.Unlock()
+			}
 			return
 		}
 		lc.mu.Lock()

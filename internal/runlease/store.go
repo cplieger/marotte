@@ -239,6 +239,17 @@ func (s *Store) SetUnattributed(ctx context.Context, workflowID string, unattrib
 	})
 }
 
+// SetDepth sets a lease's chain depth; ErrNotFound when no lease holds the run.
+func (s *Store) SetDepth(ctx context.Context, workflowID string, depth int) error {
+	return s.update(ctx, workflowID, func(l *Lease) bool {
+		if l.Depth == depth {
+			return false
+		}
+		l.Depth = depth
+		return true
+	})
+}
+
 // update applies change to a held lease and persists it when change reports a difference.
 func (s *Store) update(ctx context.Context, workflowID string, change func(l *Lease) bool) error {
 	s.mu.Lock()

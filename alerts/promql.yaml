@@ -252,6 +252,35 @@ groups:
             on. A triggered run can act on text other people wrote. Turn the
             setting off to refuse instead.
 
+      # A Bot's rule opens a turn nobody watches; a tool request in it waits
+      # 3 minutes, then marotte answers it for the absent user.
+      - alert: MarotteBotTurnNeedsApproval
+        expr: increase(marotte_bot_unattended_answers_total{answer="refused"}[24h]) >= 1
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "marotte refused a tool for a Bot turn nobody watched"
+          description: >
+            A Bot's rule started a turn, the agent asked to approve a tool
+            with nobody watching, and marotte refused it. Add a permission
+            rule for that tool, or set bot_auto_approve to true in
+            config.json to approve such requests.
+
+      # Not a fault: it records that a tool ran on a rule's authority alone.
+      - alert: MarotteBotTurnSelfApproved
+        expr: increase(marotte_bot_unattended_answers_total{answer="approved"}[24h]) >= 1
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "marotte approved a tool for a Bot turn nobody watched"
+          description: >
+            A Bot's rule started a turn and marotte approved its tool
+            request with nobody watching, because bot_auto_approve is true
+            in config.json. A rule's prompt can carry text other people
+            wrote. Set it to false to refuse instead.
+
       # rule_id is the event rule's id. A blocked rule launches nothing until
       # someone acts, so it stays firing until the cause is fixed.
       - alert: MarotteTriggerRuleBlocked

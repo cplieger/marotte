@@ -44,6 +44,8 @@ var shippedAlerts = map[string]string{
 	"MarotteTriggerCatchUpGap":          "",
 	"MarotteRuleEngineWriteFailing":     "",
 	"MarotteRuleDeliveryFailing":        "",
+	"MarotteBotTurnNeedsApproval":       "",
+	"MarotteBotTurnSelfApproved":        "",
 }
 
 type ruleFile struct {

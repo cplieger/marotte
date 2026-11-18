@@ -22,6 +22,7 @@
   "GET /api/mcp/status": "MCPStatusResponse",
   "GET /api/permissions/profile": "SecurityProfileView",
   "GET /api/recipes": "RecipesResponse",
+  "GET /api/runs/live": "LiveRunsResponse",
   "GET /api/runs/{run}/steps/{id}": "RunStepTranscript",
   "GET /api/runs/{run}/steps/{id}/capture": "RunStepCapture",
   "GET /api/runs/{run}?view=glance": null,

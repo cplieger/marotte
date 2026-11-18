@@ -242,15 +242,35 @@ func (rs *Runs) grantLease(
 	return rs.grantKeeping(ctx, workflowID, recipe, &o, host, nil)
 }
 
-// leaseKeep is what a grant records of the run's keep facts.
+// ruleTaps answers the rule engine's taps, nil when none is wired.
+func (rs *Runs) ruleTaps() ruleTaps {
+	if rs.coord == nil || rs.coord.turns == nil {
+		return nil
+	}
+	return rs.coord.turns.rules
+}
+
+// launchDepth is the chain depth a run chatID's agent launches now takes (ruleengine.Engine.LaunchDepth); 0 with no
+// rule engine.
+func (rs *Runs) launchDepth(chatID marotte.ChatID) int {
+	if taps := rs.ruleTaps(); taps != nil {
+		return taps.LaunchDepth(chatID)
+	}
+	return 0
+}
+
+// leaseKeep is what a grant records beyond its origin: the run's keep facts and its chain depth.
 type leaseKeep struct {
 	// chats hold the run's keep fact, recorded as the lease's KeepChats.
 	chats []string
+	// depth is the chain depth of the turn whose agent launched the run (observeStart); a person's launch, a Retry
+	// included, takes 0.
+	depth int
 	// unattributed records a run whose launching chat could not be named (observeStart).
 	unattributed bool
 }
 
-// grantKeeping is grantLease recording keep, the run's keep holders, on the lease; nil records none.
+// grantKeeping is grantLease recording keep (leaseKeep) on the lease; nil records none.
 func (rs *Runs) grantKeeping(
 	ctx context.Context, workflowID, recipe string, o *launchOrigin, host *runlease.HostSecurity, keep *leaseKeep,
 ) (persisted bool) {
@@ -273,7 +293,7 @@ func (rs *Runs) grantKeeping(
 		l.RuleID, l.EventKey, l.CoalesceKey, l.RunLabel = e.ruleID, e.eventKey, e.coalesceKey, o.runLabel(recipe)
 	}
 	if keep != nil {
-		l.KeepChats, l.Unattributed = keep.chats, keep.unattributed
+		l.KeepChats, l.Unattributed, l.Depth = keep.chats, keep.unattributed, keep.depth
 	}
 	persisted = true
 	if err := rs.leaseStore().Put(ctx, &l); err != nil {

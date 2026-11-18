@@ -74,6 +74,7 @@ func TestCaptureKASCorpus(t *testing.T) {
 		{name: "bot_memory", about: "A Bot whose memory file is a context file added before the file exists: a prompt, the file written, a prompt, an edit, a prompt, the file deleted and its listing, the file recreated, a prompt; then a regular session's context and a prompt, and a fork of the Bot loaded and its context.", run: runBotMemory},
 		{name: "bot_memory_write", about: "A Bot with memory on and its directory in additionalDirectories writes its memory file in a turn; reopens with memory off (no directory) and on again, a prompt; then a regular session asked to write the same file, which the client refuses.", run: runBotMemoryWrite},
 		{name: "content_collection", about: "An engine initialized with content collection disabled and a session/new; _kiro/contentCollection/settings_changed enabled, then disabled, each echoed to the session as a config_option_update.", run: runContentCollection},
+		{name: "supervised_refused", about: "A supervised session asked to write a file; its turn review answered reject_once with the unattended floor's note, as the floor answers an automatic Bot turn nobody watched, and the workspace file read after the turn.", run: runSupervisedRefused},
 		{name: "bot_tangent", about: "A Bot with memory on and a prompt; a tangent forked from it on the default mode, loaded as a regular chat, asked to read the Bot's memory file, which the client refuses.", run: runBotTangent},
 	} {
 		t.Run(sc.name, func(t *testing.T) { captureScenario(t, &env, sc) })
@@ -133,13 +134,15 @@ type capture struct {
 	grants map[marotte.SessionID][]string
 	// onFrame is the scenario's hook, run on the pump goroutine after the frame is recorded.
 	onFrame func(s *bridge.Session, msg *marotte.RPCResponse)
-	cond    *sync.Cond
-	engines []*bridge.Engine
-	cancels []context.CancelFunc
-	lines   []*capLine
-	pumps   sync.WaitGroup
-	mu      sync.Mutex
-	lanes   int
+	// permAnswer answers a permission ask in place of allow_once when set.
+	permAnswer func(params json.RawMessage) any
+	cond       *sync.Cond
+	engines    []*bridge.Engine
+	cancels    []context.CancelFunc
+	lines      []*capLine
+	pumps      sync.WaitGroup
+	mu         sync.Mutex
+	lanes      int
 }
 
 func newCapture(t *testing.T, env *captureEnv) *capture {
@@ -404,6 +407,12 @@ func (c *capture) resolve(msg *marotte.RPCResponse) (any, error) {
 	_ = json.Unmarshal(msg.Params, &p)
 	switch msg.Method {
 	case marotte.MethodRequestPermission:
+		c.mu.Lock()
+		answer := c.permAnswer
+		c.mu.Unlock()
+		if answer != nil {
+			return answer(msg.Params), nil
+		}
 		for _, o := range p.Options {
 			if o.Kind == "allow_once" {
 				return marotte.PermissionOutcomeSelected(o.OptionID), nil

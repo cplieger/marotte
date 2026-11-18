@@ -1082,8 +1082,9 @@ export interface EffectiveSettings {
   notify_sign_in: boolean;
   /**
    * SupervisedDefault seeds newly created chats; ScheduledAutoApprove decides an
-   * unattended run's permission ask at its deadline and is fail-closed by
-   * decision. DebugLogs raises the log level. All three default off.
+   * unattended run's permission ask at its deadline and BotAutoApprove an automatic
+   * Bot turn's, both fail-closed by decision. DebugLogs raises the log level. All
+   * four default off.
    * SpecPlanningAskFirst, SteeringReminders, ChatMessaging and ChatAwareness default off, matching kiro-cli.
    * WorkflowsEnabled defaults ON (user's choice, where the TUI's default is off).
    */
@@ -1094,6 +1095,7 @@ export interface EffectiveSettings {
   chat_awareness_enabled: boolean;
   supervised_default: boolean;
   scheduled_auto_approve: boolean;
+  bot_auto_approve: boolean;
   debug_logs: boolean;
   /** HighThroughput starts the agent engine with the high throughput Node.js flags, default on. */
   high_throughput_optimizations: boolean;
@@ -2905,7 +2907,8 @@ export interface PermissionNeededPayload {
   rejection_note?: RejectionNote;
   /**
    * ClassifierNote is _meta.kiro.trustClassifier's reason: Kiro's safety check did not clear the
-   * call and handed it to a person. Unattended runs refuse such an ask.
+   * call and handed it to a person. Both unattended floors, a scheduled or triggered run's and an
+   * automatic Bot turn's, refuse such an ask.
    */
   classifier_note?: string;
   options: PermissionOption[];

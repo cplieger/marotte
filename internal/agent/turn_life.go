@@ -140,6 +140,9 @@ func (lc *chatLifecycle) endLifeLocked(epochs func() uint64) {
 	lc.dropUntakenGrantLocked()
 	clear(lc.opens)
 	lc.endWakesLocked()
+	if lc.reg != nil && lc.reg.rules != nil {
+		lc.reg.rules.SessionEnded(lc.chatID)
+	}
 	lc.quietIfDoneLocked()
 	lc.wakeLocked()
 }

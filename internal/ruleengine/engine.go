@@ -40,7 +40,7 @@ type Notifier interface {
 	Unqueue(ctx context.Context, chatID marotte.ChatID, messageID string) error
 }
 
-// Deps is what New builds an engine from; every field but Logger is required.
+// Deps is what New builds an engine from; every field but WakeHold and Logger is required.
 type Deps struct {
 	Store    Store
 	Notifier Notifier
@@ -53,6 +53,9 @@ type Deps struct {
 	Waiting  func(marotte.ChatID) bool
 	// Logger defaults to slog.Default().
 	Logger *slog.Logger
+	// WakeHold is how long a run's end keeps its lease depth for the wake turn KAS owes its parent chat; zero keeps
+	// none, so every wake turn reads as another prompt-less turn.
+	WakeHold time.Duration
 }
 
 // Status is what the engine holds in memory about one Bot, for its setup.
@@ -83,7 +86,7 @@ var (
 )
 
 // Engine is the rule engine. Its taps and commands may be called from any goroutine; Run owns the loop. mu guards
-// dirty, known, opened, ceiling and failingSince; Run's goroutine alone reads and writes every other field.
+// dirty, known, opened, depths, ceiling and failingSince; Run's goroutine alone reads and writes every other field.
 type Engine struct {
 	deps  Deps
 	log   *slog.Logger
@@ -92,6 +95,7 @@ type Engine struct {
 	// known is every chat indexed or reindexed and not yet forgotten, so the turn-end tap skips any other.
 	known   map[marotte.ChatID]bool
 	opened  map[marotte.ChatID][]openedPrompt
+	depths  map[marotte.ChatID]*chatDepths
 	ceiling map[marotte.ChatID]time.Time
 	index   map[marotte.ChatID]bool
 	due     map[marotte.ChatID]time.Time
@@ -108,16 +112,16 @@ type Engine struct {
 }
 
 // New builds an engine; Run starts it.
-func New(deps Deps) *Engine {
+func New(deps *Deps) *Engine {
 	log := deps.Logger
 	if log == nil {
 		log = slog.Default()
 	}
 	return &Engine{
-		deps: deps, log: log, wake: make(chan struct{}, 1),
+		deps: *deps, log: log, wake: make(chan struct{}, 1),
 		dirty: map[marotte.ChatID]bool{}, known: map[marotte.ChatID]bool{}, opened: map[marotte.ChatID][]openedPrompt{},
-		ceiling: map[marotte.ChatID]time.Time{},
-		index:   map[marotte.ChatID]bool{}, due: map[marotte.ChatID]time.Time{}, settled: map[marotte.ChatID]bool{},
+		depths: map[marotte.ChatID]*chatDepths{}, ceiling: map[marotte.ChatID]time.Time{},
+		index: map[marotte.ChatID]bool{}, due: map[marotte.ChatID]time.Time{}, settled: map[marotte.ChatID]bool{},
 		retryAt: map[marotte.ChatID]map[string]time.Time{}, waiting: map[marotte.ChatID]int{},
 	}
 }
@@ -157,22 +161,34 @@ func (e *Engine) Reindex(chatID marotte.ChatID) {
 	e.signal()
 }
 
-// TurnOpened is the turn-open tap: a turn whose prompt a rule's event sent settles that event's queued prompt.
-func (e *Engine) TurnOpened(chatID marotte.ChatID, _ string, caller *marotte.Caller) {
-	if caller == nil || caller.Kind != marotte.CallerKindRule || caller.Event == "" {
-		return
-	}
+// TurnOpened is the turn-open tap. It records the turn's chain depth and answers, for a wake turn (one that took the
+// wake hold an ended run left), the waking run's lease depth. A turn whose prompt a rule's event sent also settles
+// that event's queued prompt. It never waits on the loop, so a full inbox loses no depth.
+func (e *Engine) TurnOpened(chatID marotte.ChatID, turnID string, source marotte.TurnOpenSource, caller *marotte.Caller,
+	wake bool,
+) (leaseDepth int) {
+	now := time.Now()
+	settles := caller != nil && caller.Kind == marotte.CallerKindRule && caller.Event != ""
 	e.mu.Lock()
-	e.opened[chatID] = append(e.opened[chatID], openedPrompt{rule: caller.Rule, event: caller.Event})
-	e.dirty[chatID] = true
+	leaseDepth = e.depthsLocked(chatID).openDepthLocked(turnID, source, caller, wake, now)
+	if settles {
+		e.opened[chatID] = append(e.opened[chatID], openedPrompt{rule: caller.Rule, event: caller.Event})
+		e.dirty[chatID] = true
+	}
 	e.mu.Unlock()
-	e.signal()
+	if settles {
+		e.signal()
+	}
+	return leaseDepth
 }
 
-// TurnClosed is the turn-end tap, called once the turn's close and LastTurnEndedAt are on disk: the Bot may be free.
-// A chat the engine does not know as a Bot costs one map lookup.
-func (e *Engine) TurnClosed(chatID marotte.ChatID, _ string, _ *marotte.Caller) {
+// TurnClosed is the turn-end tap, called once the turn's close and LastTurnEndedAt are on disk: the Bot may be free,
+// and the turn's depth becomes the chat's last closed one. A chat the engine does not know as a Bot wakes no pass.
+func (e *Engine) TurnClosed(chatID marotte.ChatID, turnID string, _ *marotte.Caller) {
 	e.mu.Lock()
+	if d := e.depths[chatID]; d != nil {
+		d.closeDepthLocked(turnID)
+	}
 	known := e.known[chatID]
 	if known {
 		e.dirty[chatID] = true

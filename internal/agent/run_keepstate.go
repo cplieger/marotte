@@ -206,7 +206,11 @@ func (rs *Runs) startRunMarks(ctx context.Context, chatID marotte.ChatID, f *lif
 	l, held := rs.lease(wf)
 	if !held {
 		o := runStartLaunch(chatID)
-		rs.grantKeeping(ctx, wf, f.WorkflowName, &o, nil, &leaseKeep{chats: chatIDs(holders), unattributed: unattributed})
+		keep := &leaseKeep{chats: chatIDs(holders), unattributed: unattributed}
+		if o.origin == runlease.OriginAgent {
+			keep.depth = rs.launchDepth(chatID)
+		}
+		rs.grantKeeping(ctx, wf, f.WorkflowName, &o, nil, keep)
 		return
 	}
 	rs.recordKeepChats(ctx, &l, holders)

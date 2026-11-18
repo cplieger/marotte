@@ -218,6 +218,7 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 		KeyNotifySignIn:         func(r json.RawMessage) error { return decodeInto(&out.NotifySignIn, r) },
 		KeySupervisedDefault:    func(r json.RawMessage) error { return decodeInto(&out.SupervisedDefault, r) },
 		KeyScheduledAutoApprove: func(r json.RawMessage) error { return decodeInto(&out.ScheduledAutoApprove, r) },
+		KeyBotAutoApprove:       func(r json.RawMessage) error { return decodeInto(&out.BotAutoApprove, r) },
 		KeyDebugLogs:            func(r json.RawMessage) error { return decodeInto(&out.DebugLogs, r) },
 		KeySpecPlanning: func(r json.RawMessage) error {
 			return decodeChecked(&out.SpecPlanning, r, KeySpecPlanning, ValidSpecPlanning)
