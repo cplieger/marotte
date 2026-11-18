@@ -583,8 +583,8 @@ func includeGlobs(root, glob string) []string {
 
 // fileGlobs is includeGlobs for a find_files pattern. KAS writes the query "^p" as "p*" and every
 // other query as "**/*q*" or "**/*q" (getFileSearchPattern in acp-server.js), and "^" anchors p at
-// the path's start: a pattern not led by "**" is root-anchored, and one whose p is literal is a
-// path prefix, so it also selects the files under a folder it names ("p*/**").
+// the path's start: a single glob not led by "**" (KAS's "p*") is root-anchored, and one whose p is
+// literal is a path prefix, so it also selects the files under a folder it names ("p*/**").
 func fileGlobs(root, pattern string) []string {
 	globs := includeGlobs(root, pattern)
 	if len(globs) != 1 || strings.HasPrefix(globs[0], "**") {
