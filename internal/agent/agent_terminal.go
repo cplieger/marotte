@@ -29,11 +29,18 @@ import (
 const keySignal = "signal"
 
 // terminalDrainGrace bounds awaitExit's wait for output EOF after the process exits (a
-// grandchild holding the pipe). Matches cmd.WaitDelay. A var only for tests.
-var terminalDrainGrace = 2 * time.Second
+// grandchild holding the pipe). Matches cmd.WaitDelay.
+const terminalDrainGrace = 2 * time.Second
 
 // terminalSessionGrace bounds a teardown's wait for the command's session to empty. A var only for tests.
 var terminalSessionGrace = 2 * time.Second
+
+// awaitExit's two waits, vars only for tests: the overlap of the drain and the session wait is
+// only observable when each one's end is the test's to choose.
+var (
+	afterDrainGrace = func() <-chan time.Time { return time.After(terminalDrainGrace) }
+	waitSessionGone = procgroup.WaitSessionGone
+)
 
 // killTerminalSession SIGKILLs term through signalSession and, for a session, waits up to
 // terminalSessionGrace for it to empty. A return does not prove the tree is gone.
@@ -781,13 +788,13 @@ func (at *agentTerminals) awaitExit(
 	// backgrounded grandchild is still writing. Observe, not kill. Joined after the drain
 	// so the two graces overlap.
 	sessionEmptied := make(chan bool, 1)
-	go func() { sessionEmptied <- sid == 0 || procgroup.WaitSessionGone(sid, terminalSessionGrace) }()
+	go func() { sessionEmptied <- sid == 0 || waitSessionGone(sid, terminalSessionGrace) }()
 
 	// Bound the drain from exit: a grandchild can hold the pipe open forever. terminal_exited
 	// must not be observable before its output (measured: exit as event 365, output as 368).
 	select {
 	case <-drained:
-	case <-time.After(terminalDrainGrace):
+	case <-afterDrainGrace():
 		slog.Warn("agent terminal: output still open after exit; releasing the reader",
 			"chat_id", chatID, "term_id", termID, "grace", terminalDrainGrace)
 		_ = pr.Close()

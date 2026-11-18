@@ -131,6 +131,8 @@ import { error as toastError } from "./toast.js";
 import { IDLE_RUN } from "./run-order.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
 import { bindTabsSync, settleTabs, tabServer } from "./__test-helpers__/tabs-server.js";
+import { pressAfterScroll, SCROLLER_RESTED_MS } from "./__test-helpers__/fling.js";
+import { until } from "./__test-helpers__/until.js";
 import { configureApi } from "@cplieger/reactive/actions";
 import { showOnlyView } from "./view-swap.js";
 
@@ -779,19 +781,25 @@ const sleep = (ms: number): Promise<void> =>
 /** The 500 ms touch hold, plus slack for the timer. */
 const HOLD = 520;
 
-function touch(type: string, target: Element, pointerId = 7): void {
+function touchEvent(type: string, target: Element, pointerId = 7): PointerEvent {
   const box = target.getBoundingClientRect();
-  target.dispatchEvent(
-    new PointerEvent(type, {
-      pointerType: "touch",
-      pointerId,
-      isPrimary: true,
-      bubbles: true,
-      cancelable: true,
-      clientX: box.left + 10,
-      clientY: box.top + 5,
-    }),
-  );
+  return new PointerEvent(type, {
+    pointerType: "touch",
+    pointerId,
+    isPrimary: true,
+    bubbles: true,
+    cancelable: true,
+    clientX: box.left + 10,
+    clientY: box.top + 5,
+  });
+}
+
+function touch(type: string, target: Element, pointerId = 7): void {
+  target.dispatchEvent(touchEvent(type, target, pointerId));
+}
+
+function touchAfterFling(row: Element): void {
+  pressAfterScroll(el("tab-sections"), row, touchEvent("pointerdown", row));
 }
 
 /** A synthetic click carries no pointerdown, as a lift's click and HTML's activation behavior do. */
@@ -1177,10 +1185,7 @@ describe("the touch hold on a closed row", () => {
     await listed(entry("c-a", "Alpha"));
     unfold();
     const row = rowFor("Alpha");
-    // Laid out first, so the press's own box read cannot push it past the fling window after the scroll.
-    row.getBoundingClientRect();
-    el("tab-sections").dispatchEvent(new Event("scroll"));
-    touch("pointerdown", row);
+    touchAfterFling(row);
     await sleep(HOLD);
     row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
     await settle();
@@ -1191,8 +1196,7 @@ describe("the touch hold on a closed row", () => {
     await closedElsewhere({ "c-a": "Alpha" });
     unfold();
     const row = rowFor("Alpha");
-    el("tab-sections").dispatchEvent(new Event("scroll"));
-    touch("pointerdown", row);
+    touchAfterFling(row);
     await sleep(HOLD);
     touch("pointerup", row);
     clickOn(row);
@@ -1205,8 +1209,7 @@ describe("the touch hold on a closed row", () => {
     await closedElsewhere({ "c-a": "Alpha" });
     unfold();
     const row = rowFor("Alpha");
-    el("tab-sections").dispatchEvent(new Event("scroll"));
-    touch("pointerdown", row);
+    touchAfterFling(row);
     await sleep(300);
     row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
     touch("pointerup", row);
@@ -1220,14 +1223,13 @@ describe("the touch hold on a closed row", () => {
     await closedElsewhere({ "c-a": "Alpha" });
     unfold();
     const row = rowFor("Alpha");
-    el("tab-sections").dispatchEvent(new Event("scroll"));
-    touch("pointerdown", row);
+    touchAfterFling(row);
     touch("pointerup", row);
     clickOn(row);
     await settle();
     expect(opens()).toHaveLength(1);
     // The shell's `#tab-sections` outlives the case: its scroll must not make the next case's touch a fling.
-    await sleep(150);
+    await sleep(SCROLLER_RESTED_MS);
   });
 
   it("reopens from the lift of a touch that travelled past the slop", async () => {
@@ -1353,14 +1355,8 @@ function stubSessions(runs: { chat: string; id: string }[] | null): void {
 const ask = (): HTMLDialogElement | null =>
   document.querySelector<HTMLDialogElement>("dialog.uip-ask[open]");
 async function askShown(): Promise<HTMLDialogElement> {
-  for (let i = 0; i < 40 && ask() === null; i++) {
-    await settle();
-  }
-  const d = ask();
-  if (d === null) {
-    throw new Error("no confirm opened");
-  }
-  return d;
+  await until(() => ask() !== null, "a confirm to open");
+  return ask() as HTMLDialogElement;
 }
 async function answer(button: "Delete" | "Cancel"): Promise<void> {
   const d = await askShown();
@@ -1370,17 +1366,18 @@ async function answer(button: "Delete" | "Cancel"): Promise<void> {
   if (b === undefined) {
     throw new Error(`no ${button} in the confirm`);
   }
-  const sent = deletes().length;
+  let closed = false;
+  d.addEventListener(
+    "close",
+    () => {
+      closed = true;
+    },
+    { once: true },
+  );
   b.click();
-  // The dialog stays open, and the page inert, until its close animation ends.
-  for (let i = 0; i < 100 && d.open; i++) {
-    await settle();
-  }
-  expect(d.open, "the confirm closed").toBe(false);
-  // A Delete sends once the confirm has settled, a task chain a loaded runner stretches past one settle.
-  for (let i = 0; i < 100 && button === "Delete" && deletes().length === sent; i++) {
-    await settle();
-  }
+  // confirm.ts answers on the close event, a task of its own that a busy page can run after later
+  // timers, not when `open` turns false at the end of the close animation.
+  await until(() => closed, "the confirm's close event");
   await settle();
   await settleTabs();
 }

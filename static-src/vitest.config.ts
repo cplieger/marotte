@@ -549,7 +549,9 @@ export default defineConfig({
     // deadline. `frame-budget.ts` owns why 10s is the floor: deep into the run this browser delivers
     // frames at 1Hz. A FAILURE bound only; a file needing more states its own.
     testTimeout: testTimeoutFor(FRAME_BUDGET_MS),
-    hookTimeout: 5000,
+    // No hookTimeout: vitest's own default bounds a hook (30 s in the browser, 10 s in node). A hook's
+    // cold module-graph import, or a teardown closing a case's 40 tabs, takes seconds on a busy host,
+    // and a teardown cut short goes on closing the next case's tabs of the same ids.
 
     // Flag tests slower than 100ms. Root-only: `slowTestThreshold` is a
     // NonProjectOption, so vitest rejects it inside a project.

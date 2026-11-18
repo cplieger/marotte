@@ -787,19 +787,29 @@ function selectUnit(unit: HTMLElement): boolean {
   return found;
 }
 
-/** Four 60Hz frames: a busy frame keeps its re-walk, and the fallback is no felt stall. */
-export const RENDER_WAIT_CEILING_MS = 64;
-
-/** One rendered frame or the ceiling; `true` when a frame was delivered, which makes a following miss conclusive. */
+/**
+ * The second animation frame, `true`; `false` on a page that is hidden or hides first, which gets no frames. Never a
+ * wall-clock ceiling: a busy page delivers its frame late, and a miss before that frame would call a rendered card
+ * unrendered.
+ */
 function nextRender(): Promise<boolean> {
+  if (document.visibilityState === "hidden") {
+    return Promise.resolve(false);
+  }
   return new Promise((resolve) => {
-    const ceiling = setTimeout(() => {
-      resolve(false);
-    }, RENDER_WAIT_CEILING_MS);
+    const settle = (rendered: boolean): void => {
+      document.removeEventListener("visibilitychange", onHide);
+      resolve(rendered);
+    };
+    const onHide = (): void => {
+      if (document.visibilityState === "hidden") {
+        settle(false);
+      }
+    };
+    document.addEventListener("visibilitychange", onHide);
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        clearTimeout(ceiling);
-        resolve(true);
+        settle(true);
       });
     });
   });
