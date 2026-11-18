@@ -925,20 +925,10 @@ type promptRoles struct {
 
 // messageDoor is where a message into a chat begins.
 type messageDoor interface {
-	// ReopenForMessage opens the tab of a chat an outside caller's message reaches, so the work it starts has a row;
-	// a rule's message opens none.
-	ReopenForMessage(ctx context.Context, chatID marotte.ChatID, from *marotte.Caller)
 	// BeginMessage answers stamp(), the life stamp the message from from (nil for a page's) presents to its submit,
-	// after reopening the chat's tab for an outside caller. A Bot left with no tab refuses with 409 chat_closed, or
-	// 409 bot_closed for a rule's message.
+	// or the refusal of a message into a chat with no tab: 410 session_closed for an outside caller's, 409
+	// bot_closed for a rule's, 409 chat_closed for a page's into a Bot.
 	BeginMessage(ctx context.Context, chatID marotte.ChatID, from *marotte.Caller, stamp func() uint64) (uint64, error)
 }
 
 var _ messageDoor = (*Membership)(nil)
-
-// reopenForCaller reopens cmd's chat for an outside caller's message; a page's own command (From nil) never does.
-func reopenForCaller(ctx context.Context, door messageDoor, cmd *marotte.ClientCommand) {
-	if cmd.From != nil {
-		door.ReopenForMessage(ctx, cmd.ChatID, cmd.From)
-	}
-}

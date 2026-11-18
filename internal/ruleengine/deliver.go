@@ -226,8 +226,8 @@ func dropWith(ruleID, eventID, reason string, now time.Time) func(c *marotte.Cha
 func (e *Engine) refused(ctx context.Context, chatID marotte.ChatID, r *rule.Rule, ev *rule.QueuedEvent, err error, now time.Time) error {
 	logArgs := eventArgs(chatID, r.ID, kindOf(&r.Spec, ev.Trigger), ev.EventID, "error", err)
 	switch command.ClassifyNotifyError(err) {
-	case command.NotifyUnknownChat, command.NotifyBotClosed:
-		closed := command.ClassifyNotifyError(err) == command.NotifyBotClosed
+	case command.NotifyUnknownChat, command.NotifyBotClosed, command.NotifySessionClosed:
+		closed := command.ClassifyNotifyError(err) != command.NotifyUnknownChat
 		obs.RuleDelivery(obs.RuleDeliveryDropped)
 		e.log.Info("rule prompt dropped", logArgs...)
 		_, werr := e.write(ctx, chatID, onEvent(r.ID, ev.EventID, func(r *rule.Rule, i int) bool {

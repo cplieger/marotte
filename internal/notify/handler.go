@@ -21,9 +21,14 @@ const Pattern = routePrefix + "{session}" + routeSuffix
 // which delivers it after the answer.
 const deliveredAccepted = "accepted"
 
+// codeSessionClosed is the code of the 410 answering ErrSessionClosed.
+const codeSessionClosed = "session_closed"
+
 var (
 	// ErrUnknownSession is a session id no chat holds; the route answers 404.
 	ErrUnknownSession = errors.New("no chat holds this session")
+	// ErrSessionClosed is a session whose chat the user closed; the route answers 410 with code session_closed.
+	ErrSessionClosed = errors.New("this chat was closed by the user")
 	// ErrUnavailable is a delivery the engine cannot take now (draining, not ready, saturated); the route answers 503
 	// with Retry-After.
 	ErrUnavailable = errors.New("the agent engine cannot take a message now")
@@ -36,7 +41,8 @@ func (e *TextRefusedError) Error() string { return "text: " + e.Reason }
 
 // Deliverer hands one message to the chat holding session, with source as the caller label. It returns once the
 // chat has accepted the message, never waiting on its delivery, with the id of the chat's message that carries it
-// (the key its delivery is logged under), or ErrUnknownSession, ErrUnavailable, a *TextRefusedError or another error.
+// (the key its delivery is logged under), or ErrUnknownSession, ErrSessionClosed, ErrUnavailable, a
+// *TextRefusedError or another error.
 type Deliverer interface {
 	Deliver(ctx context.Context, session, text, source string) (messageID string, err error)
 }
@@ -137,6 +143,8 @@ func writeDeliveryError(w http.ResponseWriter, session, source string, err error
 	switch {
 	case errors.Is(err, ErrUnknownSession):
 		httpserver.WriteJSONStatus(w, http.StatusNotFound, httpreply.ErrorJSON(ErrUnknownSession.Error()))
+	case errors.Is(err, ErrSessionClosed):
+		httpserver.WriteJSONStatus(w, http.StatusGone, httpreply.ErrorJSONWithCode(ErrSessionClosed.Error(), codeSessionClosed))
 	case errors.Is(err, ErrUnavailable):
 		unavailable(w, err.Error())
 	default:

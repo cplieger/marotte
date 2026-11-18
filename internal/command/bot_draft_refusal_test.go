@@ -75,7 +75,7 @@ func TestDraftBot_AQueuedPromptIsRefused(t *testing.T) {
 	req := queueReq(t, "later", "m-q")
 	req.ChatID = "c-bot"
 
-	_, err := cmdQueuePrompt(t.Context(), run, roles.admission, nil, store, req)
+	_, err := cmdQueuePrompt(t.Context(), run, roles.admission, nopDoor{}, store, req)
 
 	wantBotDraft(t, err, run)
 }

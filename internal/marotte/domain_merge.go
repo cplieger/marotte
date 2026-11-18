@@ -2,8 +2,10 @@ package marotte
 
 // TangentMerge is one merge_tangent operation, recorded on the tangent's chat under its op_id.
 type TangentMerge struct {
-	OpID   string `json:"op_id"`
-	Parent ChatID `json:"parent_chat_id"`
+	// From is the outside caller that asked for the merge, nil for the page's.
+	From   *Caller `json:"from,omitempty"`
+	OpID   string  `json:"op_id"`
+	Parent ChatID  `json:"parent_chat_id"`
 	// DeliveryID is the message id the summary reaches the parent under, as a prompt or a queued
 	// row: what tells a later process whether a merge it never saw settle delivered.
 	DeliveryID string            `json:"delivery_id"`

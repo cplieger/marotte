@@ -378,3 +378,19 @@ func (d *dedupeTable) len() int {
 	defer d.mu.Unlock()
 	return len(d.entries)
 }
+
+func TestHandler_AClosedSessionIs410SessionClosed(t *testing.T) {
+	rig := newHandlerRig(t)
+	rig.deliv.answer = func(string) error { return ErrSessionClosed }
+
+	w := rig.post(t, notifyBody(t, "wake", "grelot", "m-1"))
+
+	got := decodeAnswer(t, w)
+	if w.Code != http.StatusGone || got["code"] != "session_closed" || got["error"] != "this chat was closed by the user" {
+		t.Errorf("answer = %d %v, want 410 code session_closed with the closed message", w.Code, got)
+	}
+	rig.deliv.answer = nil
+	if got := decodeAnswer(t, rig.post(t, notifyBody(t, "wake", "grelot", "m-1"))); got["delivered"] != "accepted" {
+		t.Errorf("answer after the chat reopened = %v, want a delivery: a refusal records no dedupe key", got)
+	}
+}
