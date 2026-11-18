@@ -66,8 +66,9 @@
    leading element and it REPLACED the per-mode role glyph: the strip's job is
    peripheral awareness of chats you are not looking at, and a chat's role is
    the same every time you glance at it while its activity is the thing that
-   changed. Every other tab kind keeps its glyph and carries this element after
-   it, before the name: a run's or a delegate's state, the editor's unsaved mark.
+   changed. Every other kind shares that one leading slot with its glyph: the dot
+   (a run's or a delegate's state, the editor's unsaved mark) while it has a
+   state, the glyph otherwise, so every row's name starts at one x.
 
    MOVED HERE from 61-mcp-tools.css, which is the MCP-tools stylesheet and had
    nothing to do with the tab strip. It is not extracted to a shared file: there
@@ -129,25 +130,29 @@
   margin-inline-start: var(--sp-1);
 }
 
-/* A dot after the row's leading glyph (a sub-tab's nesting arrow, another kind's
-   glyph) wants neither the 14px glyph slot above (the glyph holds that slot) nor
-   the header's separation: the row's own `gap` is the whole spacing.
+/* A sub-tab's dot after its nesting arrow wants neither the 14px glyph slot above
+   (the arrow holds that slot) nor the header's separation: the row's own `gap` is
+   the whole spacing.
 
    This ties `.tab-status-dot:not(:first-child)` on specificity (two compound
    parts each), so it wins by coming AFTER it and must stay after it. */
-.tab-nest + .tab-status-dot,
-.tab-icon + .tab-status-dot {
+.tab-nest + .tab-status-dot {
   margin-inline-start: 0;
 }
 
+/* A kind with a glyph leads with its dot (tabs.ts `createTabEl`): a dot with a
+   state takes the leading slot, so the glyph after it gives the slot up. */
+.tab-status-dot[data-status]:first-child + .tab-icon {
+  display: none;
+}
+
 /* The diamond's slot correction, one position over from the leading one below.
-   `failed` is the smaller mark, so the name would move sideways at the exact
-   moment a run's status flipped to or from failed, which for a run is the moment
+   `failed` is the smaller mark, so a run sub-tab's name would move sideways at the
+   exact moment its status flipped to or from failed, which for a run is the moment
    that matters most. Derived from the two dot tokens rather than the 14px glyph
-   slot, because the glyph holds that slot and the dot only has to match its own
-   siblings. (0,4,0), above the header dot's correction below. */
-.tab.tab-child .tab-status-dot[data-status="failed"],
-.tab > .tab-icon + .tab-status-dot[data-status="failed"] {
+   slot, because the nesting arrow holds that slot and the dot only has to match
+   its own siblings. (0,4,0), above the header dot's correction below. */
+.tab.tab-child .tab-status-dot[data-status="failed"] {
   margin-inline: calc((var(--dot-size) - var(--dot-size-sm)) / 2);
 }
 
@@ -169,14 +174,8 @@
 
    A chat sub-tab, a run sub-tab and a subagent sub-tab are arrow, gap, slot, gap,
    title, and they line up because all three reserve (`chat-run-dots.test.ts`).
-   A top-level row reserves for the kinds a producer writes a dot for (a run, a
-   delegate whose chat has no tab, the editor's unsaved mark), so its name does
-   not jump when the first state or the first edit lands; a kind with no producer
-   keeps no slot and its title stays at a chat row's. */
-.tab.tab-child .tab-status-dot:not([data-status]),
-[data-kind="run"] > .tab-icon + .tab-status-dot:not([data-status]),
-[data-kind="subagent"] > .tab-icon + .tab-status-dot:not([data-status]),
-[data-kind="editor"] > .tab-icon + .tab-status-dot:not([data-status]) {
+   A top-level row needs no reservation: its glyph holds the slot until a state lands. */
+.tab.tab-child .tab-status-dot:not([data-status]) {
   display: block;
   visibility: hidden;
 }
@@ -1115,6 +1114,11 @@
   visibility: hidden;
 }
 
+/* A live run reads like the tab rows, not like History's closed ones. */
+.runs-item {
+  color: var(--c-text-primary);
+}
+
 .runs-row {
   flex: 1;
   min-inline-size: 0;
@@ -1123,6 +1127,24 @@
   align-items: center;
   color: inherit;
   text-decoration: none;
+}
+
+/* Runs is docked under the scrolling sections, so a run that wants you shows at any tab count. Its
+   list holds three rows and scrolls past them; the order puts the runs that want you first. */
+.runs-section {
+  flex-shrink: 0;
+  padding-block: var(--sp-1);
+  border-block-start: var(--hairline) solid var(--c-border);
+
+  &[hidden] {
+    display: none;
+  }
+}
+
+.runs-list {
+  max-block-size: calc(var(--sp-1) + 3 * var(--tab-row-h) + 2 * 0.125rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .history-row-name,

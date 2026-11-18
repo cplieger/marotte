@@ -203,7 +203,7 @@ body.sidebar-resizing {
   }
 }
 
-/* The sidebar's one scroll region: every section and its header scroll together, so no section hides another's rows behind a nested scrollbar. */
+/* The sidebar's scroll region: the tab sections and History scroll together, so none hides another's rows behind a nested scrollbar. Runs is docked below it (12-tabs.css). */
 [id="tab-sections"] {
   flex: 1;
   overflow-y: auto;

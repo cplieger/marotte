@@ -458,15 +458,19 @@ type LiveRun struct {
 	// read false while KAS says running (a lease read back from disk is parked; `set_step_status`
 	// advances a step without re-arming) until marotte arms the run again.
 	Executing bool `json:"executing"`
+	// StartedAt is the unix ms marotte put the run on the wire, the same on every page.
+	StartedAt int64 `json:"started_at"`
 }
 
 // LiveRunPayload is the payload for type="live_run": one LiveRun row changed. Live false
-// means the run left the inventory: ChatID is the chat it was under, Executing false.
+// means the run left the inventory: ChatID is the chat it was under, Executing false and
+// StartedAt 0.
 type LiveRunPayload struct {
 	WorkflowID string `json:"workflow_id"`
 	ChatID     string `json:"chat_id"`
 	Live       bool   `json:"live"`
 	Executing  bool   `json:"executing"`
+	StartedAt  int64  `json:"started_at"`
 }
 
 // LiveRunsResponse is GET /api/runs/live's reply.

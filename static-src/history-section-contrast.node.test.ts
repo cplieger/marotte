@@ -1,4 +1,4 @@
-// The History section's closed rows' inks and More's, over the sidebar and over their own hover,
+// The History section's closed rows' inks, More's and the Runs rows', over the sidebar and over their own hover,
 // in both themes (WCAG 1.4.3, 4.5:1: the name and the time are `--fs-sm` text). Every ink and fill
 // is read from the stylesheet and measured by css-contrast.py, so a CSS change cannot pass silently.
 
@@ -112,6 +112,15 @@ describe.skipIf(!existsSync(script))("the History section's row inks", () => {
       decl(r.hover, "color") ?? rest,
       `over(${r.hoverFill}, ${sidebar()})`,
     );
+  });
+
+  // A live run is not a closed chat, so its row takes the tab rows' primary ink over the same fills.
+  it("holds the Runs rows' primary ink to 4.5:1 at rest and hovered", () => {
+    const r = row(ROWS);
+    const ink = own(ruleBody(tabs, ".runs-item"), "color");
+    expect(ink).toBe("var(--c-text-primary)");
+    expectFloor("a run row at rest", ink, sidebar());
+    expectFloor("a run row hovered", ink, `over(${r.hoverFill}, ${sidebar()})`);
   });
 
   it("holds the close time's tertiary ink to 4.5:1 at rest and hovered", () => {

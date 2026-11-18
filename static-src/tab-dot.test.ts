@@ -538,7 +538,7 @@ describe("the tab's accessible name announces its state", () => {
     expect(row.querySelector(".tab-status-dot")?.getAttribute("aria-hidden")).toBe("true");
   });
 
-  it("leads a chat row with the dot and gives every other kind its glyph", async () => {
+  it("leads every row with the dot and gives every kind but a chat its glyph", async () => {
     const chat = await openChat();
     // A singleton's ref is EMPTY: its identity is its kind, so there is no sentinel id.
     const filesID = await openSubject("files");
@@ -551,12 +551,9 @@ describe("the tab's accessible name announces its state", () => {
     expect(chat.querySelector(".tab-icon")).toBeNull();
     expect(chat.firstElementChild?.classList.contains("tab-status-dot")).toBe(true);
 
-    // Every other kind keeps its glyph in that slot, and its dot comes right after it.
+    // Every other kind keeps its glyph and shares that slot with its dot, which leads too.
     expect(files?.querySelector(".tab-icon")).not.toBeNull();
-    expect(files?.firstElementChild?.classList.contains("tab-icon")).toBe(true);
-    expect(files?.firstElementChild?.nextElementSibling?.classList.contains("tab-status-dot")).toBe(
-      true,
-    );
+    expect(files?.firstElementChild?.classList.contains("tab-status-dot")).toBe(true);
     expect(files?.querySelector(".tab-status-dot")?.hasAttribute("data-status")).toBe(false);
   });
 });
@@ -1764,6 +1761,115 @@ describe("every row draws its dot before its name", () => {
       expect(name.right, "the name ends before the close").toBeLessThanOrEqual(close.left);
     });
   }
+});
+
+// 4g. One leading slot on every top-level row: its state while it has one, else its kind's glyph. So
+// every kind's name starts at one x, and the state is spoken with the name.
+
+describe("every top-level row puts its name at one origin", () => {
+  let sheet: HTMLStyleElement;
+
+  beforeAll(() => {
+    sheet = mountAppCSS();
+  });
+
+  afterAll(() => {
+    sheet.remove();
+  });
+
+  beforeEach(async () => {
+    await resetProjection();
+  });
+
+  /** One row of every kind a person meets at the top level, and the state its producer writes. */
+  async function openEveryKind(): Promise<readonly (readonly [TabKind, string, TabDotStatus])[]> {
+    const { subagentRef } = await import("./tab-materialize.js");
+    return [
+      ["chat", await openSubject("chat", "c1"), "working"],
+      ["run", await openSubject("run", "wf_1"), "working"],
+      ["subagent", await openSubject("subagent", subagentRef("c9", "task-1")), "failed"],
+      ["editor", await openSubject("editor", "/a.ts"), "dirty"],
+      ["settings", await openSubject("settings"), "idle"],
+      ["git", await openSubject("git"), "idle"],
+    ];
+  }
+
+  /** The kinds no producer writes a state for. */
+  const stateless = (kind: TabKind): boolean => kind === "settings" || kind === "git";
+
+  function parts(id: string): { row: HTMLElement; name: HTMLElement; dot: HTMLElement } {
+    const row = document.querySelector<HTMLElement>(`[data-tab-id="${id}"]`);
+    const name = row?.querySelector<HTMLElement>(".tab-name");
+    const dot = row?.querySelector<HTMLElement>(".tab-status-dot");
+    if (row === null || name === null || name === undefined || dot === null || dot === undefined) {
+      throw new Error(`row ${id} did not render a name and a dot`);
+    }
+    return { row, name, dot };
+  }
+
+  const nameLeft = (id: string): number => {
+    const { row, name } = parts(id);
+    return name.getBoundingClientRect().left - row.getBoundingClientRect().left;
+  };
+
+  /** Where `e`'s centre sits in its row: each row slides in from the side as it opens. */
+  const centre = (e: HTMLElement): number => {
+    const r = e.getBoundingClientRect();
+    const row = e.closest<HTMLElement>("[data-tab-id]")?.getBoundingClientRect().left ?? 0;
+    return r.left + r.width / 2 - row;
+  };
+
+  it("starts every kind's name at a chat row's x, with a state and without", async () => {
+    const { setTabStatus } = await import("./tabs.js");
+    const rows = await openEveryKind();
+    await paint();
+    const chat = rows[0]?.[1] ?? "";
+    for (const [kind, id] of rows) {
+      expect(Math.abs(nameLeft(id) - nameLeft(chat)), `${kind} with no state`).toBeLessThan(0.5);
+    }
+
+    for (const [kind, id, status] of rows.filter(([kind]) => !stateless(kind))) {
+      setTabStatus(id, status);
+      await paint();
+      expect(Math.abs(nameLeft(id) - nameLeft(chat)), `${kind} with a state`).toBeLessThan(0.5);
+    }
+  });
+
+  it("shows the kind's glyph in the slot until a state takes it, where a chat row's dot sits", async () => {
+    const { setTabStatus } = await import("./tabs.js");
+    const rows = await openEveryKind();
+    await paint();
+    const chatDot = parts(rows[0]?.[1] ?? "").dot;
+    for (const [kind, id, status] of rows.filter(([kind]) => kind !== "chat")) {
+      const { row, dot } = parts(id);
+      const icon = row.querySelector<HTMLElement>(".tab-icon");
+      if (icon === null) {
+        throw new Error(`${kind} has no glyph`);
+      }
+      expect(icon.getClientRects().length, `${kind}'s glyph with no state`).toBe(1);
+      expect(dot.getClientRects().length, `${kind}'s dot with no state`).toBe(0);
+      if (stateless(kind)) {
+        continue;
+      }
+      setTabStatus(id, status);
+      await paint();
+      expect(icon.getClientRects().length, `${kind}'s glyph with a state`).toBe(0);
+      expect(Math.abs(centre(dot) - centre(chatDot)), `${kind}'s dot`).toBeLessThan(0.5);
+    }
+  });
+
+  it("speaks the slot's state with the row's name", async () => {
+    const { setTabStatus, dotPhrase } = await import("./tabs.js");
+    const rows = await openEveryKind();
+    await paint();
+    for (const [kind, id, status] of rows.filter(([kind]) => !stateless(kind))) {
+      setTabStatus(id, status);
+      const { row, name } = parts(id);
+      expect(nameFromContents(row), kind).toBe(`${name.textContent}, ${dotPhrase(kind, status)}`);
+    }
+    const editor = rows.find(([kind]) => kind === "editor")?.[1] ?? "";
+    expect(nameFromContents(parts(editor).row)).toMatch(/, unsaved changes$/);
+  });
 });
 
 // 5b. EVERY wire outcome reaches the dot and none as "nothing is happening": `interrupted` once fell

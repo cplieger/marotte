@@ -1,6 +1,6 @@
 // The sidebar's Runs section over the shipped markup and stylesheet, fed through the real live-run
 // inventory, run store and tab projection: which runs it lists, when a row leaves, what its dot says,
-// where the dot sits and where focus goes.
+// how the rows are ordered, where the section and the dot sit and where focus goes.
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { userEvent } from "vitest/browser";
 
@@ -60,7 +60,7 @@ vi.mock("./api-client.js", async (importOriginal) => {
   };
 });
 
-import { applyLiveRunFrame, reviseRun } from "./run-store.js";
+import { applyLiveRunFrame, registerRunStateDemand, reviseRun } from "./run-store.js";
 import { applyRunAsks } from "./run-asks.js";
 import { setSectionFolded } from "./device-view.js";
 import { openTab, closeTab, tabIdFor, _resetForTest } from "./tabs.js";
@@ -84,12 +84,14 @@ const shell = document.createElement("div");
   document.body.appendChild(shell);
 }
 const { initRunsSection } = await import("./runs-section.js");
+const { installRunDotSubscriber } = await import("./run-dots.js");
 
 let style: HTMLStyleElement;
 
 beforeAll(() => {
   style = mountAppCSS();
   initRunsSection();
+  installRunDotSubscriber();
 });
 
 afterAll(() => {
@@ -100,9 +102,14 @@ afterAll(() => {
 /** Every run a case made live, so the next case starts from an empty inventory. */
 const live = new Set<string>();
 let version = 0;
+/** When the last run went on the wire, unix ms: each launch is newer than the one before it. */
+let clock = 1_000;
 
 /** One `live_run` frame, stamped past every frame before it as the server's `runs` subject is. */
-function frame(id: string, row: { chat?: string; executing?: boolean } | null): void {
+function frame(
+  id: string,
+  row: { chat?: string; executing?: boolean; started?: number } | null,
+): void {
   version++;
   applyLiveRunFrame(
     {
@@ -110,6 +117,7 @@ function frame(id: string, row: { chat?: string; executing?: boolean } | null): 
       live: row !== null,
       chat_id: row?.chat ?? "",
       executing: row?.executing ?? false,
+      started_at: row === null ? 0 : (row.started ?? ++clock),
     },
     { kind: "runs", ref: "", version: String(version) },
   );
@@ -124,12 +132,37 @@ function frame(id: string, row: { chat?: string; executing?: boolean } | null): 
 function launched(
   id: string,
   name: string,
-  over: { chat?: string; status?: string; executing?: boolean } = {},
+  over: { chat?: string; status?: string; executing?: boolean; started?: number } = {},
 ): void {
   h.headers.set(id, { status: over.status ?? "running", name });
   frame(id, {
     chat: over.chat ?? "",
     executing: over.executing ?? (over.status ?? "running") === "running",
+    ...(over.started === undefined ? {} : { started: over.started }),
+  });
+}
+
+/** An open ask on the run, as the `run_asks` frame says it; `asking(id, false)` withdraws it. */
+function asking(id: string, open = true): void {
+  applyRunAsks({
+    workflow_id: id,
+    chat_id: `run:${id}`,
+    epoch: "e1",
+    seq: open ? 1 : 2,
+    reachable: true,
+    asks: open
+      ? [
+          {
+            ask_id: `a-${id}`,
+            node_id: "pick",
+            step_session_id: `s-${id}`,
+            agent_name: "picker",
+            text: "Which one?",
+            text_source: "asked",
+            node_path: ["pick"],
+          },
+        ]
+      : [],
   });
 }
 
@@ -238,36 +271,12 @@ describe("which runs the section lists", () => {
   it("lists a paused run and one waiting for an answer, each with its own state", async () => {
     launched("wf_paused", "paused-run", { status: "paused" });
     launched("wf_asking", "asking-run", { status: "paused" });
-    applyRunAsks({
-      workflow_id: "wf_asking",
-      chat_id: "run:wf_asking",
-      epoch: "e1",
-      seq: 1,
-      reachable: true,
-      asks: [
-        {
-          ask_id: "a1",
-          node_id: "pick",
-          step_session_id: "s1",
-          agent_name: "picker",
-          text: "Which one?",
-          text_source: "asked",
-          node_path: ["pick"],
-        },
-      ],
-    });
+    asking("wf_asking");
     await settle();
 
     expect(dotOf(link("paused-run")).dataset["status"]).toBe("waiting");
     expect(dotOf(link("asking-run")).dataset["status"]).toBe("input");
-    applyRunAsks({
-      workflow_id: "wf_asking",
-      chat_id: "run:wf_asking",
-      epoch: "e1",
-      seq: 2,
-      reachable: true,
-      asks: [],
-    });
+    asking("wf_asking", false);
   });
 
   it("does not list a run a chat launched while that chat's tab is open, and lists it once it closes", async () => {
@@ -291,33 +300,52 @@ describe("which runs the section lists", () => {
     expect(names()).toEqual(["orphaned-run"]);
   });
 
-  it("orders the rows by name, the same on every device", async () => {
-    launched("wf_b", "beta");
-    launched("wf_c", "gamma");
-    launched("wf_a", "Alpha");
-    await settle();
-
-    expect(names()).toEqual(["Alpha", "beta", "gamma"]);
-  });
-
-  it("orders the rows the same whatever language the browser uses", async () => {
-    // A Swedish browser sorts ä after z; the rows keep English order there.
-    const sv = new Intl.Collator("sv");
-    const compare = vi.spyOn(String.prototype, "localeCompare").mockImplementation(function (
-      this: string,
-      that: string,
-    ) {
-      return sv.compare(this, that);
-    });
+  it("orders the rows by need, waiting for you first, then failed, then running, newest first in each", async () => {
+    launched("wf_old_run", "old-running", { started: 1 });
+    launched("wf_paused", "paused-run", { status: "paused", started: 2 });
+    launched("wf_ask", "asking-run", { status: "paused", started: 3 });
+    launched("wf_failed", "failed-run", { status: "failed", executing: false, started: 4 });
+    launched("wf_new_run", "new-running", { started: 5 });
+    launched("wf_tie", "tied-running", { started: 5 });
+    asking("wf_ask");
     try {
-      launched("wf_z", "zebra");
-      launched("wf_ae", "äpple");
       await settle();
 
-      expect(names()).toEqual(["äpple", "zebra"]);
+      expect(names()).toEqual([
+        "asking-run",
+        "paused-run",
+        "failed-run",
+        "new-running",
+        "tied-running",
+        "old-running",
+      ]);
     } finally {
-      compare.mockRestore();
+      asking("wf_ask", false);
     }
+  });
+
+  it("moves a row up when its run starts waiting for you", async () => {
+    launched("wf_up_a", "running-a", { started: 2 });
+    launched("wf_up_b", "running-b", { started: 1 });
+    await settle();
+    expect(names()).toEqual(["running-a", "running-b"]);
+
+    reviseRun("wf_up_b", 2, "paused");
+    await settle();
+    expect(names()).toEqual(["running-b", "running-a"]);
+  });
+
+  it("names its list Runs and speaks each row's state with the run's name", async () => {
+    launched("wf_said", "spoken-run", { status: "paused" });
+    await settle();
+
+    const list = el("runs-list");
+    const label = (list.getAttribute("aria-labelledby") ?? "")
+      .split(" ")
+      .map((id) => document.getElementById(id)?.textContent ?? "")
+      .join(" ");
+    expect(label).toBe("Runs");
+    expect(link("spoken-run").textContent).toBe("spoken-run, waiting for you");
   });
 
   it("follows a run's state as it moves", async () => {
@@ -337,10 +365,11 @@ describe("when a run leaves the section", () => {
     launched("wf_stays", "staying-run");
     await settle();
 
-    // A run that finished reports its outcome on its header first; the release frame is what removes it.
+    // A run that finished reports its outcome on its header first, and sorts after the running one;
+    // the release frame is what removes it.
     reviseRun("wf_done", 2, "completed");
     await settle();
-    expect(names()).toEqual(["finishing-run", "staying-run"]);
+    expect(names()).toEqual(["staying-run", "finishing-run"]);
 
     frame("wf_done", null);
     await settle();
@@ -413,24 +442,7 @@ describe("the section's fold", () => {
   it("folds to its header, which shows the most urgent hidden state", async () => {
     launched("wf_f1", "working-run");
     launched("wf_f2", "asking-run-2", { status: "paused" });
-    applyRunAsks({
-      workflow_id: "wf_f2",
-      chat_id: "run:wf_f2",
-      epoch: "e1",
-      seq: 1,
-      reachable: true,
-      asks: [
-        {
-          ask_id: "a2",
-          node_id: "pick",
-          step_session_id: "s2",
-          agent_name: "picker",
-          text: "Which one?",
-          text_source: "asked",
-          node_path: ["pick"],
-        },
-      ],
-    });
+    asking("wf_f2");
     setSectionFolded("runs", true);
     // Any repaint reads the stored fold; a run joining is one.
     launched("wf_f3", "third-run");
@@ -442,14 +454,20 @@ describe("the section's fold", () => {
       "input",
     );
     expect(toggle().querySelector(".sr-only")?.textContent).toBe("3 runs, one needs a decision");
-    applyRunAsks({
-      workflow_id: "wf_f2",
-      chat_id: "run:wf_f2",
-      epoch: "e1",
-      seq: 2,
-      reachable: true,
-      asks: [],
-    });
+    asking("wf_f2", false);
+  });
+
+  it("speaks for a paused run over a running one, as the rows' order does", async () => {
+    launched("wf_fw", "working-run-2", { started: 2 });
+    launched("wf_fp", "paused-run-2", { status: "paused", started: 1 });
+    setSectionFolded("runs", true);
+    launched("wf_fw2", "working-run-3", { started: 3 });
+    await settle();
+
+    expect(toggle().querySelector<HTMLElement>(".side-section-dot")?.dataset["status"]).toBe(
+      "waiting",
+    );
+    expect(toggle().querySelector(".sr-only")?.textContent).toBe("3 runs, one waiting for you");
   });
 
   it("opens again from its header", async () => {
@@ -557,9 +575,9 @@ describe("where focus goes", () => {
   it("moves from a row that leaves to the next row, then the previous one, then the open tab", async () => {
     await openTab({ kind: "chat", ref: "c-here" });
     await settleTabs();
-    launched("wf_r1", "r-one");
-    launched("wf_r2", "r-two");
-    launched("wf_r3", "r-zed");
+    launched("wf_r1", "r-one", { started: 3 });
+    launched("wf_r2", "r-two", { started: 2 });
+    launched("wf_r3", "r-zed", { started: 1 });
     await settle();
 
     link("r-two").focus();
@@ -577,18 +595,17 @@ describe("where focus goes", () => {
     expect(focusedTab()).toBe(tabIdFor("chat", "c-here"));
   });
 
-  it("keeps focus on a row a rename moves up the list", async () => {
-    launched("wf_m1", "alpha");
-    launched("wf_m2", "beta");
+  it("keeps focus on a row a state change moves up the list", async () => {
+    launched("wf_m1", "alpha", { started: 2 });
+    launched("wf_m2", "beta", { started: 1 });
     await settle();
     link("beta").focus();
 
-    h.headers.set("wf_m2", { status: "running", name: "aardvark" });
-    reviseRun("wf_m2");
+    reviseRun("wf_m2", 2, "paused");
     await settle();
 
-    expect(names()).toEqual(["aardvark", "alpha"]);
-    expect(document.activeElement).toBe(link("aardvark"));
+    expect(names()).toEqual(["beta", "alpha"]);
+    expect(document.activeElement).toBe(link("beta"));
   });
 
   it("moves focus to the run's new tab row on Enter at desktop width", async () => {
@@ -647,5 +664,89 @@ describe("where focus goes", () => {
     expect(tabIdFor("run", "wf_full")).toBe("");
     expect(names()).toEqual(["capped-run"]);
     expect(document.activeElement).toBe(link("capped-run"));
+  });
+});
+
+describe("where the section sits", () => {
+  it("stays in view under the tab sections however many tabs are open", async () => {
+    for (let i = 0; i < 20; i++) {
+      await openTab({ kind: "chat", ref: `c-many-${String(i)}` });
+    }
+    await settleTabs();
+    launched("wf_docked", "docked-run");
+    await settle();
+
+    const sections = el("tab-sections");
+    expect(sections.scrollHeight, "the tabs overflow their scroller").toBeGreaterThan(
+      sections.clientHeight,
+    );
+    expect(sections.contains(section())).toBe(false);
+    const row = link("docked-run").getBoundingClientRect();
+    expect(row.top).toBeGreaterThanOrEqual(sections.getBoundingClientRect().bottom - 0.5);
+    expect(row.bottom).toBeLessThanOrEqual(window.innerHeight);
+  });
+
+  it("shows three rows and scrolls the others inside its list, where focus reaches them", async () => {
+    for (let i = 1; i <= 4; i++) {
+      launched(`wf_cap${String(i)}`, `capped-${String(i)}`, { started: 10 - i });
+    }
+    await settle();
+
+    const list = el("runs-list");
+    const bottom = (): number => list.getBoundingClientRect().bottom;
+    const inView = links().filter((a) => a.getBoundingClientRect().bottom <= bottom() + 0.5);
+    expect(inView.map((a) => a.querySelector("bdi")?.textContent)).toEqual([
+      "capped-1",
+      "capped-2",
+      "capped-3",
+    ]);
+
+    link("capped-4").focus();
+    expect(link("capped-4").getBoundingClientRect().bottom).toBeLessThanOrEqual(bottom() + 0.5);
+  });
+
+  it("draws a live run in the tab rows' ink", async () => {
+    launched("wf_ink", "inked-run");
+    await settle();
+    const probe = document.createElement("span");
+    probe.style.color = "var(--c-text-primary)";
+    el("runs-list").append(probe);
+    try {
+      expect(getComputedStyle(link("inked-run")).color).toBe(getComputedStyle(probe).color);
+    } finally {
+      probe.remove();
+    }
+  });
+
+  it("draws a run's dot and name where its tab draws them once opened", async () => {
+    // The run's page holds its state while its tab shows, as run-view.ts does.
+    const release = registerRunStateDemand((id) => id === "wf_same", "header");
+    try {
+      launched("wf_same", "same-run");
+      await settle();
+      const row = link("same-run");
+      const centre = (e: Element): number => {
+        const r = e.getBoundingClientRect();
+        return r.left + r.width / 2;
+      };
+      const rowDot = centre(dotOf(row));
+      const rowName = row.querySelector("bdi")?.getBoundingClientRect().left ?? Number.NaN;
+
+      row.click();
+      await settleTabs();
+      await settle();
+      const tab = shell.querySelector<HTMLElement>(`[data-tab-id="${tabIdFor("run", "wf_same")}"]`);
+      if (tab === null) {
+        throw new Error("no run tab row");
+      }
+      await Promise.all(tab.getAnimations().map((a) => a.finished));
+
+      expect(dotOf(tab).dataset["status"]).toBe("working");
+      expect(Math.abs(centre(dotOf(tab)) - rowDot)).toBeLessThan(0.5);
+      const tabName = tab.querySelector(".tab-name")?.getBoundingClientRect().left ?? Number.NaN;
+      expect(Math.abs(tabName - rowName)).toBeLessThan(0.5);
+    } finally {
+      release();
+    }
   });
 });

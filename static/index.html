@@ -121,18 +121,6 @@
           </h2>
           <div id="pinned-list" class="side-section-list" role="tablist" aria-label="Pinned" aria-orientation="vertical"></div>
         </section>
-        <section id="runs-section" class="side-section runs-section" aria-labelledby="runs-section-name" hidden>
-          <h2 class="side-section-h">
-            <button type="button" class="side-section-toggle" aria-expanded="true" aria-controls="runs-list" aria-labelledby="runs-section-name" aria-describedby="runs-section-desc">
-              <span class="disclosure-chevron side-section-chevron" aria-hidden="true"><svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
-              <span class="side-section-name" id="runs-section-name">Runs</span>
-              <span class="side-section-dot tab-status-dot" aria-hidden="true"></span>
-              <span class="side-section-count" aria-hidden="true"></span>
-              <span class="sr-only" id="runs-section-desc"></span>
-            </button>
-          </h2>
-          <ul id="runs-list" class="runs-list"></ul>
-        </section>
         <section id="history-section" class="side-section" aria-labelledby="history-section-name" hidden>
           <h2 class="side-section-h">
             <button type="button" class="side-section-toggle" aria-expanded="false" aria-controls="history-list" aria-labelledby="history-section-name" aria-describedby="history-section-desc">
@@ -152,6 +140,18 @@
           </ul>
         </section>
       </div>
+      <section id="runs-section" class="side-section runs-section" aria-labelledby="runs-section-name" hidden>
+        <h2 class="side-section-h">
+          <button type="button" class="side-section-toggle" aria-expanded="true" aria-controls="runs-list" aria-labelledby="runs-section-name" aria-describedby="runs-section-desc">
+            <span class="disclosure-chevron side-section-chevron" aria-hidden="true"><svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+            <span class="side-section-name" id="runs-section-name">Runs</span>
+            <span class="side-section-dot tab-status-dot" aria-hidden="true"></span>
+            <span class="side-section-count" aria-hidden="true"></span>
+            <span class="sr-only" id="runs-section-desc"></span>
+          </button>
+        </h2>
+        <ul id="runs-list" class="runs-list" aria-labelledby="runs-section-name"></ul>
+      </section>
       <div class="sidebar-footer">
         <div class="popup-anchor">
           <!-- The connection mark and the address are ONE button, and it is the

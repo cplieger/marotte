@@ -2914,7 +2914,7 @@ function liveRows(list: HTMLElement): HTMLElement[] {
 
 /** A folded header's dot: the first state, in `TabDotState`'s precedence and then an editor's
  *  unsaved changes, among the rows it hides. */
-export const FOLD_DOT_PRECEDENCE: readonly TabDotStatus[] = [
+const FOLD_DOT_PRECEDENCE: readonly TabDotStatus[] = [
   "input",
   "failed",
   "working",
@@ -3246,10 +3246,10 @@ function createTabEl(row: TabRow): HTMLElement {
     // unseeded dot would shift the name.
     paintDot(node, kind, row.dotStatus ?? "idle", row.dotSince);
   } else {
-    // Other kinds keep their glyph, and their dot (a run's, a delegate's, the editor's unsaved mark)
-    // sits after it, before the name, as a sub-tab's sits after its arrow; no `idle` floor.
+    // Other kinds share the leading slot between their dot (a run's, a delegate's, the editor's
+    // unsaved mark) and their glyph, which 12-tabs.css hides while the dot has a state; no `idle` floor.
     const icon = el("span", { className: "tab-icon" }, iconEl(TAB_ICONS[kind]));
-    node.append(icon, statusDot, name, statusSR, pin, close);
+    node.append(statusDot, icon, name, statusSR, pin, close);
     // No producer supplies an age here, and the argument is passed anyway so this is
     // not the one paint site a reader has to reason about.
     paintDot(node, kind, row.dotStatus ?? "", row.dotSince);

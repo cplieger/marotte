@@ -1,5 +1,6 @@
-// The sidebar's Runs section: the live runs no open tab shows, each row a link to the run's tab. A
-// run leaves when marotte releases its lease (`live_run`) or a tab for it or its chat opens.
+// The sidebar's Runs section, docked under the tab sections: the live runs no open tab shows, each
+// row a link to the run's tab. A run leaves when marotte releases its lease (`live_run`) or a tab for
+// it or its chat opens.
 
 import { effect, el } from "@cplieger/reactive";
 import { liveRunStatus } from "./chat-run-dots.js";
@@ -18,7 +19,6 @@ import type { SectionHeaderView } from "./section-header.js";
 import { sideSection } from "./side-section.js";
 import type { TabDotState } from "./store.js";
 import {
-  FOLD_DOT_PRECEDENCE,
   dotPhrase,
   focusTabRow,
   getActiveTabId,
@@ -38,6 +38,7 @@ interface Row {
   readonly said: HTMLElement;
   status: TabDotState;
   label: string;
+  started: number;
 }
 
 /** The runs the section lists, by workflow id; each holds its run's header for the row's name and dot. */
@@ -48,8 +49,41 @@ registerRunStateDemand((id) => rows.has(id), "header");
  *  click, not the repaint, decides where focus goes then. */
 let opening = "";
 
-/** One collation for every browser language, so every device draws the same order. */
-const byName = new Intl.Collator("en");
+/** The states a folded header speaks for, most urgent first, in the rows' need order. */
+const URGENCY: readonly Exclude<TabDotState, "">[] = [
+  "input",
+  "waiting",
+  "failed",
+  "working",
+  "done",
+];
+
+/** A row's place by need, so the rows past the list's fold never hide one that wants you: waiting
+ *  for you (a decision or a resume) first, then failed, then running, then the rest. */
+function need(status: TabDotState): number {
+  switch (status) {
+    case "input":
+    case "waiting":
+      return 0;
+    case "failed":
+      return 1;
+    case "working":
+      return 2;
+    case "done":
+    case "idle":
+    case "":
+      return 3;
+  }
+}
+
+/** By need, then newest first, then by id: the same order on every device. */
+function byNeed(a: Row, b: Row): number {
+  return (
+    need(a.status) - need(b.status) ||
+    b.started - a.started ||
+    (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+  );
+}
 
 /** The live runs no open tab shows: no tab for the run, and none for the chat that launched it,
  *  whose row would carry its mark. Subscribes to the inventory and the tab set. */
@@ -72,9 +106,9 @@ function paintRow(row: Row, status: TabDotState, label: string): void {
   setText(row.said, phrase === "" ? "" : `, ${phrase}`);
 }
 
-/** The first state, in the tab sections' precedence, among the rows a fold hides. */
+/** The most urgent state among the rows a fold hides. */
 function foldDot(): SectionHeaderView["dot"] {
-  for (const status of FOLD_DOT_PRECEDENCE) {
+  for (const status of URGENCY) {
     if ([...rows.values()].some((r) => r.status === status)) {
       return { status, phrase: dotPhrase("run", status) };
     }
@@ -114,7 +148,7 @@ function makeRow(id: string): Row {
     said,
   ) as HTMLAnchorElement;
   const li = el("li", { className: "runs-item" }, link) as HTMLLIElement;
-  const row: Row = { id, li, link, dot, name, said, status: "", label: "" };
+  const row: Row = { id, li, link, dot, name, said, status: "", label: "", started: 0 };
   // A modified or non-primary click follows the href, so a run opens in a new browser tab too.
   link.addEventListener("click", (e) => {
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) {
@@ -163,11 +197,10 @@ export function initRunsSection(): void {
       if (runState(r.id) === undefined) {
         drawRun(r.id);
       }
+      row.started = r.started;
       paintRow(row, liveRunStatus(r.id, r.executing), runLabelText(r.id));
     }
-    const listed = [...rows.values()].sort(
-      (a, b) => byName.compare(a.label, b.label) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
-    );
+    const listed = [...rows.values()].sort(byNeed);
     side.seat(listed.map((r) => ({ ref: r.id, li: r.li, controls: [r.link] })));
     side.restoreFocus(mark);
   });

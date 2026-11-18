@@ -1701,6 +1701,8 @@ export function runChatID(workflowID: string): string {
 interface LiveRunRow {
   readonly chat: string;
   readonly executing: boolean;
+  /** When marotte put the run on the wire, unix ms (`LiveRun.started_at`). */
+  readonly started: number;
 }
 
 /** A row handed OUT, carrying the workflow id the map holds it under. The id is the map's KEY
@@ -1714,7 +1716,7 @@ function liveRunRows(runs: readonly LiveRun[]): Map<string, LiveRunRow> {
   const rows = new Map<string, LiveRunRow>();
   for (const r of runs) {
     if (r.workflow_id !== "") {
-      rows.set(r.workflow_id, { chat: r.chat_id, executing: r.executing });
+      rows.set(r.workflow_id, { chat: r.chat_id, executing: r.executing, started: r.started_at });
     }
   }
   return rows;
@@ -1768,7 +1770,9 @@ export function applyLiveRunFrame(p: LiveRunPayload, stamp: SubjectStamp | undef
   if (p.workflow_id === "") {
     return;
   }
-  const row = p.live ? { chat: p.chat_id, executing: p.executing } : undefined;
+  const row = p.live
+    ? { chat: p.chat_id, executing: p.executing, started: p.started_at }
+    : undefined;
   liveRuns.applyFrame(p.workflow_id, row, stamp);
 }
 

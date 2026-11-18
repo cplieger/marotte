@@ -32,9 +32,17 @@ func onRunLane(t *testing.T, h *Runtime, method string, params map[string]any) {
 	h.translateACPEvent(runChatID("wf_1"), h.originOf(runChatID("wf_1")), runNotif(method, params))
 }
 
+// liveRows reads GET /api/runs/live, checking every row carries its start and leaving it out of the rows returned.
 func liveRows(t *testing.T, h *Runtime) []marotte.LiveRun {
 	t.Helper()
-	return getLiveRuns(t, h.runRoutes).Runs
+	rows := getLiveRuns(t, h.runRoutes).Runs
+	for i := range rows {
+		if rows[i].StartedAt <= 0 {
+			t.Errorf("row %+v carries no start", rows[i])
+		}
+		rows[i].StartedAt = 0
+	}
+	return rows
 }
 
 func TestLiveRunInventory_ListsAParentlessRunWithNoChatWhileItRunsPausesOrWaits(t *testing.T) {
@@ -133,7 +141,8 @@ func TestLiveRunInventory_AParentlessRunLeavesWhenKASListsItOverOrStopsListingIt
 	})
 }
 
-// liveRunFramesSince decodes the live_run frames after since, checking each is workspace-wide.
+// liveRunFramesSince decodes the live_run frames after since, checking each is workspace-wide and each live one carries
+// its start, which it leaves out of the payloads returned.
 func liveRunFramesSince(t *testing.T, h *Runtime, since uint64) []marotte.LiveRunPayload {
 	t.Helper()
 	var out []marotte.LiveRunPayload
@@ -148,6 +157,10 @@ func liveRunFramesSince(t *testing.T, h *Runtime, since uint64) []marotte.LiveRu
 		if msg.ChatID != "" || e.Event.Topic != "" {
 			t.Errorf("live_run frame %d went to chat %q topic %q, want every page", i, msg.ChatID, e.Event.Topic)
 		}
+		if msg.Payload.Live && msg.Payload.StartedAt <= 0 {
+			t.Errorf("live_run frame %d carries no start: %+v", i, msg.Payload)
+		}
+		msg.Payload.StartedAt = 0
 		out = append(out, msg.Payload)
 	}
 	return out
@@ -196,5 +209,37 @@ func TestLiveRunInventory_PushesEachChangeOfAParentlessRunsRow(t *testing.T) {
 		if got := liveRunFramesSince(t, h, before); !slices.Equal(got, []marotte.LiveRunPayload{s.want}) {
 			t.Errorf("%s: frames = %+v, want exactly %+v", s.name, got, s.want)
 		}
+	}
+}
+
+// A row says when marotte put its run on the wire, so every page orders runs started at different times alike.
+func TestLiveRunInventory_ARowCarriesWhenItsRunWentOnTheWire(t *testing.T) {
+	h, _, br := newTestHub()
+	launchableRecipe(br, "wf_1")
+	start := h.bus.fanout.Position().Head
+	before := time.Now().UnixMilli()
+	rec := httptest.NewRecorder()
+	h.runRoutes.handleLaunch(rec, launchReq(t))
+	after := time.Now().UnixMilli()
+	if rec.Code/100 != 2 {
+		t.Fatalf("POST /api/runs = %d %s, want a launched run", rec.Code, rec.Body.String())
+	}
+
+	rows := getLiveRuns(t, h.runRoutes).Runs
+	if len(rows) != 1 || rows[0].StartedAt < before || rows[0].StartedAt > after {
+		t.Fatalf("rows = %+v, want one started between %d and %d", rows, before, after)
+	}
+	frames := eventsSince(h, start, marotte.EventLiveRun)
+	if len(frames) == 0 {
+		t.Fatal("the launch pushed no live_run frame")
+	}
+	var last struct {
+		Payload marotte.LiveRunPayload `json:"payload"`
+	}
+	if err := json.Unmarshal(frames[len(frames)-1].Event.Data, &last); err != nil {
+		t.Fatalf("decode live_run frame: %v", err)
+	}
+	if last.Payload.StartedAt != rows[0].StartedAt {
+		t.Errorf("the frame says it started at %d and the route %d", last.Payload.StartedAt, rows[0].StartedAt)
 	}
 }

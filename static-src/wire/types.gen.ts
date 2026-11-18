@@ -2378,10 +2378,9 @@ export interface LastRanLeaf {
 
 /**
  * LiveRun is one row of GET /api/runs/live: a run marotte's own lease registry says
- * is in flight, named with the chat whose agent launched it. ChatID is empty for a
- * parentless run and for a lease predating the field — both mean "no chat to launch
- * a tab under". Executing is a FIELD rather than a filter applied here because
- * three consumers ask this row three different questions, and filtering for the
+ * is in flight, named with the chat whose agent launched it. ChatID is empty exactly
+ * for a parentless run. Executing is a FIELD rather than a filter applied here because
+ * its consumers ask this row different questions, and filtering for the
  * eviction sweep would take the row away from the tab dot and the tab parent.
  */
 export interface LiveRun {
@@ -2394,17 +2393,21 @@ export interface LiveRun {
    * advances a step without re-arming) until marotte arms the run again.
    */
   executing: boolean;
+  /** StartedAt is the unix ms marotte put the run on the wire, the same on every page. */
+  started_at: number;
 }
 
 /**
  * LiveRunPayload is the payload for type="live_run": one LiveRun row changed. Live false
- * means the run left the inventory: ChatID is the chat it was under, Executing false.
+ * means the run left the inventory: ChatID is the chat it was under, Executing false and
+ * StartedAt 0.
  */
 export interface LiveRunPayload {
   workflow_id: string;
   chat_id: string;
   live: boolean;
   executing: boolean;
+  started_at: number;
 }
 
 /** LiveRunsResponse is GET /api/runs/live's reply. */
