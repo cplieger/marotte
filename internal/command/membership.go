@@ -538,12 +538,12 @@ func (m *Membership) openChatTabUnderMu(ctx context.Context, spec marotte.OpenTa
 }
 
 // BeginMessage answers stamp(), the life stamp a message from from (nil for a page's) into chatID presents to its
-// submit, where its intent begins: a close that commits after it ends the message. The chat's tab is checked and the
-// stamp taken in one hold of mu, and no message opens a tab. Into a chat with no tab, a chat the user closed, a rule's
-// message refuses with 409 bot_closed, which tells the rule engine to drop the event; any other outside caller's
-// refuses with 410 session_closed; a page's refuses with 409 chat_closed for a Bot, since no turn runs in a closed
-// Bot, and takes its stamp for any other chat. A rule's message into a Bot whose closed_at is set refuses with 409
-// bot_closed too. A chat with no record takes its stamp, left to the submit's own refusal.
+// submit, where its intent begins: a close that commits after it ends the message. Where the message can be refused,
+// the chat's tab is checked and the stamp taken in one hold of mu; no message opens a tab. Into a chat with no tab,
+// a chat the user closed, a rule's message refuses with 409 bot_closed, which tells the rule engine to drop the event;
+// any other outside caller's refuses with 410 session_closed; a page's refuses with 409 chat_closed for a Bot, since
+// no turn runs in a closed Bot, and takes its stamp for any other chat. A rule's message into a Bot whose closed_at is
+// set refuses with 409 bot_closed too. A chat with no record takes its stamp, left to the submit's own refusal.
 func (m *Membership) BeginMessage(ctx context.Context, chatID marotte.ChatID, from *marotte.Caller, stamp func() uint64) (uint64, error) {
 	c, ok := m.chats.Get(ctx, chatID)
 	if m.tabs == nil || !ok || (from == nil && c.Bot == nil) {

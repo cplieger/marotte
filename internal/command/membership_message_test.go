@@ -1,8 +1,8 @@
 package command
 
-// BeginMessage: where a message's intent toward a chat begins. The chat's tab is checked and the stamp taken in one
-// hold, and no message opens a tab. Into a chat with no tab, an outside caller's message gets 410 session_closed, a
-// rule's 409 bot_closed, a page's into a Bot 409 chat_closed, and a page's into any other chat takes its stamp.
+// BeginMessage: where a message's intent toward a chat begins. Into a chat with no tab, an outside caller's message
+// gets 410 session_closed, a rule's 409 bot_closed, a page's into a Bot 409 chat_closed, and a page's into any other
+// chat takes its stamp.
 
 import (
 	"net/http"
