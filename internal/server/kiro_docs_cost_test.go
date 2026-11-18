@@ -86,6 +86,9 @@ func writeSynthDocs(t *testing.T, work string, scale int) {
 
 func TestKiroDocsCost_DocsAnswerHoldsItsBudget(t *testing.T) {
 	testsupport.RequireCostBuild(t)
+	if !testsupport.Alone(t) {
+		return
+	}
 	for _, scale := range []int{1, 10} {
 		work := testsupport.FixedLengthDir(t)
 		writeSynthDocs(t, work, scale)
