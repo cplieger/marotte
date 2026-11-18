@@ -163,13 +163,13 @@ describe("a markdown table too wide for the reply", () => {
 });
 
 describe("a markdown table's cell alignment", () => {
-  it("starts at the top, left-aligned in header and body when no alignment is asked for", () => {
+  it("centres vertically and starts left in header and body when no alignment is asked for", () => {
     const table = renderTable(LANES, 936);
 
     for (const cell of table.querySelectorAll("th, td")) {
       const cs = getComputedStyle(cell);
       expect(cs.textAlign, cell.textContent).toBe("start");
-      expect(cs.verticalAlign, cell.textContent).toBe("top");
+      expect(cs.verticalAlign, cell.textContent).toBe("middle");
     }
   });
 
