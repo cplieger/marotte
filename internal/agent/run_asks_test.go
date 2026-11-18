@@ -725,3 +725,44 @@ func TestWireAsks_CarriesTheReasonAndCountsItAsAChange(t *testing.T) {
 		t.Error("sameAsks reports a gained reason as no change, so the card would never show it")
 	}
 }
+
+// A read whose caller has already left reads nothing: it answers the caller's error and leaves the run as the last
+// read found it.
+func TestRunAsks_AReadForACallerWhoLeftReadsNothing(t *testing.T) {
+	t.Parallel()
+	h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
+	readNow(t, h, "wf_1")
+	left, cancel := context.WithCancel(t.Context())
+	cancel()
+	c := h.runs.asks.get("wf_1")
+	for i := range 32 {
+		if _, err := h.runs.readAsks(left, c); !errors.Is(err, context.Canceled) {
+			t.Fatalf("read %d for a caller who left = %v, want context.Canceled", i, err)
+		}
+	}
+	if p := lastAsksOf(t, h, "wf_1"); !p.Reachable || len(p.Asks) != 1 {
+		t.Errorf("after reads for a caller who left = %+v, want the ask, reachable", p)
+	}
+}
+
+// The serializer takes a free turn at once, whatever the caller's deadline: a stop past its ceiling still goes out in
+// order when nothing holds the run.
+func TestAskCell_AFreeTurnIsTakenEvenPastTheCallersDeadline(t *testing.T) {
+	t.Parallel()
+	c := newAskCell("wf_1", "c1")
+	left, cancel := context.WithCancel(t.Context())
+	cancel()
+	for i := range 64 {
+		if err := c.acquire(left); err != nil {
+			t.Fatalf("acquire %d of a free turn past its caller's deadline = %v, want the turn", i, err)
+		}
+		c.release()
+	}
+	if err := c.acquire(t.Context()); err != nil {
+		t.Fatalf("Setup: acquire = %v", err)
+	}
+	defer c.release()
+	if err := c.acquire(left); !errors.Is(err, context.Canceled) {
+		t.Errorf("acquire of a held turn past its caller's deadline = %v, want context.Canceled", err)
+	}
+}

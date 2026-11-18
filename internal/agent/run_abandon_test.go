@@ -207,3 +207,27 @@ func TestRetryBehindAbandonedCancelTimesOut(t *testing.T) {
 		t.Error("the retry verb was sent though the retry was refused")
 	}
 }
+
+// A free run is owned at once, whatever the caller's deadline: only a wait for another owner can run out of time.
+func TestRunOwners_AFreeRunIsOwnedEvenPastTheCallersDeadline(t *testing.T) {
+	t.Parallel()
+	var o runOwners
+	done, cancel := context.WithCancel(t.Context())
+	cancel()
+	for i := range 64 {
+		release, err := o.hold(done, "wf_1")
+		if err != nil {
+			t.Fatalf("hold %d of a free run past its caller's deadline = %v, want the run owned", i, err)
+		}
+		release()
+	}
+
+	release, err := o.hold(t.Context(), "wf_1")
+	if err != nil {
+		t.Fatalf("Setup: hold = %v", err)
+	}
+	defer release()
+	if _, err := o.hold(done, "wf_1"); !errors.Is(err, context.Canceled) {
+		t.Errorf("hold of an owned run past its caller's deadline = %v, want context.Canceled", err)
+	}
+}

@@ -49,10 +49,16 @@ type ownerTurn struct {
 	users int
 }
 
-// hold makes the caller the run's owner once the owner before it releases, waiting at most until ctx is done.
-// release is idempotent.
+// hold makes the caller the run's owner once the owner before it releases, waiting at most until ctx is done; a free
+// run is owned at once, whatever ctx. release is idempotent.
 func (o *runOwners) hold(ctx context.Context, workflowID string) (release func(), err error) {
 	t := o.join(workflowID)
+	// First on its own: a select with ctx already done would pick between the two at random.
+	select {
+	case t.serial <- struct{}{}:
+		return o.releaser(workflowID, t), nil
+	default:
+	}
 	select {
 	case t.serial <- struct{}{}:
 		return o.releaser(workflowID, t), nil
