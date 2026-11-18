@@ -434,6 +434,39 @@ func TestText_IncludeThroughASymlinkRunsNoSearch(t *testing.T) {
 	}
 }
 
+// A literal leading folder that cannot be resolved skips the root, whatever the stat error; only a
+// pattern with no literal leading folder searches the whole root.
+func TestScope(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"go.mod": "module x\n", "repo/internal/a.go": "x"})
+	if err := os.Symlink("loop", filepath.Join(root, "loop")); err != nil {
+		t.Fatal(err)
+	}
+	tests := map[string]struct {
+		glob    string
+		wantDir string
+		wantOK  bool
+	}{
+		"literal folder":                  {"repo/internal/**/*.go", filepath.Join("repo", "internal"), true},
+		"glob-led":                        {"**/internal/*.go", ".", true},
+		"no folder":                       {"*.go", ".", true},
+		"missing folder":                  {"absent/**/*.go", "", false},
+		"prefix through a file (ENOTDIR)": {"go.mod/x/*.go", "", false},
+		"prefix over PATH_MAX":            {"deadset/" + strings.Repeat("a/", 2200) + "x", "", false},
+		"NUL in the prefix (EINVAL)":      {"a\x00b/x", "", false},
+		"prefix through a symlink loop":   {"loop/x/*.go", "", false},
+		"prefix is a file":                {"go.mod/*.go", "", false},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			dir, ok := scope(root, tc.glob)
+			if dir != tc.wantDir || ok != tc.wantOK {
+				t.Errorf("scope(%.60q) = (%q, %v), want (%q, %v)", tc.glob, dir, ok, tc.wantDir, tc.wantOK)
+			}
+		})
+	}
+}
+
 // A workspace that is not a git repository still keeps its .gitignore'd files out, as KAS's rg does.
 func TestSearch_RealRGHonoursGitignoreOutsideARepository(t *testing.T) {
 	bin := realRG(t)

@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -416,8 +415,9 @@ func readLine(br *bufio.Reader, buf []byte) (out []byte, tooLong bool, err error
 
 // scope is the directory, relative to root, rg searches for glob: the glob's leading literal
 // directories, so rg skips every other subtree (a --glob filters names but still descends every
-// directory). ok is false when no file under root can match: the directory is absent, or reached
-// through a symlink, which rg does not follow. A prefix it cannot resolve falls back to all of root.
+// directory). ok is false when no file under root can match: the directory is absent, cannot be
+// resolved (any stat error), or is reached through a symlink, which rg does not follow. Only a glob
+// with no literal leading directory searches all of root.
 func scope(root, glob string) (dir string, ok bool) {
 	if !strings.Contains(glob, "/") || strings.HasPrefix(glob, "/") {
 		return ".", true
@@ -435,14 +435,16 @@ func scope(root, glob string) (dir string, ok bool) {
 	}
 	rel := filepath.Join(lit...)
 	want := filepath.Join(root, rel)
-	info, err := os.Stat(want)
-	if errors.Is(err, fs.ErrNotExist) || (err == nil && !info.IsDir()) {
+	if info, err := os.Stat(want); err != nil || !info.IsDir() {
 		return "", false
 	}
 	resolved, err := filepath.EvalSymlinks(want)
-	realRoot, rootErr := filepath.EvalSymlinks(root)
-	if err != nil || rootErr != nil {
-		return ".", true
+	if err != nil {
+		return "", false
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", false
 	}
 	if resolved != filepath.Join(realRoot, rel) {
 		return "", false
