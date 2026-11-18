@@ -706,6 +706,57 @@ func TestText_OutputCapLogsNoWarning(t *testing.T) {
 	}
 }
 
+// isCapNotice reports whether an answer entry is the notice of a search the 10 MiB output cap cut
+// short.
+func isCapNotice(s string) bool {
+	return strings.Contains(s, "partial") && strings.Contains(s, "10 MiB output cap")
+}
+
+// capRG writes more than the output cap of match lines for ./a.go, then waits on a child.
+func capRG(t *testing.T) string {
+	t.Helper()
+	return fakeRG(t, `/usr/bin/yes '`+matchLine("./a.go", "hit", 1)+`' | /usr/bin/head -c `+strconv.Itoa(maxOutputBytes+1<<20)+`
+/bin/sleep 60`)
+}
+
+// Text ranks files by match count, so output the cap left unread can change the answer.
+func TestText_OutputCapAnswerSaysItIsPartial(t *testing.T) {
+	got := Searcher{Bin: capRG(t)}.Text(t.Context(), []string{t.TempDir()}, TextQuery{Pattern: "hit"})
+
+	if len(got) < 2 || !isCapNotice(got[0].FilePath) || !got[0].IsContext {
+		t.Fatalf("Text = %+v, want it to open on a context notice naming the output cap", got[:min(len(got), 2)])
+	}
+	if want := (Match{FilePath: "a.go", LineNumber: 1, LineText: "hit"}); got[1] != want {
+		t.Errorf("Text after the notice = %+v, want %+v", got[1], want)
+	}
+}
+
+// One root at the output cap and another at the deadline open the answer on one notice, the
+// deadline's.
+func TestText_DeadlineNoticeWinsOverTheOutputCap(t *testing.T) {
+	base := t.TempDir()
+	capped, slow := filepath.Join(base, "capped"), filepath.Join(base, "slow")
+	writeTree(t, base, map[string]string{"capped/x": "", "slow/x": ""})
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	bin := fakeRG(t, `case "$(/bin/pwd)" in
+*/capped) /usr/bin/yes '`+matchLine("./a.go", "hit", 1)+`' | /usr/bin/head -c `+strconv.Itoa(maxOutputBytes+1<<20)+` ;;
+*) printf '%s\n' '`+matchLine("./b.go", "hit", 1)+`'; /bin/sleep 60 & echo $! > `+pidFile+`; wait ;;
+esac`)
+	shortDeadline(t, 300*time.Millisecond)
+
+	got := Searcher{Bin: bin}.Text(t.Context(), []string{capped, slow}, TextQuery{Pattern: "hit"})
+
+	if len(got) == 0 || !isPartialNotice(got[0].FilePath) {
+		t.Fatalf("Text opens on %+v, want the deadline's notice", got[:min(len(got), 1)])
+	}
+	for _, m := range got[1:] {
+		if isPartialNotice(m.FilePath) || isCapNotice(m.FilePath) {
+			t.Errorf("Text holds a second notice %+v, want one", m)
+		}
+	}
+	awaitGone(t, pidFile)
+}
+
 func TestText_EndedContextLogsNoWarning(t *testing.T) {
 	logs := capture.Default(t)
 	ctx, cancel := context.WithCancel(t.Context())
