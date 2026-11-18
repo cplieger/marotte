@@ -59,11 +59,6 @@ export function reportFailure(
     latched.set(chatID, { key, at: now });
     return;
   }
-  // A summary kiro-cli reports failed arrives twice: the compaction notice, which says whether the next turn end tries
-  // again, and the turn-scoped reason, which would erase it; the reason stays in the chat's "Compaction failed" row.
-  if (turnScoped && code === "compaction_failed" && liveCode.get(chatID) === "compaction_failed") {
-    return;
-  }
   // A sticky remedy is replaced by its own repeat and by nothing else; an ordinary
   // notice is replaced by whatever this chat reports next.
   if (action !== undefined) {

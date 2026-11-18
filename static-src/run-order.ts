@@ -42,7 +42,7 @@ export function entryLive(e: RunEntryView): boolean {
 }
 
 function turnKind(e: RunEntryView): boolean {
-  return e.kind === "turn" || e.kind === "row" || e.kind === "retry" || e.kind === "resume";
+  return e.kind === "turn" || e.kind === "row" || e.kind === "retry";
 }
 
 /** Whether a turn runs on the chat by the server's list: any live turn-kind entry at its head, a
@@ -70,17 +70,11 @@ export function rowIsSteer(e: RunEntryView): boolean {
   return e.kind === "row" && (handedToAgent(e) || e.steer_in_flight === true);
 }
 
-/** The entries the dock draws: every compaction, and a row or the failsafe's resume whose message
- *  is not in the transcript yet and is not a steer. A turn, retry or revert entry is the
- *  transcript's (or has no words). */
+/** The entries the dock draws: a row whose message is not in the transcript yet and is not a steer. A
+ *  turn, retry or revert entry is the transcript's (or has no words). */
 export function dockEntries(run: RunView): RunEntryView[] {
   return run.entries.filter(
-    (e) =>
-      e.kind === "compaction" ||
-      ((e.kind === "row" || e.kind === "resume") &&
-        e.row !== undefined &&
-        e.turn === undefined &&
-        !rowIsSteer(e)),
+    (e) => e.kind === "row" && e.row !== undefined && e.turn === undefined && !rowIsSteer(e),
   );
 }
 
@@ -111,7 +105,6 @@ export function waitWords(wait: RunWait): string {
       return "Not sent \u00b7 the server restarted";
     case "paused":
       return "Paused";
-    case "compaction":
     case "turns":
       return `After ${afterWords(wait)}`;
   }
@@ -119,9 +112,6 @@ export function waitWords(wait: RunWait): string {
 
 /** What "after …" completes for a queued wait; a wait that is not queued reads as the next turn. */
 export function afterWords(wait: RunWait): string {
-  if (wait.after === "compaction") {
-    return "the compaction";
-  }
   const turns = wait.turns ?? 1;
   if (wait.after === "turns" && turns > 1) {
     return `${String(turns)} turns`;

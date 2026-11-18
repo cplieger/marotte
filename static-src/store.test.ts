@@ -89,13 +89,7 @@ import type { ChatHeader, RunView, Session, ToolCall, ToolProgressPayload } from
 import type { Entry, EntryToolCall, EntryToolResult, TurnOutcome } from "./wire/types.gen.js";
 import { effect } from "@cplieger/reactive";
 import { IDLE_RUN } from "./run-order.js";
-import {
-  compactionEntry,
-  resumeEntry,
-  rowEntry,
-  runAt,
-  turnEntry,
-} from "./__test-helpers__/run-order.js";
+import { rowEntry, runAt, turnEntry } from "./__test-helpers__/run-order.js";
 
 function makeSession(chatID: string): Session {
   return {
@@ -812,17 +806,9 @@ describe("isBusy: what Send and the mid-turn gates read", () => {
     resetStore("a");
     applyRun("a", runAt(1, [turnEntry("t1")], { cancel: "t1" }));
     expect(isBusy("a")).toBe(true);
-    applyRun("a", runAt(2, [compactionEntry("compact-1", { after: "running" })]));
-    expect(isBusy("a"), "a compaction alone is no turn").toBe(false);
-  });
-
-  it("is true while marotte's resume is taken, before its turn opens", () => {
-    resetStore("a");
-    applyRun(
-      "a",
-      runAt(1, [resumeEntry("m-resume", "continue", { after: "starting" }, { state: "starting" })]),
-    );
-    expect(isBusy("a")).toBe(true);
+    applyRun("a", runAt(2, []));
+    upsertHeader({ ...headerFor("a"), run: runAt(2, []), compacting: true });
+    expect(isBusy("a"), "a compaction call alone is no turn").toBe(false);
   });
 
   it("is false once the open turn closes", () => {
@@ -1085,6 +1071,21 @@ describe("upsertHeader re-syncs an existing row", () => {
     expect(get("a")?.compaction_watermark).toBe("w1");
     upsertHeader(headerFor("a"));
     expect(get("a")?.compaction_watermark).toBeUndefined();
+  });
+
+  // The mark rides beside the run order, whose version does not move with it.
+  it("takes compacting from every header, at the same run version both ways", () => {
+    resetStore("a");
+    upsertHeader({ ...headerFor("a"), run: runOfRows(3, ["m-q1"]), compacting: true });
+    expect(get("a")?.compacting).toBe(true);
+    upsertHeader({ ...headerFor("a"), run: runOfRows(3, ["m-q1"]) });
+    expect(get("a")?.compacting).toBe(false);
+    expect(get("a")?.run?.version).toBe(3);
+  });
+
+  it("starts a chat first seen mid-compaction with the mark", () => {
+    upsertHeader({ ...headerFor("fresh-compacting"), compacting: true });
+    expect(get("fresh-compacting")?.compacting).toBe(true);
   });
 
   it("leaves supervised mode off when the header does not mention it", () => {

@@ -1,6 +1,6 @@
 // A context-overflowed turn offers ONE way out: "Compact the context" under its notice, on the
 // newest turn only, until a compaction lands after it, whatever the auto compaction switch says: a
-// cancel of the turn's queued compaction stops its end's compaction, which the page cannot see.
+// turn that overflowed with it on was one kiro-cli's own compaction did not save.
 // Through the real paint: the conditions span the turn, its chat and the entries after its close.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
@@ -121,7 +121,7 @@ const notice = (card: HTMLElement | undefined): string | null | undefined =>
 
 describe("the overflow notice's Compact button, auto compaction off", () => {
   beforeEach(() => {
-    compactionPolicy.value = { enabled: false, pct: 90 };
+    compactionPolicy.value = { enabled: false, pct: 80 };
   });
 
   it("is offered on the newest turn and compacts that chat", async () => {
@@ -157,7 +157,7 @@ describe("the overflow notice's Compact button, auto compaction off", () => {
 
 describe("the overflow notice, auto compaction on", () => {
   beforeEach(() => {
-    compactionPolicy.value = { enabled: true, pct: 90 };
+    compactionPolicy.value = { enabled: true, pct: 80 };
   });
 
   it("keeps the manual text and the Compact button", async () => {
@@ -169,7 +169,7 @@ describe("the overflow notice, auto compaction on", () => {
     expect(dispatch).toHaveBeenCalledWith({ chatID: "c-auto" });
   });
 
-  it("withdraws the button once the turn end's compaction lands", async () => {
+  it("withdraws the button once a compaction lands after the turn", async () => {
     const [card] = await mount("c-auto-compacted", [
       turnEntries("t1", 1, overflowed, ["compaction"]),
     ]);

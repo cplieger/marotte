@@ -17,7 +17,7 @@ const DECISION_KINDS = ["permission", "elicitation", "user_input"] as const;
 const DENIAL_BASISS = ["unparseable", "cedar-unavailable", "not-loaded", "permissions-invalid", "check-failed"] as const;
 const ENGINE_STATES = ["starting", "ready", "restarting", "down"] as const;
 const ENTRY_KINDS = ["turn_open", "turn_bind", "turn_wake", "run_named", "text", "thinking", "tool_call", "tool_result", "steer", "steer_ack", "steer_delivered", "steer_cleared", "plan", "compaction", "compaction_failed", "safety_blocked", "model_switched", "model_routed", "model_fallback", "mode_switched", "profile_switched", "turn_revert", "context_reset", "reconciled", "turn_close", "step_graded"] as const;
-const ERROR_CODES = ["recovery_failed", "bridge_start_failed", "prompt_failed", "agent_not_found", "agent_config_error", "rate_limit", "switch_failed", "compaction_failed", "mode_not_applied", "supervised_not_applied", "memory_not_loaded", "model_not_served", "auth_token_unavailable", "tangent_merge_failed", "resume_not_sent"] as const;
+const ERROR_CODES = ["recovery_failed", "bridge_start_failed", "prompt_failed", "agent_not_found", "agent_config_error", "rate_limit", "switch_failed", "compaction_failed", "mode_not_applied", "supervised_not_applied", "memory_not_loaded", "model_not_served", "auth_token_unavailable", "tangent_merge_failed"] as const;
 const FAILURE_KINDS = ["context_limit", "model_call_limit", "empty_answer", "sign_in", "sign_in_unreachable", "api_key_refused"] as const;
 const FIELD_OPS = ["is", "one_of", "contains", "starts_with", "matches", "above", "below", "is_set"] as const;
 const FILE_MATCH_KINDS = ["content", "name", "dir"] as const;
@@ -50,8 +50,8 @@ const RULE_TEST_VALUES = ["true", "false", "unknown"] as const;
 const RULE_WAIT_REASONS = ["bot_busy", "gap", "hour", "day", "bot", "not_ready"] as const;
 const RUN_ASK_BLOCKERS = ["stopping", "pending", "branch_running", "unsettled", "settling"] as const;
 const RUN_ASK_TEXTS = ["asked", "last_message", "unseen"] as const;
-const RUN_ENTRY_KINDS = ["turn", "row", "retry", "compaction", "revert", "resume"] as const;
-const RUN_ENTRY_ORIGINS = ["prompt", "queue", "tangent", "summary", "retry", "wire", "run", "carried", "request", "threshold", "turn_end", "context_limit", "rewind", "failsafe", "notify"] as const;
+const RUN_ENTRY_KINDS = ["turn", "row", "retry", "revert"] as const;
+const RUN_ENTRY_ORIGINS = ["prompt", "queue", "tangent", "summary", "retry", "wire", "run", "carried", "rewind", "notify"] as const;
 const RUN_ENTRY_STATES = ["pending", "paused", "held", "offered", "in_kas", "starting", "running", "stopping", "closing"] as const;
 const RUN_PROGRESS_KINDS = ["node_start", "node_complete", "node_paused", "loop_iteration", "watch_poll", "paused", "steps_queued", "silence"] as const;
 const RUN_STANDING_KINDS = ["step", "watch", "pass_limit"] as const;
@@ -59,11 +59,11 @@ const RUN_STATUSS = ["running", "paused", "completed", "failed", "aborted", "can
 const RUN_STEP_END_STATUSS = ["completed", "failed"] as const;
 const RUN_STEP_MESSAGE_VERBS = ["steer", "answer", "prompt"] as const;
 const RUN_STEP_TRANSCRIPT_STATES = ["ready", "gone", "unavailable"] as const;
-const RUN_WAIT_AFTERS = ["running", "starting", "next", "compaction", "turns", "held", "paused"] as const;
+const RUN_WAIT_AFTERS = ["running", "starting", "next", "turns", "held", "paused"] as const;
 const RUN_WANTS = ["either", "prompt"] as const;
 const SAFETY_STATUSS = ["idle", "formalizing", "evaluating", "blocked", "error"] as const;
 const SEGMENT_KINDS = ["content", "reasoning", "tool_title", "tool_diff", "tool_denial", "tool_input", "tool_output", "steer", "prompt", "plan", "attachment", "turn_failure", "wake"] as const;
-const SEND_NOW_KINDS = ["stop", "stop_then_compaction", "after_compaction", "now"] as const;
+const SEND_NOW_KINDS = ["stop", "now"] as const;
 const SEND_VERBS = ["prompt", "steer", "queue"] as const;
 const SETTLED_BYS = ["user", "unattended", "moot", "ended"] as const;
 const SHOW_REFUSAL_CODES = ["too_large", "binary", "not_utf8"] as const;
@@ -539,6 +539,10 @@ export const decodeChatHeader: Decoder<ChatHeader> = (v) => {
   {
     const $v = own(o, "tangent");
     if ($v !== undefined && $v !== null) out.tangent = reqBool(o, "tangent", "$.chat_header");
+  }
+  {
+    const $v = own(o, "compacting");
+    if ($v !== undefined && $v !== null) out.compacting = reqBool(o, "compacting", "$.chat_header");
   }
   return out;
 };
@@ -1373,10 +1377,6 @@ export const decodeEntryPrompt: Decoder<EntryPrompt> = (v) => {
     const $v = own(o, "resends");
     if ($v !== undefined && $v !== null) out.resends = own(o, "resends") === null ? [] : decodeArray(own(o, "resends"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.entry_prompt.resends");
   }
-  {
-    const $v = own(o, "automatic");
-    if ($v !== undefined && $v !== null) out.automatic = reqBool(o, "automatic", "$.entry_prompt");
-  }
   return out;
 };
 
@@ -1880,10 +1880,6 @@ export const decodeEntryTurnClose: Decoder<EntryTurnClose> = (v) => {
     const $v = own(o, "ended_off_turn");
     if ($v !== undefined && $v !== null) out.ended_off_turn = reqBool(o, "ended_off_turn", "$.entry_turn_close");
   }
-  {
-    const $v = own(o, "stopped_to_compact");
-    if ($v !== undefined && $v !== null) out.stopped_to_compact = reqBool(o, "stopped_to_compact", "$.entry_turn_close");
-  }
   return out;
 };
 
@@ -2295,10 +2291,6 @@ export const decodeHit: Decoder<Hit> = (v) => {
   {
     const $v = own(o, "lane");
     if ($v !== undefined && $v !== null) out.lane = reqStr(o, "lane", "$.hit");
-  }
-  {
-    const $v = own(o, "automatic");
-    if ($v !== undefined && $v !== null) out.automatic = reqBool(o, "automatic", "$.hit");
   }
   return out;
 };
@@ -5928,7 +5920,7 @@ export const decodeToolInteraction: Decoder<ToolInteraction> = (v) => {
 export const decodeToolJobChangedPayload: Decoder<ToolJobChangedPayload> = (v) => {
   const o = asObject(v, "$.tool_job_changed_payload");
   const out: ToolJobChangedPayload = {
-    job: own(o, "job") === null ? null : decodeJob(reqRaw(o, "job", "$.tool_job_changed_payload")),
+    job: decodeJob(reqRaw(o, "job", "$.tool_job_changed_payload")),
   };
   return out;
 };

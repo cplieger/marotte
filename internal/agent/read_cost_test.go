@@ -24,8 +24,8 @@ var readCosts = map[string]testsupport.Cost{
 	"glance read x10":      {Allocs: 384012, Bytes: 43973557},
 	"ask core refresh x1":  {Allocs: 68313, Bytes: 13142528},
 	"ask core refresh x10": {Allocs: 686190, Bytes: 137888984},
-	"session listing x1":   {Allocs: 3227, Bytes: 722332},
-	"session listing x10":  {Allocs: 30284, Bytes: 6653106},
+	"session listing x1":   {Allocs: 3047, Bytes: 720140},
+	"session listing x10":  {Allocs: 28448, Bytes: 6571324},
 }
 
 func holdReadCost(t *testing.T, op string, got testsupport.Cost) {

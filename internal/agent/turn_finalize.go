@@ -137,9 +137,10 @@ func (bc *bridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.Ch
 		answerWait = command.CancelGrace
 	}
 	result, outcome := bc.closeTurn(ctx, t, stop, reason, kind, tc.Closer)
+	bc.closeSummaryMark(ctx, chatID)
 	cf := bc.closeFactsOf(t, tc.Closer, outcome)
 	cf.answerWait = answerWait
-	t.closeFacts = bc.listCloseOf(ctx, t, tc.Closer, &cf, &result, kind == marotte.FailureKindContextLimit)
+	t.closeFacts = listCloseOf(t, tc.Closer, &cf, &result)
 	// Before finish, whose idle edge asks the release: the tail's hold must already stand there.
 	lifeCtx, done, ok := bc.turns.beginTail(t.lc)
 	bc.turns.finish(t, &result)
@@ -170,16 +171,11 @@ func (bc *bridgeCoordinator) closeFactsOf(t *activeTurn, closer turnCloser, outc
 	return cf
 }
 
-// listCloseOf is the close's facts the run list reads at finish (runList.turnClosed): its grade, the turn end's
-// compaction the policy asks for, and whether the turn ended clean on the wire with nothing emitted, which re-sends
-// a retry-marked prompt once.
-func (bc *bridgeCoordinator) listCloseOf(
-	ctx context.Context, t *activeTurn, closer turnCloser, cf *closeFacts, result *marotte.TurnResult, contextLimit bool,
-) *listClose {
+// listCloseOf is the close's facts the run list reads at finish (runList.turnClosed): its grade, and whether the turn
+// ended clean on the wire with nothing emitted, which re-sends a retry-marked prompt once.
+func listCloseOf(t *activeTurn, closer turnCloser, cf *closeFacts, result *marotte.TurnResult) *listClose {
 	return &listClose{
 		clean:      command.CloseFacts{Outcome: cf.outcome, Unattended: cf.unattended}.Clean(),
-		completed:  marotte.SeverityOf(cf.outcome) == marotte.TurnSeverityClean,
-		compact:    bc.autoCompact.turnEndCompaction(ctx, t.Chat, contextLimit),
 		handoff:    closer == closerPromptHandoff,
 		emptyRetry: result.WireEnded && result.Stop == marotte.StopReasonEndTurn && result.EmittedNothing,
 		retryID:    "retry-" + t.ID,
@@ -443,9 +439,6 @@ func (bc *bridgeCoordinator) claimForCloser(ctx context.Context, chatID marotte.
 func (bc *bridgeCoordinator) closeTurn(ctx context.Context, t *activeTurn, stop marotte.StopReason, reason string, kind marotte.FailureKind, closer turnCloser) (marotte.TurnResult, marotte.TurnOutcome) {
 	chatID := t.Chat
 	c := bc.concludeStop(chatID, stop, reason, kind)
-	if c.Outcome == marotte.TurnOutcomeCancelled && bc.turns.stopCauseAfter(chatID, t.ID) == marotte.TurnStopCompaction {
-		c.Reason, c.StoppedToCompact = failsafeStopNotice, true
-	}
 	if closer == closerPromptResponse && stop == marotte.StopReasonEndTurn && !t.Log.Emitted() && t.unbracketedPrompt() {
 		c = c.Unobserved()
 	}

@@ -779,11 +779,11 @@ func buildToolsEngine(cfg *Config, h *agent.Runtime,
 		TrustedUIDs:         cfg.TrustedInstallUIDs,
 		OnJobChanged: func(j *toolbelt.Job) {
 			h.Broadcast(context.Background(), marotte.NewEvent(marotte.EventToolJobChanged, "",
-				marotte.ToolJobChangedPayload{Job: j}))
+				marotte.ToolJobChangedPayload{Job: *j}))
 			warnIfGitHubRateLimited(j)
 			// Async because a job callback fires under the queue lock and must not
 			// block; the call itself is idempotent.
-			if j != nil && j.State == toolbelt.JobDone {
+			if j.State == toolbelt.JobDone {
 				h.KickCodeIntelligence()
 			}
 		},
@@ -872,7 +872,7 @@ func githubTokenFor(m *forges.Manager) func(context.Context) (string, error) {
 // warnIfGitHubRateLimited names the reset and the fix for a tools job GitHub's API rate
 // limit failed, which at boot no Settings screen is open to show.
 func warnIfGitHubRateLimited(j *toolbelt.Job) {
-	if j == nil || j.State != toolbelt.JobFailed || j.ErrorCode != toolbelt.ErrorCodeGitHubRateLimited || j.RateLimit == nil {
+	if j.State != toolbelt.JobFailed || j.ErrorCode != toolbelt.ErrorCodeGitHubRateLimited || j.RateLimit == nil {
 		return
 	}
 	var hint string

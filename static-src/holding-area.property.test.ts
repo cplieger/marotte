@@ -1,5 +1,5 @@
-// The steer stack's fold over every stack shape the dock draws (steers, queued rows, compactions, the
-// failsafe's resume, a stopped queue's paused head at any depth), folded and open, inside the holding area's
+// The steer stack's fold over every stack shape the dock draws (steers, queued rows, the running compaction, a
+// stopped queue's paused head at any depth), folded and open, inside the holding area's
 // cap: past three messages the reader sees the first two, a fold row counting the rest, and the paused
 // queue's head with its Resume; open, every row in send order; the composer on screen either way.
 
@@ -14,24 +14,19 @@ import {
   openStack,
   unmountView,
 } from "./__test-helpers__/holding-area.js";
-import {
-  compactionEntry,
-  resumeEntry,
-  rowEntry,
-  runAt,
-  turnEntry,
-} from "./__test-helpers__/run-order.js";
+import { rowEntry, runAt, turnEntry } from "./__test-helpers__/run-order.js";
 import type { SteerStackSource } from "./pending-steers.js";
 import type { PendingSteer, RunEntryView } from "./types.js";
 import { LS_UI_STATE_KEY } from "./ls-keys.js";
 
-type Line = "queued" | "compact" | "resume";
-
 interface Shape {
   steers: number;
-  entries: Line[];
-  /** The first entry index the reader's stop paused: queued rows from it on wait for Resume. */
+  /** The queued rows in run order. */
+  queued: number;
+  /** The first queued row the reader's stop paused: rows from it on wait for Resume. */
   pausedFrom: number | null;
+  /** A compaction runs in the chat (`ChatHeader.compacting`). */
+  compacting: boolean;
   runs: number;
   runsOpen: boolean;
   open: boolean;
@@ -39,37 +34,36 @@ interface Shape {
 
 const MAX_ROWS = 20;
 
-const shapeArb: fc.Arbitrary<Shape> = fc
-  .array(fc.constantFrom<Line>("queued", "queued", "queued", "compact", "resume"), {
-    maxLength: MAX_ROWS,
-  })
-  .chain((entries) =>
-    fc.record({
-      steers: fc.integer({ min: 0, max: MAX_ROWS - entries.length }),
-      entries: fc.constant(entries),
-      pausedFrom: fc.option(fc.integer({ min: 0, max: Math.max(0, entries.length - 1) }), {
-        nil: null,
-      }),
-      runs: fc.integer({ min: 0, max: 5 }),
-      runsOpen: fc.boolean(),
-      open: fc.boolean(),
+const shapeArb: fc.Arbitrary<Shape> = fc.integer({ min: 0, max: MAX_ROWS }).chain((queued) =>
+  fc.record({
+    steers: fc.integer({ min: 0, max: MAX_ROWS - queued }),
+    queued: fc.constant(queued),
+    pausedFrom: fc.option(fc.integer({ min: 0, max: Math.max(0, queued - 1) }), {
+      nil: null,
     }),
-  );
+    compacting: fc.boolean(),
+    runs: fc.integer({ min: 0, max: 5 }),
+    runsOpen: fc.boolean(),
+    open: fc.boolean(),
+  }),
+);
 
 /** Five queued rows ahead of a stopped queue's head over two, and fifteen steers ahead of one over three. */
 const SEEDS: Shape[] = [
   {
     steers: 0,
-    entries: Array<Line>(7).fill("queued"),
+    queued: 7,
     pausedFrom: 5,
+    compacting: false,
     runs: 5,
     runsOpen: false,
     open: false,
   },
   {
     steers: 15,
-    entries: Array<Line>(3).fill("queued"),
+    queued: 3,
     pausedFrom: 0,
+    compacting: true,
     runs: 0,
     runsOpen: false,
     open: false,
@@ -77,28 +71,27 @@ const SEEDS: Shape[] = [
 ];
 
 function isPaused(s: Shape, i: number): boolean {
-  return s.pausedFrom !== null && i >= s.pausedFrom && s.entries[i] === "queued";
+  return s.pausedFrom !== null && i >= s.pausedFrom && i < s.queued;
+}
+
+/** The first paused row's index, or -1 for none. */
+function stoppedAt(s: Shape): number {
+  return s.pausedFrom !== null && s.pausedFrom < s.queued ? s.pausedFrom : -1;
 }
 
 /** The waiting messages' words in send order: the steers, then the queued rows in run order. */
 function messagesOf(s: Shape): string[] {
   return [
     ...Array.from({ length: s.steers }, (_, i) => `s${String(i + 1)}`),
-    ...s.entries.flatMap((line, i) => (line === "queued" ? [`q${String(i + 1)}`] : [])),
+    ...Array.from({ length: s.queued }, (_, i) => `q${String(i + 1)}`),
   ];
 }
 
 function sourceOf(s: Shape): SteerStackSource {
-  const stopped = s.entries.some((_, i) => isPaused(s, i));
-  const entries = s.entries.map((line, i): RunEntryView => {
-    const id = `${line[0] ?? ""}${String(i + 1)}`;
+  const stopped = stoppedAt(s) !== -1;
+  const entries = Array.from({ length: s.queued }, (_, i): RunEntryView => {
+    const id = `q${String(i + 1)}`;
     const wait = { after: "turns", turns: i + 1 } as const;
-    if (line === "compact") {
-      return compactionEntry(id, wait);
-    }
-    if (line === "resume") {
-      return resumeEntry(id, id, wait);
-    }
     return isPaused(s, i)
       ? rowEntry(id, { after: "paused" }, { state: "paused", stop_paused: true, send_now: "now" })
       : rowEntry(id, wait, { send_now: stopped ? "now" : "stop" });
@@ -115,7 +108,7 @@ function sourceOf(s: Shape): SteerStackSource {
     origin: "user",
   }));
   return {
-    read: () => ({ id: "c1", steers, run }),
+    read: () => ({ id: "c1", steers, run, compacting: s.compacting }),
     edit: () => Promise.resolve(),
     editByClear: () => Promise.resolve(),
     remove: () => Promise.resolve(),
@@ -143,8 +136,15 @@ function checkStack(s: Shape): void {
   expect(messageRows.map(textOf), "the messages in send order").toEqual(messages);
   expect(fold !== null, "a fold row exactly past three messages").toBe(messages.length > 3);
 
+  const compacting = stack.querySelector(':scope > [data-kind="compact"]');
+  expect(compacting !== null, "a compaction row exactly while the call runs").toBe(s.compacting);
+  if (compacting !== null) {
+    expect(children[0], "the compaction row leads the stack").toBe(compacting);
+    expect(shown(compacting), "the compaction row, never folded").toBe(true);
+  }
+
   const head = stack.querySelector(':scope > [data-kind="paused"]');
-  const firstPaused = s.entries.findIndex((_, i) => isPaused(s, i));
+  const firstPaused = stoppedAt(s);
   expect(head !== null, "a paused queue's head over its paused rows").toBe(firstPaused !== -1);
   if (head !== null) {
     expect(shown(head), "the paused queue's head").toBe(true);

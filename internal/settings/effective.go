@@ -37,11 +37,11 @@ const (
 )
 
 // The auto_compact_pct range, the one statement the validator, the PATCH check and the slider (served as
-// marotte.EffectiveSettings.AutoCompactPctRange) read. The top stays below 95, where a compaction's own call overflows
-// and KAS falls back to summarizing a truncated transcript.
+// marotte.EffectiveSettings.AutoCompactPctRange) read. The top is kiro-cli's own: KAS refuses an
+// autoCompactionThreshold over 80 with -32602 at the session door, failing the chat's session.
 const (
 	autoCompactPctMin  = 50
-	autoCompactPctMax  = 90
+	autoCompactPctMax  = 80
 	autoCompactPctStep = 5
 )
 

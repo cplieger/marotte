@@ -91,6 +91,12 @@ func (f *Facts) NoteAsk(callID, interactionType string, options []AskOption) {
 	f.asks[callID] = &ask{kind: interactionType, options: options}
 }
 
+// Asked reports whether callID raised an ask this turn.
+func (f *Facts) Asked(callID string) bool {
+	_, ok := f.asks[callID]
+	return ok
+}
+
 // NoteAnswer records how a tool call's ask was answered: an approval as the option's kind,
 // a question as its label (text answers stay text). A cancelled ask records nothing.
 func (f *Facts) NoteAnswer(callID, outcome, selected string) {

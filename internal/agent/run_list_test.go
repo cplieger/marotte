@@ -32,8 +32,7 @@ func TestRunList_AnEmptyTurnIsResentOnlyWhenEveryClauseHolds(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			at := &activeTurn{ID: "t-1", Chat: "c1", Seq: 7}
-			c := (&bridgeCoordinator{}).listCloseOf(t.Context(), at, closerWireEnd,
-				&closeFacts{outcome: marotte.TurnOutcomeEmpty}, &tc.result, false)
+			c := listCloseOf(at, closerWireEnd, &closeFacts{outcome: marotte.TurnOutcomeEmpty}, &tc.result)
 			l := &runList{}
 			l.insert(0, &runEntry{
 				id: "m-1", kind: marotte.RunKindRow, origin: marotte.RunFromPrompt, state: marotte.RunRunning,

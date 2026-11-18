@@ -1,5 +1,5 @@
 // What pressing Send means: one prompt POST, and the server's run order decides where it goes (it
-// starts, steers into the running turn, or queues behind what runs: a turn, a compaction). The dock
+// starts, steers into the running turn, or queues behind the turn that runs). The dock
 // and the composer draw the answer's `run`, so every device shows the same order.
 
 import { sendPromptTo } from "./chat-commands.js";

@@ -14,7 +14,7 @@ import { exportFilename } from "../export-filename.js";
 import { THINKING_OFF, thinkingIsOff } from "../effort.js";
 import { getCachedModels } from "../model-list.js";
 import { join as joinKey } from "@cplieger/keyenc";
-import { errorAbout, successAbout } from "./subject.js";
+import { errorAbout } from "./subject.js";
 import { mayStillApply, retryUnlessStill, stillOr } from "./still-applying.js";
 
 import type {
@@ -343,12 +343,10 @@ export const setAttachments = transportAction<{ chatID: string; paths: string[] 
   error: false,
 });
 
-/** Summarizes through KAS's native `compact` verb (typed `/compact` reaches the model as prose): at once on an idle
- *  chat, else at the running turn's end; the dock shows it queued, then running. `idempotencyKey`: a double compact
- *  summarizes a summary. An idle chat's reply comes once KAS accepted the summary (`internal/command/compact.go`), so
- *  its scope is its own: under `chat:<id>` a message sent meanwhile waited, unseen, for the whole compaction; the
- *  server queues it behind the compaction instead. Resolves true when the server queued it. */
-export const compactChat = defineAction<{ chatID: string }, boolean>({
+/** Summarizes through KAS's native `compact` verb (typed `/compact` reaches the model as prose). The server answers
+ *  once the call is under way; the dock's running row (`ChatHeader.compacting`), then kiro-cli's compaction entry or
+ *  one toast, is the outcome. `idempotencyKey`: a double compact summarizes a summary. */
+export const compactChat = defineAction<{ chatID: string }, undefined>({
   name: "chat.compact",
   networkMode: "always",
   scope: ({ chatID }) => `compact:${chatID}`,
@@ -367,33 +365,9 @@ export const compactChat = defineAction<{ chatID: string }, boolean>({
     if (!r.ok) {
       throw refusalOf(r, `compact failed with status ${String(r.status)}`);
     }
-    return compactQueued(r);
   },
-  success: successAbout(onChat, (queued: boolean) =>
-    queued ? "Compaction queued for the end of this turn" : "Compaction finished",
-  ),
-  error: errorAbout(onChat, stillOr("starting the compaction", "Compact failed", "chat")),
-});
-
-/** Whether a compact's answer says the server queued it (`{"queued": true}`) for what runs now. */
-function compactQueued(r: SendResult): boolean {
-  const body = r.body;
-  return (
-    typeof body === "object" && body !== null && (body as { queued?: unknown }).queued === true
-  );
-}
-
-/** Drops the compaction entry `id` names while it waits; a stale id is success. A compaction already
- *  running goes on. */
-export const cancelCompact = transportAction<{ chatID: string; id: string }>({
-  name: "chat.cancel_compact",
-  networkMode: "always",
-  scope: ({ chatID }) => `cancel-compact:${chatID}`,
-  command: ({ chatID, id }) => ({ type: "cancel_compact", chat_id: chatID, payload: { id } }),
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
   success: false,
-  error: errorAbout(onChat, "Could not cancel the queued compaction"),
+  error: errorAbout(onChat, stillOr("starting the compaction", "Compact failed", "chat")),
 });
 
 /** A refused send as the ActionError a custom runner throws: the envelope's `reason` is its code,

@@ -343,10 +343,19 @@ async function deleteBy(open: () => Promise<void>, button: "Delete" | "Cancel"):
   if (b === undefined) {
     throw new Error(`no ${button} in the confirm`);
   }
-  await userEvent.click(b);
-  await vi.waitFor(() => {
-    expect(d.open, "the confirm closed").toBe(false);
+  // confirm() answers on the dialog's close event, a task of its own that a loaded browser can run several timer
+  // tasks after `open` turns false, so the wait is for the event.
+  const closed = new Promise<void>((resolve) => {
+    d.addEventListener(
+      "close",
+      () => {
+        resolve();
+      },
+      { once: true },
+    );
   });
+  await userEvent.click(b);
+  await closed;
   await settle();
   await settleTabs();
 }

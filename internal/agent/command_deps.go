@@ -78,6 +78,7 @@ func (rt *Runtime) DeleteChatStateByChain(ctx context.Context, chatID marotte.Ch
 	rt.runs.deleteForSessions(ctx, chatID, sessionChain, stop)
 	rt.deleteSessions(ctx, chatID, sessionChain)
 	rt.cleanupChatState(ctx, chatID)
+	rt.translator.EndSummaryStreak(chatID)
 	rt.reapSessions(sessionChain)
 	if err := bot.RemoveDir(string(chatID), botPaths()); err != nil {
 		slog.Warn("bots: a deleted Bot's directory could not be removed; marotte's next start removes it", "chat_id", chatID, "error", err)
@@ -180,14 +181,9 @@ func (rt *Runtime) AdmissionHolderSource(chatID marotte.ChatID) (marotte.TurnOpe
 	return rt.coord.AdmissionHolderSource(chatID)
 }
 
-// RequestCompact is the reader's compaction, owned by the chat's compactor.
+// RequestCompact is the reader's Compact press (compactPresses.request).
 func (rt *Runtime) RequestCompact(ctx context.Context, chatID marotte.ChatID) (command.CompactOutcome, error) {
-	return rt.coord.autoCompact.request(ctx, chatID)
-}
-
-// CancelCompact withdraws the chat's compaction entry id ("" for the chat's one).
-func (rt *Runtime) CancelCompact(ctx context.Context, chatID marotte.ChatID, id string) error {
-	return rt.coord.autoCompact.cancel(ctx, chatID, id)
+	return rt.coord.compact.request(ctx, chatID)
 }
 
 // AbandonInFlightTurn finalizes a turn that failed before it could end.
