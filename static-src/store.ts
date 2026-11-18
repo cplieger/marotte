@@ -23,6 +23,7 @@ import type { ClassifiedRunStatus } from "./run-status.js";
 // turns.ts is a pure leaf that reaches nothing here, so this edge is one-way.
 import { IDLE_RUN, newerRun, runLive } from "./run-order.js";
 import { payloadOf } from "./turns.js";
+import { inFrameBatch, onBatchClose } from "./frame-dispatch.js";
 import { touchTurn } from "./turn-revision.js";
 import {
   foldSteerFrame,
@@ -137,7 +138,9 @@ function flushCause(chatID: string): void {
  *  should collapse into one repaint. */
 export function bumpMessages(chatID: string, cause: RenderCause = "shape"): void {
   mergeCause(chatID, cause);
-  flushCause(chatID);
+  if (!inFrameBatch()) {
+    flushCause(chatID);
+  }
 }
 
 /** `removeChat` deletes its id here, so a pending flush cannot re-mint the version signal it just
@@ -147,7 +150,7 @@ const messagesScheduled = new Set<string>();
 /** Coalesce one chat's per-delta bumps into a single repaint per microtask. */
 function scheduleMessages(chatID: string, cause: RenderCause, turnID?: string): void {
   mergeCause(chatID, cause, turnID);
-  if (messagesScheduled.has(chatID)) {
+  if (inFrameBatch() || messagesScheduled.has(chatID)) {
     return;
   }
   messagesScheduled.add(chatID);
@@ -157,6 +160,14 @@ function scheduleMessages(chatID: string, cause: RenderCause, turnID?: string): 
     }
   });
 }
+
+// A frame batch defers both bumps to its close, so its one pass paints the merged cause: a chunk
+// flushed after a shape would otherwise overwrite `flushedCause` and skip the shape's work.
+onBatchClose(() => {
+  for (const chatID of [...pendingCause.keys()]) {
+    flushCause(chatID);
+  }
+});
 
 /** The cause an entry's arrival earns, from its LANE alone. */
 function entryCause(lane: string | undefined): RenderCause {

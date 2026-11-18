@@ -20,6 +20,7 @@ import {
 
 import { registerCleanup } from "./actions/index.js";
 import { BUS_PAGE_RESUMED, BUS_RECONCILE, decodeEnvelope, emitBus } from "./bus.js";
+import { _resetFramesForTest, flushFrames, queueFrame } from "./frame-dispatch.js";
 import { inventoryHeld } from "./git-prs-state.js";
 import { mcpState } from "./mcp-state.js";
 import { isMirrorKind } from "./mirror.js";
@@ -41,7 +42,8 @@ import { observeStamp, setObserveSink, versionMap } from "./subject-versions.js"
 import { listTabs } from "./tabs-sync.js";
 import type { ConnectionStatus, ServerEvent, SubjectStamp } from "./types.js";
 
-type MsgHandler = (evt: ServerEvent) => void;
+/** Applies one event; answers true when a handler threw, so its state is not applied. */
+type MsgHandler = (evt: ServerEvent) => boolean | undefined;
 type StatusHandler = (s: ConnectionStatus) => void;
 
 /** The digest's own budget, matching the server's `RouteTimeout` on `POST /api/sync`. */
@@ -159,11 +161,13 @@ export function markHydrated(): void {
   const held = pending;
   pending = [];
   for (const evt of held) {
-    deliver(evt);
+    queueFrame(() => {
+      deliver(evt);
+    });
   }
 }
 
-/** The library's `onFrame`: decode, then apply now or hold. A throw here rejects the frame — the
+/** The library's `onFrame`: decode, then queue or hold. A throw here rejects the frame — the
  *  library advances the cursor past it and schedules `revalidate("hello")`, whose digest names
  *  whatever the dropped frame would have moved, because its stamp was never observed. */
 function applyFrame(frame: Frame): void {
@@ -184,11 +188,14 @@ function applyFrame(frame: Frame): void {
     }
     return;
   }
-  deliver(evt);
+  queueFrame(() => {
+    deliver(evt);
+  });
 }
 
 /** Dispatch one envelope to the bus and THEN observe its stamp: a version is recorded after the
- *  state it certifies is applied, never before. */
+ *  state it certifies is applied, never before. A handler that threw leaves the stamp unobserved
+ *  and re-reads the subject, as a refused frame does. */
 function deliver(evt: ServerEvent): void {
   if (evt.type === "subject_changed") {
     // The refused frame's projection moved and nothing carried it; the action is the refetch and
@@ -206,9 +213,21 @@ function deliver(evt: ServerEvent): void {
     // Its stamp is not observed either: nothing here holds what it would certify.
     return;
   }
-  onMsg(evt);
-  if (evt.subject !== undefined && projectionHeld(evt.subject)) {
-    observeStamp(evt.subject);
+  const threw = onMsg(evt) === true;
+  const subject = evt.subject;
+  if (subject === undefined) {
+    return;
+  }
+  if (threw) {
+    // A mirror's projection is held whenever it has applied a frame; any other projection only
+    // while this client holds what the stamp certifies, else there is nothing to repair.
+    if (isMirrorKind(subject.kind) || projectionHeld(subject)) {
+      void runStampAction(subject);
+    }
+    return;
+  }
+  if (projectionHeld(subject)) {
+    observeStamp(subject);
   }
 }
 
@@ -444,6 +463,8 @@ function helloIfMoved(ctx: RevalidateContext, moved: boolean): void {
 
 /** The per-tab stream's `revalidate`: this tab owns the connection and the map it digests. */
 async function revalidate(ctx: RevalidateContext): Promise<void> {
+  // The digest then presents every stamp a frame that has arrived carries.
+  flushFrames();
   // Before the wake, so the run tab's wake refresh finds this read out (`readRunUnlessOut`).
   rereadHeldRuns();
   if (isWake(ctx.cause)) {
@@ -481,6 +502,7 @@ async function revalidate(ctx: RevalidateContext): Promise<void> {
  *  epoch that dropped what this tab held makes the run full. The run's cause is the PROFILE's,
  *  so the wake refresh runs only in a visible tab. */
 async function tabRevalidate(ctx: TabRevalidateContext): Promise<void> {
+  flushFrames();
   rereadHeldRuns();
   const versions = versionMap();
   const dropped = ctx.epoch === null ? 0 : versions.bind(ctx.epoch);
@@ -652,6 +674,7 @@ export function _resetForTest(): void {
   };
   hydrated = false;
   pending = [];
+  _resetFramesForTest();
   presented = "";
 }
 

@@ -174,6 +174,10 @@ export class ScrollController {
   private delivering = false;
   /** Whether a `heldMutation` callback is running. */
   private mutating = false;
+  /** A `fillViewport` asked for inside a hold, run once the hold has answered its change. */
+  private fillOwed = false;
+  /** A `resume` asked for inside a hold, which lands once the hold's change is complete. */
+  private resumeOwed = false;
   private childSize = new WeakMap<Element, number>();
 
   private scrollbarWidth = "";
@@ -1113,13 +1117,20 @@ export class ScrollController {
     } finally {
       this.mutating = false;
     }
-    if (restoring) {
-      return;
-    }
-    if (this.holding()) {
+    if (this.resumeOwed) {
+      // Following lands on the new end, so there is no anchor to hold.
+      this.resumeOwed = false;
+      this.resume();
+    } else if (!restoring && this.holding()) {
       this.holdAnchor();
     }
-    this.floorAfter(!this.delivering);
+    if (!restoring) {
+      this.floorAfter(!this.delivering);
+    }
+    if (this.fillOwed) {
+      this.fillOwed = false;
+      this.fillViewport();
+    }
   }
 
   /** Whether the owner holds the reader's text now: Reading, with no press window or flight letting it go. */
@@ -1144,6 +1155,11 @@ export class ScrollController {
 
   /** Return to Following: the live-edge listeners mount what the landing shows, then the owner lands and settles. */
   resume(): void {
+    // Inside a hold the content is mid-change: landing now forces a layout per read the hold repeats.
+    if (this.mutating) {
+      this.resumeOwed = true;
+      return;
+    }
     this.dropMotion();
     this.setState("following");
     this.anchor = null;
@@ -1829,6 +1845,11 @@ export class ScrollController {
 
   /** Fetch until the scroller overflows. */
   fillViewport(): void {
+    // Inside a hold the content is mid-change: measuring it forces a layout the hold's own read repeats.
+    if (this.mutating) {
+      this.fillOwed = true;
+      return;
+    }
     if (this.scrollEl.scrollHeight > this.scrollEl.clientHeight) {
       return;
     }

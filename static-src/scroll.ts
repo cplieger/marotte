@@ -2,6 +2,7 @@
 // `#messages-wrap`, built at load, and the API the transcript's modules call.
 
 import { $ } from "./dom.js";
+import { setFrameHold } from "./frame-dispatch.js";
 import {
   ScrollController,
   type ReadingState,
@@ -149,6 +150,8 @@ export function fillViewport(): void {
 export function readerGestureOpen(): boolean {
   return getInstance().gestureOpen();
 }
+setFrameHold(heldMutation);
+
 // Init on load.
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", () => {
