@@ -64,7 +64,7 @@ vi.mock("./api-client.js", async (importOriginal) => {
 import { applyLiveRunFrame, registerRunStateDemand, reviseRun } from "./run-store.js";
 import { applyRunAsks } from "./run-asks.js";
 import { setSectionFolded } from "./device-view.js";
-import { openTab, closeTab, tabIdFor, _resetForTest } from "./tabs.js";
+import { openTab, closeTab, setTabPinned, tabIdFor, _resetForTest } from "./tabs.js";
 import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.js";
 import { ingestTabsChanged, listTabs, _resetTabsSyncForTest } from "./tabs-sync.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
@@ -883,12 +883,13 @@ describe("on a short screen", () => {
     );
   };
 
-  /** Size the frame, set the pointer tier, open the drawer, 20 tabs and three live runs. */
+  /** Size the frame, set the pointer tier, open the drawer, `tabs` tabs (20 unless asked) and three live runs. */
   async function crowd(
     width: number,
     height: number,
     pointer: "fine" | "coarse",
     tag: string,
+    tabs = 20,
   ): Promise<HTMLElement> {
     await page.viewport(width, height);
     expect([window.innerWidth, window.innerHeight], "viewport actually resized").toEqual([
@@ -898,7 +899,7 @@ describe("on a short screen", () => {
     pointerFound ??= { value: document.documentElement.dataset["pointer"] };
     document.documentElement.dataset["pointer"] = pointer;
     el("sidebar").classList.add("open");
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < tabs; i++) {
       await openTab({ kind: "chat", ref: `c-${tag}-${String(i)}` });
     }
     await settleTabs();
@@ -961,7 +962,7 @@ describe("on a short screen", () => {
     }
   }
 
-  // The ui owner's worked figures for a phone held sideways (grelot 2963): Runs at its floor, the tabs the rest.
+  // A phone held sideways: Runs at its floor, the tab sections the rest of the middle (228 - 87 fine, 226 - 101 coarse).
   for (const [pointer, tabs, runs] of [
     ["fine", 141, 87],
     ["coarse", 125, 101],
@@ -973,6 +974,229 @@ describe("on a short screen", () => {
       const runsH = section().getBoundingClientRect().height;
       expect(Math.abs(tabsH - tabs), `tab sections ${String(tabsH)}px`).toBeLessThanOrEqual(1);
       expect(Math.abs(runsH - runs), `Runs ${String(runsH)}px`).toBeLessThanOrEqual(1);
+    });
+  }
+
+  /** The tab sections' and Runs' heights. */
+  const heights = (): { readonly tabs: number; readonly runs: number } => ({
+    tabs: el("tab-sections").getBoundingClientRect().height,
+    runs: section().getBoundingClientRect().height,
+  });
+
+  // With fewer than three tabs the tab sections keep only what their rows need, and Runs takes the rest up to
+  // its three rows (175 fine, 193 coarse). Fine: the Open header 32, the list's inset 4, rows of 42 with gaps of
+  // 2, the scroller's end padding 4. Coarse: a 44 header and 44 rows. Two coarse tabs need 142, past what Runs'
+  // floor leaves, so Runs holds its floor and the tabs scroll.
+  for (const [pointer, count, tabs, runs] of [
+    ["fine", 1, 82, 146],
+    ["fine", 2, 126, 102],
+    ["coarse", 1, 96, 130],
+    ["coarse", 2, 125, 101],
+  ] as const) {
+    it(`gives Runs the height ${String(count)} tab(s) leave on a phone held sideways (${pointer})`, async () => {
+      const middle = await crowd(844, 390, pointer, `few-${String(count)}-${pointer}`, count);
+
+      expect(middle.scrollHeight, "the middle itself never scrolls").toBe(middle.clientHeight);
+      const got = heights();
+      expect(Math.abs(got.tabs - tabs), `tab sections ${String(got.tabs)}px`).toBeLessThanOrEqual(
+        1,
+      );
+      expect(Math.abs(got.runs - runs), `Runs ${String(got.runs)}px`).toBeLessThanOrEqual(1);
+    });
+  }
+
+  /** Pin every open tab, in the order they opened. */
+  async function pinAll(): Promise<void> {
+    for (const t of tabServer.subjects()) {
+      await setTabPinned(t.id, true);
+    }
+    await settleTabs();
+    expect(el("pinned-section").hidden, "the Pinned section shows").toBe(false);
+  }
+
+  // Every tab pinned leaves Open its list's inset 4 alone. Pinned adds its gap 4, header 32, inset 4 and its rows;
+  // three of them need 178, past the 166 the tab sections keep.
+  for (const [count, tabs, runs] of [
+    [1, 90, 138],
+    [2, 134, 94],
+    [3, 141, 87],
+  ] as const) {
+    it(`counts ${String(count)} pinned tab(s), and not the Open header they leave hidden`, async () => {
+      await crowd(844, 390, "fine", `pinned-${String(count)}`, count);
+      await pinAll();
+
+      const got = heights();
+      expect(Math.abs(got.tabs - tabs), `tab sections ${String(got.tabs)}px`).toBeLessThanOrEqual(
+        1,
+      );
+      expect(Math.abs(got.runs - runs), `Runs ${String(got.runs)}px`).toBeLessThanOrEqual(1);
+    });
+  }
+
+  // Folded, a section shows only the active tab's row: one tab's 82 in Open, 90 for a Pinned section.
+  it("counts only the row a folded Open section shows", async () => {
+    setSectionFolded("open", true);
+    await crowd(844, 390, "fine", "folded-open", 2);
+
+    const got = heights();
+    expect(Math.abs(got.tabs - 82), `tab sections ${String(got.tabs)}px`).toBeLessThanOrEqual(1);
+    expect(Math.abs(got.runs - 146), `Runs ${String(got.runs)}px`).toBeLessThanOrEqual(1);
+  });
+
+  it("counts only the row a folded Pinned section shows", async () => {
+    setSectionFolded("pinned", true);
+    await crowd(844, 390, "fine", "folded-pinned", 2);
+    await pinAll();
+
+    const got = heights();
+    expect(Math.abs(got.tabs - 90), `tab sections ${String(got.tabs)}px`).toBeLessThanOrEqual(1);
+    expect(Math.abs(got.runs - 138), `Runs ${String(got.runs)}px`).toBeLessThanOrEqual(1);
+  });
+
+  // Two tabs, one pinned: the folded section holds none of the active tab, so it is its header alone. Open's
+  // header 32, inset 4 and one row 42 or none, Pinned's gap 4, header 32, inset 4 and one row or none, the end 4.
+  for (const [folded, pinned] of [
+    ["open", "the active tab"],
+    ["pinned", "the other tab"],
+  ] as const) {
+    it(`counts no row of a folded ${folded} section that does not hold the active tab`, async () => {
+      setSectionFolded(folded, true);
+      await crowd(844, 390, "fine", `folded-away-${folded}`, 2);
+      const [first, last] = tabServer.subjects();
+      if (first === undefined || last === undefined) {
+        throw new Error("two tabs were opened");
+      }
+      await setTabPinned((pinned === "the active tab" ? last : first).id, true);
+      await settleTabs();
+      expect(el(folded === "open" ? "tab-list" : "pinned-list").hasAttribute("data-folded")).toBe(
+        true,
+      );
+
+      const got = heights();
+      expect(Math.abs(got.tabs - 122), `tab sections ${String(got.tabs)}px`).toBeLessThanOrEqual(1);
+      expect(Math.abs(got.runs - 106), `Runs ${String(got.runs)}px`).toBeLessThanOrEqual(1);
+    });
+  }
+
+  it("keeps the tab track's floor, the Open header and one row, with no tab open", async () => {
+    await crowd(844, 390, "fine", "no-tabs", 0);
+
+    const got = heights();
+    expect(Math.abs(got.tabs - 78), `tab sections ${String(got.tabs)}px`).toBeLessThanOrEqual(1);
+    expect(Math.abs(got.runs - 150), `Runs ${String(got.runs)}px`).toBeLessThanOrEqual(1);
+  });
+
+  it("counts History's header while it is folded", async () => {
+    await crowd(844, 390, "fine", "history-folded", 1);
+    const history = el("history-section");
+    history.hidden = false;
+    try {
+      // One tab's 82, and History's gap 4 and header 32.
+      const got = heights();
+      expect(Math.abs(got.tabs - 118), `tab sections ${String(got.tabs)}px`).toBeLessThanOrEqual(1);
+      expect(Math.abs(got.runs - 110), `Runs ${String(got.runs)}px`).toBeLessThanOrEqual(1);
+    } finally {
+      history.hidden = true;
+    }
+  });
+
+  // No tab open: Open is its list's inset 4. Unfolded, History adds its gap 4, header 32, inset 4 and its rows,
+  // More the last of them; three need 178.
+  for (const [count, tabs, runs] of [
+    [1, 90, 138],
+    [2, 134, 94],
+    [3, 141, 87],
+  ] as const) {
+    it(`counts ${String(count)} History row(s) once it unfolds`, async () => {
+      await crowd(844, 390, "fine", `history-${String(count)}`, 0);
+      const history = el("history-section");
+      const list = el("history-list");
+      const closed = Array.from({ length: count - 1 }, () =>
+        Object.assign(document.createElement("li"), { className: "history-item" }),
+      );
+      list.prepend(...closed);
+      history.hidden = false;
+      list.hidden = false;
+      try {
+        const got = heights();
+        expect(Math.abs(got.tabs - tabs), `tab sections ${String(got.tabs)}px`).toBeLessThanOrEqual(
+          1,
+        );
+        expect(Math.abs(got.runs - runs), `Runs ${String(got.runs)}px`).toBeLessThanOrEqual(1);
+      } finally {
+        for (const li of closed) {
+          li.remove();
+        }
+        list.hidden = true;
+        history.hidden = true;
+      }
+    });
+  }
+
+  /** The section's running slide, paused, with a sampler of its height `at` that fraction of the way. */
+  function pausedSlide(): {
+    readonly from: number;
+    readonly to: number;
+    readonly at: (t: number) => { readonly h: number; readonly eased: number };
+    readonly done: () => Promise<void>;
+  } {
+    const anim = section().getAnimations()[0];
+    const effect = anim?.effect;
+    if (anim === undefined || !(effect instanceof KeyframeEffect)) {
+      throw new Error("the section does not slide");
+    }
+    const frames = effect.getKeyframes();
+    const px = (v: unknown): number => Number.parseFloat(String(v));
+    anim.pause();
+    return {
+      from: px(frames.at(0)?.["blockSize"]),
+      to: px(frames.at(-1)?.["blockSize"]),
+      at: (t) => {
+        anim.currentTime = t * Number(effect.getComputedTiming().duration);
+        return {
+          h: section().getBoundingClientRect().height,
+          eased: effect.getComputedTiming().progress ?? Number.NaN,
+        };
+      },
+      done: async () => {
+        anim.play();
+        await anim.finished;
+      },
+    };
+  }
+
+  // Unfolded at 844x390 fine, Runs rests at its 87px floor over a 62px cap (228 - 166); folded it is its header.
+  for (const fold of [true, false]) {
+    it(`slides ${fold ? "shut" : "open"} on a phone held sideways at the slide's own height, never the cap's`, async () => {
+      await crowd(844, 390, "fine", `slide-${String(fold)}`);
+      if (!fold) {
+        toggle().click();
+        await Promise.all(
+          section()
+            .getAnimations()
+            .map((a) => a.finished),
+        );
+        expect(el("runs-list").hidden).toBe(true);
+      }
+      toggle().click();
+      const slide = pausedSlide();
+      try {
+        expect(fold ? slide.from : slide.to, "the floor it rests at unfolded").toBeCloseTo(87, 0);
+        for (const t of [0.1, 0.5, 0.9]) {
+          const { h, eased } = slide.at(t);
+          expect(h, `${String(t)} of the way`).toBeGreaterThan(Math.min(slide.from, slide.to));
+          expect(h, `${String(t)} of the way`).toBeLessThan(Math.max(slide.from, slide.to));
+          expect(
+            Math.abs(h - (slide.from + (slide.to - slide.from) * eased)),
+            `${String(t)} of the way`,
+          ).toBeLessThanOrEqual(1);
+        }
+        const nearUnfolded = slide.at(fold ? 0.1 : 0.9).h;
+        expect(nearUnfolded, "above the cap where the slide is near the floor").toBeGreaterThan(62);
+      } finally {
+        await slide.done();
+      }
+      expect(el("runs-list").hidden).toBe(fold);
     });
   }
 

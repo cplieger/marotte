@@ -97,11 +97,12 @@ export function slideBox(
   const style = getComputedStyle(box);
   // `clip` is no scroll container (CSS Overflow 3), so a scroller under it would read and paint offset 0 mid-slide.
   const clip = style.overflowY === "visible" || style.overflowY === "clip" ? "clip" : "hidden";
-  // A close's `closedHeight` can sit below a min size still applied until the slide ends; that min would beat
-  // `blockSize` (CSS 2.1 §10.7), hold the box at its floor, then snap.
+  // A min or max size still applied until the slide ends can sit outside `from`..`to` (a close's `closedHeight` under
+  // a floor, a cap under the floor it yields to); it would beat `blockSize` (CSS 2.1 §10.7), hold the box, then snap.
   const frames: PropertyIndexedKeyframes = {
     blockSize: [`${String(from)}px`, `${String(to)}px`],
     minBlockSize: ["0px", "0px"],
+    maxBlockSize: ["none", "none"],
     overflow: [clip, clip],
     ...(fromOpacity !== undefined ? { opacity: [fromOpacity, open ? "1" : "0"] } : {}),
   };
