@@ -291,7 +291,7 @@ func (l *runList) insertPending(e *runEntry) {
 func (l *runList) project() []marotte.RunEntry {
 	out := make([]marotte.RunEntry, len(l.entries))
 	for i, e := range l.entries {
-		out[i] = l.projectOne(e)
+		out[i] = e.project()
 	}
 	return out
 }
@@ -1555,10 +1555,10 @@ func (l *runList) endLife() (next, steers []marotte.RunEntry) {
 			e.launch.finish("", marotte.ErrChatClosedDuringCall, false, false)
 			continue
 		}
-		keep = append(keep, l.projectOne(e))
+		keep = append(keep, e.project())
 		if e.turnID == "" {
 			for _, j := range e.joined {
-				keep = append(keep, l.projectOne(j))
+				keep = append(keep, j.project())
 			}
 		}
 	}
@@ -1576,7 +1576,7 @@ func handedSteers(entries []marotte.RunEntry) []marotte.RunEntry {
 	return out
 }
 
-func (l *runList) projectOne(e *runEntry) marotte.RunEntry {
+func (e *runEntry) project() marotte.RunEntry {
 	return marotte.RunEntry{
 		Row: e.row, ID: e.id, Kind: e.kind, State: e.state, Origin: e.origin, Turn: e.turnID, Next: e.next,
 		Steerable: e.steerable, Yields: e.yields, Admits: e.admits, Want: e.want, Unread: e.unread,
