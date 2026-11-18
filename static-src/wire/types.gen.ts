@@ -383,7 +383,7 @@ export interface BotSaveAnswer {
 
 /** BotSetup is GET /api/bots/{id}: what the Bot's setup shows, read from its record. Field order is fieldalignment's. */
 export interface BotSetup {
-  bot?: Bot;
+  bot: Bot | null;
   /** Memory describes the memory file; nil while memory is off. */
   memory?: BotMemoryStat;
   name: string;
@@ -2265,7 +2265,7 @@ export interface Job {
 
 /** JobResponse is the 202 body of every mutating route. */
 export interface JobResponse {
-  job?: Job;
+  job: Job | null;
 }
 
 /**
@@ -3345,7 +3345,7 @@ export interface ReleaseList {
  * was removed).
  */
 export interface RemoveResponse {
-  job?: Job;
+  job: Job | null;
   dependents?: string[];
 }
 
@@ -5211,7 +5211,7 @@ export interface ToolInteraction {
  * tool_job_output.
  */
 export interface ToolJobChangedPayload {
-  job?: Job;
+  job: Job | null;
 }
 
 /**

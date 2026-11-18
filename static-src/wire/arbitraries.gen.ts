@@ -552,7 +552,7 @@ const arbModel = fc.letrec<{
   ),
   BotSetup: fc.record(
     {
-      bot: tie("Bot"),
+      bot: fc.option(tie("Bot"), { nil: null }),
       memory: tie("BotMemoryStat"),
       name: fc.string(),
       model: fc.string(),
@@ -560,7 +560,7 @@ const arbModel = fc.letrec<{
       engine: tie("BotEngine"),
       supervised: fc.boolean(),
     },
-    { requiredKeys: ["name", "model", "effort", "engine", "supervised"] },
+    { requiredKeys: ["bot", "name", "model", "effort", "engine", "supervised"] },
   ),
   BotSummary: fc.record(
     {
@@ -1688,9 +1688,9 @@ const arbModel = fc.letrec<{
   ),
   JobResponse: fc.record(
     {
-      job: tie("Job"),
+      job: fc.option(tie("Job"), { nil: null }),
     },
-    { requiredKeys: [] },
+    { requiredKeys: ["job"] },
   ),
   JobsResponse: fc.record(
     {
@@ -2445,10 +2445,10 @@ const arbModel = fc.letrec<{
   ),
   RemoveResponse: fc.record(
     {
-      job: tie("Job"),
+      job: fc.option(tie("Job"), { nil: null }),
       dependents: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
     },
-    { requiredKeys: [] },
+    { requiredKeys: ["job"] },
   ),
   Repo: fc.record(
     {
@@ -3576,9 +3576,9 @@ const arbModel = fc.letrec<{
   ),
   ToolJobChangedPayload: fc.record(
     {
-      job: tie("Job"),
+      job: fc.option(tie("Job"), { nil: null }),
     },
-    { requiredKeys: [] },
+    { requiredKeys: ["job"] },
   ),
   ToolJobOutputPayload: fc.record(
     {
