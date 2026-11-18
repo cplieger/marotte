@@ -72,9 +72,6 @@ func seedQueue(t *testing.T, cs *testChatStore, chatID marotte.ChatID, rows ...m
 		t.Fatalf("seed queue: %v", err)
 	}
 	h := cs.runtime.Load()
-	if h == nil {
-		return
-	}
 	lc, ok := h.coord.turns.lookup(chatID)
 	if !ok {
 		return
