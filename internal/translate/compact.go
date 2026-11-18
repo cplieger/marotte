@@ -90,8 +90,7 @@ func (s *summaryStreaks) end(chatID marotte.ChatID) {
 	delete(s.failing, chatID)
 }
 
-// EndSummaryStreak forgets chatID's shown summary failure, so its next one is shown: for a rewind, which can cut the
-// streak's one entry, and for a deleted chat.
+// EndSummaryStreak forgets chatID's shown summary failure, so its next one is shown.
 func (t *Translator) EndSummaryStreak(chatID marotte.ChatID) {
 	t.summaryFails.end(chatID)
 }
