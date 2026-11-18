@@ -6,6 +6,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/obs"
 	"github.com/cplieger/marotte/internal/rule"
 )
 
@@ -241,30 +244,63 @@ func TestEngine_ReevaluatesAnEventThatWaited(t *testing.T) {
 	})
 }
 
-// A waiting event whose stored data no longer decodes is dropped with the rule's failure at its recheck, never sent
-// or held.
-func TestEngine_DropsAWaitingEventThatCannotBeRead(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		h := newHarness(t)
-		r := weekly(h)
-		r.Status.Queue = []rule.QueuedEvent{{
-			Stage: rule.StageFired, Trigger: "t1", EventID: "every:t1:1", Depth: 1,
-			Data: json.RawMessage(`{"fields":{"x":{"nested":1}}}`), SeenAt: h.at(-time.Minute), FiredAt: h.at(-time.Minute),
-		}}
-		h.seedBot("b1", r)
-		h.scan()
-		h.start()
-		h.advance(time.Minute)
-		h.wantSent("an unreadable event", 0)
-		got := h.rule("b1", "r1").Status
-		if len(got.Queue) != 0 || got.LastFailure == nil || got.LastFailure.EventID != "every:t1:1" ||
-			!strings.HasPrefix(got.LastFailure.Reason, "Could not deliver: the event could not be read: ") {
-			t.Errorf("queue %v last failure %+v, want the event dropped with its failure", eventIDs(got.Queue), got.LastFailure)
+// An event whose stored data no longer decodes is dropped with the same failure on either path, at its recheck after
+// waiting or as it is sent, never sent or held, and counts one failed delivery.
+func TestEngine_DropsAnEventThatCannotBeRead(t *testing.T) {
+	for _, tc := range []struct {
+		name, logLine string
+		firedAgo      time.Duration
+	}{
+		{name: "at its recheck after waiting", firedAgo: time.Minute, logLine: "rule evaluation failed"},
+		{name: "as it is sent", logLine: "rule delivery failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			failedBefore := failedDeliveries(t)
+			synctest.Test(t, func(t *testing.T) {
+				h := newHarness(t)
+				r := weekly(h)
+				r.Status.Queue = []rule.QueuedEvent{{
+					Stage: rule.StageFired, Trigger: "t1", EventID: "every:t1:1", Depth: 1,
+					Data:   json.RawMessage(`{"fields":{"x":{"nested":1}}}`),
+					SeenAt: h.at(-tc.firedAgo), FiredAt: h.at(-tc.firedAgo),
+				}}
+				h.seedBot("b1", r)
+				h.scan()
+				h.start()
+				h.advance(time.Minute)
+				h.wantSent("an unreadable event", 0)
+				got := h.rule("b1", "r1").Status
+				if len(got.Queue) != 0 || got.LastFailure == nil || got.LastFailure.EventID != "every:t1:1" ||
+					!strings.HasPrefix(got.LastFailure.Reason, "Could not deliver: the event could not be read: ") {
+					t.Errorf("queue %v last failure %+v, want the event dropped with its failure", eventIDs(got.Queue), got.LastFailure)
+				}
+				if n := h.logs.lines(slog.LevelError, tc.logLine); n != 1 {
+					t.Errorf("%d %q ERROR lines, want 1", n, tc.logLine)
+				}
+			})
+			if n := failedDeliveries(t) - failedBefore; n != 1 {
+				t.Errorf("%v failed deliveries counted, want 1", n)
+			}
+		})
+	}
+}
+
+// failedDeliveries reads the failed-delivery counter off the metrics page; read outside a synctest bubble.
+func failedDeliveries(t *testing.T) float64 {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	obs.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", http.NoBody))
+	for line := range strings.Lines(rec.Body.String()) {
+		if v, ok := strings.CutPrefix(line, `marotte_rule_deliveries_total{outcome="failed"} `); ok {
+			n, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+			if err != nil {
+				t.Fatalf("failed deliveries %q: %v", v, err)
+			}
+			return n
 		}
-		if n := h.logs.lines(slog.LevelError, "rule evaluation failed"); n != 1 {
-			t.Errorf("%d ERROR lines, want 1", n)
-		}
-	})
+	}
+	t.Fatal("the metrics page lacks the failed-delivery series")
+	return 0
 }
 
 // The recheck of an event that waited reads the rule's last run from before the event fired: its own fire is not a

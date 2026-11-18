@@ -20,11 +20,8 @@ var evalCond = rule.Eval
 // recentIDs is how many evaluated event ids a rule keeps, so a source reporting an event twice fires it once.
 const recentIDs = 100
 
-// The failures of an evaluation that panicked and of an event that does not decode.
-const (
-	evalPanicked  = "the evaluation panicked"
-	errUnreadable = "the event could not be read"
-)
+// evalPanicked is the failure of an evaluation that panicked.
+const evalPanicked = "the evaluation panicked"
 
 // The skip mark's sentences; the reason after them is Eval's.
 const (
@@ -121,7 +118,7 @@ func snapshot(ev *rule.QueuedEvent, lastFire int64, now time.Time, st botState) 
 func judge(r *rule.Rule, ev *rule.QueuedEvent, lastFire int64, now time.Time, st botState) (rule.Result, error) {
 	s, err := snapshot(ev, lastFire, now, st)
 	if err != nil {
-		return rule.Result{}, fmt.Errorf("%s: %w", errUnreadable, err)
+		return rule.Result{}, err
 	}
 	return safeEval(r.Spec.Condition, &s)
 }

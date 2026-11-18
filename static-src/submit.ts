@@ -35,7 +35,7 @@ const GONE_FACE = "This chat no longer exists, so the message was not sent.";
 const CLOSED_FACE = "This chat was closed, so the message was not sent.";
 
 /** The 409 reason:"full" face: the queue holds as many messages as it takes. */
-const FULL_FACE = "The queue is full; it takes a message once a queued one has gone.";
+const FULL_FACE = "The queue is full until a queued message is sent.";
 
 /** Each chat's last failed TYPED attempt, so a retry of the same text reuses its message id:
  *  `hasMessage` reads the id (`turn_open`'s `prompt.id`) to tell a taken send from a refused one,

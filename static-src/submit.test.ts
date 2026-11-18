@@ -432,7 +432,7 @@ describe("a full queue", () => {
 
     expect(await submitPrompt("c1", "one more")).toBe("failed");
     expect(mockReportSendRefused).toHaveBeenCalledWith(
-      "The queue is full; it takes a message once a queued one has gone.",
+      "The queue is full until a queued message is sent.",
       { retry: true },
     );
     expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "one more");

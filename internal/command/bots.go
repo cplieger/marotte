@@ -357,7 +357,7 @@ func writeBotSave(
 			return false
 		}
 		wrote := write(c, exists)
-		if wrote && s != nil && s.rules != nil {
+		if s != nil && s.rules != nil {
 			w.answer = recordAnswer(c, s)
 		}
 		now := c.BotView()

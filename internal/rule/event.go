@@ -153,8 +153,17 @@ func boundEvent(fields map[string]any, cut []string) json.RawMessage {
 	return append(b, '}')
 }
 
-// DecodeEvent reads a QueuedEvent's Data as conditions compare it: numbers as float64, lists as []string.
+// DecodeEvent reads a QueuedEvent's Data as conditions compare it: numbers as float64, lists as []string. Every
+// error it returns starts "the event could not be read: ".
 func DecodeEvent(data json.RawMessage) (Event, error) {
+	e, err := decodeEvent(data)
+	if err != nil {
+		return Event{}, fmt.Errorf("the event could not be read: %w", err)
+	}
+	return e, nil
+}
+
+func decodeEvent(data json.RawMessage) (Event, error) {
 	var st storedEvent
 	if err := json.Unmarshal(data, &st); err != nil {
 		return Event{}, fmt.Errorf("event data: %w", err)
