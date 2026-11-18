@@ -461,9 +461,9 @@ describe("failure-notice subscribes to the transport's failure event", () => {
   });
 });
 
-// The compaction notice says the next turn end tries again, so the success that turn end brings retracts it.
+// A compaction's failure notice goes once a compaction lands: the context it said was not summarized now is.
 describe("clearCompactionFailure retracts a compaction_failed notice and leaves another failure's", () => {
-  const COMPACTION = "The compaction did not run. marotte tries again at the end of the next turn.";
+  const COMPACTION = "The compaction did not run: the call to kiro-cli failed or timed out.";
 
   it("retracts the chat's live compaction failure notice", () => {
     reportFailure("c1", COMPACTION, undefined, false, "", "compaction_failed");
@@ -491,7 +491,7 @@ describe("clearCompactionFailure retracts a compaction_failed notice and leaves 
     expect(mockDismiss).not.toHaveBeenCalled();
   });
 
-  // The next turn end's attempt can fail again within the dedupe window; that failure must show.
+  // The reader's next press can fail again within the dedupe window; that failure must show.
   it("lets the same failure show again at once after it was retracted", () => {
     reportFailure("c1", COMPACTION, undefined, false, "", "compaction_failed");
     clearCompactionFailure("c1");
@@ -500,67 +500,20 @@ describe("clearCompactionFailure retracts a compaction_failed notice and leaves 
   });
 });
 
-// A summary kiro-cli reports failed arrives as both the retry notice and the chat's turn-scoped reason, in either order.
-describe("a background chat's compaction notice keeps saying the next turn end tries again", () => {
-  const RETRYING = "The compaction did not run. marotte tries again at the end of the next turn.";
+// Each compaction has one account: a later attempt's failure replaces an earlier one's notice.
+describe("a background chat's compaction failure", () => {
+  const REFUSED = "The compaction did not run: the agent was busy.";
 
-  it("keeps the retry notice when the turn-scoped reason arrives after it", () => {
-    reportFailure("c2", RETRYING, undefined, false, "", "compaction_failed");
+  it("shows a turn-scoped compaction reason when nothing is live", () => {
     reportFailure("c2", "model error", undefined, true, "", "compaction_failed");
-    expect(toastCount()).toBe(1);
-    expect(lastToast()).toBe(`Write the docs: ${RETRYING}`);
-    expect(mockDismiss).not.toHaveBeenCalled();
+    expect(lastToast()).toBe("Write the docs: model error");
   });
 
-  it("replaces the turn-scoped reason with the retry notice arriving after it", () => {
+  it("replaces a press's refusal with kiro-cli's later failure report", () => {
+    reportFailure("c2", REFUSED, undefined, false, "", "compaction_failed");
     reportFailure("c2", "model error", undefined, true, "", "compaction_failed");
-    reportFailure("c2", RETRYING, undefined, false, "", "compaction_failed");
     expect(toastCount()).toBe(2);
-    expect(lastToast()).toBe(`Write the docs: ${RETRYING}`);
+    expect(lastToast()).toBe("Write the docs: model error");
     expect(mockDismiss).toHaveBeenCalledTimes(1);
-  });
-
-  it("shows a turn-scoped compaction reason when no retry notice is live", () => {
-    reportFailure("c2", "model error", undefined, true, "", "compaction_failed");
-    expect(lastToast()).toBe("Write the docs: model error");
-  });
-
-  it("keeps the retry notice when the turn-scoped reason arrives after the dedupe window", () => {
-    vi.useFakeTimers();
-    try {
-      reportFailure("c2", RETRYING, undefined, false, "", "compaction_failed");
-      vi.advanceTimersByTime(6_000);
-      reportFailure("c2", "model error", undefined, true, "", "compaction_failed");
-      expect(toastCount()).toBe(1);
-      expect(lastToast()).toBe(`Write the docs: ${RETRYING}`);
-      expect(mockDismiss).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("shows the turn-scoped reason once the retry notice has expired", () => {
-    reportFailure("c2", RETRYING, undefined, false, "", "compaction_failed");
-    closers.at(-1)?.();
-    reportFailure("c2", "model error", undefined, true, "", "compaction_failed");
-    expect(toastCount()).toBe(2);
-    expect(lastToast()).toBe("Write the docs: model error");
-  });
-
-  it("keeps dropping the twin while a newer retry notice is up, when an older one expires", () => {
-    const SECOND =
-      "The compaction did not run: the call failed. marotte tries again at the end of the next turn.";
-    reportFailure("c2", RETRYING, undefined, false, "", "compaction_failed");
-    reportFailure("c2", SECOND, undefined, false, "", "compaction_failed");
-    closers[0]?.();
-    reportFailure("c2", "model error", undefined, true, "", "compaction_failed");
-    expect(toastCount()).toBe(2);
-    expect(lastToast()).toBe(`Write the docs: ${SECOND}`);
-  });
-
-  it("lets another failure's turn-scoped report replace the retry notice", () => {
-    reportFailure("c2", RETRYING, undefined, false, "", "compaction_failed");
-    reportFailure("c2", "at capacity", undefined, true, "", "rate_limit");
-    expect(lastToast()).toBe("Write the docs: at capacity");
   });
 });

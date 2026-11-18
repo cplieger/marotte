@@ -484,7 +484,7 @@ func TestCmdQueuePrompt_DuringAKASHoldIsSentOnceKASGoesIdle(t *testing.T) {
 			t.Fatalf("queue_prompt during a KAS hold = %d %s, want 200", rec.Code, rec.Body.String())
 		}
 		// The dock lists the queue in the order it is sent: the held follow-up goes before the stopped one.
-		if ids, _ := queuedIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-q1", "m-q0"}) {
+		if ids := queuedIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-q1", "m-q0"}) {
 			t.Errorf("queue during the hold = %v, want [m-q1 m-q0]", ids)
 		}
 		synctest.Wait()

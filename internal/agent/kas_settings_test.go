@@ -230,7 +230,7 @@ func TestAutoCompactionPolicy_ReadsTheSettingAndFailsToTheDefault(t *testing.T) 
 	if enabled, pct := policy(dir); enabled || pct != 60 {
 		t.Errorf("autoCompactionPolicy(stored false, 60) = (%v, %d), want (false, 60)", enabled, pct)
 	}
-	for _, tc := range []struct{ stored, want int }{{85, 85}, {90, 90}, {83, 80}, {95, 80}, {45, 80}} {
+	for _, tc := range []struct{ stored, want int }{{80, 80}, {85, 80}, {90, 80}, {83, 80}, {95, 80}, {45, 80}} {
 		dir := t.TempDir()
 		writeCompactionSetting(t, dir, true, tc.stored)
 		if _, pct := policy(dir); pct != tc.want {
@@ -239,13 +239,50 @@ func TestAutoCompactionPolicy_ReadsTheSettingAndFailsToTheDefault(t *testing.T) 
 	}
 }
 
-// TestChatDoor_TurnsKASsCompactionOffAndAnObserverDoorDoesNot pins that every chat door turns KAS's own compaction
-// off, whatever the policy, since marotte compacts at a turn's end, and that an observer pass keeps KAS's defaults.
-func TestChatDoor_TurnsKASsCompactionOffAndAnObserverDoorDoesNot(t *testing.T) {
+// Both compaction settings ride the chat door, so moving either changes the door's fingerprint and an open chat
+// reloads onto the new value at its next message.
+func TestCompactionSettings_ChangeTheChatDoorFingerprint(t *testing.T) {
+	dir := t.TempDir()
+	cs := newTestChatStore()
+	h := newRuntimeOn(t.Context(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs,
+		WithConfigDir(dir))
+	cs.wire(h)
+	t.Cleanup(func() { shutdownHub(t, h) })
+	fingerprint := func(enabled bool, pct int) string {
+		t.Helper()
+		writeCompactionSetting(t, dir, enabled, pct)
+		settleConfig(t, dir)
+		fp, ok := h.sessionFingerprint(t.Context())
+		if !ok {
+			t.Fatal("no session fingerprint")
+		}
+		return fp
+	}
+
+	base := fingerprint(true, 80)
+	if fingerprint(true, 60) == base {
+		t.Error("moving Compact at left the fingerprint unchanged, so open chats keep the old threshold")
+	}
+	if fingerprint(false, 80) == base {
+		t.Error("turning Compact automatically off left the fingerprint unchanged, so open chats keep compacting")
+	}
+}
+
+// TestChatDoor_HandsCompactionToKiroCLI pins that a chat door leaves compaction to kiro-cli: on at the Compact at
+// threshold while Compact automatically is on (an invalid stored value reads as KAS's default, 80), off when it is
+// off, and that an observer pass keeps KAS's defaults.
+func TestChatDoor_HandsCompactionToKiroCLI(t *testing.T) {
 	for _, tc := range []struct {
-		enabled bool
-		pct     int
-	}{{enabled: true, pct: 60}, {enabled: false, pct: 60}, {enabled: true, pct: 90}} {
+		enabled  bool
+		pct      int
+		disabled bool
+		sent     int
+	}{
+		{enabled: true, pct: 60, sent: 60},
+		{enabled: true, pct: 80, sent: 80},
+		{enabled: true, pct: 90, sent: 80},
+		{enabled: false, pct: 60, disabled: true, sent: 60},
+	} {
 		t.Run(fmt.Sprintf("auto_compaction_enabled=%v pct=%d", tc.enabled, tc.pct), func(t *testing.T) {
 			dir := t.TempDir()
 			writeCompactionSetting(t, dir, tc.enabled, tc.pct)
@@ -279,13 +316,17 @@ func TestChatDoor_TurnsKASsCompactionOffAndAnObserverDoorDoesNot(t *testing.T) {
 			for _, rb := range doors {
 				switch o := rb.startOpts(); o.Role {
 				case marotte.SessionRoleChat:
-					if !o.DisableAutoCompaction {
-						t.Error("the chat's door left KAS's own compaction on")
+					if o.DisableAutoCompaction != tc.disabled {
+						t.Errorf("the chat's door DisableAutoCompaction = %v, want %v", o.DisableAutoCompaction, tc.disabled)
+					}
+					if o.AutoCompactionThreshold != tc.sent {
+						t.Errorf("the chat's door threshold = %d, want %d", o.AutoCompactionThreshold, tc.sent)
 					}
 					chat++
 				case marotte.SessionRoleObserver:
-					if o.DisableAutoCompaction {
-						t.Error("an observer door turned KAS's compaction off")
+					if o.DisableAutoCompaction || o.AutoCompactionThreshold != 0 {
+						t.Errorf("an observer door sent compaction (off %v, threshold %d), want KAS's defaults",
+							o.DisableAutoCompaction, o.AutoCompactionThreshold)
 					}
 					observer++
 				}

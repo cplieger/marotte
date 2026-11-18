@@ -1237,6 +1237,56 @@ func TestEntryProjection_ACallTheLiveWireNeverOpenedIsDropped(t *testing.T) {
 	}
 }
 
+// A call that raised an ask was on the live chat, its card holding the ask, though KAS records it only once it settled
+// and so replays it settled: its call and result are restored. The shape is compact_inturn's approved shell call that
+// failed to start.
+func TestEntryProjection_ASettledCallThatAskedIsRestored(t *testing.T) {
+	asked := toolCallFrame(t, "call-asked", nil)
+	var call map[string]any
+	if err := json.Unmarshal(asked[1].(json.RawMessage), &call); err != nil {
+		t.Fatal(err)
+	}
+	call["status"] = "failed"
+	asked[1] = mustJSON(t, call)
+	ask := pair(marotte.ACPUpdateSessionInfo, mustJSON(t, map[string]any{
+		"sessionUpdate": string(marotte.ACPUpdateSessionInfo),
+		"_meta": map[string]any{"kiro": map[string]any{
+			"kind": "pending_interaction", "replay": true,
+			"pendingInteraction": map[string]any{
+				"toolCallId": "call-asked", "interactionType": "tool_approval",
+				"options": []any{map[string]any{"optionId": "accept", "name": "Allow", "kind": "allow_once"}},
+			},
+		}},
+	}))
+	answer := pair(marotte.ACPUpdateSessionInfo, mustJSON(t, map[string]any{
+		"sessionUpdate": string(marotte.ACPUpdateSessionInfo),
+		"_meta": map[string]any{"kiro": map[string]any{
+			"kind": "interaction_resolved", "replay": true,
+			"interactionResolved": map[string]any{"toolCallId": "call-asked", "outcome": "selected", "selectedOption": "accept"},
+		}},
+	}))
+
+	turns := entryProject([][2]any{
+		turnStartFrame(t),
+		ask,
+		answer,
+		asked,
+		toolUpdateFrame(t, "call-asked", "failed", nil),
+		turnEndFrame(t, "end_turn"),
+	})
+	if len(turns) != 1 {
+		t.Fatalf("turns = %d, want 1:\n%s", len(turns), dumpTurns(turns))
+	}
+	var res marotte.EntryToolResult
+	payloadOf(t, entryOfKind(t, turns[0], marotte.EntryKindToolResult), &res)
+	if res.Status != marotte.ToolFailed || res.Interaction == nil || res.Interaction.Choice != "allow_once" {
+		t.Errorf("result = status %q interaction %+v, want failed with the allow_once answer", res.Status, res.Interaction)
+	}
+	if entryOfKind(t, turns[0], marotte.EntryKindToolCall).ID != "call-asked" {
+		t.Errorf("the projection lost the asked call:\n%s", dumpTurns(turns))
+	}
+}
+
 // A replayed failed edit's diff names a write that never happened, so the reloaded card draws none.
 func TestEntryProjection_AFailedEditContributesNoDiff(t *testing.T) {
 	update := pair(marotte.ACPUpdateToolUpdate, mustJSON(t, map[string]any{

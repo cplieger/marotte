@@ -1059,6 +1059,8 @@ type testChatStore struct {
 	// in another command's window.
 	mutated        atomic.Pointer[func(id marotte.ChatID)]
 	beforeDeleteIf atomic.Pointer[func(id marotte.ChatID)]
+	// mutateFault, when set, fails every Mutate with it and writes nothing, for a test about a header write lost.
+	mutateFault atomic.Pointer[error]
 	// tornDown names sessions SessionInTeardown reports in teardown besides the store's own, set through tearDown.
 	tornDown   map[string]bool
 	tornDownMu sync.Mutex
@@ -1134,6 +1136,9 @@ func (s *testChatStore) Get(ctx context.Context, id marotte.ChatID) (*marotte.Ch
 }
 
 func (s *testChatStore) Mutate(ctx context.Context, id marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error) {
+	if fault := s.mutateFault.Load(); fault != nil {
+		return "", *fault
+	}
 	version, err := s.Store.Mutate(ctx, id, mutate)
 	if hook := s.mutated.Load(); hook != nil {
 		(*hook)(id)

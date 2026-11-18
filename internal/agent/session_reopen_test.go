@@ -297,10 +297,11 @@ var configWrites = []struct {
 	{key: settings.KeyKnowledgeExcludePatterns, value: []string{"drafts/**"}, reach: reachEngine},
 	{key: settings.KeyKnowledgeMaxFiles, value: 200, reach: reachEngine},
 	{key: settings.KeyKnowledgeChunking, value: map[string]int{"size": 256, "overlap": 32}, reach: reachEngine},
-	// marotte's compactor reads both at each trigger; every chat door turns KAS's own compaction off.
-	{key: settings.KeyAutoCompactionEnabled, value: false, reach: reachLive},
-	{key: settings.KeyAutoCompactPct, value: 60, reach: reachLive},
-	{key: settings.KeyAutoCompactPct, from: 60, value: 90, reach: reachLive},
+	// Both ride every chat door (chatSessionOpts), where kiro-cli compacts; a stored 90 reads as 80, the default.
+	{key: settings.KeyAutoCompactionEnabled, value: false, reach: reachReopen},
+	{key: settings.KeyAutoCompactPct, value: 60, reach: reachReopen},
+	{key: settings.KeyAutoCompactPct, from: 60, value: 75, reach: reachReopen},
+	{key: settings.KeyAutoCompactPct, from: 80, value: 90, reach: reachNoChat},
 	{key: settings.KeyTerminalCommandTimeoutMs, value: 300000, reach: reachLive},
 	{key: settings.KeyContentCollectionEnabled, value: false, reach: reachLive},
 	{key: settings.KeyAgentIgnoreFiles, value: []string{".gitignore"}, reach: reachLive},

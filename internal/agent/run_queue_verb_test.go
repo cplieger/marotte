@@ -26,12 +26,6 @@ func TestSubmit_PlacesASendAsTheHeadersVerbSays(t *testing.T) {
 			row: &marotte.QueuedPrompt{ID: id, Text: id},
 		}
 	}
-	compaction := func(state marotte.RunEntryState) *runEntry {
-		return &runEntry{
-			id: "compact-1", kind: marotte.RunKindCompaction, origin: marotte.RunFromRequest, state: state,
-			done: newCompactWait(),
-		}
-	}
 	cases := []struct {
 		name    string
 		entries func() []*runEntry
@@ -61,21 +55,10 @@ func TestSubmit_PlacesASendAsTheHeadersVerbSays(t *testing.T) {
 			e.state = marotte.RunClosing
 			return []*runEntry{e}
 		}},
-		{name: "a running compaction", want: marotte.SendQueue, entries: func() []*runEntry {
-			return []*runEntry{compaction(marotte.RunRunning)}
-		}},
-		{name: "kiro-cli's turn under a running compaction", want: marotte.SendQueue, entries: func() []*runEntry {
-			return []*runEntry{compaction(marotte.RunRunning), running("t-w", true)}
-		}},
 		{name: "a fold-opened turn kiro-cli admits beside", want: marotte.SendPrompt, entries: func() []*runEntry {
 			e := running("t-f", false)
 			e.yields, e.admits = true, true
 			return []*runEntry{e}
-		}},
-		{name: "a fold-opened turn with a compaction pending", want: marotte.SendQueue, entries: func() []*runEntry {
-			e := running("t-f", false)
-			e.yields, e.admits = true, true
-			return []*runEntry{e, compaction(marotte.RunPending)}
 		}},
 	}
 	for _, tc := range cases {

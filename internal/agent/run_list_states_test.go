@@ -1019,7 +1019,7 @@ func TestRunList_RowStatesWithASecondRow(t *testing.T) {
 				t.Errorf("launches = %d, want %d", n, c.launches)
 			}
 			for _, id := range c.stopPaused {
-				if !w.l.stopPaused(w.entry(t, id)) {
+				if !w.entry(t, id).stopPaused() {
 					t.Errorf("%s does not wait for the reader's send or Resume (StopPaused false)", id)
 				}
 			}

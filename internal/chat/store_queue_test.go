@@ -43,9 +43,9 @@ func TestQueue_OpenPrunesSentAndHoldsRest(t *testing.T) {
 	}
 }
 
-// A compaction a previous process listed has no process to run it, so the first open drops it, and the writing process
-// keeps its own.
-func TestQueue_OpenDropsAPreviousProcesssQueuedCompaction(t *testing.T) {
+// A revert a previous process listed and its Compact call's running mark have no process to run them, so the first
+// open drops both, and the writing process keeps its own.
+func TestQueue_OpenDropsAPreviousProcesssRevertAndCompactCall(t *testing.T) {
 	dir := t.TempDir()
 	first, err := NewStore(dir)
 	if err != nil {
@@ -53,13 +53,14 @@ func TestQueue_OpenDropsAPreviousProcesssQueuedCompaction(t *testing.T) {
 	}
 	openPromptTurn(t, first, "c1", "m-sent")
 	if _, err := first.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Run = []marotte.RunEntry{{ID: "compact-1", Kind: marotte.RunKindCompaction, State: marotte.RunPending}}
+		c.Run = []marotte.RunEntry{{ID: "revert-1", Kind: marotte.RunKindRevert, State: marotte.RunRunning}}
+		c.Compacting = true
 		return true
 	}); err != nil {
-		t.Fatalf("seed the request: %v", err)
+		t.Fatalf("seed the revert and the call: %v", err)
 	}
-	if c, _ := first.Get(t.Context(), "c1"); len(c.Run) != 1 {
-		t.Fatal("the writing process lost its own queued compaction")
+	if c, _ := first.Get(t.Context(), "c1"); len(c.Run) != 1 || !c.Compacting {
+		t.Fatal("the writing process lost its own revert or call")
 	}
 
 	second, err := NewStore(dir)
@@ -69,8 +70,40 @@ func TestQueue_OpenDropsAPreviousProcesssQueuedCompaction(t *testing.T) {
 	if _, err := second.All(t.Context(), "c1"); err != nil {
 		t.Fatalf("All: %v", err)
 	}
-	if c, _ := second.Get(t.Context(), "c1"); len(c.Run) != 0 {
-		t.Errorf("run list after a restart = %+v, want no compaction", c.Run)
+	c, _ := second.Get(t.Context(), "c1")
+	if len(c.Run) != 0 {
+		t.Errorf("run list after a restart = %+v, want no revert", c.Run)
+	}
+	if c.Compacting || c.Header().Compacting {
+		t.Error("the header still says a compaction runs after a restart, which no call ever ends")
+	}
+}
+
+// Only a Compact call's running mark left by a previous process is cleared at the first open, so the header stops
+// showing a compaction nothing runs.
+func TestQueue_OpenClearsAPreviousProcesssCompactCallAlone(t *testing.T) {
+	dir := t.TempDir()
+	first, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	openPromptTurn(t, first, "c1", "m-sent")
+	if _, err := first.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Run, c.Compacting = nil, true
+		return true
+	}); err != nil {
+		t.Fatalf("seed the call: %v", err)
+	}
+
+	second, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore (restart): %v", err)
+	}
+	if _, err := second.All(t.Context(), "c1"); err != nil {
+		t.Fatalf("All: %v", err)
+	}
+	if c, _ := second.Get(t.Context(), "c1"); c.Compacting {
+		t.Error("the running mark outlived the process that ran the call")
 	}
 }
 

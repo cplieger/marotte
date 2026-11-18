@@ -91,20 +91,21 @@ func validIdent(s string) bool { return ids.ValidIdent(s) }
 // sessionSpawnOf is o's session door input.
 func sessionSpawnOf(o *marotte.SessionOpts) kascap.SessionSpawn {
 	return kascap.SessionSpawn{
-		MemoryMode:            o.Memory.Mode,
-		MemoryReflection:      o.Memory.Reflection,
-		SpecPlan:              o.Features.SpecPlan,
-		SpecAskClarification:  o.Features.SpecAskClarification,
-		WorkValidation:        o.Features.WorkValidation,
-		Workflows:             o.Features.Workflows,
-		WorkflowCreatorEffort: o.Features.WorkflowCreatorEffort,
-		Messaging:             o.Features.Messaging,
-		Awareness:             o.Features.Awareness,
-		AwarenessMode:         o.Features.AwarenessMode,
-		Presets:               slices.Clone(o.Presets),
-		CustomAgents:          slices.Clone(o.CustomAgents),
-		DisableAutoCompaction: o.DisableAutoCompaction,
-		ProfileAgentTurns:     o.Role == marotte.SessionRoleChat,
+		MemoryMode:              o.Memory.Mode,
+		MemoryReflection:        o.Memory.Reflection,
+		SpecPlan:                o.Features.SpecPlan,
+		SpecAskClarification:    o.Features.SpecAskClarification,
+		WorkValidation:          o.Features.WorkValidation,
+		Workflows:               o.Features.Workflows,
+		WorkflowCreatorEffort:   o.Features.WorkflowCreatorEffort,
+		Messaging:               o.Features.Messaging,
+		Awareness:               o.Features.Awareness,
+		AwarenessMode:           o.Features.AwarenessMode,
+		Presets:                 slices.Clone(o.Presets),
+		CustomAgents:            slices.Clone(o.CustomAgents),
+		DisableAutoCompaction:   o.DisableAutoCompaction,
+		AutoCompactionThreshold: o.AutoCompactionThreshold,
+		ProfileAgentTurns:       o.Role == marotte.SessionRoleChat,
 	}
 }
 

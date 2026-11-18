@@ -9,7 +9,7 @@ import { initPromptInput, sendComposer, setSendState } from "./prompt-input.js";
 import { refreshContextUI } from "./context-ui.js";
 import { setSessions, setActive, upsertHeader } from "./store.js";
 import type { ChatHeader, RunView, Session } from "./types.js";
-import { compactionEntry, runAt, turnEntry } from "./__test-helpers__/run-order.js";
+import { runAt, turnEntry } from "./__test-helpers__/run-order.js";
 
 const CHAT = "c1";
 
@@ -839,20 +839,6 @@ describe("the mid-turn Send", () => {
     expect(midTurn().getAttribute("aria-label")).toBe("Queue for after 3 turns");
     expect(midTurn().getAttribute("data-tooltip")).toBe("Queue for after 3 turns");
     expect(input().placeholder).toBe("Queue a follow-up for after 3 turns…");
-  });
-
-  it("says a message waits for a compaction, and goes back once it ends", () => {
-    withRun(
-      runAt(1, [compactionEntry("compact-1", { after: "running" })], {
-        send: "queue",
-        next_wait: { after: "compaction" },
-      }),
-    );
-    setSendState({ kind: "idle" });
-    expect(input().placeholder).toBe("Queue a message for after the compaction…");
-
-    withRun(runAt(2, []));
-    expect(input().placeholder).toBe("Message Kiro…");
   });
 
   it("sends the box through the composer's send path, then empties it and hides", () => {

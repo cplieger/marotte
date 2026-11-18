@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -157,10 +158,12 @@ type kasDrive struct {
 	// subst rewrites an inbound frame: the capture's prompt tags become the ones this runtime sent.
 	subst [][2]string
 	// early are the frames before the first prompt, held until the prompt opens the chat's session.
-	early   []kasLine
-	mu      sync.Mutex
-	pos     int
-	prompts int
+	early []kasLine
+	// midTurnPresses are the answers to the captured compacts sent while a turn streamed, in order.
+	midTurnPresses []*httptest.ResponseRecorder
+	mu             sync.Mutex
+	pos            int
+	prompts        int
 }
 
 const kasChat marotte.ChatID = "c1"
@@ -246,6 +249,8 @@ func (d *kasDrive) run() {
 			if rec := postCmd(t, d.h, marotte.ClientCommand{Type: marotte.CmdCompact, ChatID: kasChat}); rec.Code != http.StatusOK {
 				t.Fatalf("compact = %d %s", rec.Code, rec.Body.String())
 			}
+			// The press answers while its call runs; the capture's next frame came after KAS answered it.
+			waitForWithin(t, 30*time.Second, func() bool { return !chatRecord(t, d.cs, kasChat).Compacting })
 		case marotte.MethodSessionClose:
 			d.settle()
 			return
@@ -375,6 +380,16 @@ func (d *kasDrive) streamUntilReply(id int64) json.RawMessage {
 		case f.Method == marotte.MethodSessionSteer:
 			d.mu.Unlock()
 			d.steer(f)
+		case f.Method == marotte.MethodSessionCompact:
+			d.mu.Unlock()
+			// The capture sent it once the frames before it arrived.
+			if !d.h.coord.turns.awaitPosition(t.Context(), kasChat, d.br.seqNow()) {
+				t.Fatal("the frames before the press never folded")
+			}
+			rec := postCmd(t, d.h, marotte.ClientCommand{Type: marotte.CmdCompact, ChatID: kasChat})
+			d.mu.Lock()
+			d.midTurnPresses = append(d.midTurnPresses, rec)
+			d.mu.Unlock()
 		default:
 			d.mu.Unlock()
 		}
@@ -466,8 +481,7 @@ func waitForWithin(t *testing.T, budget time.Duration, cond func() bool) {
 // projection of KAS's replay of that session agree: a replay of a completely recorded session
 // adds nothing, and an entry the record lost comes back looking as it did live.
 func TestKASCorpus_LiveAndReplayAgree(t *testing.T) {
-	t.Parallel()
-	for _, name := range []string{"steer", "compact", "delegate"} {
+	for _, name := range []string{"steer", "compact", "compact_inturn", "delegate"} {
 		t.Run(name, func(t *testing.T) {
 			c := loadKASCorpusFile(t, name)
 			d := newKASDrive(t, c.Live)
@@ -491,12 +505,34 @@ func TestKASCorpus_LiveAndReplayAgree(t *testing.T) {
 					t.Errorf("lost %s %q: the replay did not restore it:\n%s", lost.Kind, lost.ID, dumpMerged(merged))
 					continue
 				}
+				back = storedAs(t, d.cs, back)
 				if want, got := rendered(t, lost), rendered(t, back); want != got {
 					t.Errorf("lost %s %q came back as\n  %s\nwant the live\n  %s", lost.Kind, lost.ID, got, want)
 				}
 			}
 		})
 	}
+}
+
+// storedAs is e as the store keeps it: a restored entry is written through the store, which bounds a large tool
+// payload as it bounded the live one.
+func storedAs(t *testing.T, cs *testChatStore, e marotte.Entry) marotte.Entry {
+	t.Helper()
+	const scratch marotte.ChatID = "c-restored"
+	if _, ok := cs.Get(t.Context(), scratch); !ok {
+		seedChat(t, cs, scratch)
+	}
+	open := entryOf(t, e.Turn, 0, marotte.EntryKindTurnOpen, e.Turn, "", marotte.EntryTurnOpen{})
+	if !slices.ContainsFunc(logOf(t, cs, scratch), func(x marotte.Entry) bool { return x.ID == open.ID }) {
+		if err := cs.Append(t.Context(), scratch, &open); err != nil {
+			t.Fatalf("open the restored entry's turn: %v", err)
+		}
+	}
+	if err := cs.Append(t.Context(), scratch, &e); err != nil {
+		t.Fatalf("store the restored %s %q: %v", e.Kind, e.ID, err)
+	}
+	log := logOf(t, cs, scratch)
+	return log[len(log)-1]
 }
 
 // restorable is an entry kind the replay carries; turn brackets are the merge's own spine.
@@ -601,7 +637,7 @@ func entriesOfKind(t *testing.T, log []marotte.Entry, kind marotte.EntryKind) []
 // TestKASCorpus_DecodesWithoutRefusalOrUnknownKind pins that marotte consumes every frame KAS sent
 // it live, refuses none of KAS's requests, and reads each scenario's facts at the level KAS put them.
 func TestKASCorpus_DecodesWithoutRefusalOrUnknownKind(t *testing.T) {
-	for _, name := range []string{"steer", "compact", "delegate", "elicit"} {
+	for _, name := range []string{"steer", "compact", "compact_inturn", "delegate", "elicit"} {
 		t.Run(name, func(t *testing.T) {
 			logs := captureLogs(t)
 			c := loadKASCorpusFile(t, name)
@@ -630,6 +666,9 @@ func TestKASCorpus_DecodesWithoutRefusalOrUnknownKind(t *testing.T) {
 				checkSteerFacts(t, c.Live, log)
 			case "compact":
 				checkCompactionFacts(t, c.Live, log, d)
+			case "compact_inturn":
+				checkCompactionFacts(t, c.Live, log, d)
+				checkInTurnCompactionFacts(t, log, d)
 			case "elicit":
 				checkElicitationFacts(t, c.Live, d)
 			}
@@ -669,6 +708,12 @@ func checkCompactionFacts(t *testing.T, live []kasLine, log []marotte.Entry, d *
 	s, _ := done[0]["summarization"].(map[string]any)
 	sum, _ := s["summary"].(map[string]any)
 	want, _ := sum["conversationSummary"].(string)
+	// The drive rewrites the work dir in the raw frame, where a quoted path inside the summary is escaped, so the
+	// expected summary goes through the same rewrite as JSON.
+	raw, err := json.Marshal(want)
+	if err != nil || json.Unmarshal(rewriteWorkDir(raw, d.workDir), &want) != nil {
+		t.Fatalf("rewrite the work dir in %q", want)
+	}
 	if want == "" {
 		t.Fatal("the captured frame carries no summarization.summary.conversationSummary")
 	}
@@ -683,6 +728,36 @@ func checkCompactionFacts(t *testing.T, live []kasLine, log []marotte.Entry, d *
 	}
 	if chat := chatRecord(t, d.cs, kasChat); chat.CompactionWatermark == "" {
 		t.Errorf("the chat holds no compaction watermark after a compaction")
+	}
+}
+
+// checkInTurnCompactionFacts reads kiro-cli's own compaction inside a turn, with a steer and a Compact press sent while
+// its summary ran: the entry sits in that turn, nothing failed, the steer was read, and the press sent no call, since
+// KAS answers one with {success: false} before its summary lands.
+func checkInTurnCompactionFacts(t *testing.T, log []marotte.Entry, d *kasDrive) {
+	t.Helper()
+	compaction := entriesOfKind(t, log, marotte.EntryKindCompaction)[0]
+	closes := entriesOfKind(t, log, marotte.EntryKindTurnClose)
+	if len(closes) != 1 || compaction.Turn == "" || compaction.Turn != closes[0].Turn {
+		t.Errorf("the compaction is in turn %q, want the one turn's %v", compaction.Turn, closes)
+	}
+	if got := entriesOfKind(t, log, marotte.EntryKindCompactionFailed); len(got) != 0 {
+		t.Errorf("compaction_failed entries:\n%s\nwant none", dumpEntries(got))
+	}
+	if steers := entriesOfKind(t, log, marotte.EntryKindSteer); len(steers) != 1 {
+		t.Errorf("%d steer entries, want the one sent during the summary:\n%s", len(steers), dumpEntries(log))
+	}
+	if len(d.midTurnPresses) != 1 {
+		t.Fatalf("%d presses during the turn, want the capture's one", len(d.midTurnPresses))
+	}
+	if rec := d.midTurnPresses[0]; rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "already being compacted") {
+		t.Errorf("the press during the summary = %d %s, want 409 already being compacted", rec.Code, rec.Body.String())
+	}
+	if n := countCalls(d.br, marotte.MethodSessionCompact); n != 0 {
+		t.Errorf("compact calls = %d, want none: the summary was running", n)
+	}
+	if chatRecord(t, d.cs, kasChat).Compacting {
+		t.Error("the header still shows a compaction after the summary landed")
 	}
 }
 

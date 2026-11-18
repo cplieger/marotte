@@ -76,7 +76,7 @@ var kasTransitions = [nKASStates][nKASInputs]kasCell{
 type kasPermits struct {
 	// admit: take an admission reservation, which opens a turn, or send an admitted prompt's session/prompt.
 	admit bool
-	// sessionCall: a closer's model switch or compaction, or a parked model pick's apply.
+	// sessionCall: a closer's model switch, or a parked model pick's apply.
 	sessionCall bool
 }
 

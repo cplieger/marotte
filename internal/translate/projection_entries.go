@@ -397,8 +397,9 @@ func (p *EntryProjection) ingestToolCall(raw json.RawMessage) {
 	}
 	// KAS announces a call live only once it runs or awaits approval, and replays the state it recorded
 	// at that moment: one replayed already settled reached the live chat as a bare update, which the
-	// live fold drops, so its update finds no call here either.
-	if tc.Status.Terminal() {
+	// live fold drops, so its update finds no call here either. A call that asked was on the live chat
+	// with its ask, though KAS records it only once it settled.
+	if tc.Status.Terminal() && !p.facts.footer.Asked(tc.ToolCallID) {
 		return
 	}
 	p.flushUser()

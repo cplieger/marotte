@@ -60,6 +60,7 @@ func cmdRewindChat(
 	runq runQueue,
 	runs runCutter,
 	bus broadcaster,
+	streaks summaryStreakEnder,
 	cmd *marotte.ClientCommand,
 ) (any, error) {
 	if err := requireChatID(cmd); err != nil {
@@ -125,6 +126,7 @@ func cmdRewindChat(
 		translate.PublishAppended(ctx, bus, cmd.ChatID, "", m)
 	}
 	translate.PublishAppended(ctx, bus, cmd.ChatID, "", record)
+	streaks.EndSummaryStreak(cmd.ChatID)
 
 	slog.Info("chat rewound",
 		"chat", cmd.ChatID, "message", p.MessageID, "turn", target.Turn,

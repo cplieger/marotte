@@ -221,7 +221,7 @@ type bus struct {
 	settleNotice func(subj marotte.PushSubject, ask string)
 	// ownStopped reports a stop requested during the chat's current turn (turnRegistry.ownStopped).
 	ownStopped func(marotte.ChatID) bool
-	// askSettled hears that one of a chat session's asks settled (autoCompactor.askSettled).
+	// askSettled hears that one of a chat session's asks settled (bridgeCoordinator.finishAskSettled).
 	askSettled func(marotte.ChatID)
 	// observe sees every event before it is published (Runs.noteRunEvent); it must not block.
 	observe func(*marotte.ServerEvent)
@@ -585,17 +585,11 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	h.coord.reconcileSessions = func(ctx context.Context, deadline time.Time) {
 		h.reconcileSessionSettings(ctx, "session settings", deadline)
 	}
-	h.coord.autoCompact = newAutoCompactor(h.coord, h.compactionPolicy, h.coord.chatHasAsk,
-		func(ctx context.Context, chatID marotte.ChatID, rs command.RunStop) error {
-			return h.dispatcher.CarryOutStop(ctx, chatID, rs)
-		})
+	h.coord.compact = newCompactPresses(h.coord)
 	sseP.stageStatusDesc = h.coord.turns.stageStatusDescription
 	sseP.settleNotice = h.coord.settleNotice
 	sseP.ownStopped = h.coord.turns.ownStopped
-	sseP.askSettled = func(chatID marotte.ChatID) {
-		h.coord.autoCompact.askSettled(chatID)
-		h.coord.finishAskSettled(chatID)
-	}
+	sseP.askSettled = h.coord.finishAskSettled
 	h.coord.readBound = newReadBound(h.chatStore.ReadBound, runs.RunReadBound, noticeRunBoundTimeout)
 	sseP.runAsk = runs
 	// Built here because coord and the ignore matcher do not exist at the literal. Workspace-global: the
@@ -948,10 +942,4 @@ func (rt *Runtime) HeldSessions(context.Context) ([]string, error) {
 // owner. While config.json cannot be read it answers the last readable generation, or the defaults when none was.
 func (rt *Runtime) configDocument(ctx context.Context) (configDocument, docSource) {
 	return rt.configDoc.read(ctx, rt.lifecycle.configDir, readConfigDocument)
-}
-
-// compactionPolicy is marotte's own compactor's switch and point, from the same document a session door reads.
-func (rt *Runtime) compactionPolicy(ctx context.Context) (enabled bool, pct int) {
-	doc, _ := rt.configDocument(ctx)
-	return doc.session.autoCompactEnabled, doc.session.autoCompactPct
 }

@@ -338,22 +338,6 @@ func TestHandleSessionInfoUpdate_ActivityReachesTheTurnLifecycle(t *testing.T) {
 	}
 }
 
-// The compactor hears every live reading, a sub-point move the stored usage drops included, from both usage channels.
-func TestPersistUsage_EveryReadingReachesTheObserver(t *testing.T) {
-	deps, _, _ := depsWithStore(t, "c1")
-	tr := New(rolesOf(deps))
-
-	tr.HandleUsageUpdate(t.Context(), "c1", mustJSON(t, map[string]any{"size": 100, "used": 50}))
-	tr.HandleUsageUpdate(t.Context(), "c1", mustJSON(t, map[string]any{"size": 1000, "used": 504}))
-	tr.HandleSessionInfoUpdate(t.Context(), "c1", mustJSON(t, map[string]any{"_meta": map[string]any{"kiro": map[string]any{
-		"kind": "context_usage", "contextUsage": map[string]any{"usagePercentage": 40.0},
-	}}}), FrameAttribution{})
-
-	if want := []float64{50, 50.4, 40}; !slices.Equal(deps.usageReadings, want) {
-		t.Errorf("observed readings = %v, want %v", deps.usageReadings, want)
-	}
-}
-
 // publishedUsageInfo is KAS publishing its stored figure (publishContextUsage: a prompt's end, a refresh, a load),
 // which carries the summarization threshold nested and flat; a model response's own reading carries none.
 func publishedUsageInfo(t *testing.T, pct float64) json.RawMessage {
@@ -364,9 +348,9 @@ func publishedUsageInfo(t *testing.T, pct float64) json.RawMessage {
 	}}})
 }
 
-// KAS's published figure is its stored one, which a compaction leaves at the context before it: it never reaches
-// the compactor, and it is shown only while no compaction waits on a live reading. A replayed reading is history.
-func TestContextUsage_APublishedFigureFeedsNoCompactor(t *testing.T) {
+// KAS's published figure is its stored one, which a compaction leaves at the context before it: it is shown only
+// while no compaction waits on a live reading. A replayed reading is history, shown the same way.
+func TestContextUsage_APublishedOrReplayedFigureIsShownWithNoCompactionWaiting(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 
@@ -375,17 +359,13 @@ func TestContextUsage_APublishedFigureFeedsNoCompactor(t *testing.T) {
 		"kind": "context_usage", "replay": true, "contextUsage": map[string]any{"usagePercentage": 30.0},
 	}}}), FrameAttribution{})
 
-	if len(deps.usageReadings) != 0 {
-		t.Errorf("observed readings = %v, want none for a published or replayed figure", deps.usageReadings)
-	}
 	if c, _ := store.Get(t.Context(), "c1"); c.Usage.ContextPct != 30 || !c.Usage.HasRealData {
 		t.Errorf("usage = %+v, want the newest figure shown (30) with no compaction waiting", c.Usage)
 	}
 }
 
-// KAS sends a response's reading twice, the plain frame then a twin with its breakdown, and the twin can land after
-// the next response's frames: only the plain frame reaches the compactor, while the twin's figure is still shown.
-func TestContextUsage_ABreakdownTwinFeedsNoCompactor(t *testing.T) {
+// KAS sends a response's reading twice, the plain frame then a twin with its breakdown: the twin's figure is shown.
+func TestContextUsage_ABreakdownTwinsFigureIsShown(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 
@@ -395,9 +375,6 @@ func TestContextUsage_ABreakdownTwinFeedsNoCompactor(t *testing.T) {
 		"breakdown": map[string]any{"tools": map[string]any{"tokens": 7131, "percent": 0.7}},
 	}}}), FrameAttribution{})
 
-	if want := []float64{20}; !slices.Equal(deps.usageReadings, want) {
-		t.Errorf("observed readings = %v, want only the plain frame's %v", deps.usageReadings, want)
-	}
 	if c, _ := store.Get(t.Context(), "c1"); c.Usage.ContextPct != 40 {
 		t.Errorf("usage = %+v, want the twin's figure (40) shown", c.Usage)
 	}
@@ -427,9 +404,6 @@ func TestContextUsage_ACompactionWaitsForALiveReading(t *testing.T) {
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", publishedUsageInfo(t, 33), FrameAttribution{})
 	if c, _ := store.Get(t.Context(), "c1"); c.Usage.ContextPct != 33 {
 		t.Errorf("usage after a later published figure = %+v, want 33 shown", c.Usage)
-	}
-	if want := []float64{31}; !slices.Equal(deps.usageReadings, want) {
-		t.Errorf("observed readings = %v, want only the live %v", deps.usageReadings, want)
 	}
 }
 

@@ -148,19 +148,6 @@ func TestRewindChat_AStalledEngineAnswersStillApplyingAndTheRevertIsRecorded(t *
 	})
 }
 
-// A compaction kiro-cli runs after the browser stops waiting is answered still_applying rather than as a failed call.
-func TestCompact_AStalledEngineAnswersStillApplying(t *testing.T) {
-	answerBudgetOf(t, 50*time.Millisecond)
-	h, _, br := newTestHub()
-	t.Cleanup(func() { shutdownHub(t, h) })
-	openChat(t, h, "c1")
-	release := holdCall(t, br, marotte.MethodSessionCompact)
-
-	res := postCmdWithin(t, h, marotte.ClientCommand{Type: marotte.CmdCompact, ChatID: "c1"})
-	assertCommandStillApplying(t, res)
-	release()
-}
-
 // A model switch whose tier stop kiro-cli applies after the browser stops waiting is answered still_applying, and
 // the stop lands with the switch: the stop runs inside the switch, so only the switch's request may answer for it.
 func TestSwitchModel_AStalledEngineAnswersStillApplyingAndTheStopLands(t *testing.T) {

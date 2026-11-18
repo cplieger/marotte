@@ -28,10 +28,6 @@ func fold(id string, admits bool) RunEntry {
 	}
 }
 
-func compaction(s RunEntryState) RunEntry {
-	return RunEntry{ID: "compact-1", Kind: RunKindCompaction, State: s, Origin: RunFromRequest}
-}
-
 func runEntry() RunEntry {
 	return RunEntry{ID: "run-1", Kind: RunKindTurn, State: RunRunning, Origin: RunFromRun}
 }
@@ -98,54 +94,6 @@ func TestRunViewOf(t *testing.T) {
 			},
 		},
 		{
-			name: "a closing head with a compaction pending",
-			entries: []RunEntry{
-				turn("A", RunClosing), compaction(RunPending), row("m-q1", RunPending),
-				row("m-q2", RunPending),
-			},
-			want: want{
-				send: SendQueue, next: turns(2), unread: waitOf(WaitCompaction),
-				waits: map[string]RunWait{
-					"compact-1": waitOf(waitNext), "m-q1": waitOf(WaitCompaction),
-					"m-q2": turns(1),
-				},
-				arrows:  map[string]SendNowKind{"m-q2": SendNowAfterCompaction},
-				carries: "m-q1",
-			},
-		},
-		{
-			name: "a running turn with a compaction pending",
-			entries: []RunEntry{
-				turn("A", RunRunning), compaction(RunPending), row("m-q1", RunPending),
-				row("m-q2", RunPending),
-			},
-			want: want{
-				send: SendSteer, cancel: "A", next: turns(3), unread: waitOf(WaitCompaction),
-				waits:   map[string]RunWait{"m-q1": waitOf(WaitCompaction), "m-q2": turns(2)},
-				arrows:  map[string]SendNowKind{"m-q2": SendNowStopThenCompaction},
-				carries: "m-q1",
-			},
-		},
-		{
-			name:    "a running compaction",
-			entries: []RunEntry{compaction(RunRunning), row("m-new", RunPending), row("m-q0", RunPaused)},
-			want: want{
-				send: SendQueue, next: turns(1), unread: waitOf(WaitCompaction),
-				waits:   map[string]RunWait{"compact-1": waitOf(waitRunning), "m-new": waitOf(WaitCompaction), "m-q0": turns(1)},
-				arrows:  map[string]SendNowKind{"m-q0": SendNowAfterCompaction},
-				carries: "m-new",
-			},
-		},
-		{
-			name:    "kiro-cli's turn under a compaction reads as if the compaction stood behind it",
-			entries: []RunEntry{compaction(RunRunning), wire("w", RunRunning), row("m-q1", RunPending)},
-			want: want{
-				send: SendQueue, cancel: "w", next: turns(2), unread: waitOf(WaitCompaction),
-				waits:   map[string]RunWait{"w": waitOf(waitRunning), "m-q1": waitOf(WaitCompaction)},
-				carries: "m-q1",
-			},
-		},
-		{
 			name: "a wire turn beside a taken turn counts two turns", entries: []RunEntry{
 				wire("w", RunRunning), row("m-1", RunStarting),
 				row("m-q1", RunPending),
@@ -156,25 +104,6 @@ func TestRunViewOf(t *testing.T) {
 				arrows:  map[string]SendNowKind{"m-q1": sendNowNow},
 				carries: "m-1",
 			},
-		},
-		{
-			name: "a fold turn ahead of its compaction before the claim", entries: []RunEntry{
-				fold("f", true), compaction(RunStarting),
-				row("m-new", RunPending),
-			},
-			want: want{
-				send: SendQueue, cancel: "f", next: turns(1), unread: waitOf(WaitCompaction),
-				waits:   map[string]RunWait{"compact-1": waitOf(waitStarting), "m-new": waitOf(WaitCompaction)},
-				carries: "m-new",
-			},
-		},
-		{
-			name: "a fold turn ahead of its compaction after the claim cancels nothing", entries: []RunEntry{func() RunEntry {
-				e := fold("f", true)
-				e.State = RunClosing
-				return e
-			}(), compaction(RunStarting)},
-			want: want{send: SendQueue, next: waitOf(WaitCompaction), unread: waitOf(WaitCompaction)},
 		},
 		{
 			name: "a yielding head that admits prompts", entries: []RunEntry{fold("f", true)},
@@ -208,23 +137,6 @@ func TestRunViewOf(t *testing.T) {
 			want: want{
 				send: SendPrompt, next: waitOf(waitNext), unread: waitOf(waitNext),
 				waits: map[string]RunWait{"m-h": waitOf(waitHeld)}, arrows: map[string]SendNowKind{},
-			},
-		},
-		{
-			name: "the failsafe's compaction and resume behind the turn it stopped",
-			entries: []RunEntry{
-				turn("A", RunStopping), func() RunEntry { e := compaction(RunPending); e.Origin = RunFromFailsafe; return e }(),
-				failsafeResume(), row("m-q1", RunPaused), row("m-q2", RunPaused),
-			},
-			want: want{
-				send: SendQueue, next: turns(1), unread: waitOf(WaitCompaction),
-				waits: map[string]RunWait{
-					"compact-1": waitOf(waitNext), "m-resume": waitOf(WaitCompaction), "m-q1": turns(1), "m-q2": turns(2),
-				},
-				arrows: map[string]SendNowKind{
-					"m-q1": SendNowAfterCompaction, "m-q2": SendNowAfterCompaction,
-				},
-				carries: "m-resume",
 			},
 		},
 		{
@@ -497,7 +409,6 @@ func TestRunEntryView_WaitingToSend(t *testing.T) {
 		{name: "a steer in kiro-cli", view: RunEntryView{RunEntry: d("d", RunInKAS)}, want: false},
 		{name: "a steer in flight", view: inFlight, want: false},
 		{name: "a starting row", view: RunEntryView{RunEntry: u("u", RunStarting, RunWantPrompt)}, want: false},
-		{name: "a pending compaction", view: RunEntryView{RunEntry: compaction(RunPending)}, want: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := tc.view.WaitingToSend(); got != tc.want {
@@ -538,7 +449,6 @@ func TestWantFor(t *testing.T) {
 		{name: "a labelled send", entries: list(turn("A", RunRunning)), kind: SendLabelled, want: RunWantPrompt},
 		{name: "a queue_prompt", entries: list(turn("A", RunRunning)), kind: SendQueuePrompt, want: RunWantPrompt},
 		{name: "queue mode", entries: list(turn("A", RunRunning)), mode: InterruptQueue, want: RunWantPrompt},
-		{name: "behind a running compaction", entries: list(compaction(RunRunning)), want: RunWantPrompt},
 		{name: "against a stopping turn", entries: list(turn("A", RunStopping)), want: RunWantPrompt},
 		{name: "against a starting turn", entries: list(turn("A", RunStarting)), want: RunWantPrompt},
 		{name: "against a turn that takes no steers", entries: list(notSteerable), want: RunWantPrompt},
@@ -570,11 +480,11 @@ func TestSanitizeRun(t *testing.T) {
 	next := row("m-n", RunPending)
 	next.Next = true
 	in := []RunEntry{
-		wire("w", RunRunning), compaction(RunPending), opened, taken, row("m-q1", RunPending),
+		wire("w", RunRunning), opened, taken, row("m-q1", RunPending),
 		// A kind an earlier build stored and this one no longer writes.
 		{ID: "u-1", Kind: "unread", State: RunPending, Row: &QueuedPrompt{ID: "u-1"}},
 		{ID: "r-1", Kind: RunKindRetry, State: RunPending, Row: &QueuedPrompt{ID: "r-1"}},
-		next, row("m-q0", RunPaused), row("m-h", RunHeld), carried, failsafeResume(),
+		next, row("m-q0", RunPaused), row("m-h", RunHeld), carried,
 	}
 	ids := func(es []RunEntry) (out []string) {
 		for _, e := range es {
@@ -701,8 +611,7 @@ func TestSanitizeRun_KeepsTheFailedLaunchOnAPausedWake(t *testing.T) {
 	}
 }
 
-// KAS re-prompts what a session/cancel cleared whoever sent the cancel, so marotte's failsafe stop reads as the
-// reader's does; a teardown's cancel is followed by the session's close.
+// KAS re-prompts what the reader's session/cancel cleared; a teardown's cancel is followed by the session's close.
 func TestTurnStopCause_KASRewakes(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -712,28 +621,11 @@ func TestTurnStopCause_KASRewakes(t *testing.T) {
 		{name: "no stop", cause: TurnStopNone, want: false},
 		{name: "the reader's stop", cause: TurnStopReader, want: true},
 		{name: "a teardown", cause: TurnStopTeardown, want: false},
-		{name: "the failsafe's stop", cause: TurnStopCompaction, want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := tc.cause.KASRewakes(); got != tc.want {
 				t.Errorf("KASRewakes = %v, want %v", got, tc.want)
 			}
 		})
-	}
-}
-
-// The resume is marotte's prompt, never a message of the reader's: the queue's caps and drafts never count it.
-func TestRunRows_LeavesTheResumeOut(t *testing.T) {
-	entries := []RunEntry{failsafeResume(), row("m-q1", RunPaused)}
-	rows := RunRows(entries)
-	if len(rows) != 1 || rows[0].ID != "m-q1" {
-		t.Errorf("rows = %+v, want only m-q1", rows)
-	}
-}
-
-func failsafeResume() RunEntry {
-	return RunEntry{
-		ID: "m-resume", Kind: RunKindResume, State: RunPending, Origin: RunFromFailsafe,
-		Row: &QueuedPrompt{ID: "m-resume", Text: "continue"},
 	}
 }

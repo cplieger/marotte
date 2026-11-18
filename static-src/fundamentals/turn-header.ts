@@ -38,10 +38,6 @@ export interface TurnHeaderData {
   /** The program that sent the request through the API: a "Sent by" line over it, and the header reads as that
    *  program's request, not the user's. Undefined for the user's own. */
   caller?: Caller | undefined;
-  /** marotte sent the request on its own: a "Sent by marotte" line over it, as an API caller's has. */
-  automatic?: boolean | undefined;
-  /** The turn's cancelled close is marotte's failsafe stop, not the reader's, so the dot says marotte stopped it. */
-  stoppedToCompact?: boolean | undefined;
   /** Files the user attached to this request. Drawn as the composer's own pill,
    *  read-only (a sent attachment cannot be un-sent), and OUTSIDE the clamp. */
   attachments: readonly AttachmentRef[];
@@ -101,7 +97,6 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
 }
 
 const FOLD_LABEL = "Expand or collapse this turn";
-const STOPPED_TO_COMPACT_TOOLTIP = "marotte stopped this turn to compact the context";
 
 /** The request band alone, for a turn drawn without card chrome: a run step's turn that a message resumed,
  *  headed by its Sent-by line when the reader did not send it. */
@@ -135,10 +130,7 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
   const dot = header.querySelector<HTMLElement>(":scope > .turn-head-row > .turn-dot");
   if (dot !== null) {
     dot.setAttribute("aria-label", OUTCOME_LABEL[d.outcome]);
-    dot.setAttribute(
-      "data-tooltip",
-      d.stoppedToCompact === true ? STOPPED_TO_COMPACT_TOOLTIP : OUTCOME_TOOLTIP[d.outcome],
-    );
+    dot.setAttribute("data-tooltip", OUTCOME_TOOLTIP[d.outcome]);
   }
 
   const time = header.querySelector<HTMLTimeElement>(":scope > .turn-head-row > .turn-ts");

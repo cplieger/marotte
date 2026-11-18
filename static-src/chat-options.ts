@@ -312,16 +312,15 @@ function mergeRow(): HTMLElement {
   return row;
 }
 
-/** The compact row's hints: the empty chat's is the one disabled variant, and the busy one says the compaction waits. */
+/** The compact row's hints: each disabled variant says when the row comes back. */
 const COMPACT_HINT = "Summarize the history so far to free up context";
 const COMPACT_HINT_EMPTY = "Send a message first. There is no session to compact yet";
-const COMPACT_HINT_BUSY =
-  "Summarize the history once this turn ends; it waits above the message box";
+const COMPACT_HINT_BUSY = "Available once this turn ends";
+const COMPACT_HINT_RUNNING = "Compacting the context now";
 
 /**
- * Compact this chat's context (the action `/compact` dispatches). Disabled only with no conversation yet; during a turn
- * the server queues it for the turn's end, and its 409 covers the rest. Reports no completion: the dock shows it
- * running, and the transcript's `compaction` entry marks where it landed.
+ * Compact this chat's context (the action `/compact` dispatches), refused as `compactRefusal` refuses. Reports no
+ * completion: the dock shows the call running, and the transcript's `compaction` entry marks where it landed.
  */
 function compactRow(): HTMLElement {
   const { row, btn, hint } = actionRow({
@@ -350,12 +349,19 @@ function compactRow(): HTMLElement {
   effect(() => {
     const session = activeSession.value;
     const empty = isEmptyChat(session);
+    const running = session?.compacting === true;
     const busy = session !== undefined && watchBusy(session.id);
-    const nextHint = empty ? COMPACT_HINT_EMPTY : busy ? COMPACT_HINT_BUSY : COMPACT_HINT;
+    const nextHint = empty
+      ? COMPACT_HINT_EMPTY
+      : running
+        ? COMPACT_HINT_RUNNING
+        : busy
+          ? COMPACT_HINT_BUSY
+          : COMPACT_HINT;
     if (hint.textContent === nextHint) {
       return;
     }
-    btn.disabled = empty;
+    btn.disabled = nextHint !== COMPACT_HINT;
     hint.textContent = nextHint;
   });
 

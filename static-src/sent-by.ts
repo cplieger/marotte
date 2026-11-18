@@ -13,20 +13,12 @@ export function sentBy(caller: Caller): string {
   return `Sent by ${callerName(caller)}`;
 }
 
-/** The sender fields a prompt and a search hit carry: an API caller's, or `automatic` for a prompt marotte sent
- *  on its own (the resume after a failsafe compaction). */
+/** The sender field a prompt and a search hit carry: an API caller's. */
 export interface Sender {
   readonly caller?: Caller | undefined;
-  readonly automatic?: boolean | undefined;
 }
-
-/** The Sent-by words of a prompt marotte sent on its own. */
-export const SENT_BY_MAROTTE = "Sent by marotte";
 
 /** The Sent-by words for a message the reader did not write; undefined for the reader's own. */
 export function senderWords(s: Sender | undefined): string | undefined {
-  if (s?.automatic === true) {
-    return SENT_BY_MAROTTE;
-  }
   return s?.caller === undefined ? undefined : sentBy(s.caller);
 }

@@ -55,9 +55,6 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID marotte.ChatID, 
 	} else {
 		sealed, err = turn.ToolCall(ctx, lane, &entry)
 	}
-	if lane == "" && attr.ChatOwned() {
-		t.usage.ObserveToolCall(chatID)
-	}
 	t.publishSealed(ctx, sc, sealed)
 	if err != nil {
 		appendFailed(sc, "tool_call", err)

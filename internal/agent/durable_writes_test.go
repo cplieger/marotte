@@ -77,10 +77,10 @@ var durableWriteSites = []durableSite{{
 	calls:   []string{"AppendBetweenTurns"},
 	because: "the context_reset entry telling the reader the agent forgot the turns above it, which is on no KAS wire",
 }, {
-	file:    "internal/agent/auto_compact.go",
-	fn:      "recordCompactionFailed",
-	calls:   []string{"AppendBetweenTurns"},
-	because: "the compaction_failed entry a refused attempt leaves, which is on no KAS wire",
+	file:    "internal/agent/compact_press.go",
+	fn:      "markCompacting",
+	calls:   []string{"Mutate"},
+	because: "the header's Compacting mark, whose clear runs as the chat's life ends; a lost clear shows a compaction running until the next process",
 }, {
 	file:    "internal/agent/load_projection.go",
 	fn:      "swapProjectedTranscript",

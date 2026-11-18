@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"slices"
@@ -38,13 +37,6 @@ func openTurnsListed(t *testing.T, h *Runtime) {
 	}
 }
 
-// compactBehind asks for a compaction behind what is live and waits until the list shows it pending.
-func compactBehind(t *testing.T, h *Runtime, cs *testChatStore) {
-	t.Helper()
-	go func() { _, _ = h.RequestCompact(context.WithoutCancel(t.Context()), "c1") }()
-	waitFor(t, func() bool { return slices.Contains(runStates(t, cs, "c1"), "compaction pending") })
-}
-
 // cancelHead presses Cancel on the entry the header names and waits for n session/cancel writes in all.
 func cancelHead(t *testing.T, h *Runtime, cs *testChatStore, br *fakeBridge, n int) {
 	t.Helper()
@@ -56,13 +48,6 @@ func cancelHead(t *testing.T, h *Runtime, cs *testChatStore, br *fakeBridge, n i
 		t.Fatalf("cancel = %d %s", rec.Code, rec.Body.String())
 	}
 	waitFor(t, func() bool { return len(br.notified(marotte.MethodCancel)) == n })
-}
-
-// compactAfter reports whether the compaction was written after a session/cancel.
-func compactAfterCancel(br *fakeBridge) bool {
-	w := orderWrites(br)
-	c, k := slices.Index(w, marotte.MethodCancel), slices.Index(w, marotte.MethodSessionCompact)
-	return c >= 0 && k > c
 }
 
 // wireOpen delivers a bracketed turn_start and waits for kiro-cli's turn on the list.
@@ -79,8 +64,8 @@ func foldOpen(t *testing.T, cs *testChatStore, br *fakeBridge) {
 	waitFor(t, func() bool { return slices.Contains(runStates(t, cs, "c1"), "wire running") })
 }
 
-// Every path that opens, folds, closes or reports a turn, with the entry it becomes, how that entry ends, what
-// Cancel writes for it and where a compaction asked for behind it goes.
+// Every path that opens, folds, closes or reports a turn, with the entry it becomes, how that entry ends and what
+// Cancel writes for it.
 func TestRunOrder_TurnPaths(t *testing.T) {
 	t.Run("a taken entry's prompt turn", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
@@ -91,16 +76,9 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		}
 		waitFor(t, func() bool { return slices.Equal(runStates(t, cs, "c1"), []string{"m-a running"}) })
 		openTurnsListed(t, h)
-		compactBehind(t, h, cs)
-		if got := runStates(t, cs, "c1"); !slices.Equal(got, []string{"m-a running", "compaction pending"}) {
-			t.Errorf("list = %v, want [m-a running, compaction pending]", got)
-		}
 		cancelHead(t, h, cs, br, 1)
 		open(0)
-		waitForCall(t, br, marotte.MethodSessionCompact)
-		if !compactAfterCancel(br) {
-			t.Errorf("writes = %v, want the compaction after the turn's close", orderWrites(br))
-		}
+		waitFor(t, func() bool { return !listLive(h, "c1") })
 	})
 
 	t.Run("a bracketed wire turn", func(t *testing.T) {
@@ -110,15 +88,9 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 			t.Errorf("list = %+v, want one steerable wire turn", v.Entries)
 		}
 		openTurnsListed(t, h)
-		compactBehind(t, h, cs)
 		cancelHead(t, h, cs, br, 1)
-		staysFalse(t, 100*time.Millisecond, func() bool { return slices.Contains(br.callLog(), marotte.MethodSessionCompact) },
-			"the compaction was written while kiro-cli's turn was open")
 		br.deliver(newTurnEndMsg("cancelled"))
-		waitForCall(t, br, marotte.MethodSessionCompact)
-		if !compactAfterCancel(br) {
-			t.Errorf("writes = %v, want the compaction after the turn's close", orderWrites(br))
-		}
+		waitFor(t, func() bool { return !listLive(h, "c1") })
 	})
 
 	t.Run("a fold-opened wire turn", func(t *testing.T) {
@@ -139,19 +111,10 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		if got := runStates(t, cs, "c1"); !slices.Equal(got, []string{"wire running", "m-q1 starting", "m-q2 pending"}) {
 			t.Errorf("list = %v, want [wire running, m-q1 starting, m-q2 pending]", got)
 		}
-		compactBehind(t, h, cs)
-		if got := runStates(t, cs, "c1"); !slices.Equal(got, []string{"wire running", "m-q1 starting", "compaction pending", "m-q2 pending"}) {
-			t.Errorf("list = %v, want the compaction behind the taken row", got)
-		}
 		cancelHead(t, h, cs, br, 1)
 		close(releaseOpen)
 		br.deliver(newTurnEndMsg("cancelled"))
 		open(1)
-		waitForCall(t, br, marotte.MethodSessionCompact)
-		w := orderWrites(br)
-		if n := countOf(w[:slices.Index(w, marotte.MethodSessionCompact)], marotte.MethodPrompt); n != 3 {
-			t.Errorf("writes = %v, want the compaction after m-q1's prompt", w)
-		}
 	})
 
 	t.Run("a wire turn beside a sent unbound prompt", func(t *testing.T) {
@@ -164,53 +127,16 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		br.deliver(newPromptTurnStartMsg("another-tag"))
 		waitFor(t, func() bool { return slices.Equal(runStates(t, cs, "c1"), []string{"wire running", "m-1 running"}) })
 		openTurnsListed(t, h)
-		compactBehind(t, h, cs)
-		if got := runStates(t, cs, "c1"); !slices.Equal(got, []string{"wire running", "m-1 running", "compaction pending"}) {
-			t.Errorf("list = %v, want the compaction behind the prompt", got)
-		}
 		cancelHead(t, h, cs, br, 1)
 		open(0)
-	})
-
-	t.Run("a wire turn under a running compaction", func(t *testing.T) {
-		h, cs, br, release := compactingHubIn(t, "/tmp/work")
-		wireOpen(t, cs, br)
-		if got := runStates(t, cs, "c1"); !slices.Equal(got, []string{"compaction running", "wire running"}) {
-			t.Errorf("list = %v, want [compaction running, wire running]", got)
-		}
-		openTurnsListed(t, h)
-		cancelHead(t, h, cs, br, 1)
-		release()
-	})
-
-	t.Run("a wire turn before a taken compaction is written", func(t *testing.T) {
-		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
-		entered, releaseStart := make(chan struct{}), make(chan struct{})
-		withCompactionStartHook(t, h, func(marotte.ChatID) {
-			close(entered)
-			<-releaseStart
-		})
-		go func() { _, _ = h.RequestCompact(context.WithoutCancel(t.Context()), "c1") }()
-		<-entered
-		wireOpen(t, cs, br)
-		close(releaseStart)
-		if got := runStates(t, cs, "c1"); !slices.Equal(got, []string{"wire running", "compaction pending"}) {
-			t.Errorf("list = %v, want [wire running, compaction pending]", got)
-		}
-		cancelHead(t, h, cs, br, 1)
-		if got := compactionEntry(t, cs, "c1").State; got != marotte.RunPending {
-			t.Errorf("compaction after the cancel = %q, want pending", got)
-		}
-		br.deliver(newTurnEndMsg("cancelled"))
-		waitForCall(t, br, marotte.MethodSessionCompact)
 	})
 
 	t.Run("a wire turn in a closing entry's tail replaces it", func(t *testing.T) {
 		_, cs, br, turnID := heldCleanClose(t)
 		wireOpen(t, cs, br)
 		got := runStates(t, cs, "c1")
-		if slices.Contains(got, turnID+" closing") || !slices.Equal(got, []string{"wire running", "compaction pending"}) {
-			t.Errorf("list = %v, want [wire running, compaction pending]", got)
+		if slices.Contains(got, turnID+" closing") || !slices.Equal(got, []string{"wire running"}) {
+			t.Errorf("list = %v, want [wire running]", got)
 		}
 	})
 
@@ -338,17 +264,13 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 	})
 
 	t.Run("the life's end keeps only rows", func(t *testing.T) {
-		for _, shape := range []string{"a compaction running", "kiro-cli's turn with a row behind it", "a taken row answered queued"} {
+		for _, shape := range []string{"kiro-cli's turn with a row behind it", "a taken row answered queued"} {
 			t.Run(shape, func(t *testing.T) {
 				h, cs, br, tab := closeTabHub(t)
 				t.Cleanup(func() { shutdownHub(t, h) })
 				br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
 				runPrompt(t, h, cs, "c1", "m-first")
 				switch shape {
-				case "a compaction running":
-					holdCall(t, br, marotte.MethodSessionCompact)
-					go func() { _, _ = h.RequestCompact(context.WithoutCancel(t.Context()), "c1") }()
-					waitForCall(t, br, marotte.MethodSessionCompact)
 				case "kiro-cli's turn with a row behind it":
 					wireOpen(t, cs, br)
 					queueDuring(t, h, "m-q1")
@@ -388,7 +310,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 			h.coord.turns.forget("c1")
 			if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 				c.Run = []marotte.RunEntry{
-					{ID: "compact-9", Kind: marotte.RunKindCompaction, State: marotte.RunRunning, Origin: marotte.RunFromRequest},
+					{ID: "revert-9", Kind: marotte.RunKindRevert, State: marotte.RunRunning, Origin: marotte.RunFromRewind},
 					{
 						ID: "m-q1", Kind: marotte.RunKindRow, State: marotte.RunPaused, Origin: marotte.RunFromQueue,
 						Row: &marotte.QueuedPrompt{ID: "m-q1", Text: "kept"},
@@ -472,18 +394,9 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		h.coord.WireTurnActivity("c1", true)
 		waitFor(t, func() bool { return slices.Equal(runStates(t, cs, "c1"), []string{"run running"}) })
-		compactBehind(t, h, cs)
-		if got := runStates(t, cs, "c1"); !slices.Equal(got, []string{"run running", "compaction pending"}) {
-			t.Errorf("list = %v, want [run running, compaction pending]", got)
-		}
 		cancelHead(t, h, cs, br, 1)
-		staysFalse(t, 100*time.Millisecond, func() bool { return slices.Contains(br.callLog(), marotte.MethodSessionCompact) },
-			"the compaction was written while kiro-cli reported its run")
 		h.coord.WireTurnActivity("c1", false)
-		waitForCall(t, br, marotte.MethodSessionCompact)
-		if !compactAfterCancel(br) {
-			t.Errorf("writes = %v, want the compaction once kiro-cli reported idle", orderWrites(br))
-		}
+		waitFor(t, func() bool { return len(runStates(t, cs, "c1")) == 0 })
 	})
 
 	t.Run("kiro-cli's run report beside a live entry changes nothing", func(t *testing.T) {
@@ -548,22 +461,6 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 			t.Errorf("list with a step turn hosted = %v, want empty", got)
 		}
 		h.coord.turns.endStep("c1", "t-step")
-	})
-
-	t.Run("a reader's stop by id leaves a pending compaction pending", func(t *testing.T) {
-		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
-		open := promptGates(t, br)
-		if code := postPrompt(t, h, "a"); code != http.StatusOK {
-			t.Fatalf("Setup: prompt = %d", code)
-		}
-		waitFor(t, func() bool { return slices.Equal(runStates(t, cs, "c1"), []string{"m-a running"}) })
-		compactBehind(t, h, cs)
-		wantStoppedNothing(t, postCmd(t, h, cancelCmd(`{"target":"m-first"}`)))
-		cancelHead(t, h, cs, br, 1)
-		if got := compactionEntry(t, cs, "c1").State; got != marotte.RunPending {
-			t.Errorf("compaction after the stop = %q, want pending", got)
-		}
-		open(0)
 	})
 
 	t.Run("a teardown's stop changes no entry and the life's end keeps the rows", func(t *testing.T) {

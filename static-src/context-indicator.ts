@@ -33,8 +33,8 @@ export interface CompactionPoint {
 }
 
 /**
- * The effective compaction point: the slider's value, where marotte queues a compaction for the turn's end. Switched off:
- * nothing compacts, and the ramp keys on the window's end.
+ * The effective compaction point: the slider's value, the threshold every chat door hands kiro-cli, which compacts
+ * inside the turn that reaches it. Switched off: nothing compacts, and the ramp keys on the window's end.
  */
 export function compactionPoint(policy: CompactionPolicy): CompactionPoint {
   if (!policy.enabled) {

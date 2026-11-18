@@ -522,3 +522,34 @@ func sayText(tb testing.TB, log *turnlog.Turn) {
 		tb.Fatalf("TextDelta: %v", err)
 	}
 }
+
+func promptCmd(id, text string) marotte.ClientCommand {
+	payload, _ := json.Marshal(marotte.PromptCommand{Text: text, MessageID: id})
+	return marotte.ClientCommand{Type: marotte.CmdPrompt, ChatID: "c1", Payload: payload}
+}
+
+// postAsync posts cmd from the page (postCmd) on its own goroutine; the channel carries the answer.
+func postAsync(h *Runtime, cmd marotte.ClientCommand) <-chan *httptest.ResponseRecorder {
+	done := make(chan *httptest.ResponseRecorder, 1)
+	body, _ := json.Marshal(cmd)
+	go func() {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/command", bytes.NewReader(body))
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		h.handleCommand(rec, req)
+		done <- rec
+	}()
+	return done
+}
+
+// wantQueuedAck fails unless rec is the prompt's 200 ack saying it waits in the queue.
+func wantQueuedAck(t *testing.T, rec *httptest.ResponseRecorder, id string) {
+	t.Helper()
+	var ack struct {
+		MessageID string `json:"message_id"`
+		As        string `json:"as"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &ack); rec.Code != http.StatusOK || err != nil || ack.As != "queued" || ack.MessageID != id {
+		t.Errorf("prompt answer = %d %s, want 200 queued under %s", rec.Code, rec.Body.String(), id)
+	}
+}

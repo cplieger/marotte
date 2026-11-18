@@ -72,7 +72,6 @@ func TestCommandDischarges_ClassifiesEveryCommand(t *testing.T) {
 		marotte.CmdUserInputResponse:   "CmdUserInputResponse",
 		marotte.CmdRewindChat:          "CmdRewindChat",
 		marotte.CmdCompact:             "CmdCompact",
-		marotte.CmdCancelCompact:       "CmdCancelCompact",
 		marotte.CmdSetEffort:           "CmdSetEffort",
 		marotte.CmdSetThinking:         "CmdSetThinking",
 		marotte.CmdSetDraft:            "CmdSetDraft",

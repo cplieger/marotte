@@ -17,7 +17,7 @@ export const arbDecisionKind: fc.Arbitrary<DecisionKind> = fc.constantFrom("perm
 export const arbDenialBasis: fc.Arbitrary<DenialBasis> = fc.constantFrom("unparseable", "cedar-unavailable", "not-loaded", "permissions-invalid", "check-failed");
 export const arbEngineState: fc.Arbitrary<EngineState> = fc.constantFrom("starting", "ready", "restarting", "down");
 export const arbEntryKind: fc.Arbitrary<EntryKind> = fc.constantFrom("turn_open", "turn_bind", "turn_wake", "run_named", "text", "thinking", "tool_call", "tool_result", "steer", "steer_ack", "steer_delivered", "steer_cleared", "plan", "compaction", "compaction_failed", "safety_blocked", "model_switched", "model_routed", "model_fallback", "mode_switched", "profile_switched", "turn_revert", "context_reset", "reconciled", "turn_close", "step_graded");
-export const arbErrorCode: fc.Arbitrary<ErrorCode> = fc.constantFrom("recovery_failed", "bridge_start_failed", "prompt_failed", "agent_not_found", "agent_config_error", "rate_limit", "switch_failed", "compaction_failed", "mode_not_applied", "supervised_not_applied", "memory_not_loaded", "model_not_served", "auth_token_unavailable", "tangent_merge_failed", "resume_not_sent");
+export const arbErrorCode: fc.Arbitrary<ErrorCode> = fc.constantFrom("recovery_failed", "bridge_start_failed", "prompt_failed", "agent_not_found", "agent_config_error", "rate_limit", "switch_failed", "compaction_failed", "mode_not_applied", "supervised_not_applied", "memory_not_loaded", "model_not_served", "auth_token_unavailable", "tangent_merge_failed");
 export const arbFailureKind: fc.Arbitrary<FailureKind> = fc.constantFrom("context_limit", "model_call_limit", "empty_answer", "sign_in", "sign_in_unreachable", "api_key_refused");
 export const arbFieldOp: fc.Arbitrary<FieldOp> = fc.constantFrom("is", "one_of", "contains", "starts_with", "matches", "above", "below", "is_set");
 export const arbFileMatchKind: fc.Arbitrary<FileMatchKind> = fc.constantFrom("content", "name", "dir");
@@ -51,8 +51,8 @@ export const arbRuleWaitReason: fc.Arbitrary<RuleWaitReason> = fc.constantFrom("
 export const arbRunAskBlocker: fc.Arbitrary<RunAskBlocker> = fc.constantFrom("stopping", "pending", "branch_running", "unsettled", "settling");
 export const arbRunAskRefusal: fc.Arbitrary<RunAskRefusal> = fc.constantFrom("ask_stopping", "ask_pending", "ask_stale", "ask_gone", "ask_branch_running", "ask_unsettled", "ask_settling", "ask_unreadable", "ask_unnamed", "run_answer_pending");
 export const arbRunAskText: fc.Arbitrary<RunAskText> = fc.constantFrom("asked", "last_message", "unseen");
-export const arbRunEntryKind: fc.Arbitrary<RunEntryKind> = fc.constantFrom("turn", "row", "retry", "compaction", "revert", "resume");
-export const arbRunEntryOrigin: fc.Arbitrary<RunEntryOrigin> = fc.constantFrom("prompt", "queue", "tangent", "summary", "retry", "wire", "run", "carried", "request", "threshold", "turn_end", "context_limit", "rewind", "failsafe", "notify");
+export const arbRunEntryKind: fc.Arbitrary<RunEntryKind> = fc.constantFrom("turn", "row", "retry", "revert");
+export const arbRunEntryOrigin: fc.Arbitrary<RunEntryOrigin> = fc.constantFrom("prompt", "queue", "tangent", "summary", "retry", "wire", "run", "carried", "rewind", "notify");
 export const arbRunEntryState: fc.Arbitrary<RunEntryState> = fc.constantFrom("pending", "paused", "held", "offered", "in_kas", "starting", "running", "stopping", "closing");
 export const arbRunNodeStatus: fc.Arbitrary<RunNodeStatus> = fc.constantFrom("pending", "running", "paused", "completed", "failed", "aborted", "skipped");
 export const arbRunProgressKind: fc.Arbitrary<RunProgressKind> = fc.constantFrom("node_start", "node_complete", "node_paused", "loop_iteration", "watch_poll", "paused", "steps_queued", "silence");
@@ -63,11 +63,11 @@ export const arbRunStepEndStatus: fc.Arbitrary<RunStepEndStatus> = fc.constantFr
 export const arbRunStepMessageRefusal: fc.Arbitrary<RunStepMessageRefusal> = fc.constantFrom("not_started", "finished", "run_paused", "busy", "waits_on_run", "full");
 export const arbRunStepMessageVerb: fc.Arbitrary<RunStepMessageVerb> = fc.constantFrom("steer", "answer", "prompt");
 export const arbRunStepTranscriptState: fc.Arbitrary<RunStepTranscriptState> = fc.constantFrom("ready", "gone", "unavailable");
-export const arbRunWaitAfter: fc.Arbitrary<RunWaitAfter> = fc.constantFrom("running", "starting", "next", "compaction", "turns", "held", "paused");
+export const arbRunWaitAfter: fc.Arbitrary<RunWaitAfter> = fc.constantFrom("running", "starting", "next", "turns", "held", "paused");
 export const arbRunWant: fc.Arbitrary<RunWant> = fc.constantFrom("either", "prompt");
 export const arbSafetyStatus: fc.Arbitrary<SafetyStatus> = fc.constantFrom("idle", "formalizing", "evaluating", "blocked", "error");
 export const arbSegmentKind: fc.Arbitrary<SegmentKind> = fc.constantFrom("content", "reasoning", "tool_title", "tool_diff", "tool_denial", "tool_input", "tool_output", "steer", "prompt", "plan", "attachment", "turn_failure", "wake");
-export const arbSendNowKind: fc.Arbitrary<SendNowKind> = fc.constantFrom("stop", "stop_then_compaction", "after_compaction", "now");
+export const arbSendNowKind: fc.Arbitrary<SendNowKind> = fc.constantFrom("stop", "now");
 export const arbSendVerb: fc.Arbitrary<SendVerb> = fc.constantFrom("prompt", "steer", "queue");
 export const arbSettledBy: fc.Arbitrary<SettledBy> = fc.constantFrom("user", "unattended", "moot", "ended");
 export const arbShowRefusalCode: fc.Arbitrary<ShowRefusalCode> = fc.constantFrom("too_large", "binary", "not_utf8");
@@ -649,6 +649,7 @@ const arbModel = fc.letrec<{
       turn_count: fc.double({ noNaN: true, noDefaultInfinity: true }),
       supervised_mode: fc.boolean(),
       tangent: fc.boolean(),
+      compacting: fc.boolean(),
     },
     { requiredKeys: ["name", "id", "run", "usage", "created_at", "updated_at", "turn_count"] },
   ),
@@ -1146,7 +1147,6 @@ const arbModel = fc.letrec<{
       label: fc.string(),
       attachments: fc.array(tie("Attachment"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       resends: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
-      automatic: fc.boolean(),
     },
     { requiredKeys: ["id", "text"] },
   ),
@@ -1344,7 +1344,6 @@ const arbModel = fc.letrec<{
       carrier: fc.boolean(),
       unanswered: fc.boolean(),
       ended_off_turn: fc.boolean(),
-      stopped_to_compact: fc.boolean(),
     },
     { requiredKeys: ["outcome"] },
   ),
@@ -1579,7 +1578,6 @@ const arbModel = fc.letrec<{
       excerpt: fc.string(),
       segments: fc.array(arbSegmentKind, { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       turn: fc.double({ noNaN: true, noDefaultInfinity: true }),
-      automatic: fc.boolean(),
     },
     { requiredKeys: ["turn_id", "entry_id", "kind", "excerpt", "segments", "turn"] },
   ),
