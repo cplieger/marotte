@@ -3,7 +3,7 @@
 import { relative } from "node:path";
 import { BaseSequencer, type TestSpecification } from "vitest/node";
 
-/** CI seconds per file (mean of five dev and PR runs) for each file over `check-suite-duration.ts`'s
+/** CI seconds per file (mean of the dev and PR runs measured) for each file over `check-suite-duration.ts`'s
  *  SLOW_FILE_MS. Re-measure from a CI log when that guard names a slow file this table lacks. */
 export const FILE_SECONDS: Readonly<Record<string, number>> = {
   "scroll.visual.test.ts": 297,
@@ -16,10 +16,14 @@ export const FILE_SECONDS: Readonly<Record<string, number>> = {
   "scroll.test.ts": 38,
   "residency-anchor.test.ts": 23,
   "settings-sync.test.ts": 19,
+  "history-section.test.ts": 17,
   "block-virtualization.test.ts": 16,
   "tab-close-draft.test.ts": 16,
+  "perf/read-budget/chat-long.test.ts": 15,
+  "sidebar-sections.test.ts": 15,
   "turn-footer-closed-row-css.test.ts": 13,
   "find-in-chat.test.ts": 12,
+  "perf/read-budget/chat-stream.test.ts": 12,
   "actions/still-applying-chat.test.ts": 11,
 };
 

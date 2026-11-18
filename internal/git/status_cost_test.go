@@ -13,8 +13,8 @@ import (
 // statusCosts is what the git status summary costs the server per scan of tests/perf/synth's repositories, 3 at x1
 // with 20 changed files each. A change that moves one by design rewrites its entry in the same diff.
 var statusCosts = map[string]testsupport.Cost{
-	"git status summary x1":  {Allocs: 613, Bytes: 173557},
-	"git status summary x10": {Allocs: 5873, Bytes: 1718424},
+	"git status summary x1":  {Allocs: 597, Bytes: 126453},
+	"git status summary x10": {Allocs: 5723, Bytes: 1248147},
 }
 
 // writeSynthRepos writes fixtures.py's repositories under work: each 40 tracked files, then 20 changes, a quarter
@@ -61,6 +61,12 @@ func writeSynthRepos(t *testing.T, work string, repos int) {
 func TestStatusCost_StatusSummaryHoldsItsBudget(t *testing.T) {
 	testsupport.RequireCostBuild(t)
 	skipNoGit(t)
+	// exec.Cmd hands each git it starts the whole environment, so the scan would cost what the host exports: a
+	// GitHub runner's variables more than doubled its bytes.
+	home := testsupport.FixedLengthDir(t)
+	testsupport.EmptyEnv(t)
+	t.Setenv("PATH", "/usr/local/bin:/usr/bin:/bin")
+	t.Setenv("HOME", home)
 	for _, scale := range []int{1, 10} {
 		op := fmt.Sprintf("git status summary x%d", scale)
 		t.Run(op, func(t *testing.T) {
