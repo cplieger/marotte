@@ -33,6 +33,10 @@ import (
 // unscoped one partial.
 var searchDeadline = 15 * time.Second
 
+// errSearchDeadline is the cause searchDeadline ends a search with, which tells it from a deadline
+// the caller set.
+var errSearchDeadline = errors.New("search deadline")
+
 // KAS 3.0.0's own caps (kGo, DGo, OGo and UZu in acp-server.js), so an answer holds what KAS's
 // own rg would have returned.
 const (
@@ -101,30 +105,18 @@ func (s Searcher) Text(ctx context.Context, roots []string, q TextQuery) []Match
 	if s.Bin == "" || q.Pattern == "" || len(roots) == 0 {
 		return []Match{}
 	}
-	ctx, cancel := context.WithTimeout(ctx, searchDeadline)
+	ctx, cancel := context.WithTimeoutCause(ctx, searchDeadline, errSearchDeadline)
 	defer cancel()
-	args := []string{"--json", "--engine", "auto", "-C", "2", "--max-count", maxCountArg, "--max-filesize", "1M", "--hidden", "--no-require-git", "--glob", "!.git"}
-	if !q.CaseSensitive {
-		args = append(args, "--ignore-case")
-	}
-	if q.IncludePattern != "" {
-		args = append(args, "--glob", q.IncludePattern)
-	}
-	if q.ExcludePattern != "" {
-		args = append(args, "--glob", "!"+q.ExcludePattern)
-	}
-	args = append(args, "--", trimLoneQuote(q.Pattern))
-
 	perRoot := make([][]*fileHits, len(roots))
 	cut := make([]bool, len(roots))
 	var wg sync.WaitGroup
 	for i, root := range roots {
-		dir, ok := scope(root, q.IncludePattern)
+		args, ok := textArgs(root, q)
 		if !ok {
 			continue
 		}
 		wg.Go(func() {
-			perRoot[i], cut[i] = s.textRoot(ctx, root, append(slices.Clone(args), dir))
+			perRoot[i], cut[i] = s.textRoot(ctx, root, args)
 		})
 	}
 	wg.Wait()
@@ -159,6 +151,26 @@ func (s Searcher) Text(ctx context.Context, roots []string, q TextQuery) []Match
 	return out
 }
 
+// textArgs is rg's command line searching root for q; ok is false when no file under root can match.
+func textArgs(root string, q TextQuery) (args []string, ok bool) {
+	include := includeGlob(root, q.IncludePattern)
+	dir, ok := scope(root, include)
+	if !ok {
+		return nil, false
+	}
+	args = []string{"--json", "--engine", "auto", "-C", "2", "--max-count", maxCountArg, "--max-filesize", "1M", "--hidden", "--no-require-git", "--glob", "!.git"}
+	if !q.CaseSensitive {
+		args = append(args, "--ignore-case")
+	}
+	if include != "" {
+		args = append(args, "--glob", include)
+	}
+	if exclude := rootGlob(root, q.ExcludePattern); exclude != "" {
+		args = append(args, "--glob", "!"+exclude)
+	}
+	return append(args, "--", trimLoneQuote(q.Pattern), dir), true
+}
+
 type fileHits struct {
 	abs        string
 	entries    []Match
@@ -168,7 +180,7 @@ type fileHits struct {
 // deadlineCut reports whether searchDeadline, not the caller, ended a search that cut[i] says was
 // stopped before rg finished root i.
 func deadlineCut(ctx context.Context, cut []bool) bool {
-	return errors.Is(ctx.Err(), context.DeadlineExceeded) && slices.Contains(cut, true)
+	return errors.Is(context.Cause(ctx), errSearchDeadline) && slices.Contains(cut, true)
 }
 
 // partialNotice opens the answer of a search the deadline cut short: KAS renders every answer as
@@ -256,26 +268,18 @@ func (s Searcher) Files(ctx context.Context, roots []string, q FilesQuery) []str
 	if s.Bin == "" || len(roots) == 0 {
 		return []string{}
 	}
-	ctx, cancel := context.WithTimeout(ctx, searchDeadline)
+	ctx, cancel := context.WithTimeoutCause(ctx, searchDeadline, errSearchDeadline)
 	defer cancel()
-	args := []string{"--files", "--max-depth", maxDepthArg, "--hidden", "--no-require-git", "--glob", "!.git"}
-	if q.Pattern != "" && q.Pattern != "**/*" {
-		args = append(args, "--glob", q.Pattern)
-	}
-	if q.Exclude != "" {
-		args = append(args, "--glob", "!"+q.Exclude)
-	}
-
 	perRoot := make([][]string, len(roots))
 	cut := make([]bool, len(roots))
 	var wg sync.WaitGroup
 	for i, root := range roots {
-		dir, ok := scope(root, q.Pattern)
+		args, ok := filesArgs(root, q)
 		if !ok {
 			continue
 		}
 		wg.Go(func() {
-			perRoot[i], cut[i] = s.filesRoot(ctx, root, append(slices.Clone(args), "--", dir), limit)
+			perRoot[i], cut[i] = s.filesRoot(ctx, root, args, limit)
 		})
 	}
 	wg.Wait()
@@ -293,6 +297,24 @@ func (s Searcher) Files(ctx context.Context, roots []string, q FilesQuery) []str
 		}
 	}
 	return out
+}
+
+// filesArgs is rg's command line listing root's files for q; ok is false when no file under root
+// can match.
+func filesArgs(root string, q FilesQuery) (args []string, ok bool) {
+	pattern := includeGlob(root, q.Pattern)
+	dir, ok := scope(root, pattern)
+	if !ok {
+		return nil, false
+	}
+	args = []string{"--files", "--max-depth", maxDepthArg, "--hidden", "--no-require-git", "--glob", "!.git"}
+	if pattern != "" && pattern != "**/*" {
+		args = append(args, "--glob", pattern)
+	}
+	if exclude := rootGlob(root, q.Exclude); exclude != "" {
+		args = append(args, "--glob", "!"+exclude)
+	}
+	return append(args, "--", dir), true
 }
 
 func (s Searcher) filesRoot(ctx context.Context, root string, args []string, limit int) (found []string, cut bool) {
@@ -444,16 +466,43 @@ func readLine(br *bufio.Reader, buf []byte) (out []byte, tooLong bool, err error
 	}
 }
 
+// rootGlob is glob in the form rg, run in root, matches it in: rg matches a glob against the path
+// relative to root, so an absolute path under root and a leading "./" match nothing as written.
+func rootGlob(root, glob string) string {
+	if rest, ok := strings.CutPrefix(glob, filepath.Clean(root)+"/"); ok {
+		glob = rest
+	}
+	for strings.HasPrefix(glob, "./") {
+		glob = glob[len("./"):]
+	}
+	return glob
+}
+
+// includeGlob is rootGlob for a glob that selects files: a trailing "/" names a folder's files,
+// which rg matches only as "folder/**". An exclude keeps the "/", which prunes the folder.
+func includeGlob(root, glob string) string {
+	glob = rootGlob(root, glob)
+	if strings.HasSuffix(glob, "/") {
+		glob += "**"
+	}
+	return glob
+}
+
 // scope is the directory, relative to root, rg searches for glob: the glob's leading literal
 // directories, so rg skips every other subtree (a --glob filters names but still descends every
-// directory). ok is false when no file under root can match: the directory is absent, cannot be
-// resolved (any stat error), or is reached through a symlink, which rg does not follow. Only a glob
-// with no literal leading directory searches all of root.
+// directory). A leading "/" anchors glob at root, as in rg. ok is false when no file under root can
+// match: a ".." segment (rg's paths have none), or a directory that is absent, cannot be resolved
+// (any stat error), or is reached through a symlink, which rg does not follow. Only a glob with no
+// literal leading directory searches all of root.
 func scope(root, glob string) (dir string, ok bool) {
-	if !strings.Contains(glob, "/") || strings.HasPrefix(glob, "/") {
+	glob = strings.TrimPrefix(glob, "/")
+	segs := strings.Split(glob, "/")
+	if slices.Contains(segs, "..") {
+		return "", false
+	}
+	if len(segs) == 1 {
 		return ".", true
 	}
-	segs := strings.Split(glob, "/")
 	var lit []string
 	for _, seg := range segs[:len(segs)-1] {
 		if seg == "" || seg == "." || seg == ".." || strings.ContainsAny(seg, `*?[]{}\!`) {

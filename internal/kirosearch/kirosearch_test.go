@@ -105,6 +105,116 @@ func TestText_RealRGRootedIncludeFindsOnlyThatSubtree(t *testing.T) {
 	}
 }
 
+// An include written as an absolute path, led by "./" or by "/", names the same folder as the
+// relative form, and rg walks only that folder.
+func TestText_IncludeFormsSearchOnlyTheFolderTheyName(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"repo/internal/a.go": "x", "other/b.go": "x"})
+	for name, include := range includeForms(root) {
+		t.Run(name, func(t *testing.T) {
+			argsFile := filepath.Join(t.TempDir(), "args")
+			bin := fakeRG(t, `printf '%s\n' "$@" > `+argsFile)
+
+			Searcher{Bin: bin}.Text(t.Context(), []string{root}, TextQuery{Pattern: "x", IncludePattern: include})
+
+			raw, err := os.ReadFile(argsFile)
+			if err != nil {
+				t.Fatalf("rg was not run: %v", err)
+			}
+			args := strings.Split(strings.TrimSpace(string(raw)), "\n")
+			if got := args[len(args)-1]; got != filepath.Join("repo", "internal") {
+				t.Errorf("search path = %q, want repo/internal", got)
+			}
+		})
+	}
+}
+
+// includeForms are the ways a model writes "the .go files under repo/internal" of root.
+func includeForms(root string) map[string]string {
+	return map[string]string{
+		"relative":       "repo/internal/**/*.go",
+		"absolute":       root + "/repo/internal/**/*.go",
+		"dot-led":        "./repo/internal/**/*.go",
+		"root-anchored":  "/repo/internal/**/*.go",
+		"trailing slash": "repo/internal/",
+	}
+}
+
+func TestText_RealRGIncludeFormsFindTheFilesTheyName(t *testing.T) {
+	bin := realRG(t)
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"repo/internal/deeper/a.go": "func Run() {}\n", "other/b.go": "func Run() {}\n"})
+	want := []Match{{FilePath: "repo/internal/deeper/a.go", LineNumber: 1, LineText: "func Run() {}"}}
+	for name, include := range includeForms(root) {
+		t.Run(name, func(t *testing.T) {
+			got := Searcher{Bin: bin}.Text(t.Context(), []string{root}, TextQuery{Pattern: "func Run", IncludePattern: include})
+			if !slices.Equal(got, want) {
+				t.Errorf("Text(include %q) = %+v, want %+v", include, got, want)
+			}
+		})
+	}
+	t.Run("absolute, root written with a trailing slash", func(t *testing.T) {
+		got := Searcher{Bin: bin}.Text(t.Context(), []string{root + "/"}, TextQuery{Pattern: "func Run", IncludePattern: root + "/repo/internal/**/*.go"})
+		if !slices.Equal(got, want) {
+			t.Errorf("Text = %+v, want %+v", got, want)
+		}
+	})
+}
+
+// An absolute include under one root names nothing under another, which is not searched.
+func TestText_RealRGAbsoluteIncludeSearchesOnlyItsRoot(t *testing.T) {
+	bin := realRG(t)
+	first, second := t.TempDir(), t.TempDir()
+	writeTree(t, first, map[string]string{"repo/a.go": "hit\n"})
+	writeTree(t, second, map[string]string{"repo/a.go": "hit\n"})
+
+	got := Searcher{Bin: bin}.Text(t.Context(), []string{first, second}, TextQuery{Pattern: "hit", IncludePattern: first + "/repo/*.go"})
+
+	want := []Match{{FilePath: "repo/a.go", LineNumber: 1, LineText: "hit"}}
+	if !slices.Equal(got, want) {
+		t.Errorf("Text = %+v, want %+v", got, want)
+	}
+}
+
+func TestText_RealRGExcludeFormsLeaveOutTheFolderTheyName(t *testing.T) {
+	bin := realRG(t)
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"repo/internal/a.go": "hit\n", "keep/b.go": "hit\n"})
+	want := []Match{{FilePath: "keep/b.go", LineNumber: 1, LineText: "hit"}}
+	for name, exclude := range map[string]string{
+		"relative":       "repo/internal/**",
+		"absolute":       root + "/repo/internal/**",
+		"dot-led":        "./repo/internal/**",
+		"trailing slash": "repo/internal/",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := Searcher{Bin: bin}.Text(t.Context(), []string{root}, TextQuery{Pattern: "hit", ExcludePattern: exclude})
+			if !slices.Equal(got, want) {
+				t.Errorf("Text(exclude %q) = %+v, want %+v", exclude, got, want)
+			}
+		})
+	}
+}
+
+// KAS turns a file_search query "^<path>" into the pattern "<path>*", absolute when the model wrote
+// an absolute path.
+func TestFiles_RealRGAbsoluteAndDotLedPatternsFindUnderTheRoot(t *testing.T) {
+	bin := realRG(t)
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"repo/internal/build.go": "", "other/build.go": ""})
+	for name, pattern := range map[string]string{
+		"absolute": root + "/repo/internal/build*",
+		"dot-led":  "./repo/internal/build*",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := Searcher{Bin: bin}.Files(t.Context(), []string{root}, FilesQuery{Pattern: pattern, MaxResults: 11})
+			if want := []string{"repo/internal/build.go"}; !slices.Equal(got, want) {
+				t.Errorf("Files(%q) = %q, want %q", pattern, got, want)
+			}
+		})
+	}
+}
+
 func TestText_IncludeUnderAMissingDirectoryRunsNoSearch(t *testing.T) {
 	root := t.TempDir()
 	argsFile := filepath.Join(t.TempDir(), "args")
@@ -240,6 +350,22 @@ func TestFiles_DeadlineAnswerSaysItIsPartial(t *testing.T) {
 
 	if len(got) != 2 || !isPartialNotice(got[0]) || got[1] != "a.go" {
 		t.Errorf("Files = %q, want the partial notice and then a.go", got)
+	}
+	awaitGone(t, pidFile)
+}
+
+// A caller's own deadline ends the search like a cancel, with no notice: the notice names
+// searchDeadline.
+func TestText_CallerDeadlineAddsNoPartialNotice(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	bin := slowRG(t, matchLine("./a.go", "hit", 1), pidFile)
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancel()
+
+	got := Searcher{Bin: bin}.Text(ctx, []string{t.TempDir()}, TextQuery{Pattern: "hit"})
+
+	if want := []Match{{FilePath: "a.go", LineNumber: 1, LineText: "hit"}}; !slices.Equal(got, want) {
+		t.Errorf("Text = %+v, want the partial result %+v and no notice", got, want)
 	}
 	awaitGone(t, pidFile)
 }
@@ -549,6 +675,11 @@ func TestScope(t *testing.T) {
 		"NUL in the prefix (EINVAL)":      {"a\x00b/x", "", false},
 		"prefix through a symlink loop":   {"loop/x/*.go", "", false},
 		"prefix is a file":                {"go.mod/*.go", "", false},
+		"root-anchored folder":            {"/repo/internal/*.go", filepath.Join("repo", "internal"), true},
+		"root-anchored, no folder":        {"/*.go", ".", true},
+		"led by ..":                       {"../x/*.go", "", false},
+		".. after a folder":               {"repo/../x/*.go", "", false},
+		".. after a glob":                 {"**/../x/*.go", "", false},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
