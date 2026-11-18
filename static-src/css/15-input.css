@@ -461,36 +461,42 @@
   padding-block: 0.35em;
 }
 
-/* Every other label of the class measured over 0.5px off its row's or its own
- * box's centre, and every first line a leading glyph or control centres on:
- * trimmed, then padded to 1lh with the cap band on the box's centre and
- * (1lh - 1cap) / 2 under the baseline for a descender. Every text run of a row is
- * listed or none is, since a trimmed run and an untrimmed one of the same size no
- * longer share a baseline. A diff row's marker and code go with its line number. */
+/* In each of these rows every single-line text run is trimmed, since a trimmed run and an
+ * untrimmed one beside it do not share a baseline. A run is a span or label holding text and no
+ * icon or classed element, a time, a bdi or an output. Padded to 1lh, each centres its cap band; lowered by
+ * the row's cap height less its own, a smaller run's baseline meets the row font's, so a row's
+ * font is its largest run's. text-alignment.test.ts holds each row to one trim state and one
+ * baseline. */
 :where(
+  .list-row,
+  .fb-row,
+  .turn-head-row,
+  .code-refs-item,
+  .run-head,
+  .history-row,
+  .section-title-status-row,
+  .recipe-sched-btn,
+  .tool-diff-stats
+) {
+  --row-cap: 1cap;
+
+  /* stylelint-disable-next-line selector-max-pseudo-class -- the :where() wrappers that hold this at zero specificity count too */
+  & :where(:where(span, label):not(:empty, :has(> svg, > [class])), time, bdi, output) {
+    text-box: trim-both cap alphabetic;
+    padding-block: calc((1lh - 1cap) / 2);
+    margin-block-start: calc(var(--row-cap) - 1cap);
+  }
+}
+
+/* The labels a box or a leading control centres on, and a field row's labels beside its status
+ * row's, trimmed and padded as the rows' runs above. None is lowered: each sits beside runs of its
+ * own size or none. A diff row's marker and code go with its line number. */
+:where(
+  .section-field > .section-option-label,
   .mcp-result-name,
   .chat-opt-name,
   .pr-merge-method-name,
   .user-input-sub-option > .user-input-option-title,
-  .turn-n,
-  .turn-ts,
-  .turn-hit-count,
-  .code-refs-license,
-  .code-refs-link-text,
-  .code-refs-source,
-  .ev-sum-frac,
-  .ev-sum-inner,
-  .ev-sum-dot,
-  .ev-sum-steps,
-  .history-row-name,
-  .history-row-time,
-  .section-title-status-row > .section-option-label,
-  [id="auto-compact-pct-value"],
-  .recipe-sched-label,
-  .recipe-sched-count,
-  .fb-meta,
-  .list-row-meta,
-  .tool-diff-stats > :is(.diff-add-count, .diff-del-count),
   .entry-title,
   .ev-dock-more,
   .tool-source-chip,
@@ -501,6 +507,7 @@
 ) {
   text-box: trim-both cap alphabetic;
   padding-block: calc((1lh - 1cap) / 2);
+  margin-block-start: 0;
 }
 
 /* Context pill: its share as text, inked along the compaction ramp (`context-indicator.ts` `contextInk`). */
@@ -1030,8 +1037,8 @@
 }
 
 /* The meta shares the name's baseline. Both are trimmed to their cap band and centred
- * (the first trim list), so the smaller cap sat (cap - its cap) / 2 high of the name's
- * baseline; topped up to the name's cap height, the two boxes end on one baseline. */
+ * (the first trim list), which would leave the smaller cap (cap - its cap) / 2 high of the
+ * name's baseline; topped up to the name's cap height, the two boxes end on one baseline. */
 .pill-model-item {
   --row-cap: 1cap;
 
@@ -1114,7 +1121,7 @@
 }
 
 /* The name and its chips on ONE baseline, centred in the row as one box: centred one
- * by one, the 12px chips sat 0.5px off the 13px name's baseline (more in a wider font). */
+ * by one, the 12px chips and the 13px name would not share a baseline. */
 .pill-role-text {
   display: flex;
   flex: 1 1 auto;
@@ -1200,6 +1207,19 @@
   border-top: 1px solid var(--c-border);
 }
 
+/* The slider's section. Its line (`.effort-track`) is taller than the bar on the coarse tier, and
+   the surplus under the bar is air the eye adds to the bottom padding: the bottom padding gives it
+   back and, where the surplus exceeds the padding, the top padding takes the excess, so the air
+   above the caption's cap top equals the air under the bar and the line stays inside the section
+   (`.pill-model-list` clips at its edge). */
+.effort-row:has(> .effort-track) {
+  --effort-line-h: max(var(--hit-floor), var(--effort-bar-h));
+  --effort-surplus: calc((var(--effort-line-h) - var(--effort-bar-h)) / 2);
+
+  padding-block: max(var(--sp-2), var(--effort-surplus))
+    max(0px, calc(var(--sp-2) - var(--effort-surplus)));
+}
+
 /* The control's VISIBLE label, one rung under the card's rows (01-tokens.css). It
    is the whole reason the old left-hand `Effort` label could go: a value alone
    names no dimension, and an input with no visible label is a WCAG 3.3.2 (Level A)
@@ -1215,8 +1235,7 @@
    over-long name costs card HEIGHT, which the card can absorb and then scroll,
    rather than card width or hidden characters. */
 .effort-label {
-  /* At its cap top, so the section's top padding is the air above the ink, as its
-     bottom padding is the air under the bar (`.effort-track`). */
+  /* At its cap top, so the section's top padding is the air above the ink. */
   text-box: trim-start cap alphabetic;
   font-size: var(--fs-popup-meta);
   color: var(--c-text-tertiary);
@@ -1240,15 +1259,9 @@
    `max()` so retuning either token cannot leave it short. No border and no
    padding, or `100cqi` and the border box `fracAt` reads diverge. */
 .effort-track {
-  --effort-line-h: max(var(--hit-floor), var(--effort-bar-h));
-
   position: relative;
   container-type: inline-size;
   block-size: var(--effort-line-h);
-
-  /* The line's surplus under the bar lies in the section's bottom padding, so the bar,
-     not the invisible line, ends the padding's distance from the edge. */
-  margin-block-end: calc((var(--effort-bar-h) - var(--effort-line-h)) / 2);
 
   /* The knob has to fit: below this the travel `100cqi - 100%` is negative and
      inverts. */

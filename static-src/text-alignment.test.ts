@@ -12,6 +12,7 @@ import {
   labelOffset,
   labelShapes,
   measureAlignment,
+  rowTrims,
 } from "./__test-helpers__/alignment.js";
 import {
   SURFACES,
@@ -89,6 +90,8 @@ interface Site {
   /** Measurements that must be taken, so a site that stopped rendering cannot pass: each matches
    *  `<kind>: <key>`, a label's key being its selector. */
   readonly must: readonly RegExp[];
+  /** A label's tolerance where the site's dev offset lies inside a centre's: the trimmed label's. */
+  readonly labelTol?: number;
 }
 
 const SITES: readonly Site[] = [
@@ -213,7 +216,7 @@ const SITES: readonly Site[] = [
     surface: surface("a run card"),
     frame: ".ev-sum-progress",
     sizes: [1180, 390],
-    must: [/^label: .*ev-sum-steps$/],
+    must: [/^line: .*run-name \| .*ev-sum-steps$/],
   },
   {
     id: "a loop's pass, inner pass and step fraction",
@@ -224,6 +227,7 @@ const SITES: readonly Site[] = [
       /^baseline: .*ev-sum-frac \| .*ev-sum-inner/,
       /^baseline: .*ev-sum-inner \| .*ev-sum-dot/,
       /^baseline: .*ev-sum-dot \| .*ev-sum-steps/,
+      /^line: .*run-name \| .*ev-sum-frac$/,
     ],
   },
   {
@@ -231,7 +235,7 @@ const SITES: readonly Site[] = [
     surface: surface("the file browser's rows"),
     frame: ".fb-row",
     sizes: [1180],
-    must: [/^label: .*fb-meta$/],
+    must: [/^line: .*fb-name.* \| .*fb-meta$/],
   },
   {
     id: "a pull request row's number",
@@ -245,7 +249,24 @@ const SITES: readonly Site[] = [
     surface: surface("Settings, Tools"),
     frame: "#tools-list .list-row",
     sizes: [1180, 390],
-    must: [/^label: .*list-row-meta$/],
+    must: [/^line: .*list-row-name \| .*list-row-meta$/],
+  },
+  {
+    id: "a chipless tool row's and the system row's name and version",
+    surface: surface("Settings, Tools"),
+    frame: "#tools-list .list-row:not(:has(.tool-hit-chips))",
+    sizes: [1180, 390],
+    must: [
+      /^line: .*list-row > span\.list-row-name \| .*list-row > span\.list-row-meta$/,
+      /^line: .*list-row-system > span\.list-row-name \| .*list-row-system > span\.list-row-meta$/,
+    ],
+  },
+  {
+    id: "a knowledge row's name and count",
+    surface: surface("Settings, Knowledge"),
+    frame: "#knowledge-list .list-row",
+    sizes: [1180, 390],
+    must: [/^line: .*list-row-name \| .*knowledge-meta$/],
   },
   {
     id: "a doc entry's title",
@@ -284,6 +305,7 @@ const SITES: readonly Site[] = [
     frame: ".history-row",
     sizes: [1180, 390],
     must: [/^label: .*history-row-name$/, /^label: .*history-row-time$/],
+    labelTol: BASELINE_PX,
   },
   {
     id: "a setting's label and value",
@@ -291,6 +313,7 @@ const SITES: readonly Site[] = [
     frame: ".section-title-status-row",
     sizes: [1180, 390],
     must: [/^label: .*section-option-label$/, /^label: .*auto-compact-pct-value$/],
+    labelTol: BASELINE_PX,
   },
   {
     id: "a workflow's schedule button",
@@ -298,6 +321,7 @@ const SITES: readonly Site[] = [
     frame: ".recipe-sched-btn",
     sizes: [1180],
     must: [/^label: .*recipe-sched-count$/],
+    labelTol: BASELINE_PX,
   },
   {
     id: "the run dock's +N button",
@@ -316,6 +340,8 @@ function setTheme(t: (typeof THEMES)[number]): void {
   }
 }
 
+const r2 = (n: number): number => Math.round(n * 100) / 100;
+
 /** Every measurement inside the site's frames, keyed `<kind>: <key>`, with its signed offset. */
 function measureSite(site: Site): { what: string; delta: number; tol: number }[] {
   const frames = [...document.querySelectorAll(site.frame)];
@@ -331,9 +357,26 @@ function measureSite(site: Site): { what: string; delta: number; tol: number }[]
         delta: f.delta,
         tol: f.kind === "baseline" ? BASELINE_PX : CENTRE_PX,
       })),
+    // Each pair of neighbouring runs on one line of a row: on one baseline.
+    ...rowTrims(document.body, opts)
+      .flatMap((l) =>
+        l.runs.slice(1).map((r, i) => ({
+          what: `line: ${l.runs[i]!.sel} | ${r.sel}`,
+          delta: r2(r.baseline - l.runs[i]!.baseline),
+          tol: BASELINE_PX,
+          el: r.el,
+        })),
+      )
+      .filter((f) => inside(f.el))
+      .map(({ what, delta, tol }) => ({ what, delta, tol })),
+    // A lowered run is held to its row's baseline by the line pairs above, not to the centre.
     ...labelShapes(document.body, opts)
-      .filter((l) => inside(l.el))
-      .map((l) => ({ what: `label: ${l.sel}`, delta: labelOffset(l), tol: CENTRE_PX })),
+      .filter((l) => inside(l.el) && !l.lowered)
+      .map((l) => ({
+        what: `label: ${l.sel}`,
+        delta: labelOffset(l),
+        tol: site.labelTol ?? CENTRE_PX,
+      })),
   ];
 }
 
@@ -402,23 +445,101 @@ function sectionGaps(): { section: string; top: number; bottom: number; pad: num
   );
 }
 
+const CARDS = [
+  { surface: "the model popup", sections: ["effort", "Fallback"] },
+  { surface: "the model popup without a fallback", sections: ["effort"] },
+] as const;
+
 describe("the model card's sections", () => {
   for (const vp of VPS) {
-    it(`leave as much air above their text as under it at ${String(vp.w)}x${String(vp.h)}`, async () => {
-      await page.viewport(vp.w, vp.h);
-      await mountSurface(surface("the model popup"), vp.size, vp.tier);
-      await frames();
-      const gaps = sectionGaps();
-      expect(gaps.map((g) => g.section)).toEqual(["effort", "Fallback"]);
-      // Equal air is the ink band centred between the edges, held to a centre's tolerance.
-      for (const g of gaps) {
-        expect(Math.abs(g.top - g.bottom) / 2, JSON.stringify(g)).toBeLessThanOrEqual(CENTRE_PX);
+    for (const card of CARDS) {
+      it(`leave as much air above their text as under it in ${card.surface} at ${String(vp.w)}x${String(vp.h)}`, async () => {
+        await page.viewport(vp.w, vp.h);
+        await mountSurface(surface(card.surface), vp.size, vp.tier);
+        await frames();
+        const gaps = sectionGaps();
+        expect(gaps.map((g) => g.section)).toEqual(card.sections);
+        // Equal air is the ink band centred between the edges, held to a centre's tolerance.
+        for (const g of gaps) {
+          expect(Math.abs(g.top - g.bottom) / 2, JSON.stringify(g)).toBeLessThanOrEqual(CENTRE_PX);
+        }
+        const effort = gaps[0]!;
+        expect(
+          Math.abs(effort.top - effort.pad),
+          `the padding is the air: ${JSON.stringify(effort)}`,
+        ).toBeLessThanOrEqual(CENTRE_PX);
+        // The track is the slider's whole target: inside its section and the card's clip.
+        const track = q(".effort-track").getBoundingClientRect();
+        for (const box of [q(".effort-track").parentElement!, q(".pill-model-list")]) {
+          const r = box.getBoundingClientRect();
+          expect(
+            [track.top >= r.top, track.bottom <= r.bottom],
+            `${box.className}: ${JSON.stringify({ track, r })}`,
+          ).toEqual([true, true]);
+        }
+      });
+    }
+  }
+});
+
+/** The rows whose every text run the alignment rule trims (15-input.css), each on a surface that
+ *  draws it. */
+const ROW_TYPES: readonly { row: string; surface: Surface; sizes: readonly Size[] }[] = [
+  { row: ".list-row", surface: surface("Settings, Tools"), sizes: [1180, 390] },
+  { row: ".list-row", surface: surface("Settings, Knowledge"), sizes: [1180, 390] },
+  { row: ".fb-row", surface: surface("the file browser's rows"), sizes: [1180] },
+  { row: ".turn-head-row", surface: TURN_HITS, sizes: [1180, 390] },
+  { row: ".code-refs-item", surface: surface("a turn's code references"), sizes: [1180, 390] },
+  { row: ".run-head", surface: surface("a run card"), sizes: [1180, 390] },
+  { row: ".run-head", surface: surface("a run card's nested loop"), sizes: [1180, 390] },
+  { row: ".history-row", surface: surface("the sidebar"), sizes: [1180, 390] },
+  { row: ".section-title-status-row", surface: surface("Settings, General"), sizes: [1180, 390] },
+  { row: ".recipe-sched-btn", surface: surface("the workflow list"), sizes: [1180] },
+  { row: ".tool-diff-stats", surface: surface("a turn"), sizes: [1180, 390] },
+];
+
+// Every surface the sweep fixed a row on: no line there may set a trimmed run beside an
+// untrimmed one, and each row type above shares one baseline across its runs.
+const ROW_SURFACES = [
+  ...new Set([...SITES.map((x) => x.surface), ...ROW_TYPES.map((x) => x.surface)]),
+];
+
+describe("every line of a row", () => {
+  for (const vp of VPS) {
+    for (const sf of ROW_SURFACES) {
+      const types = ROW_TYPES.filter((t) => t.surface === sf && t.sizes.includes(vp.size));
+      const sized = SITES.some((x) => x.surface === sf && x.sizes.includes(vp.size));
+      if (types.length === 0 && !sized) {
+        continue;
       }
-      const effort = gaps[0]!;
-      expect(
-        Math.abs(effort.top - effort.pad),
-        `the padding is the air: ${JSON.stringify(effort)}`,
-      ).toBeLessThanOrEqual(CENTRE_PX);
-    });
+      it(
+        `trims every text run of a row or none, on one baseline, on ${sf.name} at ${String(vp.w)}x${String(vp.h)}`,
+        { timeout: 60_000 },
+        async () => {
+          await page.viewport(vp.w, vp.h);
+          await mountSurface(sf, vp.size, vp.tier);
+          await frames();
+          const lines = rowTrims(document.body, { skip: ".steer-row" });
+          const mixed = lines
+            .filter((l) => new Set(l.runs.map((r) => r.trimmed)).size > 1)
+            .map(
+              (l) =>
+                `${l.sel}: ${l.runs.map((r) => `${r.sel}${r.trimmed ? " (trimmed)" : ""}`).join(", ")}`,
+            );
+          expect(mixed).toEqual([]);
+          for (const t of types) {
+            const own = lines.filter((l) => l.runs.every((r) => r.el.closest(t.row) !== null));
+            expect(own.length, `a line of ${t.row}`).toBeGreaterThan(0);
+            for (const l of own) {
+              const ys = l.runs.map((r) => r.baseline);
+              expect(
+                Math.max(...ys) - Math.min(...ys),
+                `${l.sel}: ${l.runs.map((r) => `${r.sel} @ ${String(r.baseline)}`).join(", ")}`,
+              ).toBeLessThanOrEqual(BASELINE_PX);
+            }
+          }
+        },
+      );
+    }
   }
 });

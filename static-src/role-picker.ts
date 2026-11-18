@@ -151,7 +151,6 @@ function renderOptions(list: HTMLElement): void {
 }
 
 /** One mode's row in the card. */
-// deadset:ignore DS1102 -- test seam: the row the alignment suite measures
 export function modeOption(mode: SessionMode, currentMode: string): HTMLButtonElement {
   const isCurrent = mode.id === currentMode;
   const words: HTMLElement[] = [

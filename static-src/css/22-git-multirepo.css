@@ -944,11 +944,11 @@
 /* The number rides inside this element, so this is the row's ONE link: one
    href, one tab stop, one hover underline.
 
-   FLEX, so the ellipsis can live on the TEXT span rather than here: the clip this
-   rule used to carry would cut away the `::after` below, which is the same trade
-   `.tool-file-link` made (14-tools.css). The 11px number sits on the 12px
-   title's baseline (centred, 0.5px apart), and the box hugs that line, since a
-   baseline group packs at the top of a stretched one. */
+   FLEX, so the ellipsis can live on the TEXT span rather than here: a clip on this
+   rule would cut away the `::after` below, the same trade `.tool-file-link` makes
+   (14-tools.css). The 11px number sits on the 12px title's baseline (centred, the
+   two would not share one), and the box hugs that line, since a baseline group
+   packs at the top of a stretched one. */
 .git-pr-row-title {
   grid-area: title;
   align-self: center;

@@ -447,9 +447,9 @@ input[type="radio"] {
 
 /* A 1rem GLYPH OR BOX LEADING A TEXT COLUMN sits on the column's first line,
  * however many lines follow: the row packs at its top and the control is moved
- * by half the line's surplus over its own size. A fixed offset fitted one font's
- * line box (it sat 1.5 to 3.3px low), and baseline alignment puts a box's
- * bottom edge on the baseline. Each row's font is its first line's, so `1lh`
+ * by half the line's surplus over its own size. A fixed offset fits one font's
+ * line box only, and baseline alignment puts a box's bottom edge on the baseline.
+ * Each row's font is its first line's, so `1lh`
  * there is that line's height (`--lead-lh`, 00-header.css). */
 :where(.chat-opt-btn, .chat-opt-row, .pr-merge-method, .user-input-sub-option) {
   --lead-lh: 1lh;

@@ -1780,12 +1780,12 @@ a.subagent-header {
 
 /* A chip rides INLINE with the name, so a badged row measures what a chipless one
    does; `wrap` breaks name plus chips at a narrow width rather than crushing the
-   ellipsis. The 11px chip sits on the 12px name's baseline: centred, it rode
-   0.5 to 0.7px high of it. */
+   ellipsis. Centred, as the row centres its runs (15-input.css): a baseline group
+   would centre the union of the name's and the chips' boxes instead of the name. */
 .tool-name-wrap {
   display: inline-flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: var(--sp-2);
   min-width: 0;
   flex: 1;
@@ -1795,6 +1795,12 @@ a.subagent-header {
    has on touch, where the 44px floor centres a 24px action 10px from each edge. */
 .list-row:has(> .tool-name-wrap) {
   padding-block: max(var(--sp-1), calc(var(--tap-gap-sm) / 2));
+}
+
+/* A chip's label is a run of its row, lowered as the row's runs are (15-input.css) so
+   its baseline meets the name's. */
+.tool-name-wrap .tool-source-chip {
+  margin-block-start: calc(var(--row-cap) - 1cap);
 }
 
 /* The wrap owns the flex slot, so the name inside it needs no share of the
@@ -1863,7 +1869,7 @@ a.subagent-header {
   outline-offset: var(--focus-offset);
 }
 
-/* The 11px badge sits on the title's baseline: centred, it rode 1.75px high of it. */
+/* The 11px badge sits on the title's baseline: centred boxes of two sizes do not share one. */
 .user-input-option-head {
   display: flex;
   align-items: baseline;

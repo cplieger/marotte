@@ -493,6 +493,9 @@ export interface LabelShape {
   /** The label's cap-band and x-band middles less the row's centre, positive low. */
   readonly capOff: number;
   readonly xOff: number;
+  /** Lowered by a top margin onto a larger run's baseline (15-input.css), so off the centre; a
+   *  margin under a quarter pixel is a cap rounding between two faces of one size. */
+  readonly lowered: boolean;
 }
 
 export function labelShapes(root: Element, opts: MeasureOptions = {}): LabelShape[] {
@@ -534,6 +537,7 @@ export function labelShapes(root: Element, opts: MeasureOptions = {}): LabelShap
       boxCy: pc.boxCy,
       capOff: r2(pc.capMid - rowCy),
       xOff: r2(pc.xMid - rowCy),
+      lowered: parseFloat(cs.marginTop) > 0.25,
     });
   }
   return out;
@@ -573,4 +577,114 @@ function flexLineCentre(el: HTMLElement, p: HTMLElement, pcs: CSSStyleDeclaratio
     }
   }
   return (top + bottom) / 2;
+}
+
+/** One line of a flex or grid row that places its items by their boxes, and the single-line text
+ *  runs on it: each with its baseline and whether `text-box-trim` reaches it from its own box or
+ *  one between it and the row. */
+export interface RowTrim {
+  readonly sel: string;
+  readonly runs: readonly {
+    readonly el: Element;
+    readonly sel: string;
+    readonly trimmed: boolean;
+    readonly baseline: number;
+  }[];
+}
+
+/** Every line under `root` where a flex row or a grid places two or more single-line text runs by
+ *  their boxes (any alignment but baseline), held outside a control or painted box of their own;
+ *  an unpainted link or label holds text. */
+export function rowTrims(root: Element, opts: MeasureOptions = {}): RowTrim[] {
+  const out: RowTrim[] = [];
+  for (const row of root.querySelectorAll<HTMLElement>("*")) {
+    if (opts.skip !== undefined && row.closest(opts.skip) !== null) {
+      continue;
+    }
+    const cs = getComputedStyle(row);
+    const flexRow = /flex/.test(cs.display) && !cs.flexDirection.startsWith("column");
+    if (!(flexRow || /grid/.test(cs.display)) || !row.checkVisibility()) {
+      continue;
+    }
+    const runs: Run[] = [];
+    for (const item of itemsOf(row)) {
+      const ics = getComputedStyle(item);
+      const self = ics.alignSelf === "auto" ? cs.alignItems : ics.alignSelf;
+      if (
+        self.includes("baseline") ||
+        painted(item) ||
+        (item.matches(CONTROL) && !textHost(item))
+      ) {
+        continue;
+      }
+      const mine = textRuns(item, row);
+      // An item whose text takes more than one line is a column, not a label on the row's line.
+      if (mine.every((m) => m.p.lines === 1 && oneLine(m.p, mine[0]!.p))) {
+        runs.push(...mine);
+      }
+    }
+    const lines: (typeof runs)[] = [];
+    for (const r of runs) {
+      const line = lines.find((l) => oneLine(l[0]!.p, r.p));
+      if (line === undefined) {
+        lines.push([r]);
+      } else {
+        line.push(r);
+      }
+    }
+    for (const l of lines.filter((x) => x.length > 1)) {
+      const runs = l.map(({ el, sel, trimmed, p }) => ({ el, sel, trimmed, baseline: p.baseline }));
+      out.push({ sel: selectorKey(row), runs });
+    }
+  }
+  return out;
+}
+
+/** Two runs on one line: baselines nearer than half the smaller run's glyph height. Content areas
+ *  will not do, since a trimmed run's overflows its box into the next line's. */
+function oneLine(a: TextPiece, b: TextPiece): boolean {
+  return Math.abs(a.baseline - b.baseline) < Math.min(a.bottom - a.top, b.bottom - b.top) / 2;
+}
+
+/** An unpainted link or label: text in its row's line rather than a control of its own. */
+function textHost(e: Element): boolean {
+  return e.matches("a, label") && !painted(e);
+}
+
+interface Run {
+  readonly el: Element;
+  readonly sel: string;
+  readonly trimmed: boolean;
+  readonly p: TextPiece;
+}
+
+/** A row's items: its children, with a `display: contents` child's own children in its place. */
+function itemsOf(row: Element): Element[] {
+  return [...row.children].flatMap((c) =>
+    getComputedStyle(c).display === "contents" ? itemsOf(c) : [c],
+  );
+}
+
+/** The rendered text runs of `item` that are not inside a control or painted box below it, an
+ *  unpainted link or label aside, nor inside an icon. */
+function textRuns(item: Element, row: Element): Run[] {
+  const out: Run[] = [];
+  const w = document.createTreeWalker(item, NodeFilter.SHOW_TEXT);
+  for (let n = w.nextNode(); n !== null; n = w.nextNode()) {
+    const t = n as Text;
+    if (t.data.trim() === "" || t.parentElement!.closest("svg") !== null || !rendered(t)) {
+      continue;
+    }
+    let trimmed = false;
+    let inUnit = false;
+    for (let e = t.parentElement; e !== null && e !== row; e = e.parentElement) {
+      trimmed ||= getComputedStyle(e).getPropertyValue("text-box-trim") !== "none";
+      const control = e.matches(CONTROL) && !textHost(e);
+      inUnit ||= e !== item && (control || painted(e));
+    }
+    if (!inUnit) {
+      out.push({ el: t.parentElement!, sel: selectorKey(t.parentElement!), trimmed, p: piece(t) });
+    }
+  }
+  return out;
 }

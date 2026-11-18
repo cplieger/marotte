@@ -10,7 +10,7 @@ import { _resetForTest as resetScrollLock } from "../legacy-ui/modal.js";
 
 import indexHtml from "../../static/index.html?raw";
 import type { Pele } from "../mermaid-svg.js";
-import type { PolicyView } from "../wire/types.gen.js";
+import type { Inventory, PolicyView } from "../wire/types.gen.js";
 import type { RunNode } from "../run-store.js";
 import { settingsPayload } from "./settings.js";
 
@@ -48,7 +48,7 @@ const { buildToolCard } = await import("../tool-card.js");
 const { buildToolGroupShell, groupBody, refreshGroupHeader } = await import("../tool-group.js");
 const { stampHookCard } = await import("../hook-fold.js");
 const { iconEl } = await import("../icon-el.js");
-const { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP, ICON_RUN_WHEN_UI, ICON_SEND, modelIcon } =
+const { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP, ICON_CLOSE, ICON_RUN_WHEN_UI, ICON_SEND, modelIcon } =
   await import("../icons.js");
 const { FallbackSlot } = await import("../model-fallback-row.js");
 const { modeOption } = await import("../role-picker.js");
@@ -63,6 +63,8 @@ const { buildEffortSlider } = await import("../effort-slider.js");
 const { buildAttachmentPill } = await import("../attachment-pill.js");
 const { buildChip } = await import("../chip.js");
 const { initNativePolicyUI, loadNativePolicy } = await import("../permissions-ui.js");
+const { initTools, loadToolsList } = await import("../tools.js");
+const { initKnowledge, loadKnowledge } = await import("../knowledge.js");
 const { mountNewDocButton } = await import("../docs-new.js");
 const { mountSteerStack } = await import("../pending-steers.js");
 const { makeExpandable } = await import("../pill-expand.js");
@@ -197,7 +199,7 @@ function plantTabs(): void {
   for (let i = 0; i < 4; i++) {
     const row = make("div", "tab", { role: "tab", tabindex: i === 0 ? "0" : "-1" });
     const close = make("span", "tab-close", { "aria-hidden": "true" });
-    close.textContent = "×";
+    close.append(iconEl(ICON_CLOSE));
     row.append(text("span", "tab-name", `Conversation ${String(i)}`), close);
     list.appendChild(row);
   }
@@ -770,37 +772,81 @@ function plantPRs(): void {
   q("#git-prs-mount").appendChild(list);
 }
 
-function plantToolRows(): void {
-  const host = q("#tools-list");
-  host.replaceChildren();
-  for (const name of ["ripgrep", "typescript-language-server"]) {
-    const toggle = make("label", "toggle toggle-inline tool-toggle");
-    toggle.append(
-      make("input", "", { type: "checkbox", "aria-label": `Disable ${name}` }),
-      make("span", "toggle-slider"),
-    );
-    const wrap = box("tool-name-wrap", [
-      text("span", "list-row-name", name),
-      box("tool-hit-chips", [text("span", "tool-source-chip", "LSP")]),
-    ]);
-    const row = box("list-row", [
-      make("span", "tool-state-dot tool-state-ok"),
-      wrap,
-      text("span", "list-row-meta", "15.2.0"),
-      box("list-row-actions", [
-        toggle,
-        iconButton("list-row-btn list-row-pin", `Pin ${name} version`),
-        iconButton("list-row-btn", `Remove ${name}`),
-      ]),
-    ]);
-    host.appendChild(row);
+/** The inventory `tools.ts` renders from GET /api/tools: a tool with an LSP chip, one without a
+ *  chip, and a system tool. */
+const INVENTORY: Inventory = {
+  tools: [
+    {
+      name: "gopls",
+      source: "aqua:golang/tools/gopls",
+      version: "0.24.0",
+      installed: true,
+      installing: false,
+      lsp: true,
+    },
+    {
+      name: "ripgrep",
+      source: "aqua:BurntSushi/ripgrep",
+      version: "15.2.0",
+      installed: true,
+      installing: false,
+    },
+  ],
+  system: [{ name: "git", installed: true }],
+};
+
+let server: ReturnType<typeof setupWorker> | null = null;
+
+/** Serves `handlers` alone over the page's MSW worker, started on first use. */
+async function serve(...handlers: Parameters<ReturnType<typeof setupWorker>["resetHandlers"]>) {
+  if (server === null) {
+    server = setupWorker();
+    await server.start({ quiet: true, onUnhandledFrame: "bypass" });
   }
+  server.resetHandlers(...handlers);
+}
+
+/** Polls until `sel` matches `n` elements, the rows a production loader paints after its fetch. */
+async function rendered(sel: string, n: number): Promise<void> {
+  for (let i = 0; document.querySelectorAll(sel).length < n; i++) {
+    if (i === 100) {
+      throw new Error(`fixture: ${sel} never rendered ${String(n)} rows`);
+    }
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+/** The tool rows `tools.ts` renders from the inventory. */
+async function plantToolRows(): Promise<void> {
+  await serve(http.get("/api/tools", () => HttpResponse.json(INVENTORY)));
+  initTools();
+  loadToolsList();
+  await rendered("#tools-list .list-row", 3);
+}
+
+/** The knowledge rows `knowledge.ts` renders from GET /api/knowledge. */
+async function plantKnowledgeRows(): Promise<void> {
+  await serve(
+    http.get("/api/knowledge", () =>
+      HttpResponse.json({
+        contexts: [
+          { name: "docs", id: "a", item_count: 42, path: "/workspace/docs" },
+          { name: "rust-book", id: "b", item_count: 1 },
+        ],
+      }),
+    ),
+  );
+  initKnowledge();
+  loadKnowledge();
+  await rendered("#knowledge-list .list-row", 2);
 }
 
 /** The rule table's answer: writable rules with and without globs, and a read-only one. */
 const POLICY: PolicyView = {
   available: true,
   profile: "custom",
+  run_profile: "custom",
+  profile_saved: true,
   profiles: [
     { id: "guarded", presets: [] },
     { id: "custom", presets: [] },
@@ -835,23 +881,12 @@ const POLICY: PolicyView = {
   ],
 };
 
-let policyServer: ReturnType<typeof setupWorker> | null = null;
-
 /** The policy rows `permissions-ui.ts` renders from GET /api/permissions, and a chip list. */
 async function plantPermissions(): Promise<void> {
-  if (policyServer === null) {
-    policyServer = setupWorker();
-    await policyServer.start({ quiet: true, onUnhandledFrame: "bypass" });
-  }
-  policyServer.resetHandlers(http.get("/api/permissions", () => HttpResponse.json(POLICY)));
+  await serve(http.get("/api/permissions", () => HttpResponse.json(POLICY)));
   initNativePolicyUI();
   loadNativePolicy();
-  for (let i = 0; q("#native-policy-list").querySelectorAll(".native-rule").length < 3; i++) {
-    if (i === 100) {
-      throw new Error("fixture: the policy table never rendered");
-    }
-    await new Promise((r) => setTimeout(r, 10));
-  }
+  await rendered("#native-policy-list .native-rule", 3);
   const chips = q("#agent-dirs-chips");
   for (const label of ["/data", "/srv"]) {
     chips.appendChild(buildChip({ label, code: true, onRemove: () => undefined }));
@@ -1034,8 +1069,10 @@ function plantSteers(): void {
   });
 }
 
-function plantModelList(): void {
-  openCard("#switch-model-btn", "#model-switch-list", fillModelList);
+function plantModelList(fallback: boolean): void {
+  openCard("#switch-model-btn", "#model-switch-list", (list) => {
+    fillModelList(list, fallback);
+  });
 }
 
 const MODELS = [
@@ -1045,8 +1082,9 @@ const MODELS = [
 ];
 
 /** The model card as `model-switcher.ts` lays it out: the first panel holds the model rows (in its
- *  `buildModelOption` shape), the effort section and the Fallback row `FallbackSlot` builds. */
-function fillModelList(list: HTMLElement): void {
+ *  `buildModelOption` shape), the effort section and, with model fallback on, the Fallback row
+ *  `FallbackSlot` builds. */
+function fillModelList(list: HTMLElement, fallback: boolean): void {
   const main = make("div", "model-panel model-panel-main");
   const scroll = make("div", "pill-model-scroll", { role: "listbox", "aria-label": "Models" });
   for (const [i, m] of MODELS.entries()) {
@@ -1075,7 +1113,7 @@ function fillModelList(list: HTMLElement): void {
     {
       model: "claude-opus-5.5",
       settings: settingsPayload({
-        model_fallback_enabled: true,
+        model_fallback_enabled: fallback,
         model_fallbacks: [
           {
             model: "claude-opus-5.5",
@@ -1520,7 +1558,19 @@ export const SURFACES: readonly Surface[] = [
   {
     name: "the model popup",
     sizes: TWO,
-    setup: plantModelList,
+    setup: () => {
+      plantModelList(true);
+    },
+    controls: [],
+    painted: [".effort-knob"],
+    rows: [".pill-model-item", ".effort-track"],
+  },
+  {
+    name: "the model popup without a fallback",
+    sizes: TWO,
+    setup: () => {
+      plantModelList(false);
+    },
     controls: [],
     painted: [".effort-knob"],
     rows: [".pill-model-item", ".effort-track"],
@@ -2020,7 +2070,7 @@ export const SURFACES: readonly Surface[] = [
     setup: () => {
       show("settings-view");
       showPanel("data-settings-panel", "tools");
-      plantToolRows();
+      return plantToolRows();
     },
     controls: [
       "#tool-update-btn",
@@ -2030,7 +2080,18 @@ export const SURFACES: readonly Surface[] = [
       "#tools-list .list-row-btn",
       "#tool-open-manifest",
     ],
-    rows: ["#tools-list .list-row"],
+    rows: ["#tools-list .list-row:not(.list-row-system)"],
+  },
+  {
+    name: "Settings, Knowledge",
+    sizes: TWO,
+    setup: () => {
+      show("settings-view");
+      showPanel("data-settings-panel", "instructions");
+      return plantKnowledgeRows();
+    },
+    controls: ["#knowledge-add-btn", "#knowledge-clear-btn", "#knowledge-list .list-row-btn"],
+    rows: ["#knowledge-list .list-row"],
   },
   {
     name: "Settings, Permissions",

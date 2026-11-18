@@ -10,10 +10,12 @@
    one: the indicator belongs to the thing being written, not to a page-wide slot,
    so the slot sits next to whichever label names that setting — a section
    heading, a toggle's label, or the global-instructions label. */
+/* Its font is its labels', which the row's runs are lowered against (15-input.css). */
 .section-title-status-row {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
+  font-size: var(--fs-form-label);
 }
 
 /* .section-title pads var(--sp-4) above ITSELF. Left there, that padding is
@@ -1502,8 +1504,8 @@ dd.governance-off {
 
 /* The rule's words, ONE baseline-aligned line centred in the row beside its
  * controls: centred one by one, the 12px capability and the 11px globs and source
- * sat 0.5px apart (more in a wider font), and a baseline group in the row itself
- * would pack at the top of the line the 24px controls make. */
+ * would not share a baseline, and a baseline group in the row itself would pack at
+ * the top of the line the 24px controls make. */
 .native-rule-text {
   display: flex;
   flex: 1 1 auto;
