@@ -5,8 +5,8 @@
 
 import { batch, el, effect, signal, touch, untracked } from "@cplieger/reactive";
 import { announce } from "./legacy-ui/announce.js";
-import { join } from "@cplieger/keyenc";
-import { openRunTab, openTab, parentChatRef, tabIdFor } from "./tabs.js";
+import { join, split } from "@cplieger/keyenc";
+import { openRunRefs, openRunTab, openTab, parentChatRef, tabIdFor } from "./tabs.js";
 import { mountRunDecisionDock, rerenderDocks, runPendingAsks } from "./decision-dock.js";
 import { clearRunStepSteers, removeRunStepSteer } from "./actions/runs.js";
 import {
@@ -217,9 +217,9 @@ const dockRows = signal<readonly string[]>([], {
   equals: (a, b) => a.length === b.length && a.every((p, i) => p === b[i]),
 });
 
-/** The view's three subscriptions, one per clock: the run's state paints the page, the shown
- *  step's log its pane, and the dock steps' logs their rows' lines. A frame of one step re-runs
- *  only the last two, and only for that step. */
+/** The view's subscriptions, one per clock: the run's state paints the page, the shown step's log
+ *  its pane, the dock steps' logs their rows' lines, and the run tab set the parked positions. A
+ *  frame of one step re-runs only the middle two, and only for that step. */
 let viewEffectInstalled = false;
 function installViewEffect(): void {
   if (viewEffectInstalled) {
@@ -292,6 +292,14 @@ function installViewEffect(): void {
     }
     page.paintTails(tails);
   });
+  effect(() => {
+    const open = new Set(openRunRefs());
+    for (const key of [...parkedScroll.keys()]) {
+      if (!open.has(split(key)[0] ?? "")) {
+        parkedScroll.delete(key);
+      }
+    }
+  });
 }
 
 /** Bring the shown step current after its tab was hidden when its log holds no live turn: the read
@@ -351,7 +359,7 @@ let pagePath = "";
 
 /** Where each step's page stood when another step or run took the one scroller, by
  *  `join(run, step path)`: a step pick swaps the page's subject in place, so each step needs a
- *  position and a clamp floor of its own. */
+ *  position and a clamp floor of its own. A run's entries go when its tab closes. */
 const parkedScroll = new Map<string, ViewScrollState>();
 
 function parkFollower(): void {
