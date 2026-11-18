@@ -202,30 +202,13 @@ function settling(): Animation[] {
     );
 }
 
-/** The removal of the tray's `data-dock-phase`, observed rather than polled: a loaded host runs the
- *  phase's timer late, by however long it is busy. */
-function phaseEnded(tray: HTMLElement): Promise<void> {
-  return new Promise((resolve) => {
-    const ended = (): boolean => tray.dataset["dockPhase"] === undefined;
-    if (ended()) {
-      resolve();
-      return;
-    }
-    const obs = new MutationObserver(() => {
-      if (ended()) {
-        obs.disconnect();
-        resolve();
-      }
-    });
-    obs.observe(tray, { attributes: true, attributeFilter: ["data-dock-phase"] });
-  });
-}
-
 /** The tray at rest: its phase over and every animation in the frame finished. The phase ends on a
  *  timer set at the swap, but the tray's height transition and the card's keyframes start with the
  *  next frame, which a loaded host delivers late, so the phase can clear while the box still grows. */
 async function traySettled(tray: HTMLElement): Promise<void> {
-  await phaseEnded(tray);
+  await until(() => tray.dataset["dockPhase"] === undefined, "the tray's phase ended", {
+    detail: () => `data-dock-phase=${tray.dataset["dockPhase"] ?? ""}`,
+  });
   await until(() => settling().length === 0, "the frame's animations finished", {
     detail: () =>
       settling()
