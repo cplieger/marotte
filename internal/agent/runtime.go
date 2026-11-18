@@ -476,12 +476,15 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		perms:     sseP,
 		bus:       sseP,
 
-		cancelRetryBase: defaultCancelRetryBase,
-		mutations:       newRunMutations(),
-		hosts:           keylock.New(cmp.Compare[string]),
-		resumes:         keylock.New(cmp.Compare[string]),
-		launchLocks:     keylock.New(cmp.Compare[string]),
-		sweep:           gateSweep{turns: keylock.New(cmp.Compare[string])},
+		cancelRetryBase:   defaultCancelRetryBase,
+		sweepRetryBase:    defaultSweepRetryBase,
+		releaseRetryBase:  defaultReleaseRetryBase,
+		orphanResumeDelay: defaultOrphanResumeDelay,
+		mutations:         newRunMutations(),
+		hosts:             keylock.New(cmp.Compare[string]),
+		resumes:           keylock.New(cmp.Compare[string]),
+		launchLocks:       keylock.New(cmp.Compare[string]),
+		sweep:             gateSweep{turns: keylock.New(cmp.Compare[string])},
 	}
 
 	h := &Runtime{

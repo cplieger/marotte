@@ -215,12 +215,9 @@ func TestCancelExpired_AResumedRunWithNoOpenStepIsAStall(t *testing.T) {
 	}
 }
 
-// fastOrphanResume shortens the re-read delay; tests using it stay off t.Parallel.
-func fastOrphanResume(t *testing.T) {
-	t.Helper()
-	prev := orphanResumeDelay
-	orphanResumeDelay = time.Millisecond
-	t.Cleanup(func() { orphanResumeDelay = prev })
+// withOrphanResumeDelay sets the runtime's resume sweep re-read delay.
+func withOrphanResumeDelay(d time.Duration) Option {
+	return func(h *Runtime) { h.runs.orphanResumeDelay = d }
 }
 
 // listCount answers the run list from a counter, returning statusAt(n) on the nth list.
@@ -240,9 +237,8 @@ func listCount(t *testing.T, br *fakeBridge, id string, statusAt func(n int32) s
 
 // A chat back inside KAS's stale window finds its orphan still listed running; the sweep reads again.
 func TestResumeInterruptedRuns_ReReadsAnOrphanKASStillListsRunning(t *testing.T) {
-	fastOrphanResume(t)
 	const id = "wf_1"
-	h, br := agentRunOnChat(t, id)
+	h, br := agentRunOnChat(t, id, withOrphanResumeDelay(time.Millisecond))
 	defer shutdownHub(t, h)
 	h.coord.closeHostedRuns(t.Context(), parkChat, marotte.StopReasonInterrupted)
 	br.mu.Lock()

@@ -855,7 +855,7 @@ func (s *holdSim) engineEnd() {
 }
 
 // roundAfterEntry is round(ev, text, r), first held at the chat's rehydrate's failed list when entryFails; its sweep
-// after orphanResumeDelay (resumeInterruptedRuns) is then the round.
+// after Runs.orphanResumeDelay (resumeInterruptedRuns) is then the round.
 func (s *holdSim) roundAfterEntry(ev holdEvent, text string, r releasers, entryFails bool) {
 	if entryFails {
 		s.entryRead(ev, text)
@@ -2433,12 +2433,12 @@ func (c *holdCell) boot(t *testing.T, signedIn bool) {
 		br *fakeBridge
 	)
 	if c.c.chat() {
-		h, br = agentRunOnChatAs(t, c.id, c.chat, c.session, c.k.door().(*fakeBridge), WithSignIn(vault, gateBackendID))
+		h, br = agentRunOnChatAs(t, c.id, c.chat, c.session, c.k.door().(*fakeBridge), c.options(vault)...)
 		h.runs.grantLease(t.Context(), c.id, "publish",
 			launchOrigin{origin: runlease.OriginAgent, chatID: string(c.chat)}, hostSec())
 		h.runs.recordParentSession(t.Context(), c.id, c.session)
 	} else {
-		h, _, br = newTestHub(WithSignIn(vault, gateBackendID))
+		h, _, br = newTestHub(c.options(vault)...)
 		origin := runlease.OriginManual
 		if c.c.kind == kindScheduled {
 			origin = runlease.OriginScheduled
@@ -2711,6 +2711,15 @@ func (c *holdCell) engineRestart(t *testing.T) {
 // armEntryList sets whether the next first list of a chat's rehydrate fails, as the step's failsEntry says.
 func (c *holdCell) armEntryList(s *gateHoldStep) {
 	c.k.set(func(k *kasRun) { k.failEntryList = s.failsEntry })
+}
+
+// holdOrphanResumeDelay is a cell runtime's resume sweep re-read delay.
+const holdOrphanResumeDelay = 20 * time.Millisecond
+
+// options are a cell runtime's: signed in through vault, with the gate's retry gaps and the resume sweep's re-read
+// delay short enough for a cell's quiet windows (faultQuiet).
+func (c *holdCell) options(vault *signin.Vault) []Option {
+	return []Option{WithSignIn(vault, gateBackendID), fastGateRetries(), withOrphanResumeDelay(holdOrphanResumeDelay)}
 }
 
 // restart ends the runtime and boots a new one over the same KAS run, the gate open at boot for evRestartOpen, and
@@ -3088,7 +3097,7 @@ func (c *holdCell) arm() {
 const stepQuiet = 50 * time.Millisecond
 
 // faultQuiet is how long a fault must go unhit, once the step's end is reached, for its readers or writers to have
-// settled: longer than any of their retries' gaps under fastGateRetries and the test's orphanResumeDelay.
+// settled: longer than any of their retries' gaps under fastGateRetries and holdOrphanResumeDelay.
 const faultQuiet = 150 * time.Millisecond
 
 // settle waits for the step's ERRORs, each reporting its reader's whole tries, for its faults to act, and for the
@@ -3326,10 +3335,6 @@ const holdCellsAtOnce = 48
 // quiet windows and wait caps are bubble time, which moves only once all of the cell's goroutines block: a loaded
 // host cannot stretch a cell's work past them.
 func TestGateHold_EveryCell(t *testing.T) {
-	fastGateRetries(t)
-	prevDelay := orphanResumeDelay
-	orphanResumeDelay = 20 * time.Millisecond
-	t.Cleanup(func() { orphanResumeDelay = prevDelay })
 	router := &holdLogs{sinks: &sync.Map{}}
 	capture.SwapDefault(t, slog.New(router))
 	byRow := map[string][]holdCombo{}

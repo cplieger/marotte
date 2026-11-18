@@ -1366,18 +1366,18 @@ func resumablePause(reason string, detail *pauseDetail) bool {
 	return slices.ContainsFunc(resumableReasonPrefixes, func(p string) bool { return strings.HasPrefix(reason, p) })
 }
 
-// orphanResumeDelay is when the resume sweep re-reads a run KAS still lists running after an engine end:
+// defaultOrphanResumeDelay is when the resume sweep re-reads a run KAS still lists running after an engine end:
 // KAS judges a run's owner dead 135 s after its last beat (staleAfterMs, 4.5 beats of 30 s)
-// and allows one beat of reader drift (kiro-cli 2.29.1). A var for tests.
-var orphanResumeDelay = 165 * time.Second
+// and allows one beat of reader drift (kiro-cli 2.29.1). Runs.orphanResumeDelay carries it.
+const defaultOrphanResumeDelay = 165 * time.Second
 
 // resumeInterruptedRuns resumes the restart-paused runs this chat's session chain launched, and sweeps again after
-// orphanResumeDelay while KAS has not yet reconciled one; never resumeAll, which would undo deliberate pauses. Each
+// Runs.orphanResumeDelay while KAS has not yet reconciled one; never resumeAll, which would undo deliberate pauses. Each
 // later sweep is lc's work, so once the chat's life ended the sweeps stand down: its next open runs its own.
 func (rs *Runs) resumeInterruptedRuns(ctx context.Context, lc *chatLifecycle, chatID marotte.ChatID) {
 	if s := rs.resumeChainRuns(ctx, chatID, lc.endedNow); s.running || s.failed {
 		slog.Info("rehydrate: a run is still listed running, or the chat's runs could not be listed or resumed; sweeping again later",
-			"chat_id", chatID, "delay", orphanResumeDelay)
+			"chat_id", chatID, "delay", rs.orphanResumeDelay)
 		begin := func() (context.Context, func(), bool) {
 			ctx, done, ok := lc.beginWork(workSweep)
 			if !ok {
@@ -1396,7 +1396,7 @@ func (rs *Runs) resumeInterruptedRuns(ctx context.Context, lc *chatLifecycle, ch
 // maxResweeps bounds a resume's tries, the caller's first included (retryResumeLater).
 const maxResweeps = 5
 
-// retryResumeLater follows the caller's one try: it calls try after orphanResumeDelay, again while it reports a
+// retryResumeLater follows the caller's one try: it calls try after Runs.orphanResumeDelay, again while it reports a
 // failed resume, until maxResweeps tries in all, then spent with that count. Each try runs on the context begin
 // answers and calls its done when it returns; a refused begin, or a stopping runtime, tries nothing more.
 func (rs *Runs) retryResumeLater(begin func() (context.Context, func(), bool), try func(context.Context) (failed bool), spent func(tries int)) {
@@ -1406,7 +1406,7 @@ func (rs *Runs) retryResumeLater(begin func() (context.Context, func(), bool), t
 			spent(tries)
 			return
 		}
-		rs.lifecycle.afterUnlessDraining(orphanResumeDelay, func() {
+		rs.lifecycle.afterUnlessDraining(rs.orphanResumeDelay, func() {
 			ctx, done, ok := begin()
 			if !ok {
 				return

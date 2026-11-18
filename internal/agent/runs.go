@@ -107,6 +107,12 @@ type Runs struct {
 	// cancelRetryBase is the refused-cancel ladder's first wait (retryTermination), a field because untracked
 	// timers can outlive whoever set a package var. Zero means defaultCancelRetryBase.
 	cancelRetryBase time.Duration
+	// sweepRetryBase, releaseRetryBase and orphanResumeDelay are the gate's retry gaps and the resume sweep's re-read
+	// delay (defaultSweepRetryBase, defaultReleaseRetryBase, defaultOrphanResumeDelay), per runtime so a test's
+	// shortened gaps reach its runtime alone.
+	sweepRetryBase    time.Duration
+	releaseRetryBase  time.Duration
+	orphanResumeDelay time.Duration
 	// revs mints every run read's revision (run_rev.go).
 	revs revMint
 	mu   sync.Mutex

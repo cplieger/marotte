@@ -329,10 +329,7 @@ func TestEngineRestart_ParentlessRunResumedOnceUnderTheHealBudget(t *testing.T) 
 
 // A parentless run whose host session fails to load after an engine end is resumed by the next try.
 func TestEngineRestart_AParentlessRunWhoseHostFailsToLoadOnceIsResumedByTheNextTry(t *testing.T) {
-	prevDelay := orphanResumeDelay
-	orphanResumeDelay = 10 * time.Millisecond
-	t.Cleanup(func() { orphanResumeDelay = prevDelay })
-	h, _, br := newTestHub()
+	h, _, br := newTestHub(withOrphanResumeDelay(10 * time.Millisecond))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.setCallResult(methodKiroWorkflowInspect, inspectPaused(t, "wf_1", stalePauseReason))
 	resumes := countResumes(t, br, "wf_1")
@@ -363,10 +360,7 @@ func TestEngineRestart_AParentlessRunWhoseHostFailsToLoadOnceIsResumedByTheNextT
 // A resume that keeps failing is tried maxResweeps times in all, the caller's first included, and reported spent with
 // that count.
 func TestRetryResumeLater_TriesMaxResweepsTimesInAll(t *testing.T) {
-	prevDelay := orphanResumeDelay
-	orphanResumeDelay = time.Millisecond
-	t.Cleanup(func() { orphanResumeDelay = prevDelay })
-	h, _, _ := newTestHub()
+	h, _, _ := newTestHub(withOrphanResumeDelay(time.Millisecond))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	var later atomic.Int32
 	spent := make(chan int, 1)
@@ -398,7 +392,7 @@ func TestRetryResumeLater_AStoppedRuntimeTriesNothing(t *testing.T) {
 		}, func(int) {})
 		shutdownHub(t, h)
 		// The bubble's clock passes every try's due time, and Wait lets anything a due timer started finish.
-		time.Sleep(maxResweeps * orphanResumeDelay)
+		time.Sleep(maxResweeps * h.runs.orphanResumeDelay)
 		synctest.Wait()
 		if n := tries.Load(); n != 0 {
 			t.Errorf("a stopped runtime made %d tries, want 0", n)

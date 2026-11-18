@@ -24,10 +24,7 @@ import (
 // run's heal budget is charged once.
 func TestSignInGate_AGateFlapDuringAReleasesRetryWakesItsOneRelease(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		base := releaseRetryBase
-		releaseRetryBase = time.Hour
-		t.Cleanup(func() { releaseRetryBase = base })
-		g := newManualGateRun(t, signedInDir(t))
+		g := newManualGateRun(t, signedInDir(t), withReleaseRetryBase(time.Hour))
 		g.br.setCallResult(methodKiroWorkflowInspect, heldInspect(t, signInHoldReason))
 		g.br.setCallErr(methodKiroWorkflowResume, errors.New("engine busy"))
 		// The boot's release starts its wait only once the edge's finder claimed the run, so the claim meets the live
@@ -96,8 +93,7 @@ func (g *gateRun) lapseVault(t *testing.T) {
 // run then, still charged the one heal its lost write took: a release that ended there would leave the next edge a
 // new release, which claims a second.
 func TestSignInGate_AReleaseThatMeetsTheClosedGateResumesOnTheNextEdgeOnItsOneHeal(t *testing.T) {
-	fastGateRetries(t)
-	g := newManualGateRun(t, signedInDir(t))
+	g := newManualGateRun(t, signedInDir(t), fastGateRetries())
 	g.br.setCallResult(methodKiroWorkflowInspect, heldInspect(t, signInHoldReason))
 	verbs := g.watchVerbs(t)
 	failFirst(g.br, methodKiroWorkflowResume, 1)
@@ -134,11 +130,11 @@ func signedInDir(t *testing.T) string {
 }
 
 // newManualGateRun is newGateRun for a manual run, which no chat's rehydrate sweeps.
-func newManualGateRun(t *testing.T, dir string) *gateRun {
+func newManualGateRun(t *testing.T, dir string, opts ...Option) *gateRun {
 	t.Helper()
 	b := newGateBackend()
 	vault := openVault(t, dir, b)
-	h, _, br := newTestHub(WithSignIn(vault, gateBackendID))
+	h, _, br := newTestHub(append([]Option{WithSignIn(vault, gateBackendID)}, opts...)...)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	leaseRun(t, h, runlease.Lease{
 		WorkflowID: gateRunID, Recipe: "publish", Origin: runlease.OriginManual, ParentSessionID: testLaunchSession,
@@ -154,8 +150,7 @@ func newManualGateRun(t *testing.T, dir string) *gateRun {
 // the refused claim started no release of its own, so ending there would leave the run held until a further sign-in.
 // The edge's tries lose two writes more, which only fresh tries outlast.
 func TestSignInGate_AReleaseThatSpendsItsTriesServesTheEdgeItRefused(t *testing.T) {
-	fastGateRetries(t)
-	g := newManualGateRun(t, t.TempDir())
+	g := newManualGateRun(t, t.TempDir(), fastGateRetries())
 	verbs := g.watchVerbs(t)
 	failFirst(g.br, methodKiroWorkflowResume, maxReleaseAttempts+2)
 	// The heal's own read holds it; the release's last try is the read after its others.
@@ -442,11 +437,19 @@ func (g *gateRun) runningNow(t *testing.T) {
 	g.br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, gateRunID, marotte.RunStatusRunning, ""))
 }
 
-func fastGateRetries(t *testing.T) {
-	t.Helper()
-	sweep, release := sweepRetryBase, releaseRetryBase
-	sweepRetryBase, releaseRetryBase = time.Millisecond, time.Millisecond
-	t.Cleanup(func() { sweepRetryBase, releaseRetryBase = sweep, release })
+// fastGateRetries shortens the runtime's gate retry gaps to a millisecond.
+func fastGateRetries() Option {
+	return func(h *Runtime) { h.runs.sweepRetryBase, h.runs.releaseRetryBase = time.Millisecond, time.Millisecond }
+}
+
+// withSweepRetryBase sets the runtime's first gap between the closing edge's sweeps.
+func withSweepRetryBase(d time.Duration) Option {
+	return func(h *Runtime) { h.runs.sweepRetryBase = d }
+}
+
+// withReleaseRetryBase sets the runtime's first gap between a release's tries.
+func withReleaseRetryBase(d time.Duration) Option {
+	return func(h *Runtime) { h.runs.releaseRetryBase = d }
 }
 
 // The step whose credential ask finds the sign-in rejected is answered only once its run's pause was accepted: KAS
@@ -517,9 +520,8 @@ func TestSignInGate_ARefusedAskWaitsUntilTheRunningRunIsPaused(t *testing.T) {
 		{name: "the run list fails until a sign-in", method: methodKiroWorkflowList, signIn: true, want: "answered"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fastGateRetries(t)
 			logs := captureLogs(t)
-			g := newGateRun(t, t.TempDir())
+			g := newGateRun(t, t.TempDir(), fastGateRetries())
 			g.signIn(t)
 			g.runningNow(t)
 			step := newStepAsk(g.watchVerbs(t))
@@ -602,11 +604,8 @@ func TestSignInGate_ARefusedAskWaitsOutTheEnginesRestart(t *testing.T) {
 
 // A refused ask waiting between failed sweeps wakes on the sign-in, rather than at its next retry.
 func TestSignInGate_AHeldRefusalWakesOnTheSignIn(t *testing.T) {
-	base := sweepRetryBase
-	sweepRetryBase = time.Hour
-	t.Cleanup(func() { sweepRetryBase = base })
 	logs := captureLogs(t)
-	g := newGateRun(t, t.TempDir())
+	g := newGateRun(t, t.TempDir(), withSweepRetryBase(time.Hour))
 	g.signIn(t)
 	g.runningNow(t)
 	step := newStepAsk(g.watchVerbs(t))
@@ -873,8 +872,7 @@ func TestSignInGate_TheClosingSweepRetriesUntilTheRunIsPaused(t *testing.T) {
 		{name: "the pause fails", method: methodKiroWorkflowPause},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fastGateRetries(t)
-			g := newGateRun(t, t.TempDir())
+			g := newGateRun(t, t.TempDir(), fastGateRetries())
 			g.signIn(t)
 			g.awaitEdgeFinder(t)
 			before := countCalls(g.br, tc.method)
@@ -896,9 +894,8 @@ func TestSignInGate_TheClosingSweepRetriesUntilTheRunIsPaused(t *testing.T) {
 	}
 
 	t.Run("it gives up loudly", func(t *testing.T) {
-		fastGateRetries(t)
 		logs := captureLogs(t)
-		g := newGateRun(t, t.TempDir())
+		g := newGateRun(t, t.TempDir(), fastGateRetries())
 		g.signIn(t)
 		g.awaitEdgeFinder(t)
 		before := countCalls(g.br, methodKiroWorkflowList)

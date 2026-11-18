@@ -39,11 +39,12 @@ func isHoldReason(reason string) bool {
 	return reason == signInHoldReason || reason == providerHoldReason
 }
 
-// sweepRetryBase is the first gap between the closing edge's sweeps (reconcileClosed, pauseBeforeRefusal),
-// releaseRetryBase between resumeHeld's and findHolds' tries; each gap doubles. Vars for tests.
-var (
-	sweepRetryBase   = time.Second
-	releaseRetryBase = 2 * time.Second
+// defaultSweepRetryBase is the first gap between the closing edge's sweeps (reconcileClosed, pauseBeforeRefusal),
+// defaultReleaseRetryBase between resumeHeld's and findHolds' tries; each gap doubles. Runs.sweepRetryBase and
+// Runs.releaseRetryBase carry them.
+const (
+	defaultSweepRetryBase   = time.Second
+	defaultReleaseRetryBase = 2 * time.Second
 	// sweepRetryCap bounds the gap between a held refusal's sweeps, which never stop, and between findHolds' tries.
 	sweepRetryCap = 30 * time.Second
 )
@@ -458,7 +459,7 @@ func (rs *Runs) keepHold(workflowID string) {
 const maxFindAttempts = 6
 
 // findHolds reads each run for a gate pause, through the transition (gateFind): the named runs, or with none every
-// run KAS lists paused. A failed read, of a run or of the list, is retried from releaseRetryBase, doubling up to
+// run KAS lists paused. A failed read, of a run or of the list, is retried from Runs.releaseRetryBase, doubling up to
 // sweepRetryCap, maxFindAttempts times in all, then logged as an ERROR.
 func (rs *Runs) findHolds(ids ...string) {
 	listed := len(ids) > 0
@@ -483,7 +484,7 @@ func (rs *Runs) findHolds(ids ...string) {
 		}
 		slog.Warn("sign-in gate: a paused run could not be read for the gate's pause; trying again",
 			"attempt", attempt, "error", err)
-		if !sleepCtx(rs.lifecycle.shutdownCtx, min(releaseRetryBase<<(attempt-1), sweepRetryCap)) {
+		if !sleepCtx(rs.lifecycle.shutdownCtx, min(rs.releaseRetryBase<<(attempt-1), sweepRetryCap)) {
 			return
 		}
 	}
@@ -604,7 +605,7 @@ func (rs *Runs) startRelease(workflowID string, chatID marotte.ChatID, opening u
 	})
 }
 
-// resumeHeld is a held run's release, its automatic resume (healResume): tried again from releaseRetryBase while it
+// resumeHeld is a held run's release, its automatic resume (healResume): tried again from Runs.releaseRetryBase while it
 // fails at the open gate, maxReleaseAttempts times in all, then logged as an ERROR, and after a try that met the
 // closed gate once the gate opens. An opening edge later than the one it serves cuts a wait short and starts the
 // tries afresh, and so does one that came before its last try ended (runGate.endRelease). Every try for one pause
@@ -640,7 +641,7 @@ func (rs *Runs) afterReleaseTry(workflowID string, chatID marotte.ChatID, out re
 	case out == resumeHeld, out == resumeFailed && !rs.gateOpen():
 		fresh, again = true, rs.awaitOpen(workflowID)
 	case out == resumeFailed && attempt < maxReleaseAttempts:
-		fresh, again = rs.awaitRetry(workflowID, releaseRetryBase<<(attempt-1))
+		fresh, again = rs.awaitRetry(workflowID, rs.releaseRetryBase<<(attempt-1))
 	default:
 		if out == resumeFailed {
 			slog.Error("sign-in gate: a held run could not be resumed; it stays held for the next sign-in",
@@ -740,7 +741,7 @@ func (rs *Runs) reconcileClosed(ctx context.Context) {
 			return
 		}
 		slog.Warn("sign-in gate: not every running run could be paused; trying again", "attempt", attempt, "error", err)
-		if !sleepCtx(ctx, sweepRetryBase<<(attempt-1)) {
+		if !sleepCtx(ctx, rs.sweepRetryBase<<(attempt-1)) {
 			return
 		}
 	}
@@ -820,7 +821,7 @@ func (rs *Runs) pauseBeforeRefusal(ctx context.Context) (gateOpen bool) {
 			slog.Warn("sign-in gate: not every running run was paused before a credential refusal; trying again",
 				"attempt", attempt, "error", err)
 		}
-		if !waitOut(ctx, min(sweepRetryBase<<min(attempt-1, maxSweepAttempts), sweepRetryCap), moved) {
+		if !waitOut(ctx, min(rs.sweepRetryBase<<min(attempt-1, maxSweepAttempts), sweepRetryCap), moved) {
 			return false
 		}
 		attempt++
