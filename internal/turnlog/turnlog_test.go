@@ -21,9 +21,6 @@ type recorder struct {
 
 // seal fails the test on an operation error and answers what it sealed; a method because
 // Go cannot spread two return values into a call that also passes t.
-// compactionFailedSealed drops CompactionFailed's first flag for the recorder.
-func compactionFailedSealed(sealed []Sealed, _ bool, err error) ([]Sealed, error) { return sealed, err }
-
 func (r *recorder) seal(sealed []Sealed, err error) []Sealed {
 	r.t.Helper()
 	if err != nil {
@@ -218,7 +215,7 @@ func TestSealingTable(t *testing.T) {
 		rec.seal(turn.TextDelta(ctx, "", "s1-say", "a"))
 		rec.seal(turn.Compaction(ctx, "summary", 0))
 		rec.seal(turn.TextDelta(ctx, "", "s2-say", "b"))
-		rec.seal(compactionFailedSealed(turn.CompactionFailed(ctx, "too big")))
+		rec.seal(turn.CompactionFailed(ctx, "too big"))
 		rec.seal(turn.TextDelta(ctx, "", "s3-say", "c"))
 		rec.seal(turn.SafetyBlocked(ctx, []string{"p1"}))
 		rec.seal(turn.TextDelta(ctx, "", "s4-say", "d"))
@@ -789,21 +786,5 @@ func TestSteeringLoaded_RecordsABoxThatIsNotContent(t *testing.T) {
 	equalShape(t, rec.shape()[3:], []string{"/turn_close"}, "the close")
 	if _, err := turn.SteeringLoaded(ctx, "", &marotte.EntryToolCall{}); !errors.Is(err, ErrClosed) {
 		t.Errorf("SteeringLoaded after a close returned %v, want ErrClosed", err)
-	}
-}
-
-// A turn holds one compaction_failed entry: a later failure in it appends nothing and reports not first.
-func TestCompactionFailed_OneEntryPerTurn(t *testing.T) {
-	ctx := t.Context()
-	turn, rec := open(t)
-	if _, first, err := turn.CompactionFailed(ctx, "model error"); err != nil || !first {
-		t.Fatalf("first failure = (first %v, %v), want first", first, err)
-	}
-	sealed, first, err := turn.CompactionFailed(ctx, "model error")
-	if err != nil || first || len(sealed) != 0 {
-		t.Errorf("second failure = (%d sealed, first %v, %v), want nothing sealed and not first", len(sealed), first, err)
-	}
-	if got := rec.shape(); len(got) != 1 || got[0] != "/compaction_failed" {
-		t.Errorf("entries = %v, want the one compaction_failed", got)
 	}
 }

@@ -188,8 +188,18 @@ func (bc *bridgeCoordinator) ObserveSummaryRunning(ctx context.Context, chatID m
 	bc.setMark(ctx, lc)
 }
 
-// closeSummaryMark clears a mark kiro-cli's summary left when its turn closed with no outcome frame.
+// closeSummaryMark ends kiro-cli's summary when its turn closed with no outcome frame. The life's flag decides, since
+// a lost header write can leave it set under a header that reads false; the header decides only with no life.
 func (bc *bridgeCoordinator) closeSummaryMark(ctx context.Context, chatID marotte.ChatID) {
+	if lc, ok := bc.turns.lookup(chatID); ok {
+		lc.mu.Lock()
+		running := lc.summaryRunning
+		lc.mu.Unlock()
+		if running {
+			bc.ObserveSummaryRunning(ctx, chatID, false)
+			return
+		}
+	}
 	if c, ok := bc.chatStore.Get(ctx, chatID); ok && c.Compacting {
 		bc.ObserveSummaryRunning(ctx, chatID, false)
 	}

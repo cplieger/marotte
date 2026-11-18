@@ -136,8 +136,6 @@ type Turn struct {
 	closed  bool
 	// woken is whether the turn's turn_wake reached the sink.
 	woken bool
-	// compactionFailed is whether the turn holds its one compaction_failed entry (CompactionFailed).
-	compactionFailed bool
 }
 
 // Open starts the accumulator for a turn. The turn_open entry (source, n) is the store's,
@@ -633,21 +631,11 @@ func (t *Turn) Compaction(ctx context.Context, summary string, emptyOrdinal int)
 }
 
 // CompactionFailed appends a compaction that did not complete.
-// CompactionFailed appends the turn's one compaction_failed entry and reports first true; a later failure in the
-// same turn appends nothing and reports false. kiro-cli tries its summary again at each response after a failed one
-// (its rearm guard arms only on a landed summary), and one mark per turn is what the reader is shown.
-func (t *Turn) CompactionFailed(ctx context.Context, reason string) (sealed []Sealed, first bool, err error) {
+func (t *Turn) CompactionFailed(ctx context.Context, reason string) ([]Sealed, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.compactionFailed {
-		return nil, false, nil
-	}
 	payload := marotte.EntryCompactionFailed{Reason: reason}
-	sealed, err = t.laneless(ctx, marotte.EntryKindCompactionFailed, t.mintID(), payload)
-	if err == nil {
-		t.compactionFailed = true
-	}
-	return sealed, err == nil, err
+	return t.laneless(ctx, marotte.EntryKindCompactionFailed, t.mintID(), payload)
 }
 
 // SafetyBlocked appends the safety properties an enforce-mode block violated.

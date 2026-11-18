@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -288,6 +289,59 @@ func TestCompactPress_DuringKiroCLIsSummaryIsRefused(t *testing.T) {
 	}}))
 	waitFor(t, func() bool { return !compactingShown(t, cs) })
 	send(t, h, newTurnEndMsg("end_turn"))
+}
+
+// A summary that keeps failing across wake turns is shown once, and a press refused during that streak still tells
+// the reader its own outcome: the suppressed failure is not the press's account.
+func TestCompaction_AFailingStreakShowsOnceAndAPressStillToasts(t *testing.T) {
+	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+	failedTurn := []*marotte.RPCResponse{
+		newTurnStartMsg(),
+		newSessionInfoMsg(map[string]any{"summarization": map[string]any{"status": "model error"}}),
+		newTurnEndMsg("end_turn"),
+	}
+	send(t, h, failedTurn...)
+	waitFor(t, func() bool { return len(compactionToasts(t, h)) == 1 })
+
+	br.setCallResult(marotte.MethodSessionCompact, json.RawMessage(`{"success":false}`))
+	release := holdCall(t, br, marotte.MethodSessionCompact)
+	answeredWithin2s(t, pressCompact(t, h))
+	waitForCall(t, br, marotte.MethodSessionCompact)
+	send(t, h, failedTurn...)
+	release()
+
+	want := []string{"model error", compactRefusedDetail}
+	waitFor(t, func() bool { return len(compactionToasts(t, h)) >= 2 })
+	staysFalse(t, 200*time.Millisecond, func() bool { return len(compactionToasts(t, h)) != 2 }, "a third toast came")
+	if got := compactionToasts(t, h); !slices.Equal(got, want) {
+		t.Errorf("toasts = %q, want %q", got, want)
+	}
+	if got := failedRows(t, cs, "c1"); len(got) != 1 {
+		t.Errorf("compaction_failed rows = %q, want the streak's one", got)
+	}
+}
+
+// A summary mark whose header write was lost still ends with its turn: the press after it is accepted, not refused
+// for a compaction nothing on screen shows.
+func TestCompaction_ALostRunningMarkStillEndsWithItsTurn(t *testing.T) {
+	h, cs, br, tails := idleAfterFirstTurn(t, "/tmp/work")
+	send(t, h, newTurnStartMsg())
+	fault := errors.New("disk full")
+	cs.mutateFault.Store(&fault)
+	send(t, h, newSessionInfoMsg(map[string]any{
+		"kind": "summarization_started", "summarization": map[string]any{"status": "running"},
+	}))
+	cs.mutateFault.Store(nil)
+	if compactingShown(t, cs) {
+		t.Fatal("Setup: the running mark was written despite the fault")
+	}
+
+	send(t, h, newTurnEndMsg("end_turn"))
+	waitFor(t, func() bool { return tails.Load() == 2 })
+	if rec := answeredWithin2s(t, pressCompact(t, h)); rec.Code != http.StatusOK {
+		t.Errorf("press = %d %s, want 200 once the summary's turn closed", rec.Code, rec.Body.String())
+	}
+	waitForCall(t, br, marotte.MethodSessionCompact)
 }
 
 // A press whose call ends while kiro-cli's own summary runs leaves the summary's mark, and the summary's outcome

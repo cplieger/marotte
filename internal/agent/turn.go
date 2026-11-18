@@ -165,8 +165,8 @@ type chatLifecycle struct {
 	closedIDs [recentCloses]string
 	// admissionMessage is the prompt message id of the held reservation, "" for none.
 	admissionMessage string
-	// compactPress is the reader's Compact call running on the chat, nil for none (compactPresses); summaryRunning is
-	// kiro-cli's own summary between its running frame and its outcome. Either one sets Chat.Compacting (setMark).
+	// compactPress is the reader's Compact call running on the chat, nil for none (compactPresses); it sets
+	// Chat.Compacting (setMark).
 	compactPress *compactCall
 	chatID       marotte.ChatID
 	// runFinal is the list the life's end left, owed to the record once the ending caller released its locks
@@ -234,7 +234,9 @@ type chatLifecycle struct {
 	// waiting on a position that can no longer advance stops waiting.
 	forwardGone bool
 	// gatePark is whether a goroutine waits out a held close to run the list's taker again (parkGateLocked).
-	gatePark       bool
+	gatePark bool
+	// summaryRunning is kiro-cli's own summary between its running frame and its outcome; it sets Chat.Compacting
+	// (setMark).
 	summaryRunning bool
 }
 
