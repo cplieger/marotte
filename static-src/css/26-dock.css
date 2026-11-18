@@ -867,8 +867,115 @@
     flex: none;
   }
 
-  &:not(:has(.steer-row, .run-bar:not(.hidden))) {
+  &:not(:has(.steer-row, .run-bar:not(.hidden), .jobs-strip:not([hidden])))) {
     display: none;
+  }
+}
+
+/* ==========================================================================
+   The jobs strip — the chat's running background jobs (jobs-strip.ts)
+
+   Compact rows, not cards: the description, how long it has run, any refusal,
+   then Stop and Show output. Three rows show; more scroll inside the strip, as
+   the run bar keeps its own rows to its box. Still: the job card in the
+   transcript and the chat list mark carry no motion either.
+   ========================================================================== */
+
+.jobs-strip-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+  gap: var(--run-row-gap, var(--sp-1)) var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-block-size: calc(3 * var(--row-tap-sm) + 2 * var(--run-row-gap, var(--sp-1)));
+  overflow: hidden auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.jobs-strip-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+  min-block-size: var(--row-tap-sm);
+  padding-inline: var(--sp-2);
+  font-size: var(--fs-sm);
+
+  & .jobs-strip-desc {
+    min-inline-size: 0;
+    overflow: hidden;
+    font-family: var(--font-mono);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  & .jobs-strip-elapsed {
+    color: var(--c-text-tertiary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  & .jobs-strip-message {
+    color: var(--c-red);
+  }
+}
+
+.job-output-dialog {
+  inline-size: min(720px, 92vw);
+  max-block-size: 85dvh;
+  padding: 0;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-primary);
+  color: var(--c-text-primary);
+  flex-direction: column;
+
+  &[open] {
+    display: flex;
+  }
+
+  &::backdrop {
+    background: color-mix(in srgb, #000 40%, transparent);
+  }
+
+  & .job-output-header {
+    padding: var(--sp-3) var(--sp-4);
+    border-block-end: 1px solid var(--c-border);
+  }
+
+  & .job-output-title {
+    margin: 0;
+    overflow-wrap: anywhere;
+    font-size: var(--fs-md);
+    font-weight: 600;
+  }
+
+  & .job-output-well {
+    flex: 1 1 auto;
+    min-block-size: 8rem;
+    margin: var(--sp-3) var(--sp-4) 0;
+    padding: var(--sp-2) var(--sp-3);
+    overflow: auto;
+    border-radius: var(--r-sm);
+    background: var(--c-well);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    white-space: pre;
+  }
+
+  & .job-output-status {
+    min-block-size: 1lh;
+    margin: var(--sp-2) var(--sp-4) 0;
+    color: var(--c-text-tertiary);
+    font-size: var(--fs-sm);
+  }
+
+  & .job-output-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--sp-2);
+    padding: var(--sp-3) var(--sp-4);
   }
 }
 

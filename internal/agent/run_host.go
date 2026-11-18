@@ -1030,11 +1030,6 @@ func (rt *Runtime) dispatch(ctx context.Context, chatID marotte.ChatID, origin a
 		rt.handleRunStepFrame(ctx, chatID, msg)
 		return
 	}
-	// KAS sends the index's status to every session on the root, a run's host session included.
-	if msg.Method == methodKiroCodeIndexStatus {
-		rt.onCodeIndexStatus(ctx, chatID, msg)
-		return
-	}
 	slog.Debug("run host session: unhandled notification", "method", msg.Method, "chat_id", chatID)
 }
 

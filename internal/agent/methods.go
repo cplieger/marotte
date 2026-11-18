@@ -49,6 +49,14 @@ const (
 	methodKiroCodeIndexCancelBuild = "_kiro/codeIntelligence/cancelBuild" // C→A request: {sessionId, buildId?} → {status: canceled|not-running}
 )
 
+// A session's background jobs, live only with kiro-cli's job shell on (settings.universalBackgroundTool).
+const (
+	methodKiroJobUpdate        = "_kiro/job/update"          // A→C notification: {sessionId, id, kind, description, status, startedAt, endedAt?}
+	methodKiroJobCancel        = "_kiro/job/cancel"          // C→A request: {sessionId, jobId} → {jobs: [{jobId, wasRunning, confirmed}]}
+	methodKiroJobOutput        = "_kiro/job/output"          // C→A request: {sessionId, jobId, lines?: 1..1000} → {status, lines[], gap?: {at}}
+	methodKiroToolContentChunk = "_kiro/tools/content_chunk" // A→C notification: {sessionId, toolCallId, content: {type: content, content: {type: text, text}}}; needs streamingShellContent
+)
+
 // methodKiroSessionNotify is the notification KAS's `send_message` builtin raises:
 // `{sessionId, callerSessionId, message, severity, workflowId?, nodeId?}`. `message` is the only
 // carrier of a step's question (KAS's pause detail is empty); a `session/prompt` to

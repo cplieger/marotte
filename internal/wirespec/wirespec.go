@@ -134,6 +134,9 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.ContextBreakdown](),
 	wiregen.TypeRef[marotte.EntryTurnClose](),
 	wiregen.TypeRef[marotte.EntryStepGraded](),
+	wiregen.TypeRef[marotte.BackgroundJob](),
+	wiregen.TypeRef[marotte.BackgroundJobEnd](),
+	wiregen.TypeRef[marotte.EntryJobEnded](),
 	wiregen.TypeRef[marotte.ConnectedPayload](),
 	wiregen.TypeRef[marotte.SubjectStamp](),
 	wiregen.TypeRef[marotte.PendingSnapshotPayload](),
@@ -219,6 +222,9 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.CodeIndexBuild](),
 	wiregen.TypeRef[marotte.CodeIndexStatusPayload](),
 	wiregen.TypeRef[marotte.CodeIndexView](),
+	wiregen.TypeRef[marotte.BackgroundJobPayload](),
+	wiregen.TypeRef[marotte.BackgroundJobsView](),
+	wiregen.TypeRef[marotte.BackgroundJobOutput](),
 	wiregen.TypeRef[marotte.SafetyPropertiesPayload](),
 	wiregen.TypeRef[marotte.GovernanceFeatures](),
 	wiregen.TypeRef[marotte.GovernanceStatePayload](),
@@ -423,6 +429,8 @@ var wireEnums = []wiregen.EnumRef{
 	wiregen.StringEnum[marotte.TurnRevertCause](),
 	// The reset row words each cause, keying the client's wording record.
 	wiregen.StringEnum[marotte.ContextResetCause](),
+	// The job card's end line and the job_ended row word each state.
+	wiregen.StringEnum[marotte.BackgroundJobState](),
 	// The turn header words each wake reason and note, so both tables must be total.
 	wiregen.StringEnum[marotte.WakeReason](),
 	wiregen.StringEnum[marotte.WakeNote](),
@@ -587,6 +595,7 @@ var wireEvents = []wiregen.Event{
 	{Name: "safety_status", Data: wiregen.TypeRef[marotte.SafetyStatusPayload]()},
 	{Name: "knowledge_indexing", Data: wiregen.TypeRef[marotte.KnowledgeIndexingPayload]()},
 	{Name: "code_index_status", Data: wiregen.TypeRef[marotte.CodeIndexStatusPayload]()},
+	{Name: "job_update", Data: wiregen.TypeRef[marotte.BackgroundJobPayload]()},
 	{Name: "tool_job_changed", Data: wiregen.TypeRef[marotte.ToolJobChangedPayload]()},
 	{Name: "tool_job_output", Data: wiregen.TypeRef[marotte.ToolJobOutputPayload]()},
 	{Name: "steer_queued", Data: wiregen.TypeRef[marotte.SteerQueuedPayload]()},

@@ -2338,3 +2338,40 @@ describe("a tool_load or load_resource card names what it loaded", () => {
     });
   }
 });
+
+describe("a background job's card", () => {
+  it("is built still, with the job's line and no spinner, while the job runs", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    const card = buildToolCard({
+      id: "tc-job",
+      title: "sleep 60",
+      kind: "execute",
+      status: "in_progress",
+      live: true,
+      job: { id: "7" },
+    });
+
+    expect(card.querySelector(".tool-spinner")).toBeNull();
+    expect(card.dataset["startMs"]).toBeUndefined();
+    expect(card.querySelector(".tool-job")?.textContent).toBe("Running in background, job 7");
+    expect(card.dataset["outcome"]).toBe("running");
+  });
+
+  it("maps the job's outcome onto the card's tones through the card options", async () => {
+    const { toolCardOptsFor } = await import("./tool-card-opts.js");
+    const call = (status: "completed" | "failed" | "cancelled" | "timed_out" | "outcome_unknown") =>
+      toolCardOptsFor(
+        { ...makeToolCall({ id: "j", status: "completed" }), job: { id: "7", end: { status, duration_ms: 1 } } },
+        true,
+      ).status;
+
+    expect(call("completed")).toBe("completed");
+    expect(call("failed")).toBe("failed");
+    expect(call("timed_out")).toBe("failed");
+    expect(call("cancelled")).toBe("aborted");
+    expect(call("outcome_unknown")).toBe("aborted");
+    expect(toolCardOptsFor({ ...makeToolCall({ id: "j", status: "completed" }), job: { id: "7" } }, true).status).toBe(
+      "in_progress",
+    );
+  });
+});

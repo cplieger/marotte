@@ -1,6 +1,7 @@
 // Chat lifecycle: create, activate, delete, switch, send prompt. Also owns the
 // chat-tab registration (openChatTab) and load-more pagination.
 
+import { chatRunsJob } from "./job-state.js";
 import type { ResumableSession } from "./types.js";
 import {
   getActiveId,
@@ -749,7 +750,7 @@ function chatRowEffect(chatID: string): () => void {
     renameTab(tabID, s.name);
     // `updated_at` is LAST ACTIVITY, which the outcome phrase's age renders; the only caller
     // supplying one.
-    setTabStatus(tabID, tabStatusFor(s, pendingAsk), s.updated_at);
+    setTabStatus(tabID, tabStatusFor(s, pendingAsk, chatRunsJob(chatID)), s.updated_at);
   });
 }
 

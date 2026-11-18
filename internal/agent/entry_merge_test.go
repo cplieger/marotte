@@ -1460,3 +1460,52 @@ func TestMergeEntries_ARecoveredEndLeavesThePlaceholder(t *testing.T) {
 		t.Errorf("closer = %+v, want the interrupted/unterminated placeholder", closer)
 	}
 }
+
+// The live end is filed where it arrived, often a later turn than the one KAS's notice replays into: a recorded
+// job_ended keeps the merge from adding the replay's copy, while an end the record lacks is added.
+func TestMergeEntries_AJobEndIsAddedOnlyWhenTheRecordLacksIt(t *testing.T) {
+	end := marotte.EntryJobEnded{JobID: "7", End: marotte.BackgroundJobEnd{Status: marotte.BackgroundJobCompleted}}
+	endRow := entryRow{kind: marotte.EntryKindJobEnded, id: marotte.JobEndedID("7"), payload: end}
+	projected := []translate.ProjectedTurn{projTurn(t, "P1",
+		openRow("P1", 0, nil),
+		textRow("S1", "", "started it"),
+		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
+		endRow,
+	)}
+	first := []entryRow{
+		openRow("T1", 1, nil),
+		textRow("S1", "", "started it"),
+		liveClose("T1:e1", marotte.TurnOutcomeCompleted, "end_turn"),
+	}
+	count := func(merged []mergedTurn) int {
+		n := 0
+		for _, turn := range merged {
+			for _, e := range turn.Entries {
+				if e.Kind == marotte.EntryKindJobEnded {
+					n++
+				}
+			}
+		}
+		return n
+	}
+
+	t.Run("recorded in a later turn", func(t *testing.T) {
+		record := []recordTurn{
+			recTurn(t, "T1", first...),
+			recTurn(t, "T2", openRow("T2", 2, nil), endRow, liveClose("T2:e1", marotte.TurnOutcomeCompleted, "end_turn")),
+		}
+
+		merged, _ := mergeEntries(record, projected, "sid-1")
+
+		if n := count(merged); n != 1 {
+			t.Errorf("job_ended entries = %d, want the record's one:\n%s", n, dumpMerged(merged))
+		}
+	})
+	t.Run("absent from the record", func(t *testing.T) {
+		merged, changed := mergeEntries([]recordTurn{recTurn(t, "T1", first...)}, projected, "sid-1")
+
+		if n := count(merged); n != 1 || !changed {
+			t.Errorf("job_ended entries = %d, changed %v; want the replay's one added:\n%s", n, changed, dumpMerged(merged))
+		}
+	})
+}

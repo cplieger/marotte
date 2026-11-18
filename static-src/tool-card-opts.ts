@@ -4,7 +4,8 @@
 
 import type { ToolStatus, ToolDiff, TextSpan, ToolCall } from "./types.js";
 import type { ToolDenial, ToolDisclosed, ToolInteraction, ToolOffload } from "./types.js";
-import type { LoadedResource, MCPToolIdentity } from "./wire/types.gen.js";
+import type { BackgroundJob, LoadedResource, MCPToolIdentity } from "./wire/types.gen.js";
+import { jobPaintStatus } from "./job-state.js";
 
 export interface BuildToolCardOpts {
   id: string;
@@ -35,6 +36,8 @@ export interface BuildToolCardOpts {
   offload?: ToolOffload | undefined;
   /** How the call's approval or question was answered. */
   interaction?: ToolInteraction | undefined;
+  /** The background job kiro-cli moved the call into; `status` is then the job's (`jobPaintStatus`). */
+  job?: BackgroundJob | undefined;
   /** The tool RAN CORRECTLY AND REFUSED; `status` stays `completed` and the reason is
    *  the tool's own `output`. */
   declined?: boolean;
@@ -67,9 +70,12 @@ export function toolCardOptsFor(tc: ToolCall, live: boolean, chatID = ""): Build
     id: tc.id,
     title: tc.card_title ?? tc.title,
     kind: tc.kind,
-    status: tc.status,
+    status: tc.job === undefined ? tc.status : jobPaintStatus(tc.job.end?.status),
     live,
   };
+  if (tc.job !== undefined) {
+    opts.job = tc.job;
+  }
   if (chatID !== "") {
     opts.chatID = chatID;
   }

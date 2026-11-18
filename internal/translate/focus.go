@@ -28,7 +28,10 @@ type focusUpdate struct {
 // focusActivity is the engine's activity snapshot. With TurnActive its status describes the
 // live turn, an outstanding ask included, never a declaration that outlives the turn.
 type focusActivity struct {
-	TurnActive bool `json:"turnActive"`
+	// Unattended is whether a background job of the session runs, nil when jobs are off. It never
+	// reaches the turn lifecycle: a job outlives its turn.
+	Unattended *bool `json:"unattended"`
+	TurnActive bool  `json:"turnActive"`
 }
 
 // handleFocusUpdate hands the engine's activity to the turn lifecycle, adopts the title onto the
@@ -38,6 +41,9 @@ type focusActivity struct {
 func (t *Translator) handleFocusUpdate(ctx context.Context, chatID marotte.ChatID, f *focusUpdate, activity *focusActivity) {
 	if activity != nil {
 		t.bracket.WireTurnActivity(chatID, activity.TurnActive)
+		if activity.Unattended != nil {
+			t.noteUnattended(ctx, chatID, *activity.Unattended)
+		}
 	}
 	if title := SanitizeTitle(f.Title); title != "" {
 		t.adoptOrRefuseTitle(ctx, chatID, title)

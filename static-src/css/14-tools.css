@@ -554,6 +554,16 @@
   flex-shrink: 0;
 }
 
+/* A background job's line (tool-card.ts syncJobMark): the same hint ink, since the
+   outcome's tone is the mark's. It may wrap on a narrow card, never truncate. */
+.tool-job {
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-xs);
+  flex-shrink: 1;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
 /* THE GROUP HEADER CARRIES A VERDICT, not a kind: `paintGroupOutcome` writes an
    `outcomeIcon` here and shares `.tool-icon`'s tint classes. The square is SIZED here,
    to the glyph's own token, so the summary never shifts as the group settles and the

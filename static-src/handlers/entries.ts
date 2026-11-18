@@ -21,6 +21,7 @@ import { markGitDirty } from "../git.js";
 import { clearCompactionFailure } from "../failure-notice.js";
 import { isRepoMutatingKind } from "../tool-schema.js";
 import { payloadOf } from "../turns.js";
+import { noteJobEnded } from "../job-state.js";
 import type { Entry } from "../types.js";
 import type { RefusalInfo } from "../wire/types.gen.js";
 
@@ -110,6 +111,13 @@ function afterAppend(chatID: string, entry: Entry): void {
       // `kind` is the SETTLED value the appender copied off the call, so absent means none.
       if (isRepoMutatingKind(result.kind ?? "")) {
         markGitDirty(mutatedPaths(result));
+      }
+      return;
+    }
+    case "job_ended": {
+      const end = payloadOf(entry, "job_ended");
+      if (end !== undefined) {
+        noteJobEnded(chatID, end);
       }
       return;
     }

@@ -4,6 +4,8 @@ export type AlwaysAllowBlock = "unparseable";
 
 export type AtDays = "daily" | "weekdays" | "monthly";
 
+export type BackgroundJobState = "running" | "completed" | "failed" | "cancelled" | "timed_out" | "outcome_unknown";
+
 export type BotEngineState = "write_failing";
 
 export type BotState = "draft" | "active" | "paused" | "closed";
@@ -24,7 +26,7 @@ export type DenialBasis = "unparseable" | "cedar-unavailable" | "not-loaded" | "
 
 export type EngineState = "starting" | "ready" | "restarting" | "down";
 
-export type EntryKind = "turn_open" | "turn_bind" | "turn_wake" | "run_named" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "steer_cleared" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "profile_switched" | "turn_revert" | "context_reset" | "reconciled" | "turn_close" | "step_graded";
+export type EntryKind = "turn_open" | "turn_bind" | "turn_wake" | "run_named" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "steer_cleared" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "profile_switched" | "turn_revert" | "context_reset" | "reconciled" | "turn_close" | "step_graded" | "job_ended";
 
 export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "memory_not_loaded" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed" | "resume_not_sent";
 
@@ -317,6 +319,58 @@ export interface AtTrigger {
 export interface Attachment {
   path: string;
   name: string;
+}
+
+/**
+ * BackgroundJob marks a tool call kiro-cli moved into a background job (_meta.kiro.job). End is nil while
+ * the job runs.
+ */
+export interface BackgroundJob {
+  end?: BackgroundJobEnd;
+  id: string;
+}
+
+/**
+ * BackgroundJobEnd is how a job ended (_meta.kiro.job.end, or a job notice's jobEnd). Status is never
+ * running. StopReason is kiro-cli's model, user, session_close or shutdown, kept as sent; the times are
+ * RFC 3339.
+ */
+export interface BackgroundJobEnd {
+  status: BackgroundJobState;
+  stop_reason?: string;
+  started_at?: string;
+  ended_at?: string;
+  duration_ms: number;
+}
+
+/**
+ * BackgroundJobOutput is GET /api/chats/{id}/jobs/{job}/output: the last lines of the job's log. Gap is set
+ * when kiro-cli skipped lines it could not read whole.
+ */
+export interface BackgroundJobOutput {
+  status: BackgroundJobState;
+  lines: string[];
+  gap?: boolean;
+}
+
+/**
+ * BackgroundJobPayload is the payload for type="job_update" (_kiro/job/update) and one row of GET
+ * /api/jobs. Kind is kiro-cli's job kind (shell), kept as sent. ChatID is set on a GET row only: an
+ * event names its chat on the envelope.
+ */
+export interface BackgroundJobPayload {
+  chat_id?: string;
+  id: string;
+  kind?: string;
+  description: string;
+  status: BackgroundJobState;
+  started_at?: string;
+  ended_at?: string;
+}
+
+/** BackgroundJobsView is GET /api/jobs: every chat's running jobs, by chat then oldest first. */
+export interface BackgroundJobsView {
+  jobs: BackgroundJobPayload[];
 }
 
 /**
@@ -1371,6 +1425,19 @@ export interface EntryDeltaPayload {
 }
 
 /**
+ * EntryJobEnded is a background job's end, filed once per job (JobEndedID) from the card's end update or
+ * kiro-cli's job notice, whichever arrives first. ToolCallID names the card when the end came from it,
+ * and Output is the tail of the job's result.
+ */
+export interface EntryJobEnded {
+  job_id: string;
+  tool_call_id?: string;
+  description?: string;
+  output?: string;
+  end: BackgroundJobEnd;
+}
+
+/**
  * EntryModeSwitched is the mode_switched payload. From and To are mode ids, so a mode the
  * catalog no longer offers still renders; From is empty when no mode was recorded.
  */
@@ -1665,6 +1732,8 @@ export interface EntryToolResult {
   offload?: ToolOffload;
   /** Interaction is how the call's approval or question was answered. */
   interaction?: ToolInteraction;
+  /** Job is ToolCall's. A result whose job has no End sealed the call while the job ran on. */
+  job?: BackgroundJob;
   /**
    * Truncated is what the STORE dropped to bound this result on disk, nil when it
    * fit; OutputBytes and HasFull mark the served PREVIEW, as on EntryToolCall.
@@ -5133,6 +5202,8 @@ export interface ToolCall {
   offload?: ToolOffload;
   /** Interaction is how the call's approval or question was answered; one-way. */
   interaction?: ToolInteraction;
+  /** Job is set once kiro-cli moved the call into a background job; one-way. */
+  job?: BackgroundJob;
   /** Truncated is what the STORE dropped to bound this call on disk, nil when it fit. */
   truncated?: ToolTruncation;
   input?: unknown;
@@ -5368,6 +5439,7 @@ export interface ToolProgressPayload {
   disclosed?: ToolDisclosed;
   denial?: ToolDenial;
   offload?: ToolOffload;
+  job?: BackgroundJob;
   turn: string;
   tool_call_id: string;
   /** Title and Kind: KAS sends them nullish on most updates, so absent is "keep". */

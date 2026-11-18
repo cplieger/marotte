@@ -375,3 +375,52 @@ describe("an append whose text lands after the create", () => {
     card.remove();
   });
 });
+
+describe("a call kiro-cli moved into a background job", () => {
+  const moved = (id: string): ToolCall =>
+    frame(id, { kind: "execute", title: "sleep 60", status: "in_progress", job: { id: "7" } });
+
+  it("reads Running in background with a still mark: no spinner, nothing in flight", () => {
+    const card = liveCard("job-run");
+    applyToolCallUpdate(card, moved("job-run"), "c1");
+
+    expect(card.querySelector(".tool-job")?.textContent).toBe("Running in background, job 7");
+    expect(card.querySelector(".tool-spinner")).toBeNull();
+    expect(card.dataset["startMs"]).toBeUndefined();
+    expect(card.dataset["jobId"]).toBe("7");
+    expect(card.getAttribute("aria-label")).toBe("sleep 60, running in background, job 7");
+  });
+
+  it("ends with the outcome in its tone, how long it ran and when it ended", () => {
+    const card = liveCard("job-end");
+    applyToolCallUpdate(card, moved("job-end"), "c1");
+    const endedAt = new Date(Date.now() - 3 * 60_000).toISOString();
+
+    applyToolCallUpdate(
+      card,
+      frame("job-end", {
+        kind: "execute",
+        status: "completed",
+        job: { id: "7", end: { status: "timed_out", duration_ms: 61000, ended_at: endedAt } },
+      }),
+      "c1",
+    );
+
+    expect(card.querySelector(".tool-job")?.textContent).toBe("Timed out, 1m 1s, ended 3 minutes ago");
+    expect(card.dataset["outcome"]).toBe("fail");
+  });
+
+  it("paints the end the chat's log holds once its turn closed", async () => {
+    const { noteJobEnded } = await import("./job-state.js");
+    const card = mountToolCallCard("c-late", moved("job-late"));
+    document.body.appendChild(card);
+    expect(card.querySelector(".tool-job")?.textContent).toBe("Running in background, job 7");
+
+    noteJobEnded("c-late", { job_id: "7", output: "slept", end: { status: "completed", duration_ms: 2000 } });
+
+    expect(card.querySelector(".tool-job")?.textContent).toBe("Completed, 2.0s");
+    expect(card.dataset["outcome"]).toBe("ok");
+    expect(card.querySelector(".tool-output")?.textContent).toContain("slept");
+    disposeAllToolEffects();
+  });
+});

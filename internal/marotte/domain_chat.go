@@ -126,6 +126,8 @@ type ToolCall struct {
 	Offload *ToolOffload `json:"offload,omitempty"`
 	// Interaction is how the call's approval or question was answered; one-way.
 	Interaction *ToolInteraction `json:"interaction,omitempty"`
+	// Job is set once kiro-cli moved the call into a background job; one-way.
+	Job *BackgroundJob `json:"job,omitempty"`
 	// Truncated is what the STORE dropped to bound this call on disk, nil when it fit.
 	Truncated *ToolTruncation  `json:"truncated,omitempty"`
 	Input     json.RawMessage  `json:"input,omitempty"`

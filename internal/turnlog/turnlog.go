@@ -69,6 +69,9 @@ type OpenCall struct {
 	Created   marotte.EntryToolCall
 	Call      marotte.ToolCall
 	StartedTs int64
+	// Streamed marks output that arrived as _kiro/tools/content_chunk deltas (FoldStreamed): the terminal
+	// update's content restates all of it.
+	Streamed bool
 }
 
 // lane is one agent's state inside a turn: at most one open entry, and the bytes
@@ -215,6 +218,21 @@ func (t *Turn) SetOpenCall(callID string, call *marotte.ToolCall) {
 	if c, ok := t.calls[callID]; ok {
 		c.Call = *call
 	}
+}
+
+// FoldStreamed applies fold to an unsettled call's value and marks it Streamed, answering the value before and
+// after; false for a settled or unknown id.
+func (t *Turn) FoldStreamed(callID string, fold func(*marotte.ToolCall)) (before, after marotte.ToolCall, ok bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	c, ok := t.calls[callID]
+	if !ok {
+		return before, after, false
+	}
+	before = c.Call
+	fold(&c.Call)
+	c.Streamed = true
+	return before, c.Call, true
 }
 
 // OpenEntries are copies of the turn's still-coalescing entries, one per lane holding one,
@@ -578,6 +596,13 @@ func (t *Turn) RunNamed(ctx context.Context, n *marotte.EntryRunNamed) ([]Sealed
 	return t.interject(ctx, marotte.EntryKindRunNamed, t.mintID(), *n)
 }
 
+// JobEnded appends a background job's end as an interjection, like a steer: the job is not this turn's.
+func (t *Turn) JobEnded(ctx context.Context, e *marotte.EntryJobEnded) ([]Sealed, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.interject(ctx, marotte.EntryKindJobEnded, marotte.JobEndedID(e.JobID), *e)
+}
+
 // Steer appends a steer in any state as an interjection: it seals no lane, whatever is streaming.
 func (t *Turn) Steer(ctx context.Context, steerID string, steer *marotte.EntrySteer) ([]Sealed, error) {
 	t.mu.Lock()
@@ -678,8 +703,9 @@ func (t *Turn) ModeSwitched(ctx context.Context, p marotte.EntryModeSwitched) ([
 }
 
 // Close ends the turn: every lane's open entry seals, every tool_call still in
-// flight gets a tool_result{status: aborted} in its own lane, then the turn_close
-// carries the aggregate. Idempotent by refusal — a second closer answers
+// flight gets a tool_result{status: aborted} in its own lane (a call kiro-cli moved
+// into a background job is sealed as it stands, since the job outlives the turn),
+// then the turn_close carries the aggregate. Idempotent by refusal — a second closer answers
 // ErrClosed and writes nothing.
 func (t *Turn) Close(ctx context.Context, c marotte.TurnConclusion) ([]Sealed, error) {
 	t.mu.Lock()
@@ -698,7 +724,7 @@ func (t *Turn) Close(ctx context.Context, c marotte.TurnConclusion) ([]Sealed, e
 			t.settleCall(id)
 			continue
 		}
-		res := t.agg.facts.WithInteraction(id, abortedResult(open))
+		res := t.agg.facts.WithInteraction(id, closedResult(open))
 		s, aerr := t.append(ctx, open.Lane, marotte.EntryKindToolResult, marotte.ToolResultID(id), res, "")
 		if aerr != nil {
 			return sealed, aerr
@@ -903,11 +929,17 @@ func (t *Turn) trackCall(id, key string, call *marotte.EntryToolCall, ts int64) 
 	t.callOrder = append(t.callOrder, id)
 }
 
-// abortedResult is a close's result for a call still in flight: aborted, with the fields of the fold its card
-// title reads, so a reload titles the card as the live one was (marotte.SettledToolCall).
-func abortedResult(open *OpenCall) *marotte.EntryToolResult {
+// closedResult is a close's result for a call still in flight: aborted, with the fields of the fold its card
+// title reads, so a reload titles the card as the live one was (marotte.SettledToolCall). A running job's
+// call returned to the model already, so it is sealed completed with its whole fold and the job mark.
+func closedResult(open *OpenCall) *marotte.EntryToolResult {
 	res := &marotte.EntryToolResult{
 		Title: open.Call.Title, Kind: open.Call.Kind, Status: marotte.ToolAborted, Disclosed: open.Call.Disclosed,
+	}
+	if open.Call.Job != nil {
+		r := marotte.EntryToolResultOf(&open.Call)
+		r.Status = marotte.ToolCompleted
+		res = &r
 	}
 	if !bytes.Equal(open.Call.Input, open.Created.Input) {
 		res.Input = open.Call.Input

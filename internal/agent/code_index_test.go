@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -77,6 +79,29 @@ func TestCodeIndexStatus_ArrivesFromARunHostSession(t *testing.T) {
 	v := codeIndexView(t, h)
 	if len(v.Statuses) != 1 || v.Statuses[0].Build == nil || v.Statuses[0].Build.Phase != "parse" {
 		t.Errorf("statuses = %+v, want the run host session's building status", v.Statuses)
+	}
+}
+
+// A build started from Settings reports through the observer pass that started it.
+func TestCodeIndexStatus_ArrivesFromAnObserverPass(t *testing.T) {
+	h, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	o := oneObserver(t, h)
+
+	err := h.observe(t.Context(), func(context.Context, engineSession) error {
+		o.deliver(indexStatusFrame(indexBuildingParse))
+		for deadline := time.Now().Add(5 * time.Second); len(codeIndexView(t, h).Statuses) == 0; time.Sleep(time.Millisecond) {
+			if time.Now().After(deadline) {
+				return errors.New("the observer's indexStatus was not kept within 5s")
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := codeIndexView(t, h); len(v.Statuses) != 1 || v.Statuses[0].Build == nil || v.Statuses[0].Build.Phase != "parse" {
+		t.Errorf("statuses = %+v, want the observer pass's building status", v.Statuses)
 	}
 }
 

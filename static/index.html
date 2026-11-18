@@ -357,6 +357,11 @@
               <div id="run-bar-fold" class="run-bar-fold" hidden></div>
               <ul id="run-bar" class="run-bar hidden" aria-label="Workflow runs from this chat"></ul>
             </div>
+            <!-- The chat's running background jobs (jobs-strip.ts): below the runs, since a
+                 job is a command of this chat's own turns, hidden while none runs. -->
+            <div id="jobs-strip" class="jobs-strip" hidden>
+              <ul id="jobs-strip-list" class="jobs-strip-list" aria-label="Background jobs in this chat"></ul>
+            </div>
             <!-- Messages waiting for the running turn or behind it, oldest at the
                  top: a new one appears at the bottom and pushes the older ones up.
                  Beside .prompt-box rather than inside it, because these are

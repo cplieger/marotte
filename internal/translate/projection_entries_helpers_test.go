@@ -48,7 +48,7 @@ func pair(kind marotte.ACPUpdateKind, raw json.RawMessage) [2]any {
 // `source` discriminator sits at `_meta.kiro.source`, never on the update object.
 func replaySteerFrame(t *testing.T, id, text string) (marotte.ACPUpdateKind, json.RawMessage) {
 	t.Helper()
-	return replayFrame(t, replayUserChunkKind, text, "", map[string]any{
+	return replayFrame(t, UserChunkKind, text, "", map[string]any{
 		"messageId": id,
 		"timestamp": "2026-09-08T20:01:00.000Z",
 		"source":    "steer",
@@ -92,5 +92,5 @@ func (r replayUserRow) frame(t *testing.T) [2]any {
 	if r.tag != "" {
 		extra["userMessageTag"] = r.tag
 	}
-	return pair(replayFrame(t, replayUserChunkKind, r.text, "", extra))
+	return pair(replayFrame(t, UserChunkKind, r.text, "", extra))
 }

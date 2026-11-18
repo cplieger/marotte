@@ -179,6 +179,8 @@ const (
 	EventKnowledgeIndexing EventType = "knowledge_indexing"
 	// EventCodeIndexStatus is one workspace root's code-index status (GET /api/code-index's row).
 	EventCodeIndexStatus EventType = "code_index_status"
+	// EventJobUpdate is one background job's state change, chat-scoped (GET /api/chats/{id}/jobs's row).
+	EventJobUpdate EventType = "job_update"
 	// EventRecipesChanged is an empty refetch signal for GET /api/recipes.
 	EventRecipesChanged EventType = "recipes_changed"
 	// EventPowersChanged is an empty refetch signal for GET /api/powers.

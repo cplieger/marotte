@@ -342,6 +342,7 @@ type Translator struct {
 	slotWaits *slotWaits
 	// internalCalls are the dropped internal calls awaiting their settle (isInternalTool).
 	internalCalls *internalCalls
+	jobs          *jobRegistry
 	workDir       string // last for fieldalignment, as in Roles
 }
 
@@ -379,6 +380,7 @@ func New(r *Roles, opts ...Option) *Translator {
 		runNames:       newRunNames(),
 		slotWaits:      &slotWaits{},
 		internalCalls:  &internalCalls{},
+		jobs:           &jobRegistry{},
 	}
 	for _, o := range opts {
 		o(t)

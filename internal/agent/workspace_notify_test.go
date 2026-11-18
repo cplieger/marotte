@@ -13,11 +13,11 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// workspaceMethods are the twelve workspace-global notifications KAS sends to every resident session or none.
+// workspaceMethods are the thirteen workspace-global notifications KAS sends to every resident session or none.
 var workspaceMethods = []string{
 	methodKiroHooksDidChange, methodV3Powers, methodKiroWorkflowRecipesChanged, methodV3Governance,
 	methodKiroConfigurationState, methodV3PolicyChanged, methodV3PolicyError, methodV3SteeringDocs, methodV3SystemNotify,
-	methodKiroMemoryChanged, methodKiroMemorySyncStatus, methodV3ProgressiveContext,
+	methodKiroMemoryChanged, methodKiroMemorySyncStatus, methodV3ProgressiveContext, methodKiroCodeIndexStatus,
 }
 
 // countedSession is the session id of the frames countWorkspaceHandlers counts.

@@ -470,3 +470,66 @@ describe("safety_blocked", () => {
     expect(textOf(node)).toContain("Infrastructure Safety blocked a change");
   });
 });
+
+describe("job_ended", () => {
+  const ended = (status: "completed" | "failed" | "timed_out" | "cancelled", description?: string) =>
+    event("job_ended", {
+      job_id: "7",
+      ...(description !== undefined && { description }),
+      end: { status, duration_ms: 61000 },
+    });
+
+  it("reads Job <description> ended: <outcome>, never as the reader's message", () => {
+    const node = buildEvent(ended("completed", "sleep 60"));
+
+    expect(labelOf(node)).toBe("Job sleep 60 ended: completed");
+    expect(node.className).toContain("boundary-job");
+    expect(node.querySelector(".steer-note, .message.user")).toBeNull();
+  });
+
+  it("names the job by its id when kiro-cli gave no description", () => {
+    expect(labelOf(buildEvent(ended("cancelled")))).toBe("Job 7 ended: cancelled");
+  });
+
+  it("takes the failed tone for a failure or a timeout only", () => {
+    expect(buildEvent(ended("failed", "x")).className).toContain("boundary-failed");
+    expect(labelOf(buildEvent(ended("timed_out", "x")))).toBe("Job x ended: timed out");
+    expect(buildEvent(ended("timed_out", "x")).className).toContain("boundary-failed");
+    expect(buildEvent(ended("cancelled", "x")).className).not.toContain("boundary-failed");
+  });
+
+  it("Show the job scrolls to the job's card and moves focus to its heading", () => {
+    const messages = document.createElement("div");
+    messages.id = "messages";
+    const card = document.createElement("div");
+    card.className = "tool-call";
+    card.dataset["jobId"] = "7";
+    const heading = document.createElement("div");
+    heading.className = "tool-header";
+    card.append(heading);
+    const row = buildEvent(ended("completed", "sleep 60"));
+    messages.append(card, row);
+    document.body.append(messages);
+    const scroll = vi.fn();
+    card.scrollIntoView = scroll;
+
+    row.querySelector<HTMLButtonElement>(".boundary-action")?.click();
+
+    expect(scroll).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(heading);
+    messages.remove();
+  });
+
+  it("drops Show the job when the card is not in the transcript, since it could change nothing", async () => {
+    const messages = document.createElement("div");
+    messages.id = "messages";
+    const row = buildEvent(ended("completed", "sleep 60"));
+    messages.append(row);
+    document.body.append(messages);
+
+    await Promise.resolve();
+
+    expect(row.querySelector(".boundary-action")).toBeNull();
+    messages.remove();
+  });
+});

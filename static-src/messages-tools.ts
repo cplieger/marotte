@@ -20,8 +20,11 @@ import {
   syncInteractionFact,
   syncOffloadLink,
   syncSilenceMarker,
+  syncJobMark,
   setToolIdentity,
 } from "./tool-card.js";
+import { jobEndFor, jobPaintStatus, peekJobEnd, withJobEnd } from "./job-state.js";
+import type { EntryJobEnded } from "./wire/types.gen.js";
 import { clearToolSilence, forgetToolSilence } from "./tool-silence.js";
 import { toolCardOptsFor } from "./tool-card-opts.js";
 import { stampHookCard } from "./hook-fold.js";
@@ -42,8 +45,10 @@ interface ToolSlot {
   chatID: string;
   toolID: string;
   card: HTMLDivElement;
-  /** The snapshot the card shows, kept across a suspend so a resume writes only what changed meanwhile. */
+  /** The signal's value and the job end the card shows, kept across a suspend so a resume writes only what
+   *  changed meanwhile. */
   applied: ToolCall;
+  appliedEnd: EntryJobEnded | undefined;
   /** The live effect's disposer, or null while suspended (view parked). */
   cleanup: (() => void) | null;
 }
@@ -52,13 +57,17 @@ interface ToolSlot {
 function armSlot(slot: ToolSlot, sig: ReturnType<typeof ensureToolCallSig>): void {
   slot.cleanup = effect(() => {
     const next = sig.value;
+    // Tracked, so the log's job_ended repaints a card whose turn already closed.
+    const jobID = next.job?.id;
+    const ended = jobID === undefined ? undefined : jobEndFor(slot.chatID, jobID);
     // Before the early return: the effect must subscribe to the silence ticker, since a quiet call sends no frame.
     syncSilenceMarker(slot.card, slot.chatID, slot.toolID);
-    if (next === slot.applied) {
+    if (next === slot.applied && ended === slot.appliedEnd) {
       return;
     }
-    applyToolCallUpdate(slot.card, next, slot.chatID);
+    applyToolCallUpdate(slot.card, withJobEnd(next, ended), slot.chatID);
     slot.applied = next;
+    slot.appliedEnd = ended;
   });
 }
 const toolSlots = new Map<string, ToolSlot[]>();
@@ -561,8 +570,9 @@ export function mountToolCallCard(
   tc: ToolCall,
   detailsOpen = false,
 ): HTMLDivElement {
+  const ended = tc.job === undefined ? undefined : peekJobEnd(chatID, tc.job.id);
   // A previewed call's bulk is addressed by (chat, call): `GET /api/chats/{id}/tools/{toolCallID}`.
-  const opts = toolCardOptsFor(tc, true, chatID);
+  const opts = toolCardOptsFor(withJobEnd(tc, ended), true, chatID);
   if (detailsOpen) {
     // Not in `toolCardOptsFor`: an open card is a fact about the render, not the tool call.
     opts.detailsOpen = true;
@@ -572,7 +582,7 @@ export function mountToolCallCard(
   const key = toolCallSigKey(chatID, tc.id);
   const slots = toolSlots.get(key) ?? [];
   toolSlots.set(key, slots);
-  const slot: ToolSlot = { chatID, toolID: tc.id, card, applied: tc, cleanup: null };
+  const slot: ToolSlot = { chatID, toolID: tc.id, card, applied: tc, appliedEnd: ended, cleanup: null };
   slots.push(slot);
   // After the build and the slot registration: a held chunk is appended to the slots' cards, and whether it
   // flushes depends on the output this build rendered.
@@ -618,7 +628,12 @@ export function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall, chatID: st
   syncOffloadLink(el, tc.offload);
   syncInteractionFact(el, tc.interaction);
   syncClassifierMarks(el, tc.classifier_approved === true, tc.classifier_note ?? "");
-  if (tc.status !== undefined) {
+  if (tc.job !== undefined) {
+    applyStatusUpdate(el, jobPaintStatus(tc.job.end?.status));
+    syncJobMark(el, tc.job);
+    // The reply stopped waiting on the call, so no silence marker belongs on it.
+    forgetToolSilence(chatID, tc.id);
+  } else if (tc.status !== undefined) {
     applyStatusUpdate(el, tc.status);
     if (isToolDone(tc.status)) {
       // A settle is the one event saying no further frame is coming; another surface may still hold a card.

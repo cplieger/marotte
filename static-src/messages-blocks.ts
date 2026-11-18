@@ -2001,7 +2001,8 @@ function placeEntry(st: TurnRender, e: Entry, live: boolean, idx: GroupIndex): v
     case "mode_switched":
     case "profile_switched":
     case "turn_revert":
-    case "context_reset": {
+    case "context_reset":
+    case "job_ended": {
       const row = cbs.makeEvent(u);
       stampEntry(st, row, seq);
       appendEntry(st, container, row);
