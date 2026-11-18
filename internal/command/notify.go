@@ -29,7 +29,7 @@ type NotifyOptions struct {
 // steer, a turn of its own or in turn. A caller's earlier entry still waiting takes the text instead, and one kiro-cli
 // holds unread covers it. from must be non-nil: a caller's message neither ends the chat's waiting_on_user claim nor
 // touches its composer. A refusal is a 400 StatusError for text that reads as a system notice or holds a
-// context-mention token, else Submit's refusal as HTTP.
+// context-mention token, BeginMessage's refusal for a chat with no tab, else Submit's refusal as HTTP.
 func (d *Dispatcher) Notify(ctx context.Context, chatID marotte.ChatID, text string, from *marotte.Caller, opts NotifyOptions) (string, error) {
 	switch {
 	case notificationPrefix.MatchString(text):
@@ -41,7 +41,6 @@ func (d *Dispatcher) Notify(ctx context.Context, chatID marotte.ChatID, text str
 	if err := refuseBotDraft(ctx, roles.chats, chatID); err != nil {
 		return "", err
 	}
-	// Before the submit, as a prompt's: a message into an idle chat starts a turn, whose tab must exist first.
 	stamp, err := roles.door.BeginMessage(ctx, chatID, from, roles.admission.LifeStamp)
 	if err != nil {
 		return "", err
@@ -76,6 +75,8 @@ const (
 	NotifyBadText
 	// NotifyBotClosed is a rule's message into a Bot the user closed: it is dropped, never retried.
 	NotifyBotClosed
+	// NotifySessionClosed is an outside caller's message into a chat the user closed: refused, never placed.
+	NotifySessionClosed
 )
 
 // ClassifyNotifyError classes err, a Notify error.
@@ -84,8 +85,11 @@ func ClassifyNotifyError(err error) NotifyRefusal {
 		return NotifyUnknownChat
 	}
 	code, reason, _ := StatusOf(err)
-	if reason == reasonBotClosed {
+	switch reason {
+	case reasonBotClosed:
 		return NotifyBotClosed
+	case reasonSessionClosed:
+		return NotifySessionClosed
 	}
 	switch code {
 	case http.StatusBadRequest:

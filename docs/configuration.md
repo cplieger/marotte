@@ -161,7 +161,7 @@ environment:
 
 ## Waking a chat from another service (`MAROTTE_NOTIFY_TOKEN`)
 
-A service on your network, such as a mail or job server for your agents, can hand a chat a message with one request. With nothing of yours waiting, marotte places the message the way **Send** on the page does: into the chat's running reply, or as a new message. The message box, its draft and a question the chat is waiting on you for are left as they are. The message shows "Sent by" and the caller's `source`. A message into a chat whose tab you closed opens its tab again on every device, without switching to it. With 48 tabs open, the message is still delivered and the tab stays closed.
+A service on your network, such as a mail or job server for your agents, can hand a chat a message with one request. With nothing of yours waiting, marotte places the message the way **Send** on the page does: into the chat's running reply, or as a new message. The message box, its draft and a question the chat is waiting on you for are left as they are. The message shows "Sent by" and the caller's `source`. A chat whose tab you closed stays closed: the request is refused with `410` and nothing is sent to it. Reopen the chat from **History** to take messages again. With **Days kept** at 0, closing a chat other than a started Bot deletes it, and the request is answered `404`.
 
 Your own messages go first. The service's message waits in the chat's queue, above the message box. It waits behind every message of yours still waiting there and every message you sent into the running reply that the agent has not read yet. It also waits while a reply runs that it cannot join or that **Sending while a turn runs** set to Queue in Settings → General keeps it out of. It then goes in order: into the reply running at that point, or as the next new message.
 
@@ -205,7 +205,8 @@ curl -X POST http://marotte:9847/api/sessions/$SESSION/notify \
 | `200 {"duplicate":true}` | The same `dedupe_key` was accepted for this chat in the last 10 minutes. |
 | `400` | A field is missing or breaks its rule, and the error names it, or `body` when the body is not a JSON object. |
 | `401` | The token is missing or wrong, or the route is off. The off answer names `MAROTTE_NOTIFY_TOKEN`. |
-| `404` | No chat holds this session. |
+| `404` | No chat holds this session, or the chat was deleted, including one closed while **Days kept** is 0 (a started Bot is kept, and answers `410`). |
+| `410 {"error":"this chat was closed by the user","code":"session_closed"}` | You closed this chat's tab. Nothing is queued, the chat stays closed, and the `dedupe_key` is not recorded. Stop sending to this session; a message after you reopen the chat is taken. |
 | `413` | The body is over 512 KiB. |
 | `503` with `Retry-After` | The agent engine is starting, stopping or cannot take a message now, or the chat is closing. Or a request with the same key is still being accepted, or a message over 16 KiB would have to wait behind a running reply. Retry with the same `dedupe_key`. |
 

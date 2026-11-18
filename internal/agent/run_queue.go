@@ -747,8 +747,8 @@ func (bc *bridgeCoordinator) SummaryLaunched(chatID marotte.ChatID, entryID stri
 }
 
 // SendNow moves a row to the front and stops the turn the press was drawn against (command.runQueue.SendNow).
-func (bc *bridgeCoordinator) SendNow(ctx context.Context, chatID marotte.ChatID, id, stop string, hasStop bool) (command.RunStop, error) {
-	lc, err := bc.runLife(ctx, chatID, bc.LifeStamp(), command.AdmissionWait)
+func (bc *bridgeCoordinator) SendNow(ctx context.Context, chatID marotte.ChatID, stamp uint64, id, stop string, hasStop bool) (command.RunStop, error) {
+	lc, err := bc.runLife(ctx, chatID, stamp, command.AdmissionWait)
 	if err != nil {
 		return command.RunStop{}, err
 	}
@@ -818,8 +818,8 @@ func (bc *bridgeCoordinator) Unqueue(ctx context.Context, chatID marotte.ChatID,
 }
 
 // Resume lets the rows a stop paused go in order (command.runQueue.Resume).
-func (bc *bridgeCoordinator) Resume(ctx context.Context, chatID marotte.ChatID) error {
-	lc, err := bc.runLife(ctx, chatID, bc.LifeStamp(), command.AdmissionWait)
+func (bc *bridgeCoordinator) Resume(ctx context.Context, chatID marotte.ChatID, stamp uint64) error {
+	lc, err := bc.runLife(ctx, chatID, stamp, command.AdmissionWait)
 	if err != nil {
 		return err
 	}

@@ -25,8 +25,7 @@ const reasonSending = "sending"
 const reasonHeld = "held"
 
 // cmdQueuePrompt holds a message for the end of what runs. An idle chat is a 409 no_turn, the refusal a steer gives,
-// so the caller sends a prompt instead. An outside caller's row reopens the chat's tab only once the queue took it:
-// before the submit, a row the queue refuses would open a tab on every device.
+// so the caller sends a prompt instead.
 func cmdQueuePrompt(
 	ctx context.Context, runq runQueue, admission turnAdmission, door messageDoor, chats chatStore, cmd *marotte.ClientCommand,
 ) (any, error) {
@@ -40,14 +39,17 @@ func cmdQueuePrompt(
 	if refusal := refuseBotDraft(ctx, chats, cmd.ChatID); refusal != nil {
 		return nil, refusal
 	}
-	ans, err := runq.Submit(ctx, cmd.ChatID, admission.LifeStamp(), &Submission{
+	stamp, err := door.BeginMessage(ctx, cmd.ChatID, cmd.From, admission.LifeStamp)
+	if err != nil {
+		return nil, err
+	}
+	ans, err := runq.Submit(ctx, cmd.ChatID, stamp, &Submission{
 		Row: row, Origin: marotte.RunFromQueue, Kind: marotte.SendQueuePrompt, NoSteer: true,
 		Retry: !kasClaimsPromptText(row.Text),
 	})
 	if err != nil {
 		return nil, submitRefusal(err)
 	}
-	reopenForCaller(ctx, door, cmd)
 	slog.Info("prompt queued", "chat", cmd.ChatID, "message_id", row.ID)
 	return responseWith(map[string]any{"message_id": row.ID, "as": ans.As, "run": ans.Run}), nil
 }
@@ -128,22 +130,27 @@ func cmdUnqueuePrompt(ctx context.Context, roles *promptRoles, cmd *marotte.Clie
 }
 
 // cmdResumeQueue is the queue's Resume (runQueue.Resume): the rows a stop paused go in order. A queue with nothing
-// paused is success.
+// paused is success. The rows start a turn, so the press goes through the message door (Membership.BeginMessage).
 func cmdResumeQueue(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
-	if err := roles.runq.Resume(ctx, cmd.ChatID); err != nil {
-		return nil, StatusError(http.StatusInternalServerError, err)
+	stamp, err := roles.door.BeginMessage(ctx, cmd.ChatID, cmd.From, roles.admission.LifeStamp)
+	if err != nil {
+		return nil, err
+	}
+	if err := roles.runq.Resume(ctx, cmd.ChatID, stamp); err != nil {
+		return nil, submitRefusal(err)
 	}
 	return runAnswer(ctx, roles.runq, cmd.ChatID, nil), nil
 }
 
 // cmdSendQueuedNow sends one queued row next (SendQueuedNowCommand). It stops only the turn its Stop names, and only
-// while that turn is still the lone live turn, so a press that crosses that turn's close stops nothing.
+// while that turn is still the lone live turn, so a press that crosses that turn's close stops nothing. The row starts
+// a turn, so the press goes through the message door (Membership.BeginMessage).
 func cmdSendQueuedNow(
-	ctx context.Context, runq runQueue, bridges bridgeAccess, perms pendingPermAccess, terms terminalAccess,
-	stops turnStopper, cmd *marotte.ClientCommand,
+	ctx context.Context, runq runQueue, admission turnAdmission, door messageDoor, bridges bridgeAccess,
+	perms pendingPermAccess, terms terminalAccess, stops turnStopper, cmd *marotte.ClientCommand,
 ) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
@@ -154,12 +161,16 @@ func cmdSendQueuedNow(
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	_, hasStop := raw["stop"]
-	rs, err := runq.SendNow(ctx, cmd.ChatID, p.MessageID, p.Stop, hasStop)
+	stamp, err := door.BeginMessage(ctx, cmd.ChatID, cmd.From, admission.LifeStamp)
+	if err != nil {
+		return nil, err
+	}
+	rs, err := runq.SendNow(ctx, cmd.ChatID, stamp, p.MessageID, p.Stop, hasStop)
 	switch {
 	case errors.Is(err, ErrRowHeld):
 		return nil, StatusErrorReason(http.StatusConflict, reasonHeld, err)
 	case err != nil:
-		return nil, StatusError(http.StatusInternalServerError, err)
+		return nil, submitRefusal(err)
 	}
 	undo := func() { runq.ClearNext(cmd.ChatID, p.MessageID) }
 	return carryOutStop(ctx, runq, bridges, perms, terms, stops, cmd.ChatID, rs, undo)

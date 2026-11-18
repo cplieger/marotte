@@ -125,7 +125,8 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.register(marotte.CmdPrompt, bind1(prompt, cmdPrompt))
 	d.register(marotte.CmdUnqueuePrompt, bind1(prompt, cmdUnqueuePrompt))
 	d.register(marotte.CmdResumeQueue, bind1(prompt, cmdResumeQueue))
-	d.register(marotte.CmdSendQueuedNow, bind5(r.Run, r.Bridges, r.Perms, r.Terminals, r.Stops, cmdSendQueuedNow))
+	d.register(marotte.CmdSendQueuedNow,
+		bind7(r.Run, r.Admission, messageDoor(mem), r.Bridges, r.Perms, r.Terminals, r.Stops, cmdSendQueuedNow))
 	d.merges = newTangentMerges(prompt, mem, r.Loader)
 	d.register(marotte.CmdMergeTangent, bind2(r.Tangents, d.merges, cmdMergeTangent))
 	d.register(marotte.CmdSteer, bind1(prompt, cmdSteer))
