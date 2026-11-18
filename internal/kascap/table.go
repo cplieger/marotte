@@ -182,7 +182,8 @@ var table = []decl{
 		key:      "mcpElicitation",
 		door:     doorConnection,
 		resolver: resolverCapability,
-		send:     false,
+		value:    true,
+		send:     true,
 	},
 	{
 		key:      "backgroundProcesses",
@@ -469,6 +470,13 @@ var table = []decl{
 		// Present only on session/new: KAS takes it as the new session's id, so every frame it sends for the session,
 		// even before the reply, names an id marotte already routes.
 		sessionGate: func(s *SessionSpawn) (any, bool) { return s.OverrideSessionID, s.OverrideSessionID != "" },
+		send:        true,
+	},
+	{
+		key:         "requireExisting",
+		door:        doorSession,
+		resolver:    resolverCapability,
+		sessionGate: func(s *SessionSpawn) (any, bool) { return true, s.RequireExisting },
 		send:        true,
 	},
 	{

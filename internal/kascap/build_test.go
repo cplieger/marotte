@@ -71,6 +71,7 @@ var sessionMatrix = []struct {
 }{
 	{"gates off", SessionSpawn{}},
 	{"a minted id", SessionSpawn{OverrideSessionID: "sess_00000000-0000-4000-8000-000000000000"}},
+	{"a load", SessionSpawn{RequireExisting: true}},
 	// Presets need both states: an empty set withholds the policyPreset key entirely (the Custom
 	// profile).
 	{"one preset", SessionSpawn{Presets: []string{"read-workspace"}}},
@@ -262,6 +263,18 @@ func TestSessionDoor_OverrideSessionIDOnlyWhenMinted(t *testing.T) {
 	}
 	if got, present := SessionMeta(&SessionSpawn{})["overrideSessionId"]; present {
 		t.Errorf("SessionMeta(load) carries overrideSessionId = %#v, want it absent", got)
+	}
+}
+
+// TestSessionDoor_RequireExistingOnlyOnLoad pins that a load asks KAS to refuse a missing record with a bare true, and
+// that session/new, which names no existing session, never carries the key.
+func TestSessionDoor_RequireExistingOnlyOnLoad(t *testing.T) {
+	if got := SessionMeta(&SessionSpawn{RequireExisting: true})["requireExisting"]; got != true {
+		t.Errorf("SessionMeta(load) requireExisting = %#v, want true", got)
+	}
+	minted := &SessionSpawn{OverrideSessionID: "sess_00000000-0000-4000-8000-000000000000"}
+	if got, present := SessionMeta(minted)["requireExisting"]; present {
+		t.Errorf("SessionMeta(new) carries requireExisting = %#v, want it absent", got)
 	}
 }
 

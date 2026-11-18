@@ -383,6 +383,7 @@ var (
 		{"with every gate field off", SessionSpawn{}},
 		{"with every gate field on", SessionSpawn{
 			OverrideSessionID: "sess_00000000-0000-4000-8000-000000000000",
+			RequireExisting:   true,
 			Presets:           []string{"read-workspace"},
 			SpecPlan:          "full", SpecAskClarification: true, WorkValidation: "on",
 			MemoryMode: "read_write", MemoryReflection: true,

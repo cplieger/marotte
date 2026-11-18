@@ -72,8 +72,8 @@ func (rs *Runs) stepTranscript(ctx context.Context, workflowID, nodePath string)
 
 	turns, state := rs.replayStepSession(ctx, sessionID)
 	// A terminal run's step session is closed once its replay settled; a live run's never is, since close quiesces
-	// the session and would abort its step.
-	if workflowTerminal(workflowID, raw) {
+	// the session and would abort its step. A gone one was never loaded.
+	if state != marotte.RunStepTranscriptGone && workflowTerminal(workflowID, raw) {
 		rs.closeStepSession(sessionID)
 	}
 	out.State = state
@@ -101,7 +101,8 @@ func stepSessionAt(raw json.RawMessage, nodePath string) (string, error) {
 }
 
 // replayStepSession loads a step session with an engine-level `session/load`, not as a session with its own lane:
-// its replay frames reach the engine lane's replay reader, its live frames stay with the run's owner.
+// its replay frames reach the engine lane's replay reader, its live frames stay with the run's owner. The load is
+// strict and carries none of the session door's settings, so KAS refuses a step it holds no record of.
 func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]translate.ProjectedTurn, marotte.RunStepTranscriptState) {
 	if !rs.stepReplays.open(sessionID, translate.NewEntryProjection(newMessageID, rs.workDir)) {
 		// Refused rather than joined; a retry meets a settled registry.
@@ -115,13 +116,18 @@ func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]tran
 	defer cancel()
 
 	// A `{"result":null}` reply would otherwise wait out the budget.
-	raw, at, err := rs.engine.callRawAt(cctx, "step transcript load", marotte.MethodSessionLoad,
-		map[string]any{marotte.KeySessionID: sessionID})
+	raw, at, err := rs.engine.callRawAt(cctx, "step transcript load", marotte.MethodSessionLoad, map[string]any{
+		marotte.KeySessionID: sessionID,
+		"_meta":              map[string]any{"kiro": map[string]any{"requireExisting": true}},
+	})
+	if marotte.SessionRecordGone(err, sessionID) {
+		slog.Info("step transcript: kiro-cli holds no record of the step's session", "session_id", sessionID)
+		return nil, marotte.RunStepTranscriptGone
+	}
 	if err != nil || len(raw) == 0 {
 		// KAS's reason is machine prose: logged, not forwarded.
 		slog.Warn("step transcript: session load failed", "session_id", sessionID,
 			"error", err, "detail", rpcerr.Details(err))
-		// Unavailable, never gone: KAS answers an unknown id and a transient fault alike (-32603).
 		return nil, marotte.RunStepTranscriptUnavailable
 	}
 	// callRawAt gives the response's position, which the barrier measures against; recording it attempts one settle.

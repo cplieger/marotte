@@ -1650,6 +1650,53 @@ func TestLoadSession_AppliesParsedResult(t *testing.T) {
 	}
 }
 
+// doorKiroMeta decodes the `_meta.kiro` of the first frame a session door wrote.
+func doorKiroMeta(t *testing.T, sent []byte) map[string]json.RawMessage {
+	t.Helper()
+	first, _, _ := bytes.Cut(sent, []byte("\n"))
+	var frame struct {
+		Params struct {
+			Meta struct {
+				Kiro map[string]json.RawMessage `json:"kiro"`
+			} `json:"_meta"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(first, &frame); err != nil {
+		t.Fatalf("decode the door's frame: %v\n%s", err, first)
+	}
+	return frame.Params.Meta.Kiro
+}
+
+// Every load is strict, so KAS refuses an id it holds no record of instead of creating a blank session under it.
+func TestLoadSession_SendsRequireExisting(t *testing.T) {
+	b := NewEngine("/nonexistent", "/work")
+	sent, _, err := runLoadSessionOpts(t, b, &marotte.SessionOpts{SessionID: "acp-session-xyz"},
+		&marotte.RPCResponse{Result: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatalf("loadSession returned error: %v", err)
+	}
+	if got := string(doorKiroMeta(t, sent)["requireExisting"]); got != "true" {
+		t.Errorf("session/load _meta.kiro.requireExisting = %q, want true", got)
+	}
+}
+
+// session/new names no existing session, so it never asks for one.
+func TestNewSession_SendsNoRequireExisting(t *testing.T) {
+	b := NewEngine("/nonexistent", "/work")
+	sent, _, err := runNewSession(t, b, &marotte.SessionOpts{},
+		&marotte.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)})
+	if err != nil {
+		t.Fatalf("newSession returned error: %v", err)
+	}
+	meta := doorKiroMeta(t, sent)
+	if _, present := meta["overrideSessionId"]; !present {
+		t.Fatalf("the first frame is not session/new's door (no overrideSessionId):\n%s", sent)
+	}
+	if got, present := meta["requireExisting"]; present {
+		t.Errorf("session/new carries _meta.kiro.requireExisting = %s, want it absent", got)
+	}
+}
+
 // LoadSession records its lane's position at the response, the only thing a replay can be ordered against. 0, or a
 // position read afterwards, would make completion trivially true and adopt a partial transcript.
 func TestLoadSession_RecordsTheResponsePosition(t *testing.T) {
@@ -1967,7 +2014,8 @@ func TestObserveEffort_IgnoresAnEmptyReport(t *testing.T) {
 }
 
 // TestInitialize_DeclaresTheEngineCapabilities pins that the one engine always declares _meta.kiro.hooks
-// {enabled:true,v2:true}, so KAS autofires .kiro/hooks/*.json itself, beside openExternalUrl and infrastructureSafety.
+// {enabled:true,v2:true}, so KAS autofires .kiro/hooks/*.json itself, beside openExternalUrl, infrastructureSafety and
+// mcpElicitation.
 func TestInitialize_DeclaresTheEngineCapabilities(t *testing.T) {
 	// A fake kiro-cli that appends the raw initialize request to $INIT_CAPTURE.
 	script := `#!/bin/sh
@@ -2019,7 +2067,8 @@ done
 		if !strings.Contains(got, `"hooks":{"enabled":true,"v2":true}`) {
 			t.Errorf("initialize missing hooks opt-in; got: %s", got)
 		}
-		if !strings.Contains(got, `"openExternalUrl":true`) || !strings.Contains(got, `"infrastructureSafety":true`) {
+		if !strings.Contains(got, `"openExternalUrl":true`) || !strings.Contains(got, `"infrastructureSafety":true`) ||
+			!strings.Contains(got, `"mcpElicitation":true`) {
 			t.Errorf("initialize missing base kiro capabilities; got: %s", got)
 		}
 		// Each settings key is asserted separately: an exact substring breaks on additions and once hid two missing keys,

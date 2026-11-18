@@ -153,6 +153,9 @@ type SessionSpawn struct {
 	// ProfileAgentTurns is whether the session's turns render in a chat's turn footer, so the turns KAS starts on
 	// its own ask for a chat prompt's profiling. A run host's and an observer's turns render nowhere.
 	ProfileAgentTurns bool
+	// RequireExisting is set by session/load only, which then refuses a session KAS holds no record of instead of
+	// creating it blank.
+	RequireExisting bool
 }
 
 // Prompt carries the per-prompt facts the prompt door's rows read.

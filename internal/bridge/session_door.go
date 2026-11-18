@@ -363,9 +363,10 @@ func (e *Engine) closeAndReap(id marotte.SessionID) {
 }
 
 // LoadSession loads o.SessionID with a lane registered under it first, attach running before the write as
-// NewSession's does. replayBudget bounds the door on top of ctx (StallAware): KAS replays the transcript before the
-// reply. A door that gives up keeps its handle until kiro-cli answers, then releases the loaded session, so a door
-// for the id waits for that.
+// NewSession's does. The load is strict (`_meta.kiro.requireExisting`): an id KAS holds no record of answers -32000
+// (marotte.SessionRecordGone) and creates nothing. replayBudget bounds the door on top of ctx (StallAware): KAS
+// replays the transcript before the reply. A door that gives up keeps its handle until kiro-cli answers, then
+// releases the loaded session, so a door for the id waits for that.
 func (e *Engine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach func(*Session) error) (*Session, error) {
 	id := marotte.SessionID(o.SessionID)
 	if !ids.ValidSessionID(o.SessionID) {
@@ -378,6 +379,7 @@ func (e *Engine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach
 	if err != nil {
 		return nil, err
 	}
+	s.spawn.RequireExisting = true
 	if attach != nil {
 		if err = attach(s); err != nil {
 			s.closed()

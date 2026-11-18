@@ -39,14 +39,14 @@ into permission prompts — and free-form questions are SURFACED
 instead of silently skipped (without the capability KAS advances
 past them). Handled by translate/user_input.go; answered via the
 user_input_response command.`,
-	"capability.mcpElicitation": `WITHHELD: it gates only sessions KAS relays to a cloud sandbox. With it
-true, attachedClientChannelFor hands a relayed session a requestElicitation that
-forwards the sandbox's MCP elicitation to this client as _kiro/mcp/elicitation,
-and a relayed prompt carries mcpElicitationRespond; without it a relayed ask has
-no client and goes unanswered. marotte opens no relayed session, and a local
-session's elicitation reaches _kiro/mcp/elicitation ungated, which
-translate.HandleElicitationCreate answers, so true would claim a path marotte
-never hosts.`,
+	"capability.mcpElicitation": `SENT: it tells KAS this client answers _kiro/mcp/elicitation
+(translate.HandleElicitationCreate), the same key-plus-handler pairing kiro-cli's
+own TUI declares, and it is true in every engine state like userInput. KAS reads
+it only for a session it relays to a cloud sandbox: attachedClientChannelFor
+then hands the session a requestElicitation that forwards the sandbox's MCP ask
+here, and promptAdmitted stamps mcpElicitationRespond on a forwarded user
+prompt, so the sandbox asks instead of declining the ask itself with a notify.
+A local session's ask reaches _kiro/mcp/elicitation ungated either way.`,
 	"capability.textSearch": `_meta.kiro.textSearch makes KAS send every grep_search to
 _kiro/search/text_search (agent/bridge_kiro_search.go, internal/kirosearch).
 Without it KAS runs its bundled rg, rejects rg's exit 2 (an unreadable path
@@ -1021,6 +1021,12 @@ as the new session's id (newSessionAdmitted: overrideSessionId ?? a fresh
 "sess_" UUID), so every frame it sends for the session, the ones before the
 reply included, names an id whose lane already exists. A load names its id
 itself and sends none.`,
+	"capability.requireExisting": `SENT on session/load only, as a bare true. KAS's load schema takes it as
+requireExisting: literal(true), and with it a load of an id that is neither a
+settled resident nor on disk throws SessionNotFoundError (-32000 "Session '<id>'
+not found") before hydration, instead of creating a blank session under that id
+that no reply tells apart from a real load. marotte.SessionRecordGone reads the
+refusal as a lost record. session/new names no existing session and sends none.`,
 }
 
 // absentTrue is the rows whose key KAS resolves to TRUE when ABSENT, which inverts the reading
