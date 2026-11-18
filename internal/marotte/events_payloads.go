@@ -717,7 +717,7 @@ type ConfigStandingChangedPayload struct{}
 // every job state transition. The job carries no output tail; output streams via
 // tool_job_output.
 type ToolJobChangedPayload struct {
-	Job *ToolJob `json:"job"`
+	Job ToolJob `json:"job"`
 }
 
 // ToolJobOutputPayload is the payload for type="tool_job_output": a coalesced batch of

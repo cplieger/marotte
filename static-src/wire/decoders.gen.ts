@@ -5928,7 +5928,7 @@ export const decodeToolInteraction: Decoder<ToolInteraction> = (v) => {
 export const decodeToolJobChangedPayload: Decoder<ToolJobChangedPayload> = (v) => {
   const o = asObject(v, "$.tool_job_changed_payload");
   const out: ToolJobChangedPayload = {
-    job: own(o, "job") === null ? null : decodeJob(reqRaw(o, "job", "$.tool_job_changed_payload")),
+    job: decodeJob(reqRaw(o, "job", "$.tool_job_changed_payload")),
   };
   return out;
 };

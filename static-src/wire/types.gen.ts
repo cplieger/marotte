@@ -5211,7 +5211,7 @@ export interface ToolInteraction {
  * tool_job_output.
  */
 export interface ToolJobChangedPayload {
-  job: Job | null;
+  job: Job;
 }
 
 /**
