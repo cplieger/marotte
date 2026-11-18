@@ -449,27 +449,25 @@ func (s Searcher) run(ctx context.Context, root string, args []string, line func
 	if read.skipped > 0 {
 		slog.Debug("search: skipped ripgrep output lines over the line cap", "root", root, "lines", read.skipped)
 	}
-	cut = err != nil && ctx.Err() != nil && !read.stopped && !read.capped
-	return exitRefusal(ctx, root, err, read, stderr.String()), cut
+	// rg exiting on its own wrote everything it found, though ctx can end before Wait returns.
+	code := cmd.ProcessState.ExitCode()
+	cut = code < 0 && ctx.Err() != nil && !read.stopped && !read.capped
+	return exitRefusal(ctx, root, err, code, read, stderr.String()), cut
 }
 
 // exitRefusal logs how rg's run ended, and returns its stderr when rg exited 2 having written no
-// line.
-func exitRefusal(ctx context.Context, root string, err error, read readResult, stderr string) string {
-	code := -1
-	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
-		code = exitErr.ExitCode()
-	}
+// line. code is rg's exit status, -1 when a signal ended it.
+func exitRefusal(ctx context.Context, root string, err error, code int, read readResult, stderr string) string {
 	switch {
 	case err == nil:
-	case ctx.Err() != nil:
+	case code < 0 && ctx.Err() != nil:
 		slog.Debug("search: deadline or cancel reached; returning partial results", "root", root, "reason", context.Cause(ctx))
 	case read.stopped:
 	case read.err != nil:
 		slog.Debug("search: reading ripgrep's output failed; returning what it found", "root", root, "error", read.err)
 	case read.capped:
 		slog.Debug("search: ripgrep's output reached its cap; returning what it found", "root", root)
-	case code == 1:
+	case code == 0, code == 1:
 	case code == 2 && read.lines+read.skipped == 0:
 		return cmp.Or(stderr, "(no stderr)")
 	case code == 2:
@@ -565,25 +563,26 @@ func rootGlob(root, glob string) string {
 	return glob
 }
 
-// literal reports whether s holds no glob metacharacter.
+// literal reports whether s holds none of the metacharacters of rg's glob grammar (globset), in
+// which "!" and "]" are literal inside a pattern.
 func literal(s string) bool {
-	return !strings.ContainsAny(s, `*?[]{}\!`)
+	return !strings.ContainsAny(s, `*?[{}\`)
 }
 
 // startDir is where rg, run in root, starts searching for glob (rootGlob's form): its literal
 // leading folders, so rg skips every other subtree (a --glob filters names but still descends every
-// folder), with their count; "." when it has none, when it has one segment and no "/" lead (rg
-// matches it at any depth), or when excluded, since rg applies ignore rules and an exclude only
-// below its start path, never to it or its ancestors. ok is false when no file under root can
-// match: a ".." segment, a ".git" folder (the !.git glob), or a leading folder realDir refuses.
+// folder), with their count. It is "." when glob has no literal leading folder, which a "!" lead
+// (rg's negation) or a "#" lead (a comment rg drops) also means, and when excluded, since rg applies
+// ignore rules and an exclude only below its start path, never to it or its ancestors. ok is false
+// when no file under root can match: a ".." segment, a ".git" folder (the !.git glob), or a leading
+// folder realDir refuses; every match lies under that folder, so the skip holds when excluded too.
 func startDir(root, glob string, excluded bool) (dir string, depth int, ok bool) {
-	rel, anchored := strings.CutPrefix(strings.TrimSuffix(glob, "/"), "/")
-	segs := strings.Split(rel, "/")
+	if strings.HasPrefix(glob, "!") || strings.HasPrefix(glob, "#") {
+		return ".", 0, true
+	}
+	segs := strings.Split(strings.TrimPrefix(strings.TrimSuffix(glob, "/"), "/"), "/")
 	if slices.Contains(segs, "..") {
 		return "", 0, false
-	}
-	if excluded || !anchored && len(segs) == 1 {
-		return ".", 0, true
 	}
 	for depth < len(segs)-1 && literal(segs[depth]) {
 		depth++
@@ -597,6 +596,9 @@ func startDir(root, glob string, excluded bool) (dir string, depth int, ok bool)
 	dir = filepath.Join(segs[:depth]...)
 	if !realDir(root, dir) {
 		return "", 0, false
+	}
+	if excluded {
+		return ".", 0, true
 	}
 	return dir, depth, true
 }

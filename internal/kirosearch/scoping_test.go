@@ -35,86 +35,93 @@ func named(p, start string) scopeCase { return scopeCase{pattern: p, glob: p, st
 func scopeCases() map[string]scopeCase {
 	long := strings.Repeat("a", 300)
 	return map[string]scopeCase{
-		"doublestar name":             same("**/x.go"),
-		"folder globstar":             same("a/**"),
-		"root-anchored globstar":      same("/**"),
-		"dot-led globstar":            form("./**", "/**"),
-		"absolute globstar":           form("<root>/**", "/**"),
-		"folder name glob":            same("a/*.go"),
-		"folder dot segment glob":     form("a/./*.go", "a/*.go"),
-		"nested globstar":             same("a/b/**/*.ts"),
-		"start-anchored name":         same("name*"),
-		"start-anchored folder":       same("repo/internal*"),
-		"start-anchored folder slash": same("repo/internal/*"),
-		"start-anchored readme":       same("READ*"),
-		"start-anchored missing":      same("absent*"),
-		"dot":                         form(".", ""),
-		"dot slash":                   form("./", ""),
-		"slash":                       form("/", ""),
-		"doubled slash only":          form("//", ""),
-		"absolute root":               form("<root>", ""),
-		"absolute root slash":         form("<root>/", ""),
-		"doubled slash":               form("repo//internal/**", "repo/internal/**"),
-		"dot segment":                 form("repo/./internal/**", "repo/internal/**"),
-		"doubled leading slash":       form("//repo/internal/**/*.go", "/repo/internal/**/*.go"),
-		"led by slash-dot":            form("/./repo/internal/**/*.go", "/repo/internal/**/*.go"),
-		"doubled trailing slash":      form("repo/internal//", "repo/internal/"),
-		"trailing slash":              same("repo/internal/"),
-		"bare folder":                 same("repo/internal"),
-		"absolute bare folder":        form("<root>/repo/internal", "/repo/internal"),
-		"root-anchored bare folder":   same("/repo/internal"),
-		"top folder":                  same("repo"),
-		"root-anchored top folder":    same("/repo"),
-		"relative":                    same("repo/internal/**/*.go"),
-		"absolute":                    form("<root>/repo/internal/**/*.go", "/repo/internal/**/*.go"),
-		"dot-led":                     form("./repo/internal/**/*.go", "/repo/internal/**/*.go"),
-		"root-anchored":               same("/repo/internal/**/*.go"),
-		"alternation below a folder":  same("repo/{internal,other}/**"),
-		"name query":                  same("**/*kiro*"),
-		"extension":                   same("*.go"),
-		"doublestar extension":        same("**/*.go"),
-		"doublestar test name":        same("**/*test*"),
-		"folder test name":            same("pkg/*test*"),
-		"root-anchored md":            same("/*.md"),
-		"dot-led md":                  form("./*.md", "/*.md"),
-		"absolute md":                 form("<root>/*.md", "/*.md"),
-		"root file":                   same("/top.md"),
-		"root-anchored x.go":          same("/x.go"),
-		"dot-led x.go":                form("./x.go", "/x.go"),
-		"absolute x.go":               form("<root>/x.go", "/x.go"),
-		"literal name":                same("go.mod"),
-		"root-anchored file":          same("/go.mod"),
-		"root-anchored name glob":     same("/re*"),
-		"folder file glob":            same("repo/internal/*.go"),
-		"folder literal file":         same("repo/internal/a.go"),
-		"build name below a folder":   same("repo/internal/**/*build.go*"),
-		"flag-shaped folder":          same("-h/**/*.go"),
-		"hidden folder":               same(".hidden/**"),
-		"folder named like a glob":    same("dir.go/**"),
-		"root-anchored NUL":           same("/a\x00b"),
-		"NUL in the prefix":           same("a\x00b/x"),
-		"root-anchored symlink loop":  same("/loop"),
-		"prefix through a loop":       same("loop/x/*.go"),
-		"root-anchored symlink":       same("/link"),
-		"prefix through a symlink":    same("link/**/*.go"),
-		"symlink out of the root":     same("out/**"),
-		"root-anchored missing":       same("/missing"),
-		"missing folder":              same("absent/**/*.go"),
-		"name over 255 bytes":         same(long),
-		"segment over 255 bytes":      same(long + "/x.go"),
-		"prefix over 4096 bytes":      same("deep/" + strings.Repeat("a/", 2200) + "x.go"),
-		"prefix through a file":       same("go.mod/x/*.go"),
-		"file as the folder":          same("go.mod/*.go"),
-		"led by ..":                   same("../x/*.go"),
-		".. after a folder":           same("repo/../x/*.go"),
-		".. after a glob":             same("**/../x/*.go"),
-		"unclosed alternate":          same("{a"),
-		"gitignored folder named":     named("ignored/**", "ignored"),
-		"below a gitignored folder":   named("ignored/sub/**", filepath.Join("ignored", "sub")),
-		"folder a parent ignores":     named("parentignored/**", "parentignored"),
-		"git folder":                  same(".git/**"),
-		"git segment below a folder":  same("repo/.git/**"),
-		"start below the depth cap":   same("deep/a/**"),
+		"doublestar name":               same("**/x.go"),
+		"folder globstar":               same("a/**"),
+		"root-anchored globstar":        same("/**"),
+		"dot-led globstar":              form("./**", "/**"),
+		"absolute globstar":             form("<root>/**", "/**"),
+		"folder name glob":              same("a/*.go"),
+		"folder dot segment glob":       form("a/./*.go", "a/*.go"),
+		"nested globstar":               same("a/b/**/*.ts"),
+		"start-anchored name":           same("name*"),
+		"start-anchored folder":         same("repo/internal*"),
+		"start-anchored folder slash":   same("repo/internal/*"),
+		"start-anchored readme":         same("READ*"),
+		"start-anchored missing":        same("absent*"),
+		"dot":                           form(".", ""),
+		"dot slash":                     form("./", ""),
+		"slash":                         form("/", ""),
+		"doubled slash only":            form("//", ""),
+		"absolute root":                 form("<root>", ""),
+		"absolute root slash":           form("<root>/", ""),
+		"doubled slash":                 form("repo//internal/**", "repo/internal/**"),
+		"dot segment":                   form("repo/./internal/**", "repo/internal/**"),
+		"doubled leading slash":         form("//repo/internal/**/*.go", "/repo/internal/**/*.go"),
+		"led by slash-dot":              form("/./repo/internal/**/*.go", "/repo/internal/**/*.go"),
+		"doubled trailing slash":        form("repo/internal//", "repo/internal/"),
+		"trailing slash":                same("repo/internal/"),
+		"bare folder":                   same("repo/internal"),
+		"absolute bare folder":          form("<root>/repo/internal", "/repo/internal"),
+		"root-anchored bare folder":     same("/repo/internal"),
+		"top folder":                    same("repo"),
+		"root-anchored top folder":      same("/repo"),
+		"relative":                      same("repo/internal/**/*.go"),
+		"absolute":                      form("<root>/repo/internal/**/*.go", "/repo/internal/**/*.go"),
+		"dot-led":                       form("./repo/internal/**/*.go", "/repo/internal/**/*.go"),
+		"root-anchored":                 same("/repo/internal/**/*.go"),
+		"alternation below a folder":    same("repo/{internal,other}/**"),
+		"name query":                    same("**/*kiro*"),
+		"extension":                     same("*.go"),
+		"doublestar extension":          same("**/*.go"),
+		"doublestar test name":          same("**/*test*"),
+		"folder test name":              same("pkg/*test*"),
+		"root-anchored md":              same("/*.md"),
+		"dot-led md":                    form("./*.md", "/*.md"),
+		"absolute md":                   form("<root>/*.md", "/*.md"),
+		"root file":                     same("/top.md"),
+		"root-anchored x.go":            same("/x.go"),
+		"dot-led x.go":                  form("./x.go", "/x.go"),
+		"absolute x.go":                 form("<root>/x.go", "/x.go"),
+		"literal name":                  same("go.mod"),
+		"root-anchored file":            same("/go.mod"),
+		"root-anchored name glob":       same("/re*"),
+		"folder file glob":              same("repo/internal/*.go"),
+		"folder literal file":           same("repo/internal/a.go"),
+		"build name below a folder":     same("repo/internal/**/*build.go*"),
+		"flag-shaped folder":            same("-h/**/*.go"),
+		"hidden folder":                 same(".hidden/**"),
+		"folder named like a glob":      same("dir.go/**"),
+		"root-anchored NUL":             same("/a\x00b"),
+		"NUL in the prefix":             same("a\x00b/x"),
+		"root-anchored symlink loop":    same("/loop"),
+		"prefix through a loop":         same("loop/x/*.go"),
+		"root-anchored symlink":         same("/link"),
+		"prefix through a symlink":      same("link/**/*.go"),
+		"symlink out of the root":       same("out/**"),
+		"root-anchored missing":         same("/missing"),
+		"missing folder":                same("absent/**/*.go"),
+		"name over 255 bytes":           same(long),
+		"segment over 255 bytes":        same(long + "/x.go"),
+		"prefix over 4096 bytes":        same("deep/" + strings.Repeat("a/", 2200) + "x.go"),
+		"prefix through a file":         same("go.mod/x/*.go"),
+		"file as the folder":            same("go.mod/*.go"),
+		"led by ..":                     same("../x/*.go"),
+		".. after a folder":             same("repo/../x/*.go"),
+		".. after a glob":               same("**/../x/*.go"),
+		"unclosed alternate":            same("{a"),
+		"gitignored folder named":       named("ignored/**", "ignored"),
+		"below a gitignored folder":     named("ignored/sub/**", filepath.Join("ignored", "sub")),
+		"folder a parent ignores":       named("parentignored/**", "parentignored"),
+		"git folder":                    same(".git/**"),
+		"git segment below a folder":    same("repo/.git/**"),
+		"start below the depth cap":     same("deep/a/**"),
+		"below an anchored ignore rule": same("repo/**/*.go"),
+		"gitignored folder with a !":    named("a!b/**", "a!b"),
+		"gitignored folder with a ]":    named("foo]/**", "foo]"),
+		"gitignored !-folder below one": named("src/!foo/**", filepath.Join("src", "!foo")),
+		"negated folder":                same("!keep/**"),
+		"comment-shaped folder":         same("#dir/**"),
+		"negated .. pattern":            same("!../x/*.go"),
 	}
 }
 
@@ -147,10 +154,12 @@ func includeExcludeCases() map[string][2]scopeCase {
 	}
 }
 
-// scopeTree writes every file under root that a scopeCases shape can name, each holding "hit".
+// scopeTree writes every file under root that a scopeCases shape can name, each holding "hit". Its
+// .gitignore holds an anchored rule two levels below repo, which a search started at repo must
+// still apply.
 func scopeTree(t *testing.T, root string) {
 	t.Helper()
-	files := map[string]string{".gitignore": "ignored/\n"}
+	files := map[string]string{".gitignore": "ignored/\n/repo/internal/vendor/\na!b/\nfoo]/\nsrc/!foo/\n"}
 	for _, name := range []string{
 		"top.go", "top.md", "go.mod", "README.md", "x.go", "names.txt", "re.txt",
 		"repo/internal/a.go", "repo/internal/b.ts", "repo/internal/build.go", "repo/internal/deeper/c.go",
@@ -160,7 +169,8 @@ func scopeTree(t *testing.T, root string) {
 		"READMEdir/x.go", "docs/README.md", "name/n.go", "sub/name/m.go", "sub/namefile.go", "sub/x.go",
 		"sub/top.md", "-h/a.go", ".hidden/h.go", "x/k.go", "deep/a/a/x.go", "ignored/z.go", "ignored/sub/w.go",
 		"parentignored/p.go", ".git/config", "repo/.git/HEAD", "deep/" + strings.Repeat("a/", 48) + "at50.go",
-		"deep/" + strings.Repeat("a/", 49) + "at51.go",
+		"deep/" + strings.Repeat("a/", 49) + "at51.go", "repo/internal/vendor/v.go", "repo/internal/sub/s.go",
+		"a!b/x.go", "foo]/x.go", "src/!foo/x.go", "keep/k.go", "#dir/h.go",
 	} {
 		files[name] = "hit\n"
 	}
@@ -254,12 +264,13 @@ func sorted(s []string) []string {
 }
 
 // scopeRoots are the trees every case is searched in: a real folder, and a symlink naming one,
-// each below a folder whose .gitignore names one of the tree's folders.
+// each below a folder whose .gitignore names one of the tree's folders, and another anchored below
+// repo/internal, which a search started there must still apply.
 func scopeRoots(t *testing.T) map[string]string {
 	t.Helper()
 	tree := func() string {
 		parent := t.TempDir()
-		writeTree(t, parent, map[string]string{".gitignore": "parentignored/\n"})
+		writeTree(t, parent, map[string]string{".gitignore": "parentignored/\n/root/repo/internal/sub/\n"})
 		root := filepath.Join(parent, "root")
 		scopeTree(t, root)
 		return root
@@ -417,7 +428,14 @@ func TestSearch_StartsAtTheLiteralLeadingFolder(t *testing.T) {
 		"named ignored folder":      {pattern: "ignored/**", text: run("ignored", ""), files: run("ignored", "49")},
 		"start at the depth cap":    {pattern: capped, text: run(filepath.Dir(capped), ""), files: rgCall{}},
 		"git segment":               {pattern: "repo/.git/**"},
+		"git segment, any exclude":  {pattern: "repo/.git/**", exclude: "*.md"},
 		"through a symlink":         {pattern: "link/**"},
+		"symlink, any exclude":      {pattern: "link/**", exclude: "*.md"},
+		"folder with a !":           {pattern: "a!b/**", text: run("a!b", ""), files: run("a!b", "49")},
+		"folder with a ]":           {pattern: "foo]/*.go", text: run("foo]", ""), files: run("foo]", "49")},
+		"negated pattern":           {pattern: "!keep/**", text: run(".", ""), files: run(".", "50")},
+		"comment-shaped pattern":    {pattern: "#dir/**", text: run(".", ""), files: run(".", "50")},
+		"root-anchored # folder":    {pattern: "/#dir/**", text: run("#dir", ""), files: run("#dir", "49")},
 		"symlink out of the root":   {pattern: "out/**"},
 		"NUL in one segment":        {pattern: "/a\x00b"},
 		".. segment":                {pattern: "repo/../x/*.go"},
@@ -467,17 +485,21 @@ func withoutDACOverride(t *testing.T, f func()) {
 	}
 }
 
+// skipCase is a literal leading folder whose stat fails with errno under the root setup prepares.
+type skipCase struct {
+	setup  func(t *testing.T, root string)
+	folder string
+	errno  syscall.Errno
+	// peer is whether another root can hold the folder, and so must still be searched.
+	peer, noDAC bool
+}
+
 // A literal leading folder that stat or EvalSymlinks refuses skips the root it is under, never
-// widening to that root's whole walk, while every other root is still searched.
+// widening to that root's whole walk, while every other root is still searched; an exclude, which
+// starts rg at the root, skips it too.
 func TestSearch_UnresolvableLeadingFolderSkipsOnlyItsRoot(t *testing.T) {
 	long := strings.Repeat("a", 300)
-	tests := map[string]struct {
-		setup  func(t *testing.T, root string)
-		folder string
-		errno  syscall.Errno
-		// peer is whether another root can hold the folder, and so must still be searched.
-		peer, noDAC bool
-	}{
+	tests := map[string]skipCase{
 		"missing (ENOENT)": {folder: "absent/x", errno: syscall.ENOENT, peer: true},
 		"through a file (ENOTDIR)": {folder: "go.mod/x", errno: syscall.ENOTDIR, peer: true, setup: func(t *testing.T, root string) {
 			writeTree(t, root, map[string]string{"go.mod": ""})
@@ -500,48 +522,53 @@ func TestSearch_UnresolvableLeadingFolderSkipsOnlyItsRoot(t *testing.T) {
 		}},
 	}
 	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			bad, good := t.TempDir(), t.TempDir()
-			if tc.setup != nil {
-				tc.setup(t, bad)
-			}
-			roots, want := []string{bad}, []string(nil)
-			if tc.peer {
-				writeTree(t, good, map[string]string{tc.folder + "/a.go": "hit\n"})
-				realGood, err := filepath.EvalSymlinks(good)
-				if err != nil {
-					t.Fatal(err)
-				}
-				roots, want = []string{bad, good}, []string{realGood}
-			}
-			logs := t.TempDir()
-			textRG := fakeRG(t, `/bin/pwd -P >> '`+filepath.Join(logs, "text")+`'`)
-			filesRG := fakeRG(t, `/bin/pwd -P >> '`+filepath.Join(logs, "files")+`'`)
-			var statErr error
-			search := func() {
-				_, statErr = os.Stat(filepath.Join(bad, tc.folder))
-				pattern := tc.folder + "/*.go"
-				Searcher{Bin: textRG}.Text(t.Context(), roots, TextQuery{Pattern: "hit", IncludePattern: pattern})
-				Searcher{Bin: filesRG}.Files(t.Context(), roots, FilesQuery{Pattern: pattern, MaxResults: 11})
-			}
-			if tc.noDAC {
-				withoutDACOverride(t, search)
-			} else {
-				search()
-			}
-			if !errors.Is(statErr, tc.errno) {
-				t.Fatalf("the fixture's stat error is %v, want %v", statErr, tc.errno)
-			}
-			ranIn := func(file string) []string {
-				raw, _ := os.ReadFile(filepath.Join(logs, file))
-				return slices.DeleteFunc(strings.Split(string(raw), "\n"), func(s string) bool { return s == "" })
-			}
-			if got := ranIn("text"); !slices.Equal(got, want) {
-				t.Errorf("Text ran rg in %q, want %q", got, want)
-			}
-			if got := ranIn("files"); !slices.Equal(got, want) {
-				t.Errorf("Files ran rg in %q, want %q", got, want)
-			}
-		})
+		for variant, exclude := range map[string]string{"no exclude": "", "any exclude": "*.md"} {
+			t.Run(name+", "+variant, func(t *testing.T) { checkSkipsOnlyItsRoot(t, tc, exclude) })
+		}
+	}
+}
+
+func checkSkipsOnlyItsRoot(t *testing.T, tc skipCase, exclude string) {
+	t.Helper()
+	bad, good := t.TempDir(), t.TempDir()
+	if tc.setup != nil {
+		tc.setup(t, bad)
+	}
+	roots, want := []string{bad}, []string(nil)
+	if tc.peer {
+		writeTree(t, good, map[string]string{tc.folder + "/a.go": "hit\n"})
+		realGood, err := filepath.EvalSymlinks(good)
+		if err != nil {
+			t.Fatal(err)
+		}
+		roots, want = []string{bad, good}, []string{realGood}
+	}
+	logs := t.TempDir()
+	textRG := fakeRG(t, `/bin/pwd -P >> '`+filepath.Join(logs, "text")+`'`)
+	filesRG := fakeRG(t, `/bin/pwd -P >> '`+filepath.Join(logs, "files")+`'`)
+	var statErr error
+	search := func() {
+		_, statErr = os.Stat(filepath.Join(bad, tc.folder))
+		pattern := tc.folder + "/*.go"
+		Searcher{Bin: textRG}.Text(t.Context(), roots, TextQuery{Pattern: "hit", IncludePattern: pattern, ExcludePattern: exclude})
+		Searcher{Bin: filesRG}.Files(t.Context(), roots, FilesQuery{Pattern: pattern, Exclude: exclude, MaxResults: 11})
+	}
+	if tc.noDAC {
+		withoutDACOverride(t, search)
+	} else {
+		search()
+	}
+	if !errors.Is(statErr, tc.errno) {
+		t.Fatalf("the fixture's stat error is %v, want %v", statErr, tc.errno)
+	}
+	ranIn := func(file string) []string {
+		raw, _ := os.ReadFile(filepath.Join(logs, file))
+		return slices.DeleteFunc(strings.Split(string(raw), "\n"), func(s string) bool { return s == "" })
+	}
+	if got := ranIn("text"); !slices.Equal(got, want) {
+		t.Errorf("Text ran rg in %q, want %q", got, want)
+	}
+	if got := ranIn("files"); !slices.Equal(got, want) {
+		t.Errorf("Files ran rg in %q, want %q", got, want)
 	}
 }

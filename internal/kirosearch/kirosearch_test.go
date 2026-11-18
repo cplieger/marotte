@@ -404,8 +404,8 @@ wait`)
 }
 
 // escapedRG prints one result, then leaves a child that called setsid holding rg's output, which the
-// session kill does not reach. The child is killed by pid when the test ends.
-func escapedRG(t *testing.T, firstLine string) string {
+// session kill does not reach, and runs end. The child is killed by pid when the test ends.
+func escapedRG(t *testing.T, firstLine, end string) string {
 	t.Helper()
 	pidFile := filepath.Join(t.TempDir(), "pid")
 	t.Cleanup(func() {
@@ -418,11 +418,11 @@ func escapedRG(t *testing.T, firstLine string) string {
 	return fakeRG(t, `printf '%s\n' '`+firstLine+`'
 /usr/bin/setsid /bin/sleep 30 &
 echo $! > `+pidFile+`
-wait`)
+`+end)
 }
 
 func TestText_DeadlineEndsTheReadWhenAChildOutsideTheSessionHoldsTheOutput(t *testing.T) {
-	bin := escapedRG(t, matchLine("./a.go", "hit", 1))
+	bin := escapedRG(t, matchLine("./a.go", "hit", 1), "wait")
 	const deadline = 300 * time.Millisecond
 	shortDeadline(t, deadline)
 
@@ -434,6 +434,26 @@ func TestText_DeadlineEndsTheReadWhenAChildOutsideTheSessionHoldsTheOutput(t *te
 	}
 	if len(got) != 2 || !isPartialNotice(got[0].FilePath) || got[1].FilePath != "a.go" {
 		t.Errorf("Text = %+v, want the partial notice and then a.go", got)
+	}
+}
+
+// rg exiting on its own wrote every result, so the answer is whole even when the deadline passes
+// before the search reads that exit, here because a child outside rg's session holds the output.
+func TestSearch_RGExitingBeforeTheDeadlineAnswersWhole(t *testing.T) {
+	shortDeadline(t, 300*time.Millisecond)
+	for _, code := range []string{"0", "1", "2"} {
+		t.Run("exit "+code, func(t *testing.T) {
+			textRG := Searcher{Bin: escapedRG(t, matchLine("./a.go", "hit", 1), "exit "+code)}
+			text := textRG.Text(t.Context(), []string{t.TempDir()}, TextQuery{Pattern: "hit"})
+			if want := []Match{{FilePath: "a.go", LineNumber: 1, LineText: "hit"}}; !slices.Equal(text, want) {
+				t.Errorf("Text = %+v, want %+v with no partial notice", text, want)
+			}
+			filesRG := Searcher{Bin: escapedRG(t, "./a.go", "exit "+code)}
+			files := filesRG.Files(t.Context(), []string{t.TempDir()}, FilesQuery{Pattern: "**/*", MaxResults: 11})
+			if want := []string{"a.go"}; !slices.Equal(files, want) {
+				t.Errorf("Files = %q, want %q with no partial notice", files, want)
+			}
+		})
 	}
 }
 
@@ -626,7 +646,7 @@ exit 2`)
 }
 
 // A --files walk that finds no file writes nothing, so its exit 2 with no output is a refusal only
-// when rg names a bad glob; otherwise it met unreadable paths. The stderr lines are rg 14.1.1's.
+// when rg names a bad glob; otherwise it met unreadable paths. The stderr lines are rg 15.2.0's.
 func TestFiles_ExitTwoWithNoOutputWarnsOnlyForARefusal(t *testing.T) {
 	tests := map[string]struct {
 		stderr string
