@@ -54,8 +54,9 @@ anywhere) and its 30 s budget, and falls back to a Node walker with no time
 limit and no cancel, which held workflow steps for 20 to 142 minutes.`,
 	"capability.findFiles": `_meta.kiro.findFiles makes KAS send every file_search to
 _kiro/search/find_files, answered by marotte's bounded rg listing. Without it
-KAS's rg --files follows symlinks, fails on a dangling one or a loop, and falls
-back to the same unbounded Node walker as grep_search.`,
+KAS runs rg --files (no --follow) and keeps an exit 2 that still listed files;
+any other failure falls back to a Node walk that stops after 30 s and returns
+the partial listing it found.`,
 	"capability.backgroundProcesses": `_meta.kiro.backgroundProcesses opts into KAS's background-process tools
 (list_processes, get_process_output and a start/stop tool) over marotte's
 terminal handlers (agent/agent_terminal.go). From 2.28 each start holds
@@ -899,17 +900,20 @@ The 60s/300s stream-idle watchdog and its _kiro/system/notify text (default on).
 Un-gates the bundled default-v2 mode. The gate reads only the environment and the
 experiment, so this variable is the one client lever: _meta.kiro.settings.unifiedAgent,
 which the bundle's experiment-gate helper names as its settingKey, has no reader.`,
-	"env.KIRO_FEATURE_UNIVERSAL_BACKGROUND_TOOL_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
-(decision: pin only where a marotte setting owns the behaviour).
-The universal_background_tool experiment (default off). On, the session runs jobs:
-the tool belt builds the job shell tool in place of execute_bash and
-selectCommandHost answers "agent", so KAS hosts that session's commands and
-marotte's terminal/* handlers, process-group teardown and environment shaping do not
-apply. The job_list and job_cancel tools mount, KAS serves _kiro/job/cancel and
-_kiro/job/output and can send _kiro/job/update and a job-end-wake turn, none of which
-marotte renders or calls. Revisit when the experiment defaults on or marotte adopts
-session jobs. The session setting of the same name is recorded unclaimed, so the
-ramp decides there too.`,
+	"env.KIRO_FEATURE_UNIVERSAL_BACKGROUND_TOOL_ENABLED": `SENT "false", kiro-cli's own default (universal_background_tool, default off),
+so AWS's experiment ramp cannot turn session jobs on. On, the tool belt builds the
+job shell tool in place of execute_bash and selectCommandHost answers "agent", so
+KAS hosts the session's commands and marotte's terminal/* handlers, process-group
+teardown and environment shaping do not apply; a ramp would take workflow steps'
+process tools with them. The job tools, _kiro/job/* and job-end-wake stay unused.
+The session row of the same name states off too, since KAS's per-session gate
+reads setting over persisted over this arm. Not settingOwned, since no Settings
+control decides it; ChildEnv's value is appended last, so it wins over an inherited one.`,
+	"setting.universalBackgroundTool": `SENT {"enabled": false} on both session doors. KAS resolves a session's
+jobs gate setting over persisted over the experiment registry (resolveSessionGate),
+so stating off on session/new and session/load keeps every session, a resumed one
+created under a ramp included, on marotte's terminal: the job shell and the agent
+command host stay off. Pairs with the environment arm of the same name.`,
 	"env.KIRO_FEATURE_USER_AGENT_REFACTORING_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 Backend user-agent shape; not pinned by decision.`,

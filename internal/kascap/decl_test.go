@@ -204,6 +204,8 @@ func TestSettingRowsCarryTheEnabledObject(t *testing.T) {
 	vetoRows := map[string]bool{
 		// KAS's own default, sent so every session states it.
 		"_providerPowers": true,
+		// Pinned off so an experiment ramp cannot move command hosting off marotte's terminal.
+		"universalBackgroundTool": true,
 	}
 
 	checked := 0

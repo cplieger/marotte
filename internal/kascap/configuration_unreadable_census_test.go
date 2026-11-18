@@ -16,8 +16,8 @@ var (
 )
 
 // TestConfigurationUnreadableIsAnUnnamedUser pins the premise of the getState retry (internal/agent
-// configurationGetRaw): KAS answers ConfigurationUnreadableError only while the signed-in user is still unnamed,
-// a state a later read leaves, so asking again is safe.
+// configurationGetRaw): KAS's one ConfigurationUnreadableError throw is the unnamed-user check, so a retry never
+// repeats a refusal of another cause.
 func TestConfigurationUnreadableIsAnUnnamedUser(t *testing.T) {
 	forEachBundle(t, func(t *testing.T, b bundle) {
 		classes := configurationUnreadableClassRe.FindAllStringSubmatch(b.src, -1)

@@ -45,13 +45,14 @@ func sessionSchemaKeys(src string) ([]string, error) {
 }
 
 // stringBinding returns the string literal assigned to ident in scope at use, failing unless there is exactly
-// one. The minifier reuses a short name across function scopes, so an assignment inside a block that closes
-// before use binds a different variable.
+// one. The minifier reuses a short name across function scopes, and a name declared inside a scope that closes
+// before use is a different variable; a bare assignment there (esbuild's lazy init) binds the outer one.
 func stringBinding(src, ident string, use int) (string, error) {
 	var vals []string
 	for _, at := range literalSites(src, ident+`="`, false) {
 		open := at + len(ident) + 1
-		if end := closingQuote(src, open); end > 0 && (at > use || !closesBefore(src, end+1, use)) {
+		end := closingQuote(src, open)
+		if end > 0 && (at > use || !closesBefore(src, end+1, use) || bareAssignment(src, at)) {
 			vals = append(vals, src[open+1:end])
 		}
 	}
@@ -59,6 +60,66 @@ func stringBinding(src, ident string, use int) (string, error) {
 		return "", fmt.Errorf("%s: found %d string assignments %v in scope, want exactly 1", ident, len(vals), vals)
 	}
 	return vals[0], nil
+}
+
+// bareAssignment reports whether the assignment at at is a statement of its own, not part of a var, let or const
+// chain, scanning back over the chain's earlier `name=value,` pairs. An escaped quote on the way back means the
+// site is text inside a string literal, no assignment at all.
+func bareAssignment(src string, at int) bool {
+	depth := 0
+	for i := at - 1; i >= 0; i-- {
+		switch src[i] {
+		case '"', '\'', '`':
+			if i > 0 && src[i-1] == '\\' {
+				return false
+			}
+			i = jsStringStart(src, i)
+		case ')', ']', '}':
+			depth++
+		case '(', '[', '{':
+			if depth--; depth < 0 {
+				return true
+			}
+		case ';':
+			if depth == 0 {
+				return true
+			}
+		case ' ':
+			if depth == 0 && declarationKeywordBefore(src, i) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// declarationKeywordBefore reports whether var, let or const ends at src[end], as a word of its own.
+func declarationKeywordBefore(src string, end int) bool {
+	for _, kw := range []string{"var", "let", "const"} {
+		if start := end - len(kw); start >= 0 && src[start:end] == kw &&
+			(start == 0 || !isIdentByte(src[start-1], true) && src[start-1] != '.') {
+			return true
+		}
+	}
+	return false
+}
+
+// jsStringStart returns the index of the quote opening the string that closes at i.
+func jsStringStart(src string, i int) int {
+	q := src[i]
+	for j := i - 1; j >= 0; j-- {
+		if src[j] != q {
+			continue
+		}
+		escapes := 0
+		for k := j - 1; k >= 0 && src[k] == '\\'; k-- {
+			escapes++
+		}
+		if escapes%2 == 0 {
+			return j
+		}
+	}
+	return 0
 }
 
 // closesBefore reports whether a block enclosing from closes before end; strings are skipped.
@@ -214,6 +275,14 @@ func TestSessionSchemaKeysExtractor(t *testing.T) {
 	shadowed := `function g(){var Wx="elk.layout"}` + src
 	if got, err := sessionSchemaKeys(shadowed); err != nil || !slices.Contains(got, "overrideSessionId") {
 		t.Errorf("a reused name bound in a closed scope: keys = %v, err = %v; want overrideSessionId", got, err)
+	}
+	chained := `function g(){let a={b:"}"},Wx="elk.layout"}` + src
+	if got, err := sessionSchemaKeys(chained); err != nil || !slices.Contains(got, "overrideSessionId") {
+		t.Errorf("a reused name declared later in a closed scope's chain: keys = %v, err = %v; want overrideSessionId", got, err)
+	}
+	lazy := `var Wx;var initWx=E(()=>{Wx="overrideSessionId"});` + strings.Replace(src, `Wx="overrideSessionId",`, ``, 1)
+	if got, err := sessionSchemaKeys(lazy); err != nil || !slices.Contains(got, "overrideSessionId") {
+		t.Errorf("a lazy init assigning the outer name: keys = %v, err = %v; want overrideSessionId", got, err)
 	}
 	for name, bad := range map[string]string{
 		"two pick sites":               src + `,Qk=cd.pick({settings:!0})`,

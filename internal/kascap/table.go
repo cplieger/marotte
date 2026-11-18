@@ -319,6 +319,13 @@ var table = []decl{
 		send:     true,
 	},
 	{
+		key:      "universalBackgroundTool",
+		door:     doorSession,
+		resolver: resolverSetting,
+		value:    enabledIf(false),
+		send:     true,
+	},
+	{
 		key:      "shellType",
 		door:     doorSession,
 		resolver: resolverEnum,
@@ -705,7 +712,8 @@ var table = []decl{
 		key:      "KIRO_FEATURE_UNIVERSAL_BACKGROUND_TOOL_ENABLED",
 		door:     doorEnvironment,
 		resolver: resolverEnv,
-		send:     false,
+		value:    "false",
+		send:     true,
 	},
 	{
 		key:      "KIRO_FEATURE_USER_AGENT_REFACTORING_ENABLED",

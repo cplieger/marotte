@@ -36,5 +36,4 @@ setting evalStrategy
 setting evalTreatments
 setting sessionRecap
 setting tangentMode
-setting universalBackgroundTool
 setting verifyFirstWorkflow

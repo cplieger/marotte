@@ -70,8 +70,8 @@ func (o *engineOwner) connectionConfigurationRaw(ctx context.Context) (json.RawM
 	return o.configurationGetRaw(ctx, map[string]any{"observer": "connection"})
 }
 
-// configurationUnreadableClass is KAS's getState answer while the signed-in user is still unnamed after its own
-// 10 s first-attempt wait, as a slow token lookup at engine start leaves it; a later read is answered.
+// configurationUnreadableClass is KAS's getState answer while its lookup of the signed-in user has not answered
+// after its own 10 s first-attempt wait: a slow or failing lookup, at engine start or after a token change.
 const configurationUnreadableClass = "ConfigurationUnreadableError"
 
 // configurationRetryDelay is the wait before getState attempt n+1 (1-based n) after an unreadable answer: 1 s
