@@ -6,7 +6,7 @@ This page is for anyone who needs a Debian package the image does not ship. The 
 { "tools": { "gcc": { "source": "apt:gcc" }, "libc6-dev": { "source": "apt:libc6-dev" } } }
 ```
 
-Debian packages install only when the container runs as root, with `user: "0:0"` in `compose.yaml`. As user 1000, the example's default, the engine reports apt as unavailable.
+Debian packages install only when the container runs as root, with `user: "0:0"` in `compose.yaml`. As user 1000, the example's default, the engine reports apt as unavailable. They also need a writable root, so leave out `read_only: true`, as [Read-only root](hardening.md#read-only-root) explains.
 
 Two cases need this. Go work that runs `go test -race` needs a C compiler the image does not ship. And a runtime the engine installs can link a shared library the image lacks. The tool then installs and refuses to start, and the tools panel names the missing library on that runtime's row.
 
