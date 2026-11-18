@@ -440,7 +440,7 @@
  * centred box centres the letterforms in any font; descenders leave the box. `.sidebar-email` and
  * `.tab-name` take the same fix in 10-shell-app.css. The labels are listed because CSS cannot
  * select "my parent is a centred flex row" and a universal trim moves every paragraph's block
- * edges; `text-alignment.test.ts` measures the third list on its screens. */
+ * edges; `text-alignment.test.ts` measures these, the rows and the label list below. */
 :where(
   [id="context-label"],
   [id="ctx-model-pill"],
@@ -456,7 +456,7 @@
 
 /* Room for the descenders the trim put outside the box, on the labels that clip: symmetric,
  * since the row centres the margin box, and 0.35em clears the deepest descender of either font
- * stack (0.300em, Liberation Mono). A label of the first list left out of it clips nothing. */
+ * stack (0.300em, Liberation Mono). A centred label left out of it clips nothing. */
 :where([id="ctx-model-pill"], .pill-role-label) {
   padding-block: 0.35em;
 }
@@ -489,8 +489,9 @@
 }
 
 /* The labels a box or a leading control centres on, and a field row's labels beside its status
- * row's, trimmed and padded as the rows' runs above. None is lowered: each sits beside runs of its
- * own size or none. A diff row's marker and code go with its line number. */
+ * row's, trimmed and padded as the rows' runs above. Only the chip in a tool name's wrap is
+ * lowered (14-tools.css): the rest sit beside runs of their own size or none. A diff row's marker
+ * and code go with its line number. */
 :where(
   .section-field > .section-option-label,
   .mcp-result-name,
@@ -1037,7 +1038,7 @@
 }
 
 /* The meta shares the name's baseline. Both are trimmed to their cap band and centred
- * (the first trim list), which would leave the smaller cap (cap - its cap) / 2 high of the
+ * (the centred-label list above), which would leave the smaller cap (cap - its cap) / 2 high of the
  * name's baseline; topped up to the name's cap height, the two boxes end on one baseline. */
 .pill-model-item {
   --row-cap: 1cap;
