@@ -26,7 +26,8 @@ func TestCannedAnswers_ReadAsTheHandlersWrite(t *testing.T) {
 }
 
 // runViewCheck holds a run view to withRunExtras: each member past the inspect reply's is one runExtras.keys can
-// write, reading back as the type it writes there.
+// write, reading back as the type it writes there, and every member it always writes is present. workflowId and
+// state are required because the client's RunInspectReply reads them.
 func runViewCheck(inspect []string, noLog bool) func(a *testsupport.CannedAnswer) error {
 	now := time.Now()
 	every := &runExtras{
@@ -37,13 +38,19 @@ func runViewCheck(inspect []string, noLog bool) func(a *testsupport.CannedAnswer
 	for _, k := range every.keys() {
 		written[k.name] = reflect.TypeOf(k.v)
 	}
+	required := []string{"workflowId", "state"}
+	for _, k := range (&runExtras{noLog: noLog}).keys() {
+		required = append(required, k.name)
+	}
 	return func(a *testsupport.CannedAnswer) error {
 		var members map[string]json.RawMessage
 		if err := json.Unmarshal(a.Body, &members); err != nil {
 			return fmt.Errorf("is no object: %w", err)
 		}
-		if _, ok := members["state"]; !ok {
-			return fmt.Errorf("carries no state")
+		for _, name := range required {
+			if _, ok := members[name]; !ok {
+				return fmt.Errorf("carries no %s", name)
+			}
 		}
 		for name, raw := range members {
 			if slices.Contains(inspect, name) {

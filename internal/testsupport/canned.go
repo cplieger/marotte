@@ -88,7 +88,8 @@ func HoldCanned(t *testing.T, route string, check func(a *CannedAnswer) error) {
 	}
 }
 
-// HoldCannedShape holds every recorded answer of route to ReadsBackAs a T, the type its handler writes.
+// HoldCannedShape holds every recorded answer of route to ReadsBackAs a T: the handler's response type or, for a
+// map-literal answer, the test's copy of its members.
 func HoldCannedShape[T any](t *testing.T, route string) {
 	t.Helper()
 	HoldCanned(t, route, func(a *CannedAnswer) error {
