@@ -11,8 +11,9 @@
  * Ceiling (ms) on how long a settle waits for `transitionend` before assuming
  * no transition ran at all. Not an estimate of any duration: every duration in
  * this library is the app's, set through a `--uip-*` custom property, so the
- * library cannot know the real one. A transition skinned longer than this is
- * truncated.
+ * library cannot know the real one. A transition still running at the ceiling
+ * (a long one, or a short one whose frames a busy page delivers late) settles
+ * when it ends instead.
  */
 const SETTLE_FALLBACK_MS = 400;
 
@@ -46,10 +47,13 @@ function stillRunning(el: HTMLElement, property: string): boolean {
 
 /** @internal Arm one settle on `el`: the first `transitionend` whose target is
  *  `el` and whose property no newer transition still runs, or the fallback
- *  ceiling, whichever comes first. Fires once; returns its cancel. */
+ *  ceiling, whichever comes first; at the ceiling, the end of every transition
+ *  still running on `el`. Fires once; returns its cancel. */
 export function watchSettle(el: HTMLElement, onSettled: () => void): () => void {
+  let armed = true;
   let timer: ReturnType<typeof setTimeout> | null = null;
   const detach = (): void => {
+    armed = false;
     el.removeEventListener("transitionend", onEnd);
     if (timer !== null) {
       clearTimeout(timer);
@@ -67,8 +71,22 @@ export function watchSettle(el: HTMLElement, onSettled: () => void): () => void 
       fire();
     }
   };
+  // A cancelled transition rejects `finished`, and one cancelled for a replacement leaves that
+  // one running, so each round settles every promise and reads what runs now.
+  const onCeiling = (): void => {
+    timer = null;
+    if (!armed) {
+      return;
+    }
+    const running = el.getAnimations().filter((a) => a instanceof CSSTransition);
+    if (running.length === 0) {
+      fire();
+      return;
+    }
+    void Promise.allSettled(running.map((a) => a.finished)).then(onCeiling);
+  };
   el.addEventListener("transitionend", onEnd);
-  timer = setTimeout(fire, SETTLE_FALLBACK_MS);
+  timer = setTimeout(onCeiling, SETTLE_FALLBACK_MS);
   return detach;
 }
 

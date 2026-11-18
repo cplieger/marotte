@@ -202,6 +202,32 @@ describe("the committed start state, against real CSS", () => {
     ctl.dispose();
   });
 
+  it("keeps a disclosure's open tween running when it outlasts the settle ceiling", async () => {
+    expect(window.matchMedia("(prefers-reduced-motion: reduce)").matches).toBe(false);
+
+    // A tween still running at the ceiling is what a busy page's late frames make of a short
+    // one; a long duration makes that deterministic.
+    const trigger = document.createElement("button");
+    const region = document.createElement("div");
+    region.style.setProperty("--uip-disclosure-duration", "700ms");
+    region.appendChild(document.createElement("p")).textContent = "x".repeat(400);
+    document.body.append(trigger, region);
+    const ctl = createDisclosure(trigger, region);
+
+    ctl.open();
+    const opening = region.getAnimations();
+    expect(opening.length, "the premise: the open tweens").toBe(1);
+    const [outcome] = await Promise.allSettled(opening.map((a) => a.finished));
+
+    expect(outcome?.status, "the tween ran to its end, not cancelled at the ceiling").toBe(
+      "fulfilled",
+    );
+    await settle();
+    expect(region.style.height).toBe("");
+
+    ctl.dispose();
+  });
+
   it("fades a popup on hide, finishing on its own transitionend rather than the ceiling", async () => {
     expect(window.matchMedia("(prefers-reduced-motion: reduce)").matches).toBe(false);
 
