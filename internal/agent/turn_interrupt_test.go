@@ -191,7 +191,7 @@ func TestCompactionReap_AnExpiryOutlivingAnEmptyTurnLeavesItsRetryAlone(t *testi
 		h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(factory, nil), cs)
 		cs.wire(h)
 		t.Cleanup(func() { shutdownHub(t, h) })
-		settleBoot(t, h)
+		awaitBoot(h)
 		seedChat(t, cs, "c1")
 		if rec := postCmd(t, h, marotte.ClientCommand{
 			Type: marotte.CmdPrompt, ChatID: "c1", Payload: json.RawMessage(`{"text":"` + firstPrompt + `","message_id":"m-1"}`),

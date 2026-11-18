@@ -36,7 +36,7 @@ export function rowStatus(a: ConfiguredForge, now: number = Date.now()): RowStat
       return {
         line:
           a.error?.code === "scope_insufficient"
-            ? `The token is missing a permission this needs. Add it to the token on the forge, then check again. ${message}`
+            ? `The token is missing a permission this needs${neededWords(a.error.needs)}. Add it to the token on the forge, then check again. ${message}`
             : message,
         tone: "error",
         control: "check",
@@ -53,6 +53,10 @@ export function rowStatus(a: ConfiguredForge, now: number = Date.now()): RowStat
     case "unusable":
       return { line: message, tone: "error", control: "none" };
   }
+}
+
+function neededWords(needs: string | undefined): string {
+  return needs === undefined || needs === "" ? "" : `: ${needs}`;
 }
 
 /** The wait the forge's rate limit asked for, counted down to its deadline. */

@@ -130,7 +130,7 @@ func newDeleteRig(t *testing.T, runs json.RawMessage) (*Runtime, *testChatStore,
 	h := newRuntimeOn(t.Context(), testReaperWorkDir, rig.engine(), cs)
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	settleBoot(t, h)
+	awaitBoot(h)
 	return h, cs, rig
 }
 
@@ -197,7 +197,7 @@ func TestDeleteChatStateByChain_DeletesEveryChainSessionThroughTheEngine(t *test
 	if slices.Contains(closedAtDelete, true) {
 		t.Errorf("a session/delete arrived after the chat's session closed (%v), so SessionEnd cannot fire there", closedAtDelete)
 	}
-	joinInflight(t, h)
+	joinInflight(h)
 	if !owner.isClosed() {
 		t.Error("the chat's session was not closed after its sessions were deleted")
 	}

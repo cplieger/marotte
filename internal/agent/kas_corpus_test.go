@@ -261,7 +261,7 @@ func (d *kasDrive) run() {
 // settle ends the session, as the capture's close did, and waits for the forward to fold every frame.
 func (d *kasDrive) settle() {
 	d.br.end()
-	joinInflight(d.t, d.h)
+	joinInflight(d.h)
 }
 
 func (d *kasDrive) prompt(f kasFrame) {

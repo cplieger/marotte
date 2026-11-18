@@ -1287,7 +1287,7 @@ func TestCancel_ReconcilesNothingWhenTheCancelFAILED(t *testing.T) {
 	if err := h.runs.cancel(t.Context(), "wf_1", callerPage); err == nil {
 		t.Fatal("Cancel reported success for a cancel that failed")
 	}
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if _, held := h.runs.lease("wf_1"); !held {
 		t.Error("a FAILED cancel released the lease, stranding a live run with no clock " +

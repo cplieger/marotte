@@ -47,9 +47,6 @@ func TestHandleMCPReconnect_UnknownServer(t *testing.T) {
 // The reset addresses the oldest live session that binds the server, never every session holding the name.
 func TestMCPReconnect_SendsTheBindingSessionID(t *testing.T) {
 	h := newHubWithMCPConfig(t, enabledConfig("everything"))
-	if !awaitEngine(h) {
-		t.Fatal("the engine never became ready")
-	}
 	reportMCP(t, h, "sess_a", connectedMCP("other", marotte.MCPSource{}))
 	reportMCP(t, h, "sess_b", failedMCP("everything", marotte.MCPSource{}, "boom"))
 	reportMCP(t, h, "sess_c", failedMCP("everything", marotte.MCPSource{}, "boom"))
@@ -83,9 +80,6 @@ func TestHandleMCPReconnect_AServerNoSessionBindsIsAConflict(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHubWithMCPConfig(t, enabledConfig("everything"))
-			if !awaitEngine(h) {
-				t.Fatal("the engine never became ready")
-			}
 			stage(t, h)
 
 			rec := postJSON(h.mcpRegistry.handleReconnect, "/api/mcp/reconnect", `{"server":"everything"}`)
@@ -100,9 +94,6 @@ func TestHandleMCPReconnect_AServerNoSessionBindsIsAConflict(t *testing.T) {
 // A reset the engine refuses is a failed reconnect, never a success.
 func TestHandleMCPReconnect_ARefusedResetIsABadGateway(t *testing.T) {
 	h := newHubWithMCPConfig(t, enabledConfig("everything"))
-	if !awaitEngine(h) {
-		t.Fatal("the engine never became ready")
-	}
 	reportMCP(t, h, "sess_a", failedMCP("everything", marotte.MCPSource{}, "boom"))
 	fakeSourceOf(t, h).lane.setCallRPCErr(methodV3MCPResetServer, &marotte.RPCError{Code: -32603, Message: "no such server"})
 	rec := postJSON(h.mcpRegistry.handleReconnect, "/api/mcp/reconnect", `{"server":"everything"}`)
@@ -137,9 +128,6 @@ func TestHandleMCPReconnect_WithNoEngineIsUnavailable(t *testing.T) {
 // A reset in flight is a door: a restart requested meanwhile stops the engine only after the reset answered.
 func TestHandleMCPReconnect_ARestartWaitsForAResetInFlight(t *testing.T) {
 	h := newHubWithMCPConfig(t, enabledConfig("everything"))
-	if !awaitEngine(h) {
-		t.Fatal("the engine never became ready")
-	}
 	reportMCP(t, h, "sess_a", failedMCP("everything", marotte.MCPSource{}, "boom"))
 	src := fakeSourceOf(t, h)
 	inReset := make(chan struct{})
@@ -205,9 +193,6 @@ func TestHandleMCPReconnect_ReachesAServerKASReportsLive(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			h := newHubWithMCPConfig(t, enabledConfig("mine"))
-			if !awaitEngine(h) {
-				t.Fatal("the engine never became ready")
-			}
 			reportMCP(t, h, "sess_a", tc.report)
 			rec := postJSON(h.mcpRegistry.handleReconnect, "/api/mcp/reconnect", `{"server":"theirs"}`)
 			if rec.Code != tc.want {
@@ -276,9 +261,6 @@ func TestReconnect_ResetsTheSessionTheRowShows(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			h := newHubWithMCPConfig(t, enabledConfig("linear"))
-			if !awaitEngine(h) {
-				t.Fatal("the engine never became ready")
-			}
 			lane := fakeSourceOf(t, h).lane
 			if tc.older.Name != "" {
 				reportMCP(t, h, "sess-older", tc.older)

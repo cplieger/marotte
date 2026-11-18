@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/go/slogx/capture"
@@ -330,42 +331,44 @@ func TestRetentionClose_ACloseCommittedAfterItRunsAfterIt(t *testing.T) {
 }
 
 func TestRetentionClose_AStuckTeardownCostsThePassOneBound(t *testing.T) {
-	logs := capture.Default(t)
-	old := retentionTeardownWait
-	retentionTeardownWait = 50 * time.Millisecond
-	t.Cleanup(func() { retentionTeardownWait = old })
-	h := newRunnerHost(t, runnerOpts{})
-	c, cTab := h.chatUnder(t, "op-c", "")
-	d, _ := h.chatUnder(t, "op-d", cTab)
-	chain, err := h.store.Delete(t.Context(), c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.gates.park(c)
+	synctest.Test(t, func(t *testing.T) {
+		logs := capture.Default(t)
+		old := retentionTeardownWait
+		retentionTeardownWait = 50 * time.Millisecond
+		t.Cleanup(func() { retentionTeardownWait = old })
+		h := newRunnerHost(t, runnerOpts{})
+		c, cTab := h.chatUnder(t, "op-c", "")
+		d, _ := h.chatUnder(t, "op-d", cTab)
+		chain, err := h.store.Delete(t.Context(), c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.gates.park(c)
 
-	start := time.Now()
-	h.mem.RetentionClose(t.Context(), c, chain)
+		start := time.Now()
+		h.mem.RetentionClose(t.Context(), c, chain)
 
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
-		t.Errorf("RetentionClose took %v with its job stuck, want about the bound", elapsed)
-	}
-	if n := logs.CountLevel(slog.LevelDebug, "a purged chat's teardown is still running; the purge goes on"); n != 1 {
-		t.Errorf("logged the stuck purge %d times, want once", n)
-	}
-	h.log.awaitEvent(t, "end close "+string(d))
-	reopened, _, _, err := h.tabs.Open(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: string(c)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := h.mem.closeTab(t.Context(), reopened.ID, "op-close", true, nil); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(20 * time.Millisecond) // a close that did not queue behind the stuck job would start here
-	if h.log.count("start close "+string(c)) != 0 {
-		t.Error("a close committed after the stuck retention job started before it")
-	}
-	h.gates.open(c)
-	h.log.awaitEvent(t, "end close "+string(c))
+		if elapsed := time.Since(start); elapsed > 2*time.Second {
+			t.Errorf("RetentionClose took %v with its job stuck, want about the bound", elapsed)
+		}
+		if n := logs.CountLevel(slog.LevelDebug, "a purged chat's teardown is still running; the purge goes on"); n != 1 {
+			t.Errorf("logged the stuck purge %d times, want once", n)
+		}
+		h.log.awaitEvent(t, "end close "+string(d))
+		reopened, _, _, err := h.tabs.Open(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: string(c)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := h.mem.closeTab(t.Context(), reopened.ID, "op-close", true, nil); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(20 * time.Millisecond) // a close that did not queue behind the stuck job would start here
+		if h.log.count("start close "+string(c)) != 0 {
+			t.Error("a close committed after the stuck retention job started before it")
+		}
+		h.gates.open(c)
+		h.log.awaitEvent(t, "end close "+string(c))
+	})
 }
 
 func TestTeardownJobs_CarryTheirStopCause(t *testing.T) {

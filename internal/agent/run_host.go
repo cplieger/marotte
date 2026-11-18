@@ -195,6 +195,7 @@ func (rs *Runs) launchAs(
 		sb.closeOwned(rs.bridges.closeSession)
 		return "", "", nil, fmt.Errorf("%w: the host session's door answered no session id", errRunHostStart)
 	}
+	defer rs.launchHosts.claim(string(parent))()
 	var wfID string
 	err = sb.useRun(cctx, func(ctx context.Context, s engineSession) error {
 		var nErr error
@@ -208,6 +209,7 @@ func (rs *Runs) launchAs(
 		}
 		return "", "", nil, err
 	}
+	rs.launchHosts.name(string(parent), wfID)
 	if !rs.bridges.insert(runChatID(wfID), sb) {
 		sb.closeOwned(rs.bridges.closeSession)
 		return "", "", nil, fmt.Errorf("workflow %s %w", wfID, errHostSessionTaken)
@@ -264,6 +266,7 @@ func (rs *Runs) startLaunched(
 	}
 	parent := sb.SessionID()
 	rs.recordParentSession(ctx, wfID, string(parent))
+	rs.recordHost(ctx, wfID, string(parent))
 	// Visible to Route before invoke is written, so the run's first frame reaches the host's lane.
 	rs.router.registerOwner(wfID, parent)
 	if _, err := rs.write(ctx, a, sb, wfID, methodKiroWorkflowInvoke,
@@ -653,6 +656,9 @@ func (rs *Runs) retry(
 	defer lease.end()
 	// Read before the verb and reused throughout: nothing can learn it once the run re-drives, and two reads can disagree.
 	origin := rs.originOf(ctx, workflowID)
+	if uErr := rs.unroutableOrigin(workflowID, &origin); uErr != nil {
+		return out, uErr
+	}
 	cctx, cancel := context.WithTimeout(ctx, retryTimeout)
 	defer cancel()
 
@@ -947,8 +953,8 @@ type runOrigin struct {
 	recipe string
 }
 
-// An ownerless parent is trusted only after a complete chat scan: loading a chat's session as a
-// run host replays that chat's transcript into the run.
+// An ownerless parent is trusted only after a complete chat scan, or as the run's recorded host (parentlessHost):
+// loading a chat's session as a run host replays that chat's transcript into the run.
 func (rs *Runs) originOf(ctx context.Context, workflowID string) runOrigin {
 	runs, err := rs.listRaw(ctx)
 	if err != nil {
@@ -970,11 +976,23 @@ func (rs *Runs) originOf(ctx context.Context, workflowID string) runOrigin {
 	}
 	var complete bool
 	o.parent.chat, complete = rs.chatForSession(ctx, o.parent.session)
-	if o.parent.chat == "" && !complete {
+	if o.parent.chat == "" && !complete && !rs.parentlessHost(ctx, workflowID, o.parent.session) {
 		o.err = fmt.Errorf("%w: a chat file could not be read, so which chat launched the run is unknown",
 			errRunHostStart)
 	}
 	return o
+}
+
+// unroutableOrigin is origin's error when nothing else names the run's launching session: a leased or resident run
+// routes from its lease or its resident host (ensureResident), and an origin naming a parent session is routable.
+func (rs *Runs) unroutableOrigin(workflowID string, origin *runOrigin) error {
+	if origin.parent.session != "" || rs.residentRunHost(workflowID) != nil {
+		return nil
+	}
+	if _, held := rs.lease(workflowID); held {
+		return nil
+	}
+	return origin.err
 }
 
 // isCtxErr reports a cancellation or deadline at any depth: KAS may have taken a verb whose context ended.

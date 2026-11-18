@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 var testFeed = Feed{Connection: "github:github.com", Selector: "cplieger/Animap-Source"}

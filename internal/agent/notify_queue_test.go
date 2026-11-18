@@ -65,7 +65,7 @@ func TestNotify_AWakeQueuesBehindTheUsersWaitingRow(t *testing.T) {
 
 	awaitDelivery(t, notifyWake(t, s.h, "c1"))
 
-	joinInflight(t, s.h)
+	joinInflight(s.h)
 	if steers := slices.Collect(func(yield func(string) bool) {
 		for _, m := range br.callLog() {
 			if m == marotte.MethodSessionSteer && !yield(m) {
@@ -265,7 +265,7 @@ func TestNotify_AWakeIsSteeredOnceTheUsersSteerIsRead(t *testing.T) {
 
 	placeWake(t, s.h, "c1", "n-1")
 
-	joinInflight(t, s.h)
+	joinInflight(s.h)
 	if got := k.steered(); !slices.Equal(got, []string{"check the logs"}) {
 		t.Errorf("steers sent = %q, want the user's alone while it is unread", got)
 	}
@@ -351,7 +351,7 @@ func TestNotify_AWakeKiroCLIDropsWaitsForATurnOfItsOwn(t *testing.T) {
 	placeWake(t, s.h, "c1", "n-1")
 
 	waitFor(t, func() bool { return len(k.steered()) == 1 && stateOf(s.h, "c1", "n-1") == marotte.RunPending })
-	joinInflight(t, s.h)
+	joinInflight(s.h)
 	if f := s.lastFrame("steer-n-1"); f.State != marotte.SteerRowRemoved {
 		t.Errorf("the wake's dock frame = %q, want removed: it waits as a row, not as a steer", f.State)
 	}
@@ -536,7 +536,7 @@ func TestNotify_AWakeWaitsBehindTheUsersSteerCommand(t *testing.T) {
 
 	placeWake(t, s.h, "c1", "n-1")
 
-	joinInflight(t, s.h)
+	joinInflight(s.h)
 	if got := k.steered(); !slices.Equal(got, []string{"check the logs"}) {
 		t.Errorf("steers sent = %q, want the user's alone while it is unread", got)
 	}
@@ -628,7 +628,7 @@ func TestNotify_ALaterWakeReplacesTheWaitingOnesTextInPlace(t *testing.T) {
 	if err := wakeWith(t, s.h, "c1", "2 new; run grelot inbox"); err != nil {
 		t.Errorf("second wake = %v, want accepted", err)
 	}
-	joinInflight(t, s.h)
+	joinInflight(s.h)
 	ids, texts := grelotRows(s.h, "c1")
 	if !slices.Equal(texts, []string{"2 new; run grelot inbox"}) || !slices.Equal(ids, first) {
 		t.Errorf("grelot rows = %v %q, want the one row %v carrying the later text", ids, texts, first)
@@ -664,7 +664,7 @@ func TestNotify_AWakeBesideOneTheAgentHoldsAddsNothing(t *testing.T) {
 	if err := wakeWith(t, s.h, "c1", "2 new; run grelot inbox"); err != nil {
 		t.Errorf("second wake = %v, want accepted", err)
 	}
-	joinInflight(t, s.h)
+	joinInflight(s.h)
 	if got := k.steered(); !slices.Equal(got, []string{"1 new; run grelot inbox"}) {
 		t.Errorf("steers sent = %q, want the first wake once", got)
 	}
@@ -722,7 +722,7 @@ func TestNotify_AWakePastTheDraftCapIsSteeredWhenNothingWaits(t *testing.T) {
 	if err := wakeWith(t, s.h, "c1", big); err != nil {
 		t.Errorf("delivery = %v, want accepted", err)
 	}
-	joinInflight(t, s.h)
+	joinInflight(s.h)
 	if sent := k.steered(); len(sent) != 1 || sent[0] != big {
 		t.Errorf("steers sent = %d, want the wake once", len(sent))
 	}

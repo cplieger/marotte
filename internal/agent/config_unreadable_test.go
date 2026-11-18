@@ -99,7 +99,7 @@ func (*notLiveBackend) LiveSwitchable(_, _ signin.Credential) bool { return fals
 func TestUnreadableConfig_AnAccountSwitchIsQueuedAndAppliedOnceConfigReads(t *testing.T) {
 	vault := openVault(t, t.TempDir(), &notLiveBackend{flowBackend{id: "test"}})
 	h, dir := reopenFixture(t, WithSignIn(vault, "test"))
-	settleBoot(t, h)
+	awaitBoot(h)
 	src := fakeSourceOf(t, h)
 	// Registered after the runtime's listener, so a delivery here means the runtime's has returned.
 	delivered := make(chan struct{}, 2)
@@ -148,7 +148,7 @@ func lastReadableHub(t *testing.T) (*Runtime, *fakeEngineSource) {
 		WithConfigDir(dir))
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	settleBoot(t, h)
+	awaitBoot(h)
 	rewriteConfigByHand(t, dir, `{"agent_ignore_files":`)
 	return h, fakeSourceOf(t, h)
 }
@@ -206,7 +206,7 @@ func TestUnreadableConfig_ABootOverABrokenFileQueuesALiveReasonUntilConfigReads(
 	cliJSON := withKiroTelemetry(t, `{"telemetry.enabled":true}`)
 	dir := writeSettings(t, `{"engine_heap_mib":`)
 	h := reopenFixtureIn(t, dir, nil)
-	settleBoot(t, h)
+	awaitBoot(h)
 	src := fakeSourceOf(t, h)
 	executingLease(t, h, "wf_1")
 

@@ -204,7 +204,7 @@ func TestLoadSession_AFailedGenerationIsNotReopenedOrResumed(t *testing.T) {
 	if err := h.coord.LoadSession(ctx, "c1"); !errors.Is(err, errSwap) {
 		t.Fatalf("LoadSession over a failing replay swap = %v, want %v", err, errSwap)
 	}
-	joinInflight(t, h)
+	joinInflight(h)
 	if n := opens.Load() - before; n != 1 {
 		t.Errorf("sessions opened by one failing load = %d, want 1", n)
 	}
@@ -497,7 +497,7 @@ func TestLoadSession_AResumedGenerationRefusedAtPublicationResumesNoRuns(t *test
 			store.armed.Store(true)
 
 			err := h.coord.LoadSession(t.Context(), "c1")
-			joinInflight(t, h)
+			joinInflight(h)
 
 			if err == nil || errors.Is(err, command.ErrChatGone) != tc.wantGone {
 				t.Errorf("LoadSession(c1) refused at publication = %v, want a failure (chat gone %v)", err, tc.wantGone)
@@ -680,7 +680,7 @@ func TestOpenGeneration_ASessionAnUnreadableRecordRefusedIsReapedAndRetryable(t 
 	if err := <-done; err == nil || errors.Is(err, command.ErrChatGone) {
 		t.Fatalf("LoadSession whose record could not take the new session = %v, want a retryable failure", err)
 	}
-	joinInflight(t, h)
+	joinInflight(h)
 	if sb := h.coord.bridgeFor("c1"); sb != nil {
 		t.Errorf("Bridge(c1) after the failed generation = %p, want none: the next open must start fresh", sb)
 	}
@@ -755,7 +755,7 @@ func TestOpenGeneration_ReapsOnlyTheFreshSessionNoRecordHolds(t *testing.T) {
 		if err := <-done; !errors.Is(err, command.ErrChatGone) {
 			t.Fatalf("LoadSession of a chat deleted before its readiness = %v, want %v", err, command.ErrChatGone)
 		}
-		joinInflight(t, h)
+		joinInflight(h)
 		mu.Lock()
 		defer mu.Unlock()
 		if len(reaped) != 0 {
@@ -798,7 +798,7 @@ func testReapsTheSessionARemovedRecordRefused(t *testing.T, remove func(cs *test
 	if err := <-done; !errors.Is(err, command.ErrChatGone) {
 		t.Fatalf("LoadSession of a chat removed mid-open = %v, want %v", err, command.ErrChatGone)
 	}
-	joinInflight(t, h)
+	joinInflight(h)
 	mu.Lock()
 	defer mu.Unlock()
 	if want := []string{string(fb.SessionID())}; !slices.Equal(reaped, want) {
@@ -910,7 +910,7 @@ func TestTangentMerge_AParentDeletedWhileItsSessionLoadsFailsTheMergeOnce(t *tes
 			for deadline := time.Now().Add(5 * time.Second); countFailures() == 0 && time.Now().Before(deadline); {
 				time.Sleep(5 * time.Millisecond)
 			}
-			joinInflight(t, h)
+			joinInflight(h)
 			if failures := countFailures(); failures != 1 {
 				t.Errorf("tangent merge failure frames = %d, want 1", failures)
 			}

@@ -78,7 +78,7 @@ func TestBootPass_StaysOpenForWhatKASSendsAfterTheDoor(t *testing.T) {
 	observer.deliver(&marotte.RPCResponse{Method: methodV3SteeringDocs, Params: mustJSON(t, map[string]any{
 		"sessionId": string(observer.SessionID()), "status": "success", "documents": []any{},
 	})})
-	settleBoot(t, h)
+	awaitBoot(h)
 
 	if !sessionClosed(observer) {
 		t.Error("the boot observer pass left its session open after both arrived")
@@ -104,7 +104,7 @@ func TestBootPass_ClosesOnAFailedSteeringFrame(t *testing.T) {
 			t.Fatal("the boot observer pass held its session 3s after KAS sent a failed steering frame")
 		}
 	}
-	settleBoot(t, h)
+	awaitBoot(h)
 
 	if out := logs.String(); strings.Contains(out, "no steering documents") {
 		t.Errorf("logs = %s, want no WARN for steering documents KAS answered", out)

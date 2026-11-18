@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // applyRuns matches one run walk read under bound. A run enters the rule's map only when it passes the static

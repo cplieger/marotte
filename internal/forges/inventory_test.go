@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/creds"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/creds"
 )
 
 // scopeCore serves ListMyPRs per owner ("" is the authored list), from walks
@@ -252,6 +252,14 @@ func TestInventory_FailedScopeKeepsItsRowsAndCarriesTheError(t *testing.T) {
 	p.sweep(t.Context())
 	if e = entryFor(t, p, rec.ID); e.Error != nil || e.State != inventoryReady {
 		t.Errorf("entry after a clean cycle: error %+v, state %q; want none and ready", e.Error, e.State)
+	}
+}
+
+func TestInventoryError_NamesTheMissingPermission(t *testing.T) {
+	got := inventoryError(&forgeapi.Error{Kind: forgeapi.KindForbidden, Code: forgeapi.CodeScopeInsufficient, Needs: "pull_requests=read"})
+	want := InventoryError{Code: forgeapi.CodeScopeInsufficient, Kind: "forbidden", Needs: "pull_requests=read"}
+	if *got != want {
+		t.Errorf("inventoryError = %+v, want %+v", *got, want)
 	}
 }
 

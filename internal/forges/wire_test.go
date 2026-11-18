@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // marshalObject encodes v and decodes it back as a generic object, so a test

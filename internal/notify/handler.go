@@ -17,9 +17,9 @@ import (
 // Pattern is the route's ServeMux pattern; the method is checked in the handler, as on every marotte route.
 const Pattern = routePrefix + "{session}" + routeSuffix
 
-// DeliveredAccepted is the delivered value of every answer that took the message: it is on the chat's run order,
+// deliveredAccepted is the delivered value of every answer that took the message: it is on the chat's run order,
 // which delivers it after the answer.
-const DeliveredAccepted = "accepted"
+const deliveredAccepted = "accepted"
 
 var (
 	// ErrUnknownSession is a session id no chat holds; the route answers 404.
@@ -126,7 +126,7 @@ func (h *Handler) deliver(ctx context.Context, w http.ResponseWriter, k dedupeKe
 	}
 	h.dedupe.commit(k, h.now())
 	slog.Info("notify accepted", "session_id", k.session, "source", source, "message_id", messageID)
-	httpserver.WriteJSON(w, map[string]string{"delivered": DeliveredAccepted})
+	httpserver.WriteJSON(w, map[string]string{"delivered": deliveredAccepted})
 }
 
 func writeDeliveryError(w http.ResponseWriter, session, source string, err error) {

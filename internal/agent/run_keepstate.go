@@ -197,7 +197,7 @@ func (rs *Runs) startRunMarks(ctx context.Context, chatID marotte.ChatID, f *lif
 			"workflow_id", logsafe.Field(wf))
 		return
 	}
-	holders, unattributed := rs.startHolders(ctx, chatID, f.ParentSessionID)
+	holders, unattributed := rs.startHolders(ctx, wf, chatID, f.ParentSessionID)
 	rs.markRunAlive(ctx, wf, holders)
 	if unattributed {
 		rs.chats.HoldUnattributed(wf)
@@ -240,18 +240,22 @@ func (rs *Runs) confirmStart(l *runlease.Lease) {
 
 // startHolders names a run_start's holders by RunHolders over one fresh owner scan, plus the lane's chat for an
 // agent's run and, on an incomplete scan, every chat the scan could not read: one of them may own the parent
-// session. unattributed is a failed listing of the chats directory, which names no chat at all.
-func (rs *Runs) startHolders(ctx context.Context, chatID marotte.ChatID, parent string) (holders []marotte.ChatID, unattributed bool) {
+// session. unattributed is a failed listing of the chats directory, which names no chat at all. A parent that is the
+// run's recorded host (parentlessHost) is owned by no chat, so neither doubt applies to it.
+func (rs *Runs) startHolders(
+	ctx context.Context, workflowID string, chatID marotte.ChatID, parent string,
+) (holders []marotte.ChatID, unattributed bool) {
 	scan := rs.chats.SessionOwners(ctx)
 	holders, _ = RunHolders([]string{parent}, nil, scan.Owners)
 	if o := runStartLaunch(chatID); o.origin == runlease.OriginAgent {
 		holders = append(holders, chatID)
 	}
-	if !scan.Complete {
+	hosted := !scan.Complete && rs.parentlessHost(ctx, workflowID, parent)
+	if !scan.Complete && !hosted {
 		holders = append(holders, scan.Skipped...)
 	}
 	slices.Sort(holders)
-	return slices.Compact(holders), !scan.Listed
+	return slices.Compact(holders), !scan.Listed && !hosted
 }
 
 // recordKeepChats adds the holders a lease does not name yet to its KeepChats.
@@ -304,7 +308,7 @@ func (rs *Runs) attribute(ctx context.Context, wf, parent string, l *runlease.Le
 		return false
 	}
 	holders, _ := RunHolders([]string{parent}, l, scan.Owners)
-	if !scan.Complete {
+	if !scan.Complete && !rs.parentlessHost(ctx, wf, parent) {
 		holders = append(holders, scan.Skipped...)
 	}
 	rs.markRunAlive(ctx, wf, holders)
@@ -318,14 +322,16 @@ func (rs *Runs) attribute(ctx context.Context, wf, parent string, l *runlease.Le
 
 var (
 	errRetryChatPurging = errors.New("the chat that launched this run is being deleted, so nothing was retried")
-	errRetryChatUnread  = errors.New("the chat that launched this run could not be read, so nothing was retried. Try again")
-	errRetryChatClosed  = errors.New("the chat that launched this run is closed, so nothing was retried. " +
+	errRetryChatUnread  = errors.New("a chat file could not be read, so which chat launched this run is unknown " +
+		"and nothing was retried. Try again")
+	errRetryChatClosed = errors.New("the chat that launched this run is closed, so nothing was retried. " +
 		"Open the chat to retry the run")
 )
 
 // retryHolders names a retry's mark holders by RunHolders over one fresh owner scan, and its launchers: the lease's
 // ChatID and the chats owning the parent session, never a chat the lease keeps only in doubt. It refuses a run whose
-// launching session is in teardown, and one whose scan could not read every chat and found no launcher.
+// launching session is in teardown, and one whose scan could not read every chat and found no launcher, unless the
+// parent session is the run's recorded host (parentlessHost), which no unread chat can own.
 func (rs *Runs) retryHolders(
 	ctx context.Context, workflowID string, o *runOrigin,
 ) (holders, launchers []marotte.ChatID, err error) {
@@ -344,7 +350,7 @@ func (rs *Runs) retryHolders(
 		launch = &runlease.Lease{ChatID: lp.ChatID, Origin: lp.Origin}
 	}
 	launchers, _ = RunHolders([]string{o.parent.session}, launch, scan.Owners)
-	if len(launchers) == 0 && !scan.Complete {
+	if len(launchers) == 0 && !scan.Complete && !rs.parentlessHost(ctx, workflowID, o.parent.session) {
 		return nil, nil, command.StatusError(http.StatusServiceUnavailable, errRetryChatUnread)
 	}
 	return holders, launchers, nil

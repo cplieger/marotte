@@ -32,6 +32,9 @@ type fakeRunOwner struct {
 	parented    map[string][]string
 	parentedAll map[string][]string
 	parentedErr error
+	// hosted is RunHostedBy's answer per session (a listed session hosts its run), hostedErr its failure.
+	hosted    map[string]string
+	hostedErr error
 	// bounds is what RunReadBound answers per run, and boundErr its failure.
 	bounds   map[string]uint64
 	boundErr error
@@ -63,6 +66,11 @@ func (f *fakeRunOwner) RunOwner(_ context.Context, workflowID string) (RunOwner,
 
 func (f *fakeRunOwner) RunsParentedBy(_ context.Context, sessionID string) (live, all []string, err error) {
 	return f.parented[sessionID], append(slices.Clone(f.parented[sessionID]), f.parentedAll[sessionID]...), f.parentedErr
+}
+
+func (f *fakeRunOwner) RunHostedBy(_ context.Context, sessionID string) (string, bool, error) {
+	wf, hosted := f.hosted[sessionID]
+	return wf, hosted, f.hostedErr
 }
 
 // slowRunOwner answers RunOwner only once released: a finished run's engine read.

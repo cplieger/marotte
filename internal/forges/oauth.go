@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/creds"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/creds"
 )
 
 // Marotte's own OAuth applications on github.com and gitlab.com. Both ids are

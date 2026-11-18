@@ -174,7 +174,7 @@ func TestChatTeardown_RetiresTheBridgesAsksAsEnded(t *testing.T) {
 			head := h.bus.fanout.Position().Head
 
 			teardown(h)
-			joinInflight(t, h)
+			joinInflight(h)
 
 			if left := h.bus.pendingPerms.list("c1"); len(left) != 0 {
 				t.Errorf("asks pending after the %s = %v, want none", name, left)

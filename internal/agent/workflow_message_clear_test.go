@@ -37,7 +37,7 @@ func clearCauseHub(t *testing.T, onCancel func(clear func())) (*Runtime, *testCh
 		"sessionId": string(br.SessionID()), "message": `paused: repeat "fix-loop" reached its iteration limit`,
 		"severity": "info", "sender": "step", "workflowId": "wf_1", "nodeId": "fix-loop", "notifyId": "notify-cap",
 	}))
-	joinInflight(t, h)
+	joinInflight(h)
 	br.mu.Lock()
 	br.onNotify = func(method string) {
 		if method == marotte.MethodCancel {
@@ -180,7 +180,7 @@ func TestWorkflowMessage_AnErrorClearFoldedAfterTheReadersStopWaitsForTheRewake(
 		t.Fatalf("Setup: settlements before the clear = %+v, want none: the error clear is still queued", d)
 	}
 	h.translateACPEvent("c1", h.originOf("c1"), clearedMsg("notify-cap"))
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if c := clearCausesOf(t, cs); len(c) != 1 || c[0] != marotte.SteerClearCauseCancel {
 		t.Errorf("clear causes = %v, want [cancel]", c)

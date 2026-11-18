@@ -104,7 +104,7 @@ func TestCmdCancel_AWireTurnWithNoTurnEndClosesAtTheGrace(t *testing.T) {
 		t.Fatal("no session/cancel reached the bridge")
 	}
 	waitFor(t, func() bool { _, open := ownID(h, "c1"); return !open })
-	joinInflight(t, h)
+	joinInflight(h)
 
 	closes := closesOf(t, logOf(t, cs, "c1"))
 	if len(closes) != 1 || closes[0].Outcome != marotte.TurnOutcomeCancelled {
@@ -160,7 +160,7 @@ func TestCmdCancel_AFoldOpenedWireTurnClosesAtTheGrace(t *testing.T) {
 		t.Fatalf("send = %d %s, want 200", rec.Code, rec.Body.String())
 	}
 	waitFor(t, func() bool { return slices.Contains(promptTexts(t, cs), "also check the logs") })
-	joinInflight(t, h)
+	joinInflight(h)
 
 	closes := closesOf(t, logOf(t, cs, "c1"))
 	if len(closes) == 0 || closes[0].Outcome != marotte.TurnOutcomeCancelled {
@@ -177,7 +177,7 @@ func TestKASIdle_ClosesAWireTurnWhoseEndNeverCame(t *testing.T) {
 	send(t, h, newSessionChunkMsg("", "reading the notification"), newActivityMsg(false))
 
 	waitFor(t, func() bool { _, open := ownID(h, "c1"); return !open })
-	joinInflight(t, h)
+	joinInflight(h)
 
 	closes := closesOf(t, logOf(t, cs, "c1"))
 	if len(closes) != 1 || closes[0].Outcome != marotte.TurnOutcomeUnknown || closes[0].FailureReason != kasIdleReason {
@@ -212,7 +212,7 @@ func TestKASIdle_LeavesATurnKASStillRuns(t *testing.T) {
 	}
 
 	time.Sleep(80 * time.Millisecond) // The idle close would run on a real timer.
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if _, open := ownID(h, "c1"); !open {
 		t.Error("the turn closed while KAS still ran it, want it left open")
@@ -256,7 +256,7 @@ func TestKASIdle_ARunningReportAsTheGraceExpiresKeepsTheTurn(t *testing.T) {
 	send(t, h, newActivityMsg(false))
 
 	waitFor(t, reported.Load)
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if _, open := ownID(h, "c1"); !open {
 		t.Error("the turn closed after KAS reported it running, want it left open")
@@ -301,7 +301,7 @@ func TestKASIdle_SendsASteerSentBesideALostEndAsThePrompt(t *testing.T) {
 	}
 	send(t, h, newActivityMsg(false))
 	waitFor(t, func() bool { return slices.Contains(promptTexts(t, cs), "also check the logs") })
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if got := promptTexts(t, cs); !slices.Equal(got, []string{"also check the logs"}) {
 		t.Errorf("prompts opened = %q, want the steer's words once", got)
@@ -337,7 +337,7 @@ func TestKASIdle_SendsARowQueuedBesideALostEnd(t *testing.T) {
 	}
 	send(t, h, newActivityMsg(false))
 	waitFor(t, func() bool { return len(queuedRows(t, cs, "c1")) == 0 })
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if ids := promptIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-q1"}) {
 		t.Errorf("prompts opened = %v, want the queued row once", ids)
@@ -411,7 +411,7 @@ func TestKASIdle_ALateEndLeavesTheDrainedPromptToReachKAS(t *testing.T) {
 
 			send(t, h, newActivityMsg(false))
 			waitFor(t, func() bool { return len(closesOf(t, logOf(t, cs, "c1"))) == 2 })
-			joinInflight(t, h)
+			joinInflight(h)
 
 			if !late.fired.Load() {
 				t.Fatal("setup: the late turn_end never met the drained prompt")

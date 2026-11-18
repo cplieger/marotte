@@ -454,7 +454,7 @@ func TestBotDoor_ALinkSwappedInBeforeAReloadIsDropped(t *testing.T) {
 		t.Fatalf("the first open sent %d calls, last %v; want one add", n, p)
 	}
 	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
-	joinInflight(t, h)
+	joinInflight(h)
 
 	target := filepath.Join(kiroHome, "elsewhere.md")
 	if err := os.WriteFile(target, []byte("not the Bot's notes\n"), 0o600); err != nil {

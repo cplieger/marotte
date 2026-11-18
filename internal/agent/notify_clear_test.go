@@ -75,7 +75,7 @@ func TestNotify_ADiscardOfAWakeBeingSentIsRefusedAndItIsSentOnce(t *testing.T) {
 	if !reachesState(s.h, "c1", "n-1", marotte.RunInKAS) {
 		t.Errorf("wake = %q, want in kiro-cli's buffer after the refused discard", stateOf(s.h, "c1", "n-1"))
 	}
-	joinInflight(t, s.h)
+	joinInflight(s.h)
 	if got := k.steered(); !slices.Equal(got, []string{grelotWake}) {
 		t.Errorf("steers sent = %q, want the wake once", got)
 	}
@@ -90,7 +90,7 @@ func TestNotify_ADiscardOfAWakeTheAgentHoldsClearsIt(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("unqueue = %d %s, want 200", rec.Code, rec.Body.String())
 	}
-	joinInflight(t, s.h)
+	joinInflight(s.h)
 	if got := k.clears(); len(got) != 1 || !slices.Equal(got[0], []string{"steer-n-1"}) {
 		t.Errorf("steering_cleared frames = %v, want one naming the wake", got)
 	}
@@ -122,7 +122,7 @@ func TestNotify_DeletingAUserSteerBesideAWakeResendsOnlyTheUsersKeptSteers(t *te
 	if rec.Code != http.StatusOK {
 		t.Fatalf("steer_remove = %d %s, want 200", rec.Code, rec.Body.String())
 	}
-	joinInflight(t, s.h)
+	joinInflight(s.h)
 	resent := "second\n\nthird"
 	if got, want := k.steered(), []string{grelotWake, "first", "second", "third", resent}; !slices.Equal(got, want) {
 		t.Errorf("steers sent = %q, want %q: the user's kept steers resent as one", got, want)
@@ -152,7 +152,7 @@ func TestNotify_DeletingAWakeResendsTheUsersSteerAlone(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("steer_remove = %d %s, want 200", rec.Code, rec.Body.String())
 	}
-	joinInflight(t, s.h)
+	joinInflight(s.h)
 	if got, want := k.steered(), []string{grelotWake, "first", "first"}; !slices.Equal(got, want) {
 		t.Errorf("steers sent = %q, want %q", got, want)
 	}
@@ -171,7 +171,7 @@ func TestNotify_QueueInsteadPutsTheUsersSteerAheadOfTheWake(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("queue instead = %d %s, want 200", rec.Code, rec.Body.String())
 	}
-	joinInflight(t, s.h)
+	joinInflight(s.h)
 	if got, want := k.steered(), []string{grelotWake, "first"}; !slices.Equal(got, want) {
 		t.Errorf("steers sent = %q, want %q: nothing resent", got, want)
 	}

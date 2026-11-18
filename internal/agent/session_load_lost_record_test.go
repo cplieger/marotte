@@ -62,7 +62,7 @@ func lostRecordHub(t *testing.T, configure func(b *fakeBridge)) (*Runtime, *test
 	fakes := &doorFakes{configure: configure}
 	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(fakes.next, nil), cs)
 	cs.wire(h)
-	settleBoot(t, h)
+	awaitBoot(h)
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 	return h, cs, fakes
 }

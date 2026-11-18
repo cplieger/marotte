@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/marotte/internal/launchrule"
 )
 
@@ -91,6 +91,37 @@ func TestSaveRefusesUnreadableRepo(t *testing.T) {
 			t.Errorf("refusal = %+v, want the forge's sentence", fe)
 		}
 	})
+	for name, tc := range map[string]struct {
+		core *ruleCheckCore
+		want string
+	}{
+		"a token missing a named permission on the repository read": {
+			core: &ruleCheckCore{affErr: &forgeapi.Error{
+				Op: "RepoAffordances", Kind: forgeapi.KindForbidden, Code: forgeapi.CodeScopeInsufficient, Status: 403, Needs: "metadata=read",
+			}},
+			want: "github.com: the token is missing a permission this rule needs: metadata=read. Add it to the token on the forge",
+		},
+		"a token missing a named permission on the list read": {
+			core: &ruleCheckCore{
+				aff: forgeapi.RepoAffordances{HasIssues: forgeapi.SupportYes},
+				listErr: &forgeapi.Error{
+					Op: "ListRuns", Kind: forgeapi.KindForbidden, Code: forgeapi.CodeScopeInsufficient, Status: 403, Needs: "actions=read",
+				},
+			},
+			want: "github.com: the token is missing a permission this rule needs: actions=read. Add it to the token on the forge",
+		},
+		"a token missing an unnamed permission": {
+			core: &ruleCheckCore{affErr: &forgeapi.Error{Op: "RepoAffordances", Kind: forgeapi.KindForbidden, Code: forgeapi.CodeScopeInsufficient}},
+			want: "github.com: the token is missing a permission this rule needs. Add it to the token on the forge",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fe := refusal(t, recordManager(t, tc.core).CheckEventRule(t.Context(), eventSpec(launchrule.KindRunConcluded)))
+			if fe.Unavailable || fe.Text != tc.want {
+				t.Errorf("refusal = %+v, want %q", fe, tc.want)
+			}
+		})
+	}
 	t.Run("a Gitea that lists runs undated", func(t *testing.T) {
 		core := &ruleCheckCore{listErr: &forgeapi.Error{Op: "ListRuns", Kind: forgeapi.KindUpstream, Code: forgeapi.CodeRunUndated}}
 		fe := refusal(t, recordManager(t, core).CheckEventRule(t.Context(), eventSpec(launchrule.KindRunConcluded)))
@@ -180,6 +211,9 @@ func TestSaveReadsOnePageOfTheKindsList(t *testing.T) {
 		set, err := forgeapi.ResolveList(opts...)
 		if err != nil || set.PageBound != 1 {
 			t.Errorf("%s read with page bound %d (%v), want 1", core.lists[i], set.PageBound, err)
+		}
+		if core.lists[i] == "prs" && (!set.ReviewsSet || set.Reviews) {
+			t.Errorf("prs read with reviews set %v, read %v; want WithReviews(false)", set.ReviewsSet, set.Reviews)
 		}
 		if core.lists[i] == "runs" && (set.Since.Before(start.Add(-time.Hour-time.Minute)) || set.Since.After(time.Now().Add(-time.Hour))) {
 			t.Errorf("runs read since %v, want an hour before the save", set.Since)

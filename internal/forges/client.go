@@ -6,11 +6,11 @@ import (
 	"log/slog"
 	"slices"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/creds"
-	"github.com/cplieger/forgeapi/v2/gitea"
-	"github.com/cplieger/forgeapi/v2/github"
-	"github.com/cplieger/forgeapi/v2/gitlab"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/creds"
+	"github.com/cplieger/forgeapi/v3/gitea"
+	"github.com/cplieger/forgeapi/v3/github"
+	"github.com/cplieger/forgeapi/v3/gitlab"
 )
 
 // connReadCacheBytes bounds each connection's forgeapi read cache at the lower

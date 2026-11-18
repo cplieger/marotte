@@ -15,7 +15,7 @@ import (
 // terminals it created are released, each through that session's own forward tail.
 func TestEngineExit_ClosesEveryHostedSessionsTurnAndAsks(t *testing.T) {
 	h, _ := reopenFixture(t)
-	settleBoot(t, h)
+	awaitBoot(h)
 	if _, err := h.chatStore.Mutate(t.Context(), "c2", func(c *marotte.Chat, _ bool) bool { c.Name = "B"; return true }); err != nil {
 		t.Fatalf("Setup: seed c2: %v", err)
 	}
@@ -87,7 +87,7 @@ func loadEndingFixture(t *testing.T, n int32) (*Runtime, func() []*marotte.Sessi
 			retireOnce.Do(func() { time.AfterFunc(200*time.Millisecond, func() { close(retired) }) })
 		}
 	})
-	settleBoot(t, h)
+	awaitBoot(h)
 	src := fakeSourceOf(t, h)
 	src.mu.Lock()
 	src.exitGate = retired

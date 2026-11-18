@@ -80,7 +80,7 @@ func TestPushTurnOutcome_PushReadsTheSeverity(t *testing.T) {
 				&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": string(tc.stop)})})
 
 			if tc.want == "" {
-				joinInflight(t, h)
+				joinInflight(h)
 				select {
 				case body := <-fp.sends:
 					t.Errorf("a %q turn pushed %q; a turn that merely stopped reports nothing", tc.stop, body)

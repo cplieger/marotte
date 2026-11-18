@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 )
@@ -196,7 +196,7 @@ func handlePRDetail(w http.ResponseWriter, r *http.Request, core forgeapi.Core, 
 		httpreply.BadRequest(w, "invalid PR number")
 		return
 	}
-	pr, err := core.ReadPR(r.Context(), ref, forgeapi.PRRef{Number: number})
+	pr, err := core.ReadPR(r.Context(), ref, forgeapi.PRRef{Number: number}, noReviews)
 	if err != nil {
 		writeOpsError(w, r, err)
 		return
@@ -339,11 +339,12 @@ func (h *HTTPHandler) handlePRAction(w http.ResponseWriter, r *http.Request, rh 
 	httpserver.WriteJSON(w, PRChanged{PR: prWire(&row), CycleID: cycle})
 }
 
-// handlePRRerun re-runs a PR's failed CI pinned to `?head_sha=`, the head the
-// caller's row displayed: a re-run can trigger a deployment, so the library
-// refuses one for any other commit. No pin re-runs the head as it is now. A
-// re-run changes no forge object, so it evicts nothing; the checks it restarts
-// are the cycle's to read.
+// handlePRRerun re-runs a PR's failed CI (on Forgejo 17 and later its whole
+// run, passed jobs included) pinned to `?head_sha=`, the head the caller's row
+// displayed: a re-run can trigger a deployment, so the library refuses one for
+// any other commit. No pin re-runs the head as it is now. A re-run changes no
+// forge object, so it evicts nothing; the checks it restarts are the cycle's to
+// read.
 func (h *HTTPHandler) handlePRRerun(w http.ResponseWriter, r *http.Request, rh *readHandle, ref forgeapi.RepoRef, pr forgeapi.PRRef) {
 	if err := rh.core.RerunFailedChecks(r.Context(), ref, pr, r.URL.Query().Get(fieldHeadSHA)); err != nil {
 		writeOpsError(w, r, err)
@@ -518,15 +519,9 @@ func (h *HTTPHandler) handleAffordances(w http.ResponseWriter, r *http.Request, 
 	httpserver.WriteJSON(w, aff)
 }
 
-// Labels is an optional role, so a client without it answers errNotSupported.
 func handleLabels(w http.ResponseWriter, r *http.Request, core forgeapi.Core, ref forgeapi.RepoRef) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
-	lab, ok := core.(forgeapi.Labels)
-	if !ok {
-		writeOpsError(w, r, errNotSupported)
 		return
 	}
 	req, err := listRequestOf(r.URL.Query())
@@ -534,7 +529,7 @@ func handleLabels(w http.ResponseWriter, r *http.Request, core forgeapi.Core, re
 		writeOpsError(w, r, err)
 		return
 	}
-	page, err := lab.ListLabels(r.Context(), ref, req.opts...)
+	page, err := core.ListLabels(r.Context(), ref, req.opts...)
 	if err != nil {
 		writeOpsError(w, r, err)
 		return

@@ -193,6 +193,21 @@ describe("the New PR dialog", () => {
     expect(H.dialogClose).not.toHaveBeenCalled();
   });
 
+  it("Open pull request names the permission a scope refusal says the token lacks", async () => {
+    await open();
+    const calls = heldFetch();
+    submit().click();
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    calls[0]!.answer(
+      json({ error: "denied", code: "scope_insufficient", needs: "pull_requests=write" }, 403),
+    );
+    await vi.waitFor(() =>
+      expect(status().textContent).toBe(
+        "Could not open the pull request. The token is missing a permission this needs: pull_requests=write. Add it to the token on the forge. denied",
+      ),
+    );
+  });
+
   it("Open pull request names and links the one it opened, cannot open it twice, and asks the list for a cycle", async () => {
     await open();
     const calls = heldFetch();

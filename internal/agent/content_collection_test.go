@@ -48,10 +48,7 @@ func TestGovernanceLockChange_ReachesTheEngineReadableOrNot(t *testing.T) {
 					default:
 					}
 				}))
-			settleBoot(t, h)
-			if !awaitEngine(h) {
-				t.Fatal("Setup: the engine never became ready")
-			}
+			awaitBoot(h)
 			before := len(contentCollectionWrites(lane))
 			if tc.document != "" {
 				rewriteConfigByHand(t, h.lifecycle.configDir, tc.document)

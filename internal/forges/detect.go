@@ -9,8 +9,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/families"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/families"
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 )

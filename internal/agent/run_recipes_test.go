@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -90,63 +91,72 @@ func TestRecipeRoutes_RefuseASourceGoneSinceTheHold(t *testing.T) {
 // Lookups arriving while a listing runs share it: KAS admits every recipe file per call, so overlapping walks are
 // what stretched the 2026-11-02 listing past its deadline.
 func TestListRecipes_ConcurrentReadersShareOneListing(t *testing.T) {
-	h, _, br := newTestHub()
-	launchableRecipe(br, "wf_shared")
-	release := make(chan struct{})
-	br.blockOn = map[string]chan struct{}{methodKiroWorkflowListRecipes: release}
+	synctest.Test(t, func(t *testing.T) {
+		h, _, br := newTestHub()
+		t.Cleanup(func() { shutdownHub(t, h) })
+		launchableRecipe(br, "wf_shared")
+		release := make(chan struct{})
+		br.blockOn = map[string]chan struct{}{methodKiroWorkflowListRecipes: release}
 
-	const readers = 4
-	var wg sync.WaitGroup
-	errs := make([]error, readers)
-	for i := range readers {
-		wg.Go(func() {
-			got, err := h.runs.recipeBySource(t.Context(), "bundled://publish")
-			if err == nil && got.Name != "publish" {
-				err = fmt.Errorf("got recipe %q, want publish", got.Name)
-			}
-			errs[i] = err
-		})
-	}
-	waitFor(t, func() bool { return listRecipesCalls(br) >= 1 })
-	close(release)
-	wg.Wait()
-	for i, err := range errs {
-		if err != nil {
-			t.Errorf("reader %d: %v", i, err)
+		const readers = 4
+		var wg sync.WaitGroup
+		errs := make([]error, readers)
+		for i := range readers {
+			wg.Go(func() {
+				got, err := h.runs.recipeBySource(t.Context(), "bundled://publish")
+				if err == nil && got.Name != "publish" {
+					err = fmt.Errorf("got recipe %q, want publish", got.Name)
+				}
+				errs[i] = err
+			})
 		}
-	}
-	if n := listRecipesCalls(br); n != 1 {
-		t.Errorf("%d concurrent readers made %d listRecipes calls, want 1", readers, n)
-	}
+		// Every reader is parked on the listing before it ends; a reader arriving after would start its own.
+		synctest.Wait()
+		close(release)
+		wg.Wait()
+		for i, err := range errs {
+			if err != nil {
+				t.Errorf("reader %d: %v", i, err)
+			}
+		}
+		if n := listRecipesCalls(br); n != 1 {
+			t.Errorf("%d concurrent readers made %d listRecipes calls, want 1", readers, n)
+		}
+	})
 }
 
 // One reader walking away leaves the shared listing running for the others.
 func TestListRecipes_AReaderWalkingAwayDoesNotFailTheOthers(t *testing.T) {
-	h, _, br := newTestHub()
-	launchableRecipe(br, "wf_walk")
-	release := make(chan struct{})
-	br.blockOn = map[string]chan struct{}{methodKiroWorkflowListRecipes: release}
+	synctest.Test(t, func(t *testing.T) {
+		h, _, br := newTestHub()
+		t.Cleanup(func() { shutdownHub(t, h) })
+		launchableRecipe(br, "wf_walk")
+		release := make(chan struct{})
+		br.blockOn = map[string]chan struct{}{methodKiroWorkflowListRecipes: release}
 
-	gone, cancel := context.WithCancel(t.Context())
-	goneErr := make(chan error, 1)
-	go func() {
-		_, err := h.runs.recipeBySource(gone, "bundled://publish")
-		goneErr <- err
-	}()
-	waitFor(t, func() bool { return listRecipesCalls(br) >= 1 })
-	stayed := make(chan error, 1)
-	go func() {
-		_, err := h.runs.recipeBySource(t.Context(), "bundled://publish")
-		stayed <- err
-	}()
-	cancel()
-	if err := <-goneErr; !errors.Is(err, context.Canceled) {
-		t.Errorf("the departed reader's error = %v, want context.Canceled", err)
-	}
-	close(release)
-	if err := <-stayed; err != nil {
-		t.Errorf("the remaining reader failed with its peer's cancel: %v", err)
-	}
+		gone, cancel := context.WithCancel(t.Context())
+		goneErr := make(chan error, 1)
+		go func() {
+			_, err := h.runs.recipeBySource(gone, "bundled://publish")
+			goneErr <- err
+		}()
+		synctest.Wait()
+		stayed := make(chan error, 1)
+		go func() {
+			_, err := h.runs.recipeBySource(t.Context(), "bundled://publish")
+			stayed <- err
+		}()
+		// The remaining reader is parked on the departing reader's listing, not on one of its own.
+		synctest.Wait()
+		cancel()
+		if err := <-goneErr; !errors.Is(err, context.Canceled) {
+			t.Errorf("the departed reader's error = %v, want context.Canceled", err)
+		}
+		close(release)
+		if err := <-stayed; err != nil {
+			t.Errorf("the remaining reader failed with its peer's cancel: %v", err)
+		}
+	})
 }
 
 // slowListing makes every later listing run out of time, as on a busy engine.

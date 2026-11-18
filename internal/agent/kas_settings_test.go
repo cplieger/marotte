@@ -100,9 +100,7 @@ func TestEngineSpawn_TelemetryReachesTheEngineProcess(t *testing.T) {
 				h.config.SetGovernance(t.Context(), *tc.org)
 			}
 			close(engine.installed)
-			if !awaitEngine(h) {
-				t.Fatal("the engine over the fake process never became ready")
-			}
+			awaitEngine(h)
 			env, initialize := engine.received(t)
 
 			var carried []string

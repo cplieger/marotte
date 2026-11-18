@@ -499,7 +499,7 @@ func emptyRetryHub(t *testing.T, arm func(*fakeBridge)) (h *Runtime, cs *testCha
 	h = newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(factory, nil), cs)
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	settleBoot(t, h)
+	awaitBoot(h)
 	seedChat(t, cs, "c1")
 	if code := postPrompt(t, h, "tidy"); code != http.StatusOK {
 		t.Fatalf("Setup: prompt = %d", code)

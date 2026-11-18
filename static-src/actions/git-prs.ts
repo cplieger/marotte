@@ -84,7 +84,7 @@ export const mergePR = apiAction<MergePRArgs, MergeResult>({
     body: mergeBody(args, false),
   }),
   decode: (data) => decodeMergeResult(data),
-  decodeError: keepMovedBody,
+  decodeError: keepRefusalBody,
   error: false,
   // Not retryable: a timed-out merge may have succeeded. The head pin makes a retry fail closed
   // against a moved head, but not safe.
@@ -98,7 +98,7 @@ export const armAutoMerge = apiAction<MergePRArgs, MergeResult>({
   dedupe: true,
   request: (args) => ({ method: "POST", path: prPath(args, "merge"), body: mergeBody(args, true) }),
   decode: (data) => decodeMergeResult(data),
-  decodeError: keepMovedBody,
+  decodeError: keepRefusalBody,
   error: false,
   idempotencyKey: true,
   retryable: retryNetwork,
@@ -114,7 +114,7 @@ export const closePR = apiAction<PRArgs, PRChanged>({
   dedupe: true,
   request: (args) => ({ method: "POST", path: prPath(args, "close"), body: {} }),
   decode: (data) => decodePRChanged(data),
-  decodeError: keepMovedBody,
+  decodeError: keepRefusalBody,
   error: false,
   idempotencyKey: true,
   retryable: retryNetwork,
@@ -139,16 +139,17 @@ export const reopenPR = apiAction<PRArgs>({
   scope: (args) => "git:" + args.forge_id + ":" + args.owner + "/" + args.name,
   dedupe: true,
   request: (args) => ({ method: "POST", path: prPath(args, "reopen"), body: {} }),
-  decodeError: keepMovedBody,
+  decodeError: keepRefusalBody,
   error: false,
   idempotencyKey: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
 });
 
-/** Re-run the failed CI of the head the row's red chip shows; the server refuses a moved branch,
- *  and unpinned re-runs the live head. Not optimistic, no toast: an instance that cannot re-run
- *  answers `capability_unsupported` with the evidence that becomes its message. */
+/** Re-run the CI (the failed jobs, or Forgejo's whole run) of the head the row's red chip shows;
+ *  the server refuses a moved branch, and unpinned re-runs the live head. Not optimistic, no
+ *  toast: an instance that cannot re-run answers `capability_unsupported` with the evidence that
+ *  becomes its message. */
 export const rerunChecks = apiAction<PinnedPRArgs>({
   name: "git.rerun_checks",
   scope: (args) => "git:" + args.forge_id + ":" + args.owner + "/" + args.name,
@@ -158,17 +159,18 @@ export const rerunChecks = apiAction<PinnedPRArgs>({
     path: prPath(args, "rerun") + pinnedQuery(args),
     body: {},
   }),
-  decodeError: (info) => keepMovedBody(info) ?? capabilityRefusal(info),
+  decodeError: (info) => keepRefusalBody(info) ?? capabilityRefusal(info),
   error: false,
   idempotencyKey: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
 });
 
-/** A refusal naming a moved repository keeps its body as the error's cause, since
- *  the body says where the repository went (git-pr-status.ts `movedRepository`). */
-function keepMovedBody(info: ApiErrorInfo): { kind: "error"; error: ActionError } | undefined {
-  if (info.code !== "repo_ref_stale") {
+/** A refusal naming a moved repository or a missing permission keeps its body as the
+ *  error's cause, since the body says where the repository went or what the token lacks
+ *  (git-pr-status.ts `movedRepository`, `refusalWords`). */
+function keepRefusalBody(info: ApiErrorInfo): { kind: "error"; error: ActionError } | undefined {
+  if (info.code !== "repo_ref_stale" && info.code !== "scope_insufficient") {
     return undefined;
   }
   return {
@@ -285,6 +287,7 @@ export const createPR = apiAction<CreatePRArgs, PR>({
     },
   }),
   decode: (data) => decodePR(data),
+  decodeError: keepRefusalBody,
   error: false,
 });
 

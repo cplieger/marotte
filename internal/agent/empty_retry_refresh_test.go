@@ -141,7 +141,7 @@ func TestEmptyRetry_ACutDuringTheForwardWaitClosesNoTurn(t *testing.T) {
 		t.Fatalf("close_tab = %d, want 200", code)
 	}
 	awaitTeardown(t, h, "c1")
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if !errors.Is(refreshErr, marotte.ErrChatClosedDuringCall) {
 		t.Errorf("refresh = %v, want the close's cut", refreshErr)

@@ -50,7 +50,7 @@ func botRuntimeWith(t *testing.T, opts []Option, bridges ...*fakeBridge) (*Runti
 	h := newRuntimeOn(context.Background(), "/tmp/work", fakeEngineOf(factory, nil), cs, opts...)
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	settleBoot(t, h)
+	awaitBoot(h)
 	return h, cs
 }
 

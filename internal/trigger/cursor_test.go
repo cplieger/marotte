@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 func TestCursorKeyedByRepoID(t *testing.T) {

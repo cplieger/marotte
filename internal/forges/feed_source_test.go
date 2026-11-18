@@ -6,25 +6,38 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/marotte/internal/trigger"
 )
 
-// feedWire answers a GitHub instance by request path and records each request's path and query.
+// feedWire answers a GitHub instance by request path and records each request's path and query, and each GraphQL
+// request's body.
 type feedWire struct {
-	bodies map[string]string
-	seen   []string
-	mu     sync.Mutex
+	bodies  map[string]string
+	seen    []string
+	graphql []string
+	mu      sync.Mutex
 }
 
 func (w *feedWire) RoundTrip(r *http.Request) (*http.Response, error) {
+	var sent []byte
+	if r.URL.Path == "/graphql" && r.Body != nil {
+		var err error
+		if sent, err = io.ReadAll(r.Body); err != nil {
+			return nil, err
+		}
+	}
 	w.mu.Lock()
 	w.seen = append(w.seen, r.Method+" "+r.URL.Path+"?"+r.URL.RawQuery)
+	if sent != nil {
+		w.graphql = append(w.graphql, string(sent))
+	}
 	body, ok := w.bodies[r.URL.Path]
 	w.mu.Unlock()
 	status := http.StatusOK
@@ -108,6 +121,12 @@ func TestFeedSourceReadsIssuesPRsRuns(t *testing.T) {
 		if len(page.Items) != 1 || page.Items[0].Ref.Number != 31 || page.Items[0].TargetBranch != "main" ||
 			len(page.Items[0].Labels) != 1 || page.Items[0].Labels[0].Name != "report:fast" {
 			t.Errorf("pull requests = %+v, want #31 into main labelled report:fast", page.Items)
+		}
+		wire.mu.Lock()
+		sent := slices.Clone(wire.graphql)
+		wire.mu.Unlock()
+		if len(sent) != 1 || !strings.Contains(sent[0], `"reviews":false`) {
+			t.Errorf("pull request queries = %q, want one with reviews false", sent)
 		}
 	})
 	t.Run("runs", func(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
@@ -71,6 +71,7 @@ type errorEnvelope struct {
 	Code        string          `json:"code"`
 	Kind        string          `json:"kind"`
 	DiagID      string          `json:"diag_id,omitempty"`
+	Needs       string          `json:"needs,omitempty"`
 	RetryAfterS int64           `json:"retry_after_s,omitempty"`
 }
 
@@ -90,6 +91,7 @@ func envelopeFor(e *forgeapi.Error) errorEnvelope {
 		Code:        e.Code,
 		Kind:        e.Kind.String(),
 		DiagID:      e.DiagID,
+		Needs:       logsafe.Field(e.Needs),
 		RetryAfterS: retryAfterSeconds(e),
 		Successor:   successorOf(e.Successor),
 	}
@@ -150,7 +152,7 @@ func statusOf(err error, at time.Time) status {
 	if !ok {
 		return status{kind: statusRetrying, checkedAt: at, fault: &fault{message: err.Error()}}
 	}
-	f := &fault{message: fe.Error(), code: fe.Code, kind: fe.Kind.String()}
+	f := &fault{message: fe.Error(), code: fe.Code, kind: fe.Kind.String(), needs: fe.Needs}
 	if fe.RetryAfter > 0 {
 		f.retryAt = at.Add(fe.RetryAfter)
 	}

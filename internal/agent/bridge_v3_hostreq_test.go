@@ -31,7 +31,7 @@ func openURL(t *testing.T, h *Runtime, lane *fakeBridge, id int64, url string) e
 	t.Helper()
 	h.engineFrame(fakeSourceOf(t, h).current(), openExternalURLMsg(t, id, "linear", url))
 	answer := awaitLaneAnswer(t, lane, id)
-	joinInflight(t, h)
+	joinInflight(h)
 	return answer.err
 }
 
@@ -232,7 +232,7 @@ func TestEngineLane_OpenExternalURLWithAPageConnectedIsShownEverywhere(t *testin
 	h.engineFrame(fakeSourceOf(t, h).current(), openExternalURLMsg(t, 12, "", consent))
 
 	answer := awaitLaneAnswer(t, lane, 12)
-	joinInflight(t, h)
+	joinInflight(h)
 	if answer.err != nil {
 		t.Fatalf("answer error = %v, want success so KAS keeps its listener waiting", answer.err)
 	}
@@ -276,7 +276,7 @@ func TestEngineLane_OpenExternalURLWithNoPageConnectedIsRefused(t *testing.T) {
 
 	answer := awaitLaneAnswer(t, lane, 11)
 	// The answer runs on inflight and may broadcast after it responds, so the buffer is read only once it returns.
-	joinInflight(t, h)
+	joinInflight(h)
 	rpcErr, isRPC := errors.AsType[*marotte.RPCError](answer.err)
 	if !isRPC || rpcErr.Code != -32000 {
 		t.Errorf("answer = (result %v, error %v), want RPC error -32000 so KAS ends the attempt at once", answer.result, answer.err)
@@ -303,7 +303,7 @@ func TestEngineLane_OpenExternalURLUnsafeSchemeIsRefusedWithInvalidParams(t *tes
 	h.engineFrame(fakeSourceOf(t, h).current(), openExternalURLMsg(t, 9, "", "javascript:alert(1)"))
 
 	answer := awaitLaneAnswer(t, lane, 9)
-	joinInflight(t, h)
+	joinInflight(h)
 	rpcErr, isRPC := errors.AsType[*marotte.RPCError](answer.err)
 	if !isRPC || rpcErr.Code != -32602 {
 		t.Errorf("answer = (result %v, error %v), want RPC error -32602", answer.result, answer.err)
@@ -373,7 +373,7 @@ func TestEngineLane_OpenExternalURLGoogleConsentIsShownWithOfflineAccess(t *test
 	if a := awaitLaneAnswer(t, lane, 31); a.err != nil {
 		t.Fatalf("answer error = %v, want success", a.err)
 	}
-	joinInflight(t, h)
+	joinInflight(h)
 
 	const want = "https://accounts.google.com/o/oauth2/v2/auth?client_id=c&" + redirect + "&state=s1&access_type=offline&prompt=consent"
 	if p := bannerOf(t, h, before); p.URL != want || p.Server != "gmail" {
@@ -402,7 +402,7 @@ func lazyConsent(t *testing.T, h *Runtime, lane *fakeBridge, id int64, server, f
 		}),
 	})
 	awaitLaneAnswer(t, lane, id)
-	joinInflight(t, h)
+	joinInflight(h)
 }
 
 // closedSince decodes the mcp_sign_in_closed events since before.
@@ -433,7 +433,7 @@ func TestEngineLane_OAuthCompletedFailureEndsTheLazySignIn(t *testing.T) {
 	}
 
 	h.engineFrame(fakeSourceOf(t, h).current(), oauthCompletedMsg(t, "linear", "f1", false))
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if got := closedSince(t, h, before); len(got) != 1 || got[0] != (marotte.MCPSignInClosedPayload{Server: "linear", FlowID: "f1"}) {
 		t.Errorf("mcp_sign_in_closed = %+v, want linear's f1 closed unsuccessful", got)
@@ -458,7 +458,7 @@ func TestEngineLane_OAuthCompletedSuccessAndUnknownFlow(t *testing.T) {
 
 	h.engineFrame(fakeSourceOf(t, h).current(), oauthCompletedMsg(t, "github", "f9", false))
 	h.engineFrame(fakeSourceOf(t, h).current(), oauthCompletedMsg(t, "linear", "f1", true))
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if got := closedSince(t, h, before); len(got) != 1 || got[0] != (marotte.MCPSignInClosedPayload{Server: "linear", FlowID: "f1", Success: true}) {
 		t.Errorf("mcp_sign_in_closed = %+v, want only linear's f1, succeeded", got)

@@ -15,7 +15,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // RepoOrigin is one workspace clone's origin as the caller resolved it: the git
@@ -129,7 +129,7 @@ func readerOf(core forgeapi.Core, family forgeapi.Family) func(context.Context, 
 		if err != nil {
 			return PR{}, err
 		}
-		got, err := core.ReadPR(ctx, ref, forgeapi.PRRef{Number: number})
+		got, err := core.ReadPR(ctx, ref, forgeapi.PRRef{Number: number}, noReviews)
 		if err != nil {
 			return PR{}, err
 		}
@@ -159,7 +159,7 @@ func cycleScopes(h *readHandle, present bool) []Scope {
 // familyFills reads it per row instead.
 func listScope(ctx context.Context, core forgeapi.Core, sc Scope, after forgeapi.Cursor) scopePage {
 	page := scopePage{Scope: sc}
-	opts := []forgeapi.ListOption{forgeapi.WithAfter(after), forgeapi.WithMergeState(false)}
+	opts := prListOptions(forgeapi.WithAfter(after), forgeapi.WithMergeState(false))
 	if sc.Owner != "" {
 		opts = append(opts, forgeapi.WithOwner(sc.Owner))
 	}

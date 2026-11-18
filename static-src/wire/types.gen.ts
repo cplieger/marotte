@@ -355,6 +355,12 @@ export interface Capabilities {
   grant: { [key: string]: Affordance };
   /** Account is the sign-in the answer was read through. */
   account: string;
+  /**
+   * RerunWholeRun is whether this instance's re-run starts the whole finished
+   * run, its passed jobs included, rather than its failed jobs: forgeapi's
+   * Forgejo departure on RerunFailedChecks.
+   */
+  rerun_whole_run: boolean;
 }
 
 /**
@@ -1826,6 +1832,11 @@ export interface ForgeError {
   code?: string;
   kind?: string;
   /**
+   * Needs is the permission the forge said the credential lacks, as the
+   * forge spells it; absent when it named none.
+   */
+  needs?: string;
+  /**
    * RetryAt is when the forge's rate limit lets a request through again, in
    * Unix milliseconds; absent when the forge named no wait.
    */
@@ -2044,6 +2055,7 @@ export interface InventoryError {
   code: string;
   kind: string;
   diag_id?: string;
+  needs?: string;
   retry_after_s?: number;
 }
 

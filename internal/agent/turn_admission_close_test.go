@@ -72,7 +72,7 @@ func TestCloseTab_AReservationAfterTheHoldsWaitsAndRunsInTheReopenedChat(t *test
 	if r.code != http.StatusConflict || r.reason != "chat_closed" {
 		t.Errorf("prompt = %d %q, want 409 chat_closed", r.code, r.reason)
 	}
-	joinInflight(t, h)
+	joinInflight(h)
 	if n := doors.Load(); n != 0 {
 		t.Errorf("doors = %d, want none for the closed chat", n)
 	}
@@ -109,7 +109,7 @@ func TestCloseTab_ARefusedCloseLetsItsParkedPromptRunInTheSameLife(t *testing.T)
 }
 
 func TestReserveTurnForPrompt_AClosedSinceTheStampAnswersClosed(t *testing.T) {
-	t.Run("a close committed since the stamp", func(t *testing.T) {
+	inBubble(t, "a close committed since the stamp", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		t.Cleanup(func() { shutdownHub(t, h) })
 		stamp := h.coord.LifeStamp()
@@ -125,7 +125,7 @@ func TestReserveTurnForPrompt_AClosedSinceTheStampAnswersClosed(t *testing.T) {
 			t.Errorf("reserve answered after %v, want at once", took)
 		}
 	})
-	t.Run("a hold standing past the wait", func(t *testing.T) {
+	inBubble(t, "a hold standing past the wait", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		t.Cleanup(func() { shutdownHub(t, h) })
 		hold := h.HoldChat("c1")
@@ -151,7 +151,7 @@ func TestTryReserve_DuringACloseRefusesAtOnce(t *testing.T) {
 		{name: "a chat with a life", life: true},
 		{name: "a chat with no lifecycle yet"},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
+		inBubble(t, tc.name, func(t *testing.T) {
 			h, _, _ := newTestHub()
 			t.Cleanup(func() { shutdownHub(t, h) })
 			if tc.life {

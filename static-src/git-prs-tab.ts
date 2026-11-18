@@ -48,13 +48,14 @@ import {
   movedRepository,
   queueText,
   rerunControl,
+  refusalWords,
   rerunRefusal,
   canArmAutoMerge,
   capitalise,
 } from "./git-pr-status.js";
 import type { MergeVerdict, Moved, RerunControl } from "./git-pr-status.js";
 import { registerCleanup } from "./actions/index.js";
-import type { ActionOutcome } from "./actions/index.js";
+import type { ActionErrorLike, ActionOutcome } from "./actions/index.js";
 import {
   applyInventoryEntry,
   applyInventoryList,
@@ -163,6 +164,33 @@ const RERUN_LABEL = "Re-run";
 const REOPEN_LABEL = "Reopen";
 const CLOSE_LABEL = "Close";
 const UNDO_LABEL = "Undo";
+
+/** What Re-run promises: the whole run, the failed jobs, or (no capabilities answer named the product) either. */
+function rerunWords(whole: boolean | undefined): {
+  tooltip: string;
+  title: (n: number) => string;
+  started: string;
+} {
+  if (whole === true) {
+    return {
+      tooltip: "Re-run the whole CI run, its passed jobs included",
+      title: (n) => `Re-run the whole CI run on PR #${n}?`,
+      started: "Re-run of the whole run started.",
+    };
+  }
+  if (whole === false) {
+    return {
+      tooltip: "Re-run the failed CI jobs",
+      title: (n) => `Re-run failed checks on PR #${n}?`,
+      started: "Re-run started.",
+    };
+  }
+  return {
+    tooltip: "Re-run CI: the failed jobs, or on Forgejo the whole run, its passed jobs included",
+    title: (n) => `Re-run CI on PR #${n}?`,
+    started: "Re-run started.",
+  };
+}
 
 function closingText(pr: PR): string {
   return `PR #${String(pr.number)} closes in a few seconds.`;
@@ -723,7 +751,8 @@ function inventoryErrorText(e: InventoryEntry): string {
     return RECONNECT_WORDS;
   }
   if (err?.code === "scope_insufficient") {
-    return "the token is missing a permission this list needs. Add it to the token on the forge.";
+    const named = err.needs === undefined || err.needs === "" ? "" : `: ${err.needs}`;
+    return `the token is missing a permission this list needs${named}. Add it to the token on the forge.`;
   }
   switch (err?.kind) {
     case "rate_limited":
@@ -1173,6 +1202,8 @@ function appendSummary(li: HTMLElement, pr: PR, number: string): void {
 
 /** Null when its read failed; absent until it answers. Kept until the connection's account or status changes. */
 const rerunCaps = new Map<string, Affordance | null>();
+/** Whether each connection's re-run starts the whole run, as its last usable capabilities answer said. */
+const rerunWhole = new Map<string, boolean>();
 const capsAsked = new Set<string>();
 /** Per connection, bumped when its account or status changes: a capabilities answer applies only to its own ask. */
 const capsIssue = new Map<string, number>();
@@ -1220,12 +1251,11 @@ function askCapabilities(groups: readonly RepoGroup[]): void {
       }
       capsAsked.delete(id);
       // The route carries every capability forgeapi names, so an absent key is an answer that did not arrive.
-      rerunCaps.set(
-        id,
-        caps !== null && caps.account === usableAccount(id)
-          ? (caps.connection["rerun_checks"] ?? null)
-          : null,
-      );
+      const usable = caps !== null && caps.account === usableAccount(id) ? caps : null;
+      rerunCaps.set(id, usable === null ? null : (usable.connection["rerun_checks"] ?? null));
+      if (usable !== null) {
+        rerunWhole.set(id, usable.rerun_whole_run);
+      }
       paint();
     });
   }
@@ -1281,6 +1311,7 @@ function followForgeRows(
 
 function forgetConnection(id: string): void {
   rerunCaps.delete(id);
+  rerunWhole.delete(id);
   capsAsked.delete(id);
   capsIssue.set(id, (capsIssue.get(id) ?? 0) + 1);
   for (const key of [...rerunRefused.keys()]) {
@@ -1337,6 +1368,7 @@ function rowView(g: RepoGroup, pr: PR): RowView {
             g.forge_kind,
             rerunCaps.get(g.forge_id),
             rerunRefused.get(join(g.forge_id, g.repo_id)),
+            rerunWhole.get(g.forge_id),
           )
         : { offer: false },
     outcome: follow ?? (stands ? o.text : ""),
@@ -1354,7 +1386,7 @@ function rowSig(g: RepoGroup, pr: PR): string[] {
     g.forge_kind,
     g.forge_id,
     String(closing.has(rowId(g, pr))),
-    v.rerun.offer ? `offer:${v.rerun.reason}` : "",
+    v.rerun.offer ? `offer:${String(v.rerun.whole)}:${v.rerun.reason}` : "",
     v.outcome,
     String(v.failed),
     [...v.busy].sort().join(","),
@@ -1386,8 +1418,14 @@ interface PressOutcome {
 /** A cancelled dispatch says nothing. */
 function refused(o: ActionOutcome<unknown>, lead: string): PressOutcome {
   return o.status === "error"
-    ? { ok: false, text: `${lead}. ${o.error.message}` }
+    ? { ok: false, text: `${lead}. ${refusalSentence(o.error)}` }
     : { ok: true, text: "" };
+}
+
+/** The refusal's words, as the sentence after a lead: the server's own text keeps its case. */
+function refusalSentence(err: ActionErrorLike): string {
+  const words = refusalWords(err);
+  return err.code === "scope_insufficient" ? capitalise(words) : words;
 }
 
 /** Offers the re-point when the refusal names where the repository (`key`, a groupKey) moved. */
@@ -1828,9 +1866,10 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
 
   // A failed check here is most often flaky, so a retry beats a context switch.
   if (v.rerun.offer) {
+    const words = rerunWords(v.rerun.whole);
     const rerun = rowButton(RERUN_LABEL, v.busy);
     if (v.rerun.reason === "") {
-      rerun.setAttribute("data-tooltip", "Re-run the failed CI jobs");
+      rerun.setAttribute("data-tooltip", words.tooltip);
     } else {
       rerun.disabled = true;
       appendNote(li, rerun, "rerun", rerunNote(v.rerun));
@@ -1838,7 +1877,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
     rerun.addEventListener("click", () => {
       void (async () => {
         const ok = await confirmDialog({
-          title: `Re-run failed checks on PR #${pr.number}?`,
+          title: words.title(pr.number),
           confirmLabel: "Re-run",
         });
         if (!ok) {
@@ -1848,10 +1887,9 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
           // The same pin as the merge: the chip is pr.head_sha's folded state, so the re-run must name that commit.
           const o = await rerunChecks.dispatch({ ...prRef, head_sha: pr.head_sha ?? "" }).outcome;
           if (o.status === "success") {
-            return { ok: true, text: "Re-run started." };
+            return { ok: true, text: words.started };
           }
-          const refusal =
-            o.status === "error" ? rerunRefusal(o.error.code, o.error.message) : undefined;
+          const refusal = o.status === "error" ? rerunRefusal(o.error) : undefined;
           if (refusal === undefined) {
             return refusedOn(groupKey(g), id, o, "Could not re-run checks", RERUN_LABEL);
           }
@@ -2151,7 +2189,7 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
           draft: draftInput.checked,
         }).outcome;
         if (o.status !== "success") {
-          const why = o.status === "error" ? o.error.message : "it was cancelled";
+          const why = o.status === "error" ? refusalSentence(o.error) : "it was cancelled";
           setStatus(`Could not open the pull request. ${why}`, "err");
           throw new Error(why);
         }

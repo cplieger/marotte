@@ -648,7 +648,7 @@ func finishedTurn(t *testing.T, h *Runtime, chatID marotte.ChatID) {
 	t.Helper()
 	id, _ := h.stagePromptTurn(t, chatID)
 	endTurn(t, h, chatID, id)
-	joinInflight(t, h)
+	joinInflight(h)
 	if c, ok := h.chatStore.Get(t.Context(), chatID); !ok || c.TurnCount != 1 {
 		t.Fatalf("after one finished turn the header reads %+v, want turn_count 1", c)
 	}

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -266,35 +267,39 @@ func callsOf(br *fakeBridge, method string) int {
 // TestRetryTermination_ARunNoLongerBoundedIsLeftAlone pins that the retry re-reads before acting, so a parked or
 // released run is not cancelled.
 func TestRetryTermination_ARunNoLongerBoundedIsLeftAlone(t *testing.T) {
-	h, _, br := newTestHub()
-	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner is live")}
-	// The park must land inside the base and the settle must outlast it, or the guard is never exercised.
-	const base = 200 * time.Millisecond
-	setCancelRetryDelay(h.runs, base)
-	leased(t, h.runs, "wf_1")
-	h.runs.armDeadline(t.Context(), "wf_1")
+	synctest.Test(t, func(t *testing.T) {
+		h, _, br := newTestHub()
+		t.Cleanup(func() { shutdownHub(t, h) })
+		br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner is live")}
+		// The park must land inside the base and the settle must outlast it, or the guard is never exercised.
+		const base = 200 * time.Millisecond
+		setCancelRetryDelay(h.runs, base)
+		leased(t, h.runs, "wf_1")
+		h.runs.armDeadline(t.Context(), "wf_1")
 
-	if err := h.runs.cancel(t.Context(), "wf_1", callerPage); err == nil {
-		t.Fatal("Cancel reported success for a refused cancel")
-	}
-	before := callsOf(br, methodKiroWorkflowCancel)
-	// The run parks before the re-attempt comes due.
-	h.runs.disarmDeadline(t.Context(), "wf_1")
+		if err := h.runs.cancel(t.Context(), "wf_1", callerPage); err == nil {
+			t.Fatal("Cancel reported success for a refused cancel")
+		}
+		before := callsOf(br, methodKiroWorkflowCancel)
+		// The run parks before the re-attempt comes due.
+		h.runs.disarmDeadline(t.Context(), "wf_1")
 
-	time.Sleep(2 * base)
+		time.Sleep(2 * base)
 
-	if got := callsOf(br, methodKiroWorkflowCancel); got != before {
-		t.Errorf("a run marotte had stopped bounding was cancelled anyway (%d → %d calls)",
-			before, got)
-	}
+		if got := callsOf(br, methodKiroWorkflowCancel); got != before {
+			t.Errorf("a run marotte had stopped bounding was cancelled anyway (%d → %d calls)",
+				before, got)
+		}
+	})
 }
 
 // A refused cancel's re-attempt speaks for the run it was refused on: once that run ended and a person retried the
 // same workflow id, the re-attempt must not cancel the retried run.
 func TestRetryTermination_ARetriedRunIsNotCancelledForItsLastRun(t *testing.T) {
 	for name, endSeen := range map[string]bool{"its end seen": true, "its end missed": false} {
-		t.Run(name, func(t *testing.T) {
+		inBubble(t, name, func(t *testing.T) {
 			h, _, br := newTestHub()
+			t.Cleanup(func() { shutdownHub(t, h) })
 			br.callResults = map[string]json.RawMessage{
 				methodKiroWorkflowRetry: json.RawMessage(`{}`),
 				methodKiroWorkflowList: json.RawMessage(`{"runs":[{"workflowId":"wf_1","name":"publish",` +

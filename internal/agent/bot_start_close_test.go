@@ -160,7 +160,7 @@ func TestBotSave_AKickoffBegunBeforeTheCloseIsEndedByIt(t *testing.T) {
 	}
 	release()
 	awaitTeardown(t, h, "c1")
-	joinInflight(t, h)
+	joinInflight(h)
 
 	if !cancelled.Load() {
 		t.Errorf("wire = %v, want the kickoff's turn cancelled by the close", br.wireLog())

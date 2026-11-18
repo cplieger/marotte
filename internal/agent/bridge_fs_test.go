@@ -59,7 +59,7 @@ func hubForFSTest(t *testing.T, workDir string, opts ...Option) (*Runtime, *resp
 	factory := func() engineSession { return br }
 	h := newRuntimeOn(t.Context(), workDir, fakeEngineOf(factory, nil), cs, opts...)
 	cs.wire(h)
-	settleBoot(t, h)
+	awaitBoot(h)
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	sb, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {

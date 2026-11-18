@@ -265,7 +265,7 @@ func TestAutoCompact_ARestartBetweenTheFailureAndTheNextTurnEndStillAttempts(t *
 			return br
 		}, nil), cs)
 		cs.wire(h)
-		settleBoot(t, h)
+		awaitBoot(h)
 		return h
 	}
 	before := boot()
@@ -526,7 +526,7 @@ func TestCompactTurn_NamesTheOpenTurnThenTheFinishedOne(t *testing.T) {
 func TestUnreadableConfig_MarottesCompactorKeepsTheLastReadablePolicy(t *testing.T) {
 	dir := writeSettings(t, `{"auto_compaction_enabled":false,"auto_compact_pct":90}`)
 	h := reopenFixtureIn(t, dir, nil)
-	settleBoot(t, h)
+	awaitBoot(h)
 	rewriteConfigByHand(t, dir, `{"auto_compaction_enabled":`)
 
 	if on, pct := h.coord.autoCompact.policy(t.Context()); on || pct != 90 {

@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/creds"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/creds"
 	"github.com/cplieger/go/keyenc"
 	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/marotte/internal/logsafe"
@@ -102,6 +102,7 @@ type fault struct {
 	message string
 	code    string
 	kind    string
+	needs   string
 }
 
 const (
@@ -233,7 +234,7 @@ func viewOf(c *connection, health string) ConfiguredForge {
 		v.Status = forgeReconnect
 	}
 	f := c.status.fault
-	v.Error = &ForgeError{Message: logsafe.Field(f.message), Code: f.code, Kind: f.kind}
+	v.Error = &ForgeError{Message: logsafe.Field(f.message), Code: f.code, Kind: f.kind, Needs: logsafe.Field(f.needs)}
 	if !f.retryAt.IsZero() {
 		v.Error.RetryAt = f.retryAt.UnixMilli()
 	}

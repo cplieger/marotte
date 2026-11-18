@@ -17,7 +17,7 @@ import (
 // or permission request on it with a refusal, and closes the session when its reads return.
 func TestObserverPass_OpensWithTheCurrentPresetsRefusesToolRequestsAndCloses(t *testing.T) {
 	h, dir := reopenFixture(t)
-	settleBoot(t, h)
+	awaitBoot(h)
 	writeSetting(t, dir, settings.KeySecurityProfile, "unrestricted")
 	o := oneObserver(t, h)
 	fsID, permID := int64(41), int64(42)
@@ -63,7 +63,7 @@ func TestObserverPass_OpensWithTheCurrentPresetsRefusesToolRequestsAndCloses(t *
 // lane for it ends: nothing is left live.
 func TestObserverPass_ARefusedCloseDeletesTheSessionAndClosesIt(t *testing.T) {
 	h, _ := reopenFixture(t)
-	settleBoot(t, h)
+	awaitBoot(h)
 	o := oneObserver(t, h)
 	o.mu.Lock()
 	o.closeErr = fmt.Errorf("ACP error -32603: %w", &marotte.RPCError{Code: marotte.RPCCodeInternal, Message: "a lifecycle operation is in progress"})

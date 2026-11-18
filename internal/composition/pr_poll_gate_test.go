@@ -13,7 +13,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/go/sse/v2"
 	"github.com/cplieger/marotte/internal/forges"
 	"github.com/cplieger/marotte/internal/liveness"
