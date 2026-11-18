@@ -219,7 +219,7 @@ afterEach(async () => {
     r.remove();
   }
   await Promise.all(
-    el("history-section")
+    el("history-list")
       .getAnimations()
       .map((a) => a.finished),
   );
@@ -295,6 +295,8 @@ const description = (b: HTMLElement): string =>
     .map((id) => document.getElementById(id)?.textContent.trim() ?? "")
     .join(" ");
 const shown = (e: HTMLElement): boolean => e.getBoundingClientRect().height > 0;
+/** Whether the fold hides the rows and More: the list marked folded, More drawn at no height. */
+const folded = (): boolean => list().hasAttribute("data-folded") && !shown(more());
 
 /** Unfold through the header at reduced motion, so the open state is there at the press. */
 function unfold(): void {
@@ -527,15 +529,10 @@ describe("when the History section shows", () => {
 });
 
 describe("folding the History section", () => {
-  const slideEnd = async (box: HTMLElement): Promise<void> => {
-    await Promise.all(box.getAnimations().map((a) => a.finished));
-    await settle();
-  };
-
   it("starts folded with nothing stored: the header shows, the rows do not", async () => {
     await listed(entry("c-a", "Alpha"));
     expect(toggle().getAttribute("aria-expanded")).toBe("false");
-    expect(list().hidden).toBe(true);
+    expect(folded()).toBe(true);
     expect(shown(header())).toBe(true);
   });
 
@@ -549,58 +546,25 @@ describe("folding the History section", () => {
         "sidebar_folds"
       ];
     expect(stored()).toEqual({ pinned: true, history: false });
-    expect(list().hidden).toBe(false);
+    expect(folded()).toBe(false);
     toggle().click();
     expect(stored()).toEqual({ pinned: true, history: true });
-    expect(list().hidden).toBe(true);
+    expect(folded()).toBe(true);
   });
 
   it("draws the stored unfold when its rows arrive", async () => {
     localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ sidebar_folds: { history: false } }));
     await listed(entry("c-a", "Alpha"));
     expect(toggle().getAttribute("aria-expanded")).toBe("true");
-    expect(list().hidden).toBe(false);
+    expect(folded()).toBe(false);
   });
 
-  it("slides the section open, never the list, the rows shown at the press", async () => {
-    await listed(entry("c-a", "A"), entry("c-b", "B"), entry("c-c", "C"));
-    toggle().click();
-    expect(toggle().getAttribute("aria-expanded")).toBe("true");
-    expect(list().hidden).toBe(false);
-    expect(section().getAnimations(), "the section slides").not.toHaveLength(0);
-    expect(list().getAnimations(), "the list does not").toHaveLength(0);
-    await slideEnd(section());
-  });
-
-  it("keeps the rows rendered while it slides shut, to the header's height", async () => {
-    await listed(entry("c-a", "A"), entry("c-b", "B"), entry("c-c", "C"));
+  it("hides a row a frame draws while folded, and shows it on the unfold", async () => {
+    await listed(entry("c-a", "Alpha"));
+    await listed(entry("c-b", "Beta"), entry("c-a", "Alpha"));
+    expect(rows().map(shown)).toEqual([false, false]);
     unfold();
-    const headerHeight = header().getBoundingClientRect().height;
-    toggle().click();
-    expect(toggle().getAttribute("aria-expanded")).toBe("false");
-    const anims = section().getAnimations();
-    expect(anims, "the section slides shut").not.toHaveLength(0);
-    expect(list().getAnimations()).toHaveLength(0);
-    expect(list().hidden, "mid-slide").toBe(false);
-    const frames = (anims[0]?.effect as KeyframeEffect | null)?.getKeyframes() ?? [];
-    expect(frames.at(-1)?.["blockSize"], "the closed height is the header's").toBe(
-      `${String(headerHeight)}px`,
-    );
-    await slideEnd(section());
-    expect(list().hidden).toBe(true);
-    expect(section().getBoundingClientRect().height).toBe(headerHeight);
-  });
-
-  it("flips at the press under reduced motion, with no animation left", async () => {
-    await listed(entry("c-a", "A"), entry("c-b", "B"));
-    stubReducedMotion();
-    toggle().click();
-    expect(list().hidden).toBe(false);
-    expect(section().getAnimations()).toHaveLength(0);
-    toggle().click();
-    expect(list().hidden).toBe(true);
-    expect(section().getAnimations()).toHaveLength(0);
-    expect(list().getAnimations()).toHaveLength(0);
+    expect(rows().map(shown)).toEqual([true, true]);
   });
 });
 
@@ -622,8 +586,7 @@ describe("the More row that ends the History section", () => {
 
   it("is hidden with the rows while the section is folded, leaving the header", async () => {
     await listed(entry("c-a", "Alpha"));
-    expect(list().hidden).toBe(true);
-    expect(shown(more())).toBe(false);
+    expect(folded()).toBe(true);
     expect(shown(toggle())).toBe(true);
     unfold();
     expect(shown(more())).toBe(true);
@@ -709,9 +672,9 @@ describe("a closed row's box", () => {
     return tab?.getBoundingClientRect().height ?? 0;
   }
 
-  it("is as tall as its header while the list is folded, with no padding, border or gap of its own", async () => {
+  it("is its header over the list's top inset while folded, with no padding, border or gap of its own", async () => {
     await listed(entry("c-a", "Alpha"), entry("c-b", "Beta"));
-    expect(list().hidden).toBe(true);
+    expect(folded()).toBe(true);
     const cs = getComputedStyle(section());
     for (const p of [
       "padding-block-start",
@@ -722,7 +685,13 @@ describe("a closed row's box", () => {
       expect(cs.getPropertyValue(p), p).toBe("0px");
     }
     expect(["normal", "0px"]).toContain(cs.rowGap);
-    expect(section().getBoundingClientRect().height).toBe(header().getBoundingClientRect().height);
+    // A folded Pinned with no active row keeps the same inset: one fold, one closed box.
+    const inset = parseFloat(getComputedStyle(list()).paddingBlockStart);
+    expect(inset, "the list's top inset").toBeGreaterThan(0);
+    expect(list().getBoundingClientRect().height).toBe(inset);
+    expect(section().getBoundingClientRect().height).toBe(
+      header().getBoundingClientRect().height + inset,
+    );
   });
 
   it.each(["fine", "coarse"])(
@@ -1031,7 +1000,7 @@ describe("a closed row to a screen reader and the keyboard", () => {
 
   it("makes no row and not More a Tab stop while folded: Tab leaves the section from its header", async () => {
     await listed(entry("c-a", "Alpha"), entry("c-b", "Beta"));
-    expect(list().hidden).toBe(true);
+    expect(folded()).toBe(true);
     toggle().focus();
     await userEvent.keyboard("{Tab}");
     expect(section().contains(document.activeElement)).toBe(false);
@@ -1401,12 +1370,17 @@ async function answer(button: "Delete" | "Cancel"): Promise<void> {
   if (b === undefined) {
     throw new Error(`no ${button} in the confirm`);
   }
+  const sent = deletes().length;
   b.click();
   // The dialog stays open, and the page inert, until its close animation ends.
   for (let i = 0; i < 100 && d.open; i++) {
     await settle();
   }
   expect(d.open, "the confirm closed").toBe(false);
+  // A Delete sends once the confirm has settled, a task chain a loaded runner stretches past one settle.
+  for (let i = 0; i < 100 && button === "Delete" && deletes().length === sent; i++) {
+    await settle();
+  }
   await settle();
   await settleTabs();
 }

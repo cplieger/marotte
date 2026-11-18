@@ -128,7 +128,7 @@ export function setStackOpen(open: boolean): void {
 }
 
 /** Whether this screen folded the sidebar section `key`; `fallback`, the section's default, when nothing valid is stored. */
-export function sectionFolded(key: string, fallback = false): boolean {
+export function sectionFolded(key: string, fallback: boolean): boolean {
   const folds = readBlob()["sidebar_folds"];
   if (typeof folds !== "object" || folds === null || Array.isArray(folds)) {
     return fallback;
