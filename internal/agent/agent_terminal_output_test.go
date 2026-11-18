@@ -424,7 +424,6 @@ type awaitExitWaits struct {
 	sessionGone    chan bool
 }
 
-// waitRing waits for want to reach term's raw ring.
 func waitRing(t *testing.T, term *agentTerminal, want string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
