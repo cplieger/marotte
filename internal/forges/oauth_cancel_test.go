@@ -7,7 +7,7 @@ import (
 	"github.com/cplieger/forgeapi/v3"
 )
 
-// A cancel ends the grant with the library's Close (ADR-0099): the grant leaves
+// A cancel ends the grant with the library's Close: the grant leaves
 // the registry at once, sends no token request, and its endpoint is released.
 
 func TestGrantRegistry_CancelFreesItsPlace(t *testing.T) {

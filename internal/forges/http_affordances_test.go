@@ -137,7 +137,7 @@ func TestAffordancesRoute_MutationEvictsIt(t *testing.T) {
 }
 
 // One repository has one identifier: an id that is not the canonical encoding
-// of its selector is refused before the library or the cache (ADR-0100).
+// of its selector is refused before the library or the cache.
 func TestAffordancesRoute_NonCanonicalIDIsRefused(t *testing.T) {
 	core := &pagedCore{aff: affordedRepo("squash")}
 	mux := repoRoutes(recordManager(t, core))

@@ -1,5 +1,5 @@
-// Tests for store-load.ts, the ENTRY-LOG loaders: the chat list, the window GET of section 6.3 and
-// the range read of 6.4.
+// Tests for store-load.ts, the ENTRY-LOG loaders: the chat list, the single-chat window GET and the
+// range read.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Session, TurnState } from "./types.js";

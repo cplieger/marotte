@@ -575,7 +575,7 @@ func TestListCache_StaleFillAfterMutationDoesNotPublish(t *testing.T) {
 	})
 }
 
-// ADR-0065: zero is a live generation, so a record filled before its
+// Zero is a live generation, so a record filled before its
 // repository's first mutation is served, and a fill in flight at zero is fenced
 // by that mutation like any later one.
 func TestListCache_GenerationZeroIsALiveGeneration(t *testing.T) {
@@ -632,7 +632,7 @@ func TestListCache_ARecordFilledAfterAMutationRevalidates(t *testing.T) {
 }
 
 // A mutation through an id that is not the canonical encoding is refused, so it
-// neither reaches the library nor evicts the canonical entry (ADR-0100).
+// neither reaches the library nor evicts the canonical entry.
 func TestListCache_MutationThroughANonCanonicalIDIsRefused(t *testing.T) {
 	for name, seg := range map[string]string{"upper-case hex": "v1.6F2F72", "a mixed-case selector": "v1.4f2f52"} {
 		t.Run(name, func(t *testing.T) {

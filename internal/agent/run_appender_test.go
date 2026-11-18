@@ -360,7 +360,7 @@ type wakeRig struct {
 }
 
 const (
-	wakeRunID = "wf_4712dbcf39b116b2"
+	wakeRunID = "wf_empty_answer"
 	// wakeSession is the step session inspectWithStep's record names.
 	wakeSession = "step-session-1"
 )
@@ -411,13 +411,12 @@ func (g *wakeRig) wakes() []string {
 	return out
 }
 
-// wakeStepPath is the review seat of wf_4712dbcf39b116b2 that ended on an empty turn (2026-11-06T20:54:22Z).
 var wakeStepPath = []string{wakeRunID, "seat-b"}
 
 // kasStandIn is KAS's ensureAlternatingMessages placeholder, which one model echoed as its whole answer.
 const kasStandIn = "(No assistant response was recorded for the preceding turn. This placeholder was inserted automatically to preserve message alternation.)"
 
-// endStep drives the seat's one turn as the frames recorded it: text, a tool call to its result, then after, then
+// endStep drives the step's one turn as the frames recorded it: text, a tool call to its result, then after, then
 // the turn_end and KAS's node_complete.
 func (g *wakeRig) endStep(t *testing.T, before, after string, stop marotte.StopReason, status string) {
 	t.Helper()
@@ -451,9 +450,9 @@ func (g *wakeRig) endStep(t *testing.T, before, after string, stop marotte.StopR
 	joinInflight(g.h)
 }
 
-// TestRunNodeComplete_AnEmptyAnswerWakesTheLaunchingAgent replays the review seats that ended on an empty turn on
-// 2026-11-06 to 07: KAS completed each with no signal and the next gate stalled. marotte fails the step, wakes the
-// launching agent with the retry it can call, and resumes or re-runs nothing itself.
+// TestRunNodeComplete_AnEmptyAnswerWakesTheLaunchingAgent replays steps that ended on an empty turn: KAS completed each
+// with no signal and the next step stalled. marotte fails the step, wakes the launching agent with the retry it can
+// call, and resumes or re-runs nothing itself.
 func TestRunNodeComplete_AnEmptyAnswerWakesTheLaunchingAgent(t *testing.T) {
 	nodePath := workflow.PathKey(wakeStepPath)
 	for _, tc := range []struct {

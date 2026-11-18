@@ -776,7 +776,7 @@ const sleep = (ms: number): Promise<void> =>
   new Promise((r) => {
     setTimeout(r, ms);
   });
-/** The design's touch hold, plus slack for the timer. */
+/** The 500 ms touch hold, plus slack for the timer. */
 const HOLD = 520;
 
 function touch(type: string, target: Element, pointerId = 7): void {

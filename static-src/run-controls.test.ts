@@ -84,7 +84,7 @@ describe("the refusal sentences", () => {
 describe("reporting a retry's outcome", () => {
   // The defect, stated as a rule. A retry that reset ZERO nodes is a first-class outcome upstream
   // and a no-op from the reader's seat, and reporting it as a success is precisely what made "I
-  // pressed Retry and nothing happened" the design's expected appearance.
+  // pressed Retry and nothing happened" look like the expected outcome.
   it("does NOT report a zero-node retry as a success", () => {
     const notice = retryOutcomeNotice(0);
     expect(notice.level).toBe("error");

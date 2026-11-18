@@ -71,12 +71,11 @@ func byHandHub(t *testing.T, id, nodeID, status, signal string) (*Runtime, *test
 	return h, cs, &stepEnding{t: t, h: h, id: id, path: path, nodePath: nodePath, session: session}
 }
 
-// TestStepEnd_AStepEndedByHandAfterAThrottledTurnReadsCompletedEndedByHand replays wf_09004949bdedbb2b's
-// account-review-a: throttled turns parked the node, a later turn on the parked node signalled and answered, and
-// the parent's update_status completed it, so KAS records it completed with no signal. A step its own warning parked
-// and Mark step done completed (account-gate) reads the same.
+// TestStepEnd_AStepEndedByHandAfterAThrottledTurnReadsCompletedEndedByHand: throttled turns parked the node, a later
+// turn on the parked node signalled and answered, and the parent's update_status completed it, so KAS records it
+// completed with no signal. A step its own warning parked and Mark step done completed (account-gate) reads the same.
 func TestStepEnd_AStepEndedByHandAfterAThrottledTurnReadsCompletedEndedByHand(t *testing.T) {
-	const id = "wf_09004949bdedbb2b"
+	const id = "wf_by_hand"
 	for _, tc := range []struct {
 		desc  string
 		drive func(s *stepEnding)
@@ -126,7 +125,7 @@ func TestStepEnd_AStepEndedByHandAfterAThrottledTurnReadsCompletedEndedByHand(t 
 // TestStepEnd_AStepKASFailedAfterAThrottledTurnStaysFailed: KAS's failed status is the step's end, whatever turn
 // came before it.
 func TestStepEnd_AStepKASFailedAfterAThrottledTurnStaysFailed(t *testing.T) {
-	const id = "wf_09004949bdedbb2b"
+	const id = "wf_by_hand"
 	h, _, s := byHandHub(t, id, "account-review-a", "failed", "")
 	s.throttle()
 	s.signalledTurn()
@@ -139,10 +138,10 @@ func TestStepEnd_AStepKASFailedAfterAThrottledTurnStaysFailed(t *testing.T) {
 	}
 }
 
-// TestStepEnd_AStepThatSignalledSuccessAfterThrottlesReadsPlainCompleted replays wf_09004949bdedbb2b's
-// account-build iteration 0: three throttled turns, then its own success signal applied.
+// TestStepEnd_AStepThatSignalledSuccessAfterThrottlesReadsPlainCompleted: three throttled turns, then the step's own
+// success signal applied.
 func TestStepEnd_AStepThatSignalledSuccessAfterThrottlesReadsPlainCompleted(t *testing.T) {
-	const id = "wf_09004949bdedbb2b"
+	const id = "wf_by_hand"
 	h, cs, s := byHandHub(t, id, "account-build", "completed", "success")
 	s.throttle()
 	s.throttle()

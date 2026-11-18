@@ -16,7 +16,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// attemptCase is one line of the design's test table: a start state, the event delivered, and what must follow.
+// attemptCase is one line of the attempt table: a start state, the event delivered, and what must follow.
 // Every case runs in a synctest bubble, so the bound's timers run on its clock.
 type attemptCase struct {
 	// spec is the rule's event spec, runSpec("success") when nil.

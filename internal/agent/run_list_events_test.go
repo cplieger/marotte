@@ -86,9 +86,9 @@ func (w *tableWorld) wantOrder(t *testing.T, step, want string) {
 	}
 }
 
-// The list's events, one script per row of DESIGN section 3's table: a door entry (grelot's wake) is steered only
-// with nothing of the user's waiting and never into a turn the user's stop or send-now asked for, waits behind every
-// user entry waiting ahead of it, is never stranded on an idle list, and one prompt never joins two senders.
+// The list's events: a door entry (grelot's wake) is steered only with nothing of the user's waiting and never into a
+// turn the user's stop or send-now asked for, waits behind every user entry waiting ahead of it, is never stranded on
+// an idle list, and one prompt never joins two senders.
 func TestRunList_Events(t *testing.T) {
 	cases := []struct {
 		run       func(t *testing.T, w *tableWorld)

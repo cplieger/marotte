@@ -13,7 +13,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// The rule rows' lines of the design's test table, run by TestAttemptTable.
+// The rule rows' lines of the attempt table, run by TestAttemptTable.
 
 // liveStates are the three pending states, each set up as wf_1 holding the queued key k1.
 var liveStates = []struct {

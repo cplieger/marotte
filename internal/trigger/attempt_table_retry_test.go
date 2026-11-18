@@ -9,7 +9,7 @@ import (
 	"github.com/cplieger/marotte/internal/launchrule"
 )
 
-// The retry and outcome lines of the design's test table, run by TestAttemptTable.
+// The retry and outcome lines of the attempt table, run by TestAttemptTable.
 
 // retriedLive retries wf_1 and checks A35's answer: not handed back, the event to re-lease the run for, no write.
 func retriedLive(tc *testConfirmer, r *launchrule.Rule) {

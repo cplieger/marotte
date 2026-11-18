@@ -246,7 +246,7 @@
 }
 
 /* A dispatched task's row beats on its own opacity until the file moves or the
-   target's turn ends (design 1.4). */
+   target's turn ends. */
 .spec-dispatched > .spec-node-row {
   animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) infinite;
 

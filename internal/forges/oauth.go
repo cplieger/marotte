@@ -53,7 +53,7 @@ func marotteApp(family forgeapi.Family) (creds.GrantRequest, bool) {
 }
 
 // grantScopes are what a device grant on family asks for, whichever
-// application it signs in with (ADR-0068).
+// application it signs in with.
 func grantScopes(family forgeapi.Family) []string {
 	if family == forgeapi.FamilyGitLab {
 		return gitlabOAuthScopes

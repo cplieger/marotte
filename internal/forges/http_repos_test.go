@@ -265,7 +265,7 @@ func TestRepoRoute_NestedGitLabProjectIsReachable(t *testing.T) {
 }
 
 // One repository has one identifier: an id that is not the canonical encoding
-// of its selector is refused before the library or the cache (ADR-0100).
+// of its selector is refused before the library or the cache.
 func TestRepoRoute_NonCanonicalIDIsRefused(t *testing.T) {
 	core := &pagedCore{prPages: onePRPage(4)}
 	mux := repoRoutes(recordManager(t, core))

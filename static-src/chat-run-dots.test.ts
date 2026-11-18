@@ -678,7 +678,7 @@ describe("the mark takes space only while a run is live", () => {
     const a = await openSubject("chat", "cA");
     const b = await openSubject("chat", "cB");
     await paint();
-    // Quiet rows share one origin with each other and every other kind (section 7).
+    // Quiet rows share one origin with each other and every other kind.
     await settle(a);
     await settle(b);
     expect(titleLeft(a)).toBe(titleLeft(b));

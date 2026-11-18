@@ -519,9 +519,9 @@ func TestLivePrefix_EndsBeforeASteerInFlight(t *testing.T) {
 	}
 }
 
-// A user's send may later be steered only when it is a plain send that meets a running turn taking steers (DESIGN
-// section 2 "Want"); every send that would queue behind anything else stays a turn of its own ("two prompts, in
-// order"), even once a steerable turn runs.
+// A user's send may later be steered only when it is a plain send that meets a running turn taking steers; every send
+// that would queue behind anything else stays a turn of its own ("two prompts, in order"), even once a steerable turn
+// runs.
 func TestWantFor(t *testing.T) {
 	notSteerable := turn("A", RunRunning)
 	notSteerable.Steerable = false
