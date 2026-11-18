@@ -39,6 +39,9 @@ func (f *fakePolicy) PolicyListing(_ context.Context, _ string) ([]marotte.Polic
 
 func getPolicyView(t *testing.T, s *Server) (marotte.PolicyView, map[string]json.RawMessage) {
 	t.Helper()
+	if s.agent == nil {
+		s.agent = &fakeEngine{}
+	}
 	rec := httptest.NewRecorder()
 	s.handlePolicyView(rec, httptest.NewRequest(http.MethodGet, "/api/permissions", http.NoBody))
 	if rec.Code != http.StatusOK {
@@ -149,7 +152,7 @@ func TestPolicyViewLive(t *testing.T) {
 	f := &fakePolicy{rules: []marotte.PolicyRule{
 		{Capability: "fs_write", Effect: "allow", Scope: "user", Source: "/x/permissions.yaml"},
 	}}
-	s := &Server{policy: f, workDir: t.TempDir()}
+	s := &Server{policy: f, agent: &fakeEngine{}, workDir: t.TempDir()}
 	req := httptest.NewRequest(http.MethodGet, "/api/permissions", http.NoBody)
 	rec := httptest.NewRecorder()
 	s.handlePolicyView(rec, req)
@@ -168,6 +171,25 @@ func TestPolicyViewLive(t *testing.T) {
 	}
 }
 
+// The Settings picker shows the default checked on a fresh config; profile_saved is what lets a click on it save it,
+// and run_profile what a run not started from a chat opens on until then.
+func TestPolicyView_ReportsWhetherTheProfileIsSaved(t *testing.T) {
+	s, _, _, _ := profileFixture(t, nil)
+	if view, _ := getPolicyView(t, s); view.Profile != policyfile.ProfileDelegated ||
+		view.RunProfile != policyfile.ProfileTrusted || view.ProfileSaved {
+		t.Errorf("fresh config: profile %q run %q saved %v, want delegated, trusted, unsaved", view.Profile,
+			view.RunProfile, view.ProfileSaved)
+	}
+	if rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileDelegated}); rec.Code != http.StatusOK {
+		t.Fatalf("select: status = %d, body %s", rec.Code, rec.Body)
+	}
+	if view, _ := getPolicyView(t, s); view.Profile != policyfile.ProfileDelegated ||
+		view.RunProfile != policyfile.ProfileDelegated || !view.ProfileSaved {
+		t.Errorf("after saving delegated: profile %q run %q saved %v, want delegated for both, saved", view.Profile,
+			view.RunProfile, view.ProfileSaved)
+	}
+}
+
 func TestPolicyViewFileFallback(t *testing.T) {
 	home := t.TempDir()
 	work := t.TempDir()
@@ -178,7 +200,7 @@ func TestPolicyViewFileFallback(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{policy: &fakePolicy{listErr: context.DeadlineExceeded}, workDir: work}
+	s := &Server{policy: &fakePolicy{listErr: context.DeadlineExceeded}, agent: &fakeEngine{}, workDir: work}
 	req := httptest.NewRequest(http.MethodGet, "/api/permissions", http.NoBody)
 	rec := httptest.NewRecorder()
 	s.handlePolicyView(rec, req)
@@ -668,7 +690,7 @@ func TestPolicyView_DropsIdenticalDuplicatesFromKAS(t *testing.T) {
 		Capability: "fs_read", Effect: "allow", Scope: "agent", Source: "agent-profile", Match: []string{"./**"},
 	})
 
-	s := &Server{policy: &fakePolicy{rules: rules}, workDir: t.TempDir()}
+	s := &Server{policy: &fakePolicy{rules: rules}, agent: &fakeEngine{}, workDir: t.TempDir()}
 	req := httptest.NewRequest(http.MethodGet, "/api/permissions", http.NoBody)
 	rec := httptest.NewRecorder()
 	s.handlePolicyView(rec, req)

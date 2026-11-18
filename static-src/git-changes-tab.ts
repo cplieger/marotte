@@ -11,6 +11,7 @@ import {
   ICON_GIT_DOWN_ARROW,
   ICON_WARN,
 } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { preserveGitScroll } from "./git-scroll.js";
@@ -161,7 +162,7 @@ export function initChangesTab(): void {
 
   const refreshBtn = maybeEl<HTMLButtonElement>("git-refresh-all-btn");
   if (refreshBtn !== null) {
-    refreshBtn.innerHTML = ICON_REFRESH;
+    refreshBtn.replaceChildren(iconEl(ICON_REFRESH));
     refreshBtn.addEventListener("click", () => {
       // An explicit refresh opts into the server-side git fetch, so ahead/behind reflects the remote.
       void withAsyncFeedback(refreshBtn, async () => {
@@ -174,7 +175,7 @@ export function initChangesTab(): void {
 
   const pullAllBtn = maybeEl<HTMLButtonElement>("git-pull-all-btn");
   if (pullAllBtn !== null) {
-    pullAllBtn.innerHTML = ICON_GIT_DOWN_ARROW;
+    pullAllBtn.replaceChildren(iconEl(ICON_GIT_DOWN_ARROW));
     const status = el("span", { className: "page-toolbar-error", role: "status" });
     pullAllBtn.before(status);
     // The pass's refresh runs once the button settles, so the loading binding and the button's feedback end together.
@@ -686,7 +687,7 @@ function renderHeaderHTML(r: RepoStatus): string {
 function renderRepoNote(verdict: string, lead: string, detail: string): HTMLElement {
   const box = el("div", { className: "git-repo-note", "data-verdict": verdict });
   const icon = el("span", { className: "git-repo-note-icon", "aria-hidden": "true" });
-  icon.innerHTML = ICON_WARN;
+  icon.replaceChildren(iconEl(ICON_WARN));
   box.append(
     icon,
     el(

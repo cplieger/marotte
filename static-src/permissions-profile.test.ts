@@ -68,13 +68,15 @@ function userRule(capability: string): PolicyRule {
   };
 }
 
-function view(profile: string, rules: PolicyRule[] = []): PolicyView {
+function view(profile: string, rules: PolicyRule[] = [], saved = true): PolicyView {
   return {
     available: true,
     writable_scopes: ["user", "workspace"],
     capabilities: ["fs_read", "fs_write", "shell"],
     profiles: LADDER,
     profile,
+    run_profile: saved ? profile : "trusted",
+    profile_saved: saved,
     rules,
     load_errors: [],
   };
@@ -193,6 +195,61 @@ describe("the profile ladder", () => {
     await pick("trusted");
     expect(mocks.profileDispatch).not.toHaveBeenCalled();
     expect(mocks.confirm).not.toHaveBeenCalled();
+  });
+
+  // A checked radio fires no change event, and parentless runs stay on Trusted until a profile is
+  // saved, so the default the picker shows on a fresh config has to save on a click.
+  it("saves the default it shows checked when no profile is saved yet", async () => {
+    await mount(view("delegated", [], false));
+    mocks.profileDispatch.mockResolvedValue({ ok: true });
+    radioFor("delegated").click();
+    await flush();
+    expect(profileCalls()).toEqual([{ profile: "delegated", seed: false }]);
+  });
+
+  it("writes nothing for a click on the checked profile once it is saved", async () => {
+    await mount(view("delegated"));
+    radioFor("delegated").click();
+    await flush();
+    expect(mocks.profileDispatch).not.toHaveBeenCalled();
+  });
+
+  it("writes once when another profile is clicked on an unsaved config", async () => {
+    await mount(view("delegated", [], false));
+    mocks.profileDispatch.mockResolvedValue({ ok: true });
+    radioFor("trusted").click();
+    await flush();
+    expect(profileCalls()).toEqual([{ profile: "trusted", seed: false }]);
+  });
+});
+
+// An unsaved default and a saved pick of it check the same radio, yet a parentless run opens on
+// Trusted only while nothing is saved, so the picker has to say which one it is showing.
+describe("a profile that is not saved yet", () => {
+  it("says new chats start on it and workflow runs on the run profile until a click saves one", async () => {
+    await mount(view("delegated", [], false));
+    expect(statusText()).toContain("No saved profile is in use");
+    expect(statusText()).toContain("New chats start on Approve for me");
+    expect(statusText()).toContain("use Trusted until you click a profile");
+  });
+
+  it("names the run profile the server reports, not a copy of its default", async () => {
+    await mount({ ...view("delegated", [], false), run_profile: "guarded" });
+    expect(statusText()).toContain("use Guarded until you click a profile");
+  });
+
+  it("says nothing once the profile is saved", async () => {
+    await mount(view("delegated"));
+    expect(statusText()).toBe("");
+  });
+
+  it("clears the line once the click that saves the default reloads a saved view", async () => {
+    await mount(view("delegated", [], false));
+    mocks.apiGet.mockResolvedValue(view("delegated"));
+    radioFor("delegated").click();
+    await flush();
+    expect(profileCalls()).toEqual([{ profile: "delegated", seed: false }]);
+    expect(statusText()).toBe("");
   });
 });
 
@@ -503,10 +560,10 @@ describe("the Security profile section hint", () => {
     expect(securityProfileHint()).toContain("keep applying alongside the profile");
   });
 
-  it("says it is the profile new chats start on, and names Trusted as the default", () => {
+  it("says it is the profile new chats start on, and names Approve for me as the default", () => {
     const hint = securityProfileHint();
     expect(hint).toContain("New chats start on this profile");
-    expect(hint).toContain("Trusted unless you pick another");
+    expect(hint).toContain("Approve for me unless you pick another");
   });
 
   it("claims no reach into open chats, which keep their own profile", () => {

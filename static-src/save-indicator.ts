@@ -1,9 +1,9 @@
 // Per-setting save indicators: a spinner while a write is in flight, then a tick or a cross, in a
 // slot next to the setting's own label.
 
-import { el } from "@cplieger/reactive";
 import { ICON_SAVE_OK, ICON_SAVE_FAIL } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { spinnerEl } from "./spinner.js";
 import { queryAll } from "./dom.js";
 
 /** The slot token for the global-instructions textarea. Not an AppSettings key — that content is
@@ -67,10 +67,6 @@ function slotsFor(keys: SaveKeys): HTMLElement[] {
   return out;
 }
 
-function spinnerNode(): HTMLDivElement {
-  return el("div", { className: "spinner-sm" }) as HTMLDivElement;
-}
-
 function clearTimers(s: SlotState): void {
   clearTimeout(s.fadeTimer);
   clearTimeout(s.hideTimer);
@@ -111,7 +107,7 @@ export function showSaving(keys: SaveKeys): void {
     // A new write for this setting supersedes the last error, so it no longer holds the next
     // success back: the spinner already says something changed.
     s.lastErrorAt = 0;
-    paint(target, spinnerNode());
+    paint(target, spinnerEl());
   }
 }
 

@@ -49,55 +49,11 @@
   initial-value: 1;
 }
 
-/* WHERE A ROTATING RING'S ARC IS, and the reason no ring rotates its own box.
- *
- *  A bordered circle under `transform: rotate()` is composited into a raster the
- *  size of the ring — 12 device pixels at DPR 1 — and every angle that is not a
- *  multiple of 90deg resamples it. Measured on `.tool-spinner` at DPR 1 over one
- *  revolution: the rendered rim's area varied 8.0% and its support centroid
- *  travelled 0.82px, four times per turn at 1.67 turns a second. That is the
- *  reported wobble, and the centre was never off — the box is exactly square and
- *  `transform-origin` exactly its middle, so the ring orbits a point it is
- *  rasterised half a pixel away from. Painting the arc instead holds the rim
- *  exactly still (area variation 0.0%, rim-radius spread 0.001px) because
- *  nothing is resampled: the box never moves and only this angle changes.
- *  `will-change: transform` was measured too and only halves it (0.53px, 4.0%),
- *  so it is not the fix.
- *
- *  Registration is what makes it interpolate at all — an unregistered custom
- *  property steps at the halfway point instead of ramping.
- *  `inherits: false` keeps each frame's invalidation on the one ring, which is the
- *  mistake the deleted `--vk-beat` made in the other direction.
- *
- *  A ring whose box keeps a border carries an explicit `border-box` inside the
- *  `background` shorthand, and it is load-bearing rather than tidy: `background-origin`
- *  defaults to the PADDING box, so a ring that keeps a border to hold its
- *  diameter (every pseudo-element one does — the reset's `*` does not reach a
- *  pseudo-element, so it is content-box) sizes its gradient tile to the box
- *  INSIDE that border and `background-repeat` then tiles the remainder. Measured:
- *  an 8px tile repeated across a 12px box, which paints a ring broken into
- *  segments with a blank row where the tiles meet. The keyword has to live in the
- *  shorthand because the shorthand resets the longhand.
- *
- *  It starts at -45deg so a conic sector of `0deg 90deg` is the TOP quarter,
- *  which is the quarter a `border-top-color` painted. A painted ring reads a plain
- *  `from var(--vk-spin-arc)`, a turning disc `from -45deg`, and both rest there —
- *  visible under `prefers-reduced-motion`, where the sweep zeroes the duration and
- *  the angle or the turn reverts to its start. */
-@property --vk-spin-arc {
-  syntax: "<angle>";
-  inherits: false;
-  initial-value: -45deg;
-}
-
-/* A RING THAT SPINS WHILE WORK RUNS turns on the compositor and still never
- *  resamples its rim: the host box holds the ring's shape (`clip-path: circle()` for
- *  the outer edge, a radial mask for the hole) and never moves, and its `::before`
- *  is the arc's conic disc, scaled past the clip, turning under it (`vk-spin-rotate`).
- *  A painted `--vk-spin-arc` ring re-runs style, paint and commit on the main thread
- *  every frame, about 4% of a Chromium core per ring. Only a ring drawn on a host
- *  that holds other content (a loading button) still paints its arc: it has no still
- *  box of its own to clip it. */
+/* A RING THAT SPINS WHILE WORK RUNS never rotates its own box: a rotated ring is resampled at every angle off a
+ *  multiple of 90deg, measured as an 8% rim-area wobble on a 12px ring at DPR 1. Its host holds the ring's shape
+ *  (`clip-path: circle()` for the rim, a radial mask for the hole) and never moves; its `::before` is the arc's conic
+ *  disc `from -45deg` (a `0deg 90deg` sector is the top quarter), scaled past the clip and turned under it by
+ *  `vk-spin-rotate` on the compositor. `.spinner` (15-input.css) is that ring. */
 
 /* Beat synchronisation is a shared phase ORIGIN (`--beat-phase`, an unregistered
  *  plain custom property read once as a delay), never a registered property

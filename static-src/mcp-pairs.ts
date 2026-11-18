@@ -3,6 +3,7 @@
 import { el } from "@cplieger/reactive";
 import { type KeyPair, SECRET_MASK } from "./mcp-state.js";
 import { ICON_CLOSE } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 
 type PairKind = "env" | "header";
 
@@ -88,7 +89,7 @@ export function appendKeyPair(host: HTMLDivElement, kv: EditablePair, kind: Pair
     "data-tooltip": "Remove",
     "aria-label": "Remove",
   });
-  del.innerHTML = ICON_CLOSE;
+  del.replaceChildren(iconEl(ICON_CLOSE));
   del.addEventListener("click", () => {
     row.remove();
   });

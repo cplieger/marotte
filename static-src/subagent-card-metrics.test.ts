@@ -126,7 +126,7 @@ async function frame(): Promise<void> {
 }
 
 /** Jump every entry animation to its end: `vk-slide-up`'s `translateY(6px)` extends scrollable
- *  overflow while it runs. INFINITE animations (a running card's `vk-spin`) are skipped:
+ *  overflow while it runs. INFINITE animations (a running card's `vk-spin-rotate`) are skipped:
  *  `finish()` throws on one, and a glyph spin inside `overflow: hidden` cannot reach the list. */
 function finishAnimations(root: Element): void {
   for (const anim of root.getAnimations({ subtree: true })) {

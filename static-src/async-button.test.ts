@@ -116,6 +116,28 @@ describe("withAsyncFeedback", () => {
     await promise;
   });
 
+  it("draws its pending face as the small .spinner ring", async () => {
+    const btn = makeButton();
+    const promise = withAsyncFeedback(btn, () => Promise.resolve());
+
+    const ring = btn.querySelector(".btn-async-spinner");
+    expect([...(ring?.classList ?? [])]).toEqual(["spinner", "spinner-sm", "btn-async-spinner"]);
+    expect(ring?.getAttribute("aria-hidden")).toBe("true");
+
+    await promise;
+  });
+
+  it("draws a caller's own pending face in place of the ring", async () => {
+    const btn = makeButton();
+    const own = document.createElement("i");
+    const promise = withAsyncFeedback(btn, () => Promise.resolve(), { renderPending: () => own });
+
+    expect(own.isConnected).toBe(true);
+    expect(btn.querySelector(".spinner")).toBeNull();
+
+    await promise;
+  });
+
   it("when button is removed from DOM mid-flight, no error and no glyph", async () => {
     const btn = makeButton();
     const work = Promise.resolve();

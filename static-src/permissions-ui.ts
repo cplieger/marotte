@@ -301,6 +301,10 @@ class NativePolicyController {
   /** Never local constants: the ladder decides what one click grants, and policyfile owns it. */
   private profiles: SecurityProfile[] = [];
   private activeProfile = "";
+  /** PolicyView.profile_saved. */
+  private profileSaved = false;
+  /** PolicyView.run_profile. */
+  private runProfile = "";
   /** A transient line under the picker: the outcome of a selection, or a note that Custom is
    *  empty. Carried across the refetch a selection ends in, because that refetch repaints this
    *  same line. */
@@ -417,6 +421,8 @@ class NativePolicyController {
     this.writable = new Set(data.writable_scopes);
     this.profiles = data.profiles;
     this.activeProfile = data.profile;
+    this.profileSaved = data.profile_saved;
+    this.runProfile = data.run_profile;
     this.lastRules = data.rules;
     this.populateCapabilities(data.capabilities);
     if (data.available) {
@@ -472,6 +478,12 @@ class NativePolicyController {
             void this.selectProfile(p.id);
           }
         });
+        // A click on the checked radio fires no change, and the unsaved default needs it to save.
+        input.addEventListener("click", () => {
+          if (p.id === this.activeProfile) {
+            void this.selectProfile(p.id);
+          }
+        });
         const row = el("label", { className: "perm-mode profile-row" }, input);
         row.append(el("span", {}, profileLabel(p.id)));
         row.append(el("p", { className: "section-hint profile-desc" }, profileDescription(p.id)));
@@ -503,6 +515,13 @@ class NativePolicyController {
         "Custom, with no rules. Every capability asks, including reading a file. " +
         "Add rules below, or pick a profile to start from one.";
     }
+    if (text === "" && !this.profileSaved) {
+      // The unsaved default checks the same radio as a saved pick of it, but parentless runs follow
+      // only a saved profile (policyfile.DefaultRunProfile).
+      text =
+        `No saved profile is in use. New chats start on ${profileLabel(this.activeProfile)}, and ` +
+        `workflow runs not started from a chat use ${profileLabel(this.runProfile)} until you click a profile to save it.`;
+    }
     status.textContent = text;
     status.classList.toggle("hidden", text === "");
     status.classList.toggle("native-policy-status-error", this.profileNoteIsError);
@@ -531,7 +550,7 @@ class NativePolicyController {
   /** The leaving-Custom confirm says the user's own rules SURVIVE, because a grant outliving a
    *  narrowing is the surprise this screen can produce. */
   private async selectProfile(id: string): Promise<void> {
-    if (id === this.activeProfile) {
+    if (id === this.activeProfile && this.profileSaved) {
       return;
     }
     this.profileNote = "";

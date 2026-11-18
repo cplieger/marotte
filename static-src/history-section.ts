@@ -4,8 +4,7 @@
 import { effect, el, signal } from "@cplieger/reactive";
 import { reopenChat } from "./chat.js";
 import { showContextMenu } from "./context-menu.js";
-import { sectionFolded, setSectionFolded } from "./device-view.js";
-import { isSliding, slideBox } from "./disclosure-row.js";
+import { isSliding } from "./disclosure-row.js";
 import { $, maybeEl, setText } from "./dom.js";
 import { iconEl } from "./icon-el.js";
 import { type Press, focusAs, lastPress } from "./legacy-ui/scripted-focus.js";
@@ -14,12 +13,20 @@ import { ICON_TRASH } from "./icons.js";
 import { deleteClosedChat } from "./chat-delete.js";
 import { formatClock, formatShortDate, formatWeekdayStamp, watchClock } from "./locale-time.js";
 import { isRetentionEnabled, onRetentionChange } from "./retention.js";
+import {
+  bindSectionToggle,
+  foldRows,
+  isSectionFolded,
+  paintSectionHeader,
+  sectionToggle,
+  type SidebarSection,
+} from "./section-header.js";
 import { watchSession } from "./store.js";
-import { dragOwnsStrip } from "./tabs-drag.js";
 import {
   focusHistoryEntry,
   focusTabRow,
   getActiveTabId,
+  historyPaneTab,
   recentClosed,
   refreshActiveView,
   showHistoryView,
@@ -27,8 +34,6 @@ import {
   tabIdFor,
 } from "./tabs.js";
 import type { RecentClose } from "./wire/types.gen.js";
-
-const FOLD_KEY = "history";
 
 let descSeq = 0;
 
@@ -89,11 +94,17 @@ function closedWhen(ms: number, today: number): { readonly short: string; readon
 export function initHistorySection(): void {
   const section = maybeEl("history-section");
   const list = maybeEl("history-list");
-  const header = section?.querySelector<HTMLElement>(":scope > h2.side-section-h") ?? null;
-  const toggle = header?.querySelector<HTMLButtonElement>(".side-section-toggle") ?? null;
-  if (section === null || list === null || header === null || toggle === null) {
+  const toggle = list === null ? null : sectionToggle(list);
+  if (section === null || list === null || toggle === null) {
     return;
   }
+  const fold: SidebarSection = {
+    key: "history",
+    list,
+    foldedByDefault: true,
+    noun: "chat",
+    emptyHides: "section",
+  };
   $.historyMore.addEventListener("click", () => {
     showHistoryView();
   });
@@ -186,8 +197,18 @@ export function initHistorySection(): void {
     }
   };
 
-  const paintFold = (folded: boolean): void => {
-    toggle.setAttribute("aria-expanded", String(!folded));
+  /** Hide the rows when `folded`, More too unless its page shows, unless a running slide owns
+   *  them, and paint the header. Reads the page's signal first, so the effect tracks it. */
+  const paintFold = (folded: boolean, slideOwnsRows = false): void => {
+    const moreSelected = historyPaneTab() !== null;
+    if (!slideOwnsRows) {
+      foldRows(
+        list.querySelectorAll<HTMLElement>(":scope > li"),
+        folded,
+        (li) => moreSelected && li.contains($.historyMore),
+      );
+    }
+    paintSectionHeader(fold, { count: order.length, dot: null });
   };
 
   async function reopen(row: Row): Promise<void> {
@@ -366,37 +387,11 @@ export function initHistorySection(): void {
       prev = row.li;
     }
     order = entries.map((e) => e.ref);
-    const count = entries.length;
-    section.hidden = count === 0;
-    setText(toggle.querySelector(".side-section-count"), String(count));
-    setText(toggle.querySelector(".sr-only"), `${String(count)} ${count === 1 ? "chat" : "chats"}`);
-    const folded = sectionFolded(FOLD_KEY, true);
-    paintFold(folded);
-    if (!isSliding(section)) {
-      list.hidden = folded;
-    }
+    paintFold(isSectionFolded(fold), isSliding(list));
     restoreFocus(mark, mark !== null && "ref" in mark ? deletePress.get(mark.ref) : undefined);
   });
 
-  toggle.addEventListener("click", () => {
-    if (dragOwnsStrip()) {
-      return;
-    }
-    const folded = !sectionFolded(FOLD_KEY, true);
-    setSectionFolded(FOLD_KEY, folded);
+  bindSectionToggle(fold, (folded) => {
     paintFold(folded);
-    // The header is the section's whole height while its list is hidden, so the close needs no measuring layout.
-    const closed = folded ? { closedHeight: header.getBoundingClientRect().height } : {};
-    // A click that moves no focus (confirm.ts owns the WebKit case) leaves it on a row the fold hides.
-    const mark = noteFocus();
-    slideBox(
-      section,
-      !folded,
-      (open) => {
-        list.hidden = !open;
-        restoreFocus(mark);
-      },
-      closed,
-    );
   });
 }

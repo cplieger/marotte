@@ -119,8 +119,11 @@ func TestProfileFor_ReportsAbsenceInBand(t *testing.T) {
 	if _, ok := ProfileFor("nonexistent"); ok {
 		t.Error("ProfileFor reported an unknown id as found")
 	}
-	if p, ok := ProfileFor(DefaultProfile); !ok || p.ID != ProfileTrusted {
-		t.Errorf("DefaultProfile %q does not resolve to trusted", DefaultProfile)
+	if p, ok := ProfileFor(DefaultProfile); !ok || p.ID != ProfileDelegated {
+		t.Errorf("DefaultProfile %q does not resolve to delegated", DefaultProfile)
+	}
+	if p, ok := ProfileFor(DefaultRunProfile); !ok || p.ID != ProfileTrusted || DelegatesToSafetyCheck(p.Presets) {
+		t.Errorf("DefaultRunProfile %q does not resolve to trusted, which asks a person", DefaultRunProfile)
 	}
 }
 

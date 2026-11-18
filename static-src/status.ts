@@ -114,7 +114,7 @@ const contextBar = new ContextBarController();
 
 const paintedIcon = new WeakMap<Element, string>();
 
-/** Unwrapped, before the label: the `.switching` face hides the pill's svg by selector (15-input.css). */
+/** Unwrapped, before the label: the busy rule hides only a direct child svg (15-input.css). */
 function paintModelIcon(pill: HTMLElement, icon: string): void {
   if (paintedIcon.get(pill) === icon) {
     return;

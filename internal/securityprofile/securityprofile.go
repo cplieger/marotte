@@ -47,11 +47,12 @@ type Store struct {
 	WorkDir   string
 }
 
-// Active is the Settings profile a new chat starts on, with the session door's fallback, so a
-// reader shows what that chat's door sends.
+// Active is the profile config.json names now, read fresh for a profile write's decision:
+// policyfile.DefaultProfile while it names no known profile or cannot be read. Views read
+// agent.Runtime.SecurityProfileChoice instead.
 func (s *Store) Active(ctx context.Context) string {
 	var id string
-	if !settings.FieldInto(ctx, s.ConfigDir, settings.KeySecurityProfile, &id) || id == "" {
+	if !settings.FieldInto(ctx, s.ConfigDir, settings.KeySecurityProfile, &id) {
 		return policyfile.DefaultProfile
 	}
 	if _, ok := policyfile.ProfileFor(id); !ok {

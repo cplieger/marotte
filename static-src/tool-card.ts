@@ -6,6 +6,7 @@ import { escText, truncate, windowOutput, windowSpans } from "./strings.js";
 import { renderOutput } from "./output-render.js";
 import { fileIcon, toolIcon, outcomeIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { spinnerEl } from "./spinner.js";
 import { chevronEl } from "./chevron.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { openChange, openAtLine, openCallDiff, openSpec } from "./navigate.js";
@@ -404,8 +405,7 @@ function buildHeader(
   }
 
   if (opts.live && isToolActive(opts.status)) {
-    const spinner = el("span", { className: "tool-spinner" });
-    header.appendChild(spinner);
+    header.appendChild(spinnerEl("tool-spinner"));
   }
 
   // No status word: the row carries ONE mark (applyOutcome).

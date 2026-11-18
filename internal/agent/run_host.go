@@ -176,7 +176,7 @@ func (rs *Runs) launchAs(
 	// The host session's presets are resolved once and recorded on the lease: a reload after a restart applies
 	// these, never the profile as it is then.
 	settings := rs.doorSettings(cctx)
-	presets := settings.Presets
+	presets := settings.RunPresets
 	sb := newSharedBridge(runHostLife{ctx: rs.lifecycle.shutdownCtx})
 	var relay *hostRelay
 	door := &marotte.SessionOpts{

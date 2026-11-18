@@ -24,7 +24,7 @@ import {
   RETRY_LABEL,
 } from "./model-list.js";
 import { makeExpandable, collapseAll, type Expandable } from "./pill-expand.js";
-import { bindLoadingState, transportAction, RETRY_STANDARD } from "./actions/index.js";
+import { transportAction, RETRY_STANDARD } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
 import { repaintKeepingFocus } from "./focus-keep.js";
 import { el, effect, untracked } from "@cplieger/reactive";
@@ -53,6 +53,7 @@ import { settingsAsShown, shownSettingsSignal } from "./persist.js";
 import { currentIdentity } from "./settings.js";
 import type { EffectiveSettings } from "./persist.js";
 import type { ModelInfo, Session, SessionEffortLevel } from "./types.js";
+import { bindLoadingSpinner } from "./spinner.js";
 
 // effort.ts owns the effort vocabulary: the pill names the live tier too.
 
@@ -169,8 +170,8 @@ interface PillDraft {
 class ModelSwitchController {
   init(rereadCatalog: () => Promise<void>): void {
     this.rereadCatalog = rereadCatalog;
-    // Prepended because the label follows it. The `.switching` face hides this svg by
-    // descendant selector, so it must not be wrapped.
+    // Prepended because the label follows it, and never wrapped: the busy face hides only the
+    // button's own `> svg` (15-input.css).
     $.switchModelBtn.prepend(iconEl(ICON_MODEL));
     const expandContent = $.modelSwitchList;
     expandContent.append(this.mainPanel);
@@ -233,7 +234,7 @@ class ModelSwitchController {
     });
     // Wired ONCE: re-wiring per render stacks keydown handlers. The first panel's own: the Fallback list has its.
     this.modelNav = rovingFocus(this.mainPanel, '.pill-model-item[role="option"]');
-    bindLoadingState("chat.switch_model", $.switchModelBtn, { pendingClass: "switching" });
+    bindLoadingSpinner("chat.switch_model", $.switchModelBtn, { pendingClass: "switching" });
   }
 
   /** Runs a repaint of the open card. One that takes focus out of the card (a removed or

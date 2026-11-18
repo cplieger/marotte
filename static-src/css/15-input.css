@@ -593,32 +593,9 @@
     pointer-events: none;
   }
 
-  &:where(.switching) svg {
-    display: none;
-  }
-
-  /* 1rem IS the diameter this has always painted — `--icon-ui`'s value, which is
-     what it stands in for, since the rule above hides the pill's own glyph. It read
-     `0.75rem` plus a 2px border that the pseudo-element's content-box default put
-     outside that length, so the authored number was 12px and the mark was 16px. The
-     size moves here, not the render. */
-  &.switching::before {
-    content: "";
-    width: 1rem;
-    height: 1rem;
-    border-radius: 50%;
-    background: conic-gradient(
-        from var(--vk-spin-arc),
-        transparent 0deg 90deg,
-        currentcolor 90deg 360deg
-      )
-      border-box;
-    mask: radial-gradient(
-      closest-side,
-      transparent calc(100% - 0.125rem),
-      #000 calc(100% - 0.125rem)
-    );
-    animation: vk-spin var(--spin-dur) linear infinite;
+  /* The busy ring takes the box of the glyph it replaces, the `.ic-inline` model mark (status.ts). */
+  & > .spinner {
+    --spinner-size: calc(var(--icon-inline) + var(--icon-grow));
   }
 }
 
@@ -2209,33 +2186,24 @@
   }
 }
 
-/* The one consumer that rotates its WHOLE box, rim and all, because its mark is a
- * stroked arc with round caps rather than a ring: a conic gradient cannot draw a
- * cap, and the dash alternative is refused for a measured reason recorded at
- * `ICON_SPINNER` (icons.ts). */
-.icon-spinner {
-  transform-origin: center;
-  animation: vk-spin-rotate var(--spin-dur) linear infinite;
-}
-
 [id="context-indicator"] {
   anchor-name: --context-indicator;
 }
 
-/* `--vk-ring-band` exists on these two because 17-settings.css narrows the band
-   of the save indicator's copy; the band is the mask's now, so there is no
-   `border-width` left for that rule to override. */
+/* THE loading ring, 00-header.css "A RING THAT SPINS WHILE WORK RUNS". A site tunes it only through
+   `--spinner-size`, `--vk-ring-band`, `--spinner-arc` and `--spinner-track`, never with a ring of its own.
+   `flex-shrink: 0`: in a flex row a long label squeezes the disc into an ellipse, which wobbles as it turns. */
 .spinner {
-  --vk-ring-band: 0.125rem;
-
-  width: 1rem;
-  height: 1rem;
+  display: inline-block;
+  vertical-align: middle;
+  inline-size: var(--spinner-size, var(--icon-ui));
+  block-size: var(--spinner-size, var(--icon-ui));
   flex-shrink: 0;
   clip-path: circle();
   mask: radial-gradient(
     closest-side,
-    transparent calc(100% - var(--vk-ring-band)),
-    #000 calc(100% - var(--vk-ring-band))
+    transparent calc(100% - var(--vk-ring-band, 0.125rem)),
+    #000 calc(100% - var(--vk-ring-band, 0.125rem))
   );
 }
 
@@ -2246,43 +2214,30 @@
   block-size: 100%;
   background: conic-gradient(
     from -45deg,
-    var(--c-text-primary) 0deg 90deg,
-    var(--c-border) 90deg 360deg
+    var(--spinner-arc, var(--c-text-primary)) 0deg 90deg,
+    var(--spinner-track, var(--c-border)) 90deg 360deg
   );
   scale: 1.5;
   animation: vk-spin-rotate var(--spin-dur) linear infinite;
 }
 
-/* `flex-shrink: 0` on both, like `.tool-spinner` and `.subagent-spinner`: these
-   two had none, and `.settings-save-status` is a flex row, so a long enough save
-   label squeezed the disc into an ELLIPSE — a ring that is not round cannot turn
-   without wobbling, whatever its rotation origin. */
 .spinner-sm {
-  --vk-ring-band: 0.125rem;
-
-  width: 0.875rem;
-  height: 0.875rem;
-  flex-shrink: 0;
-  clip-path: circle();
-  mask: radial-gradient(
-    closest-side,
-    transparent calc(100% - var(--vk-ring-band)),
-    #000 calc(100% - var(--vk-ring-band))
-  );
+  --spinner-size: 0.875rem;
 }
 
-.spinner-sm::before {
-  content: "";
-  display: block;
-  inline-size: 100%;
-  block-size: 100%;
-  background: conic-gradient(
-    from -45deg,
-    var(--c-text-primary) 0deg 90deg,
-    var(--c-border) 90deg 360deg
-  );
-  scale: 1.5;
-  animation: vk-spin-rotate var(--spin-dur) linear infinite;
+/* The mark of running work (a subagent, a run step, an exec node): an accent ring with a gap. */
+.spinner-work {
+  --spinner-arc: transparent;
+  --spinner-track: var(--c-accent);
+}
+
+/* `bindLoadingSpinner`'s dormant ring (spinner.ts): shown only while its control is busy, in the glyph's place. */
+:not([aria-busy="true"]) > .spinner-on-busy {
+  display: none;
+}
+
+[aria-busy="true"]:has(> .spinner-on-busy) > svg {
+  display: none;
 }
 
 /* The `/` and `#` menu: in flow above .prompt-box on .steer-stack's measure, so the bar

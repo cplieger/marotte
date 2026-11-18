@@ -162,6 +162,11 @@
     inline-size: var(--icon-btn);
     block-size: var(--icon-btn);
   }
+
+  /* The pending Rewind's ring grows with the glyph it replaces on touch. */
+  & > .spinner {
+    --spinner-size: var(--icon-btn);
+  }
 }
 
 /* REQUIRED, not defensive, and the same trap 31-exec-view.css records at

@@ -3301,12 +3301,14 @@ export const decodePolicyView: Decoder<PolicyView> = (v) => {
   const o = asObject(v, "$.policy_view");
   const out: PolicyView = {
     profile: reqStr(o, "profile", "$.policy_view"),
+    run_profile: reqStr(o, "run_profile", "$.policy_view"),
     rules: own(o, "rules") === null ? [] : decodeArray(own(o, "rules"), decodePolicyRule, "$.policy_view.rules"),
     writable_scopes: own(o, "writable_scopes") === null ? [] : decodeArray(own(o, "writable_scopes"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.policy_view.writable_scopes"),
     capabilities: own(o, "capabilities") === null ? [] : decodeArray(own(o, "capabilities"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.policy_view.capabilities"),
     profiles: own(o, "profiles") === null ? [] : decodeArray(own(o, "profiles"), decodeSecurityProfile, "$.policy_view.profiles"),
     load_errors: own(o, "load_errors") === null ? [] : decodeArray(own(o, "load_errors"), decodePolicyErrorItem, "$.policy_view.load_errors"),
     available: reqBool(o, "available", "$.policy_view"),
+    profile_saved: reqBool(o, "profile_saved", "$.policy_view"),
   };
   return out;
 };

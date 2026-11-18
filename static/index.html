@@ -130,7 +130,7 @@
               <span class="sr-only" id="history-section-desc"></span>
             </button>
           </h2>
-          <ul id="history-list" class="history-list" hidden>
+          <ul id="history-list" class="history-list">
             <li>
               <button type="button" id="history-more" class="history-more" aria-label="More history">
                 <svg class="ic-ui" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
@@ -1231,7 +1231,7 @@
 
             <div class="page-section" id="security-profile-section">
               <h2 class="section-title">Security profile</h2>
-              <p class="section-hint">How much the agent may do here without asking. New chats start on this profile, Trusted unless you pick another, and the shield pill beside the model pill changes it for one chat. Outside Custom the table below is read-only. Rules <em>you</em> added stay in the table and keep applying alongside the profile.</p>
+              <p class="section-hint">How much the agent may do here without asking. New chats start on this profile, Approve for me unless you pick another, and the shield pill beside the model pill changes it for one chat. Outside Custom the table below is read-only. Rules <em>you</em> added stay in the table and keep applying alongside the profile.</p>
               <p id="security-profile-admin" class="section-hint governance-reason hidden">Your administrator has rules on this machine that apply under every profile and win over it.</p>
               <div id="security-profile-list" class="profile-list" role="radiogroup" aria-label="Security profile"></div>
               <div class="profile-actions">
@@ -1878,9 +1878,7 @@
         <label for="tool-search">Search the catalog</label>
         <div class="tool-search-row">
           <input id="tool-search" class="tool-form-input" type="search" placeholder="ripgrep, terraform, pyright…" autocomplete="off">
-          <!-- Both glyphs are installed by tools.ts from the icons registry, so the
-               magnifier and the spinner each keep one drawing in the app. -->
-          <button type="button" id="tool-search-btn" class="action-pill tool-search-go" data-tooltip="Search" aria-label="Search"></button>
+          <button type="button" id="tool-search-btn" class="action-pill" data-tooltip="Search" aria-label="Search"></button>
         </div>
         <span class="tool-form-hint">Runtimes, language servers and CLIs from the mise and aqua registries, plus this container's Debian packages. Versions resolve to the latest release, and the pin icon freezes them afterwards.</span>
       </div>

@@ -6,6 +6,7 @@ import type { TurnState } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
 import type * as Confirm from "./confirm.js";
 import { confirmText } from "./__test-helpers__/confirm-text.js";
+import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import type * as Toast from "./toast.js";
 import type * as StoreLoad from "./store-load.js";
 
@@ -400,14 +401,84 @@ describe("a rewind in flight", () => {
     expect(clicked?.getAttribute("aria-label")).toBe("Rewinding\u2026");
     expect(
       [...(clicked?.children ?? [])].map((c) => c.getAttribute("class")),
-      "the shared spinner glyph in the icon's ic-ui box",
-    ).toEqual(["icon-spinner ic-ui"]);
+      "the app's shared ring spinner, alone",
+    ).toEqual(["spinner"]);
     for (const b of others) {
       expect(b.disabled).toBe(true);
       expect(b.hasAttribute("aria-busy"), "only the clicked one is busy").toBe(false);
     }
 
     answer({ ok: true, status: 200 });
+  });
+
+  it("draws the ring every other loading mark draws, in the Rewind glyph's box", async () => {
+    const sheet = mountAppCSS();
+    const reference = document.createElement("span");
+    reference.className = "spinner";
+    document.body.appendChild(reference);
+    try {
+      await paintChat(4);
+      const glyph = rewindButtonOf(cards()[0]).firstElementChild?.getBoundingClientRect();
+      const answer = holdReply();
+      await rewindFirstTurn();
+      await until(() => mockSend.mock.calls.length === 1, "the rewind command");
+
+      const [clicked] = rewindButtons();
+      expect(clicked?.querySelector("svg, .icon-spinner"), "no stroked arc icon").toBeNull();
+      const ring = clicked?.querySelector<HTMLElement>(":scope > .spinner");
+      if (ring === null || ring === undefined) {
+        throw new Error("the pending Rewind has no .spinner");
+      }
+      expect(ring.getAttribute("aria-hidden"), "the button's label names the state").toBe("true");
+      const box = ring.getBoundingClientRect();
+      expect([box.width, box.height], "the ring fills the glyph's slot").toEqual([
+        glyph?.width,
+        glyph?.height,
+      ]);
+      const host = (e: Element): string[] => {
+        const s = getComputedStyle(e);
+        return [s.clipPath, s.maskImage];
+      };
+      const disc = (e: Element): string[] => {
+        const s = getComputedStyle(e, "::before");
+        return [
+          s.backgroundImage,
+          s.scale,
+          s.animationName,
+          s.animationDuration,
+          s.animationTimingFunction,
+          s.animationIterationCount,
+        ];
+      };
+      expect(host(ring), "the still host's rim and hole").toEqual(host(reference));
+      expect(disc(ring), "the turning disc, its arc, track and timing").toEqual(disc(reference));
+      expect(disc(ring)[2]).toBe("vk-spin-rotate");
+
+      // The touch tier grows the button glyph past the bare `.spinner`, so this is where the ring's own sizing shows.
+      const root = document.documentElement;
+      const tier = root.getAttribute("data-pointer");
+      root.setAttribute("data-pointer", "coarse");
+      try {
+        const resting = rewindButtons()[1]?.firstElementChild?.getBoundingClientRect();
+        const grown = ring.getBoundingClientRect();
+        const bare = reference.getBoundingClientRect();
+        expect([grown.width, grown.height], "the ring grows with the touch glyph").toEqual([
+          resting?.width,
+          resting?.height,
+        ]);
+        expect(grown.width, "past the bare ring's size").toBeGreaterThan(bare.width);
+      } finally {
+        if (tier === null) {
+          root.removeAttribute("data-pointer");
+        } else {
+          root.setAttribute("data-pointer", tier);
+        }
+      }
+      answer({ ok: true, status: 200 });
+    } finally {
+      reference.remove();
+      sheet.remove();
+    }
   });
 
   it("survives a repaint while the revert is in flight", async () => {
@@ -435,9 +506,7 @@ describe("a rewind in flight", () => {
     expect(clicked, "kept, not re-mounted").toBe(before[0]);
     expect(clicked?.getAttribute("aria-busy")).toBe("true");
     expect(clicked?.disabled).toBe(true);
-    expect([...(clicked?.children ?? [])].map((c) => c.getAttribute("class"))).toEqual([
-      "icon-spinner ic-ui",
-    ]);
+    expect([...(clicked?.children ?? [])].map((c) => c.getAttribute("class"))).toEqual(["spinner"]);
     expect(others.every((b) => b.disabled)).toBe(true);
 
     answer({ ok: true, status: 200 });

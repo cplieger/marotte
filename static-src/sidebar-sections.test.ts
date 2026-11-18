@@ -85,7 +85,12 @@ import { LS_UI_STATE_KEY } from "./ls-keys.js";
 import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.js";
 import { ingestTabsChanged, listTabs, _resetTabsSyncForTest } from "./tabs-sync.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
-import { bindTabsSync, settleTabs, tabServer } from "./__test-helpers__/tabs-server.js";
+import {
+  bindTabsSync,
+  fakeSubject,
+  settleTabs,
+  tabServer,
+} from "./__test-helpers__/tabs-server.js";
 
 bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
 
@@ -292,6 +297,20 @@ describe("a section's header", () => {
     expect(description(toggle("pinned"))).toBe("1 tab");
   });
 
+  it("counts a sub-tab whose parent is not open as its own group, and shows the header for it", async () => {
+    tabServer.queueList({
+      tabs: [fakeSubject("orphan", { parent: "gone" }), fakeSubject("solo")],
+      recent: [],
+      version: 1,
+    });
+    await listTabs();
+    await paint();
+    expect(el("tab-list").querySelectorAll("[data-tab-id]")).toHaveLength(2);
+    expect(header("open").hidden).toBe(false);
+    expect(toggle("open").querySelector(".side-section-count")?.textContent).toBe("2");
+    expect(description(toggle("open"))).toBe("2 tabs");
+  });
+
   it.each(["{Enter}", " "])("toggles on %s and follows the fold in aria-expanded", async (key) => {
     await openChats("a", "b");
     const b = toggle("open");
@@ -344,17 +363,17 @@ async function press(key: string): Promise<void> {
 }
 
 describe("the stored folds", () => {
-  it("reads every tab section open when nothing is stored", () => {
-    expect(deviceView.sectionFolded("open")).toBe(false);
-    expect(deviceView.sectionFolded("pinned")).toBe(false);
+  it("reads each section's default when nothing is stored", () => {
+    expect(deviceView.sectionFolded("open", false)).toBe(false);
+    expect(deviceView.sectionFolded("history", true)).toBe(true);
   });
 
   it("reads back what it wrote, per key", () => {
     deviceView.setSectionFolded("pinned", true);
-    expect(deviceView.sectionFolded("pinned")).toBe(true);
-    expect(deviceView.sectionFolded("open")).toBe(false);
+    expect(deviceView.sectionFolded("pinned", false)).toBe(true);
+    expect(deviceView.sectionFolded("open", false)).toBe(false);
     deviceView.setSectionFolded("pinned", false);
-    expect(deviceView.sectionFolded("pinned")).toBe(false);
+    expect(deviceView.sectionFolded("pinned", false)).toBe(false);
   });
 
   it.each([
@@ -364,8 +383,8 @@ describe("the stored folds", () => {
     { desc: "null", folds: null },
   ])("reads $desc as the default", ({ folds }) => {
     localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ sidebar_folds: folds }));
-    expect(deviceView.sectionFolded("open")).toBe(false);
-    expect(deviceView.sectionFolded("pinned")).toBe(false);
+    expect(deviceView.sectionFolded("open", true)).toBe(true);
+    expect(deviceView.sectionFolded("pinned", false)).toBe(false);
   });
 
   it("keeps a key this build does not know, and the blob's other fields, on a write", () => {

@@ -90,6 +90,7 @@ import { createDisclosure, type DisclosureController } from "./legacy-ui/disclos
 import { skeletonTiming } from "./legacy-ui/skeleton.js";
 import { gitRepoSkeleton, paintPlaceholder } from "./skeleton.js";
 import { iconEl } from "./icon-el.js";
+import { spinnerEl } from "./spinner.js";
 
 import type { GitPR as PR, GitRepoGroup as RepoGroup } from "./git-types.js";
 
@@ -368,7 +369,7 @@ export function initPRsTab(): void {
 
   const refreshBtn = maybeEl<HTMLButtonElement>("git-refresh-prs-btn");
   if (refreshBtn !== null) {
-    refreshBtn.innerHTML = ICON_REFRESH;
+    refreshBtn.replaceChildren(iconEl(ICON_REFRESH));
     const status = el("span", { className: "page-toolbar-error", role: "status" });
     refreshBtn.before(status);
     refreshBtn.addEventListener("click", () => {
@@ -1558,10 +1559,7 @@ function rowButton(
   if (busy.has(label)) {
     btn.disabled = true;
     btn.setAttribute("aria-busy", "true");
-    btn.prepend(
-      el("span", { className: "spinner-sm btn-async-spinner", "aria-hidden": "true" }),
-      " ",
-    );
+    btn.prepend(spinnerEl("spinner-sm btn-async-spinner"), " ");
   }
   return btn;
 }
