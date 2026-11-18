@@ -59,7 +59,7 @@ function session():
       supervised_mode: boolean | undefined;
       message_count: number;
       tangent: boolean;
-      run: { compacting: boolean };
+      compacting: boolean;
     }
   | undefined {
   return activeID === ""
@@ -70,7 +70,7 @@ function session():
         supervised_mode: supervised,
         message_count: messageCount,
         tangent,
-        run: { compacting },
+        compacting,
       };
 }
 

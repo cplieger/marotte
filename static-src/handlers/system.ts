@@ -255,9 +255,9 @@ onBus(BUS_PAGE_RESUMED, () => {
 // No slash-command palette: of a session's commands only skills lack another door, and none is
 // invocable, so skills live on the /docs Skills tab.
 
-// compaction_started is advisory only: the dock's running row for the reader's call is the header's
-// `run.compacting`, which survives a reload, and the durable record is the `compaction` ENTRY, appended
-// where the compaction happened, which also marks the dock's rows (`handlers/entries.ts`).
+// compaction_started is advisory only: the dock's running row is the header's `compacting`, which survives a
+// reload, and the durable record is the `compaction` ENTRY, appended where the compaction happened, which also
+// marks the dock's rows (`handlers/entries.ts`).
 onSSE("compaction_started", () => {
   // intentional no-op
 });

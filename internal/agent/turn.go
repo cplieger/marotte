@@ -165,7 +165,8 @@ type chatLifecycle struct {
 	closedIDs [recentCloses]string
 	// admissionMessage is the prompt message id of the held reservation, "" for none.
 	admissionMessage string
-	// compactPress is the reader's Compact call running on the chat, nil for none (compactPresses).
+	// compactPress is the reader's Compact call running on the chat, nil for none (compactPresses); summaryRunning is
+	// kiro-cli's own summary between its running frame and its outcome. Either one sets Chat.Compacting (setMark).
 	compactPress *compactCall
 	chatID       marotte.ChatID
 	// runFinal is the list the life's end left, owed to the record once the ending caller released its locks
@@ -214,6 +215,8 @@ type chatLifecycle struct {
 	mu        sync.Mutex
 	// factsMu pairs each take of the steer record's facts with its apply to run (bridgeCoordinator.endsApplied).
 	factsMu sync.Mutex
+	// markMu serializes Chat.Compacting's writes, so the last one reflects the last change (setMark).
+	markMu sync.Mutex
 	// closer is whether a closer goroutine runs for this life; only the request that set it starts one (askClose).
 	closer bool
 	// ended is set once, when the life ends (endLifeLocked); an ended life admits nothing.
@@ -231,7 +234,8 @@ type chatLifecycle struct {
 	// waiting on a position that can no longer advance stops waiting.
 	forwardGone bool
 	// gatePark is whether a goroutine waits out a held close to run the list's taker again (parkGateLocked).
-	gatePark bool
+	gatePark       bool
+	summaryRunning bool
 }
 
 // turnRegistry holds one lifecycle per chat. Lock order registry.mu -> lifecycle.mu -> chat store: opens and

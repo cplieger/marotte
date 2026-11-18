@@ -344,8 +344,8 @@ export const setAttachments = transportAction<{ chatID: string; paths: string[] 
 });
 
 /** Summarizes through KAS's native `compact` verb (typed `/compact` reaches the model as prose). The server answers
- *  once the call is under way; the dock's running row (`RunView.compacting`), then kiro-cli's compaction entry or one
- *  toast, is the outcome. `idempotencyKey`: a double compact summarizes a summary. */
+ *  once the call is under way; the dock's running row (`ChatHeader.compacting`), then kiro-cli's compaction entry or
+ *  one toast, is the outcome. `idempotencyKey`: a double compact summarizes a summary. */
 export const compactChat = defineAction<{ chatID: string }, undefined>({
   name: "chat.compact",
   networkMode: "always",

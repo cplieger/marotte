@@ -405,3 +405,44 @@ func TestHandleCompactionFailed_BoundsAndSanitizesTheDetail(t *testing.T) {
 		t.Errorf("CompactionFailed calls = %+v, want the filed bounded detail %q", deps.compactionFailures, failed[0].Reason)
 	}
 }
+
+// kiro-cli tries its summary again at each response after a failed one, so a turn can carry several failure frames:
+// the first is the turn's one Compaction failed entry and toast, and each one still reaches the press and the host.
+func TestHandleCompactionFailed_OneEntryAndToastPerTurn(t *testing.T) {
+	deps, events, _ := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	deps.turns.chatTurn("c1")
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "model error", ""), FrameAttribution{})
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "model error", ""), FrameAttribution{})
+
+	if got := compactionFailuresOf(t, deps.chatEntries("c1")); len(got) != 1 {
+		t.Errorf("compaction_failed entries = %d, want 1", len(got))
+	}
+	if got := errorPayloads(t, events); len(got) != 1 {
+		t.Errorf("toasts = %d, want 1", len(got))
+	}
+	if deps.failuresObserved != 2 {
+		t.Errorf("ObserveCompactionFailed calls = %d, want 2", deps.failuresObserved)
+	}
+	if len(deps.compactionFailures) != 2 {
+		t.Errorf("CompactionFailed host calls = %d, want 2, so each failure re-arms the turn's reap", len(deps.compactionFailures))
+	}
+}
+
+// The header's Compacting mark follows kiro-cli's summary: set on its running frame, cleared after every outcome.
+func TestHandleV3Summarization_MarksTheSummaryWhileItRuns(t *testing.T) {
+	for _, status := range []string{"success", "error", "canceled"} {
+		t.Run(status, func(t *testing.T) {
+			deps, _, _ := depsWithStore(t, "c1")
+			tr := New(rolesOf(deps))
+
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "running", ""), FrameAttribution{})
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, status, "the summary"), FrameAttribution{})
+
+			if got := deps.summaryRunning; len(got) != 2 || !got[0] || got[1] {
+				t.Errorf("ObserveSummaryRunning = %v, want [true false]", got)
+			}
+		})
+	}
+}

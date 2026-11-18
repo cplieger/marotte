@@ -76,7 +76,6 @@ func TestCmdCompact_AnswersOnceTheCallIsUnderWay(t *testing.T) {
 		log  string
 	}{
 		{name: "started", out: CompactStarted, log: `msg="compact started"`},
-		{name: "one already running", out: CompactRunning, log: `msg="compact already running"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			buf := captureLogs(t)
@@ -96,6 +95,21 @@ func TestCmdCompact_AnswersOnceTheCallIsUnderWay(t *testing.T) {
 				t.Errorf("requests = %v, want [c1]", f.requested)
 			}
 		})
+	}
+}
+
+// A press while the chat's call runs is refused in words the page shows, so the pressing device sees an outcome.
+func TestCmdCompact_APressWhileOneRunsIsRefused(t *testing.T) {
+	buf := captureLogs(t)
+	_, err := cmdCompact(t.Context(), &fakeCompactor{out: CompactRunning}, compactReq("c1"))
+	if got := statusOf(err); got != 409 {
+		t.Errorf("status = %d, want 409", got)
+	}
+	if got, want := errText(err), "the context is already being compacted"; got != want {
+		t.Errorf("refusal = %q, want %q", got, want)
+	}
+	if got := buf.String(); !strings.Contains(got, `msg="compact already running"`) {
+		t.Errorf("log = %q, want compact already running", got)
 	}
 }
 

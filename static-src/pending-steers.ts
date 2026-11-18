@@ -53,7 +53,7 @@ import { setStackOpen, stackOpen } from "./device-view.js";
  *  (none carries it yet), or, for a dock with no run order (a run step's), as the next prompt. */
 type SteerPlace = RunWait | "next_message" | undefined;
 
-/** One dock row: the reader's running compaction call, a steer the agent has not read, a message the
+/** One dock row: the chat's running compaction, a steer the agent has not read, a message the
  *  server holds, the head of the rows the reader's stop paused, or the fold row. */
 type DockRow =
   | { kind: "compact" }
@@ -69,6 +69,8 @@ export interface SteerStackSource {
     id: string;
     steers: readonly PendingSteer[];
     run?: RunView;
+    /** A compaction runs in the chat (`ChatHeader.compacting`). */
+    compacting?: boolean;
   };
   /** Stop the turn `target` names and send this row first; absent where no turn is the reader's to
    *  stop. */
@@ -133,6 +135,7 @@ export function mountSteerStack(stack: HTMLUListElement, src: SteerStackSource):
       s.id,
       join(...s.steers.map(steerSig)),
       s.run === undefined ? "" : wireSignature(s.run),
+      s.compacting === true ? "1" : "",
       String(foldChoice.value),
     );
   });
@@ -166,7 +169,7 @@ function render(
   announced: { waiting: number; id: string },
   fold: FoldRow,
 ): void {
-  const { id, steers, run } = untracked(() => src.read());
+  const { id, steers, run, compacting } = untracked(() => src.read());
   const stopTarget = run === undefined ? undefined : runningTarget(run);
   const waitingRows = steers.filter((e) => e.pending !== true);
   const state: StackState = {
@@ -180,7 +183,7 @@ function render(
     fold,
   };
   const waiting = state.waiting;
-  const rows = dockRows(steers, run);
+  const rows = dockRows(steers, run, compacting === true);
   const open = stackOpen() === true;
   const folding = stackFold(rows.map(foldLine));
   if (folding !== null) {
@@ -269,15 +272,19 @@ function runningTarget(run: RunView): string | undefined {
   return e?.state === "running" ? target : undefined;
 }
 
-/** Top to bottom is send order, all of it the server's, under the reader's running compaction call,
- *  which nothing waits on: steers not yet unsent sit under the running turn, above every entry; the
+/** Top to bottom is send order, all of it the server's, under the chat's running compaction, which
+ *  nothing waits on: steers not yet unsent sit under the running turn, above every entry; the
  *  entries follow in run order, the first row the reader's stop paused led by the paused queue's head;
  *  an unsent steer sits where `unread_wait` places it, and one awaiting a prompt with the entry that
  *  carries it. A dock with no run order lists its steers alone. */
-function dockRows(steers: readonly PendingSteer[], run: RunView | undefined): DockRow[] {
+function dockRows(
+  steers: readonly PendingSteer[],
+  run: RunView | undefined,
+  compacting: boolean,
+): DockRow[] {
   const steerRows = (list: readonly PendingSteer[], place: SteerPlace): DockRow[] =>
     list.map((steer) => ({ kind: "steer", steer, place }));
-  const out: DockRow[] = run?.compacting === true ? [{ kind: "compact" }] : [];
+  const out: DockRow[] = compacting ? [{ kind: "compact" }] : [];
   out.push(
     ...steerRows(
       steers.filter((e) => e.unsent !== true),
@@ -818,7 +825,12 @@ const chatSource: SteerStackSource = {
     if (s === undefined) {
       return { id: "", steers: [] };
     }
-    return { id: s.id, steers: s.steers ?? [], ...(s.run !== undefined && { run: s.run }) };
+    return {
+      id: s.id,
+      steers: s.steers ?? [],
+      ...(s.run !== undefined && { run: s.run }),
+      compacting: s.compacting === true,
+    };
   },
   sendNow: sendSteerNow,
   queueInstead: queueSteerInstead,
@@ -870,7 +882,7 @@ async function resumeStoppedQueue(): Promise<void> {
 
 const COMPACTING_TEXT = "Compacting the context\u2026";
 
-/** The reader's compaction call while it runs: kiro-cli has no verb to stop it, so the row has no control. */
+/** The chat's compaction while it runs: kiro-cli has no verb to stop one, so the row has no control. */
 function buildCompactRow(): HTMLElement {
   const word = "Running";
   return el(

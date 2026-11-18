@@ -74,7 +74,7 @@ func TestQueue_OpenDropsAPreviousProcesssRevertAndCompactCall(t *testing.T) {
 	if len(c.Run) != 0 {
 		t.Errorf("run list after a restart = %+v, want no revert", c.Run)
 	}
-	if c.Compacting || c.Header().Run.Compacting {
+	if c.Compacting || c.Header().Compacting {
 		t.Error("the header still says a compaction runs after a restart, which no call ever ends")
 	}
 }

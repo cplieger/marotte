@@ -25,6 +25,7 @@ var (
 	errUnknownInterruptMode = errors.New("interrupt_mode must be steer or queue")
 	errRewindTargetNotFound = errors.New("rewind target is not a user message in this chat")
 	// Prose: the client appends it to "Compact failed: ".
+	errCompactRunning  = errors.New("the context is already being compacted")
 	errCompactNoBridge = errors.New("this chat's agent session could not be started, so the conversation was not compacted")
 	// Prose, not a code: the client appends the reason to "Couldn't rewind
 	// chat: ", so it reaches the user verbatim.

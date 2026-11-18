@@ -236,7 +236,7 @@ export function compactRefusal(s: Session | undefined): string | null {
   if (s === undefined || isEmptyChat(s)) {
     return "Send a message first, then compact the conversation";
   }
-  if (s.run?.compacting === true) {
+  if (s.compacting === true) {
     return "The context is already being compacted.";
   }
   return isBusy(s.id) ? "Compaction is unavailable while the agent is working." : null;

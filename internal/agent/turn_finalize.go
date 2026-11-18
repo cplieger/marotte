@@ -137,6 +137,7 @@ func (bc *bridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.Ch
 		answerWait = command.CancelGrace
 	}
 	result, outcome := bc.closeTurn(ctx, t, stop, reason, kind, tc.Closer)
+	bc.closeSummaryMark(ctx, chatID)
 	cf := bc.closeFactsOf(t, tc.Closer, outcome)
 	cf.answerWait = answerWait
 	t.closeFacts = listCloseOf(t, tc.Closer, &cf, &result)

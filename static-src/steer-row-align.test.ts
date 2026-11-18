@@ -40,9 +40,13 @@ afterEach(async () => {
   await browser.viewport(1280, 720);
 });
 
-function sourceOf(steers: readonly PendingSteer[], run: RunView): SteerStackSource {
+function sourceOf(
+  steers: readonly PendingSteer[],
+  run: RunView,
+  compacting = false,
+): SteerStackSource {
   return {
-    read: () => ({ id: "c1", steers: [...steers], run }),
+    read: () => ({ id: "c1", steers: [...steers], run, compacting }),
     edit: () => Promise.resolve(),
     editByClear: () => Promise.resolve(),
     remove: () => Promise.resolve(),
@@ -71,6 +75,7 @@ const STACKS: readonly {
   name: string;
   steers: PendingSteer[];
   run: RunView;
+  compacting?: boolean;
   phoneBaselines?: number;
 }[] = [
   {
@@ -112,7 +117,8 @@ const STACKS: readonly {
   {
     name: "compacting",
     steers: [],
-    run: runAt(1, [], { compacting: true }),
+    run: runAt(1, []),
+    compacting: true,
   },
 ];
 
@@ -148,7 +154,12 @@ describe("a holding-area row's state and message", () => {
         await browser.viewport(w, h);
         style = mountAppCSS();
         openStack(true);
-        const chat = await mountPane(h, 0, false, sourceOf(stack.steers, stack.run));
+        const chat = await mountPane(
+          h,
+          0,
+          false,
+          sourceOf(stack.steers, stack.run, stack.compacting),
+        );
         const rows = [...chat.area.querySelectorAll<HTMLElement>(".steer-stack > .steer-row")];
         expect(rows.length, "rows drawn").toBeGreaterThan(0);
         let baselines = 0;

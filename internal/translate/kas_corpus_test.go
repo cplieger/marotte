@@ -15,7 +15,7 @@ import (
 
 // The corpus under testdata/kas is KAS's live answer to marotte's own bridge, written by
 // internal/bridge's TestCaptureKASCorpus. Re-capture it there; never edit a line by hand.
-var kasCorpus = []string{"steer", "compact", "delegate", "elicit", "bot_role", "bot_policy", "bot_memory", "bot_memory_write", "bot_tangent", "content_collection"}
+var kasCorpus = []string{"steer", "compact", "compact_inturn", "delegate", "elicit", "bot_role", "bot_policy", "bot_memory", "bot_memory_write", "bot_tangent", "content_collection"}
 
 type kasCaptureHeader struct {
 	Recorded string `json:"recorded"`

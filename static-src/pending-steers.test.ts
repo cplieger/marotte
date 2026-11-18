@@ -109,7 +109,15 @@ const {
   resumeQueueDispatch,
 } = mocks;
 
-import { setSessions, setActive, recordSteerQueued, openTurn, appendEntry, get } from "./store.js";
+import {
+  setSessions,
+  setActive,
+  recordSteerQueued,
+  openTurn,
+  appendEntry,
+  get,
+  upsertHeader,
+} from "./store.js";
 import { initPendingSteers, mountSteerStack, type SteerStackSource } from "./pending-steers.js";
 import { signal } from "@cplieger/reactive";
 import { ICON_PAPERCLIP, ICON_QUEUE_UI, ICON_STEER } from "./icons.js";
@@ -947,11 +955,17 @@ describe("the steer stack", () => {
   const HEAD = turnEntry("t1", { origin: "prompt", kind: "row" });
 
   /** The chat's run order: `entries` behind a running turn when `turnRuns`, as the server lists them. */
-  function withRun(entries: RunEntryView[], over: Partial<RunView> = {}, turnRuns = true): void {
+  /** `compacting` is the header's mark beside the run order (`ChatHeader.compacting`). */
+  function withRun(
+    entries: RunEntryView[],
+    { compacting = false, ...over }: Partial<RunView> & { compacting?: boolean } = {},
+    turnRuns = true,
+  ): void {
     const head = turnRuns ? [HEAD] : [];
     setSessions([
       {
         ...makeSession("chat-1"),
+        compacting,
         run: runAt(++runVersion, [...head, ...entries], {
           ...(turnRuns ? { cancel: "t1", send: "steer" as const } : {}),
           ...over,
@@ -1637,7 +1651,7 @@ describe("the steer stack", () => {
     );
   });
 
-  // The reader's Compact is one kiro-cli call the header marks while it runs (`run.compacting`); no run-order entry.
+  // A compaction is one kiro-cli call the header marks while it runs (`compacting`); no run-order entry.
   it("draws the running compaction from the header's mark, with no control", () => {
     withRun([], { send: "prompt", compacting: true }, false);
 
@@ -1648,6 +1662,26 @@ describe("the steer stack", () => {
     expect(firstRow().getAttribute("aria-label")).toBe("Running: Compacting the context\u2026");
     expect(firstRow().querySelector(".steer-state-icon .steer-spinner")).not.toBeNull();
     expect(actions(firstRow())).toEqual([]);
+  });
+
+  // kiro-cli's compaction moves no run version, so each header frame is the mark's authority.
+  it("draws and clears the row from two headers at the same run version", () => {
+    withRun([], { send: "prompt" }, false);
+    const header = {
+      id: "chat-1",
+      name: "chat-1",
+      run: get("chat-1")!.run!,
+      usage: { context_pct: 0, context_size: 0, credits: 0, last_turn_ms: 0, has_real_data: false },
+      turn_count: 0,
+      created_at: 0,
+      updated_at: 0,
+    };
+
+    upsertHeader({ ...header, compacting: true });
+    expect(rows().map(textOf)).toEqual(["Compacting the context\u2026"]);
+
+    upsertHeader({ ...header, compacting: false });
+    expect(rows()).toEqual([]);
   });
 
   it("draws no compaction row while no call runs", () => {

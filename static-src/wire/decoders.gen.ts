@@ -540,6 +540,10 @@ export const decodeChatHeader: Decoder<ChatHeader> = (v) => {
     const $v = own(o, "tangent");
     if ($v !== undefined && $v !== null) out.tangent = reqBool(o, "tangent", "$.chat_header");
   }
+  {
+    const $v = own(o, "compacting");
+    if ($v !== undefined && $v !== null) out.compacting = reqBool(o, "compacting", "$.chat_header");
+  }
   return out;
 };
 
@@ -4868,10 +4872,6 @@ export const decodeRunView: Decoder<RunView> = (v) => {
   {
     const $v = own(o, "cancel");
     if ($v !== undefined && $v !== null) out.cancel = reqStr(o, "cancel", "$.run_view");
-  }
-  {
-    const $v = own(o, "compacting");
-    if ($v !== undefined && $v !== null) out.compacting = reqBool(o, "compacting", "$.run_view");
   }
   return out;
 };

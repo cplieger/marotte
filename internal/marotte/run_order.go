@@ -240,8 +240,6 @@ type RunView struct {
 	// UnreadWait is where the chat's unsent steers go.
 	UnreadWait RunWait `json:"unread_wait"`
 	Version    uint64  `json:"version"`
-	// Compacting is true while the reader's Compact call to kiro-cli runs (Chat.Compacting). Nothing waits on it.
-	Compacting bool `json:"compacting,omitempty"`
 }
 
 // CancelTarget is the first live turn-kind entry starting or running: what a Cancel naming no target stops. It

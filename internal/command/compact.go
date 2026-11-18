@@ -44,7 +44,7 @@ const (
 	// CompactStarted is a call sent to kiro-cli; its outcome reaches the chat later, as kiro-cli's compaction entry
 	// or one toast.
 	CompactStarted CompactOutcome = iota
-	// CompactRunning is a press while the chat's call runs: no second call is sent.
+	// CompactRunning is a press while the chat's call runs: no second call is sent, and the press is refused.
 	CompactRunning
 	// CompactNoSession is a chat with no live agent session to compact.
 	CompactNoSession
@@ -66,6 +66,7 @@ func cmdCompact(ctx context.Context, compacts compactRequester, cmd *marotte.Cli
 		return nil, StatusError(http.StatusConflict, errCompactNoBridge)
 	case out == CompactRunning:
 		slog.Info("compact already running", "chat", cmd.ChatID)
+		return nil, StatusError(http.StatusConflict, errCompactRunning)
 	default:
 		slog.Info("compact started", "chat", cmd.ChatID)
 	}

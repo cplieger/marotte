@@ -25,7 +25,7 @@ interface Shape {
   queued: number;
   /** The first queued row the reader's stop paused: rows from it on wait for Resume. */
   pausedFrom: number | null;
-  /** The reader's compaction call runs (`run.compacting`). */
+  /** A compaction runs in the chat (`ChatHeader.compacting`). */
   compacting: boolean;
   runs: number;
   runsOpen: boolean;
@@ -97,11 +97,10 @@ function sourceOf(s: Shape): SteerStackSource {
       : rowEntry(id, wait, { send_now: stopped ? "now" : "stop" });
   });
   const run = stopped
-    ? runAt(1, entries, { send: "prompt", compacting: s.compacting })
+    ? runAt(1, entries, { send: "prompt" })
     : runAt(1, [turnEntry("t1", { origin: "prompt", kind: "row" }), ...entries], {
         cancel: "t1",
         send: "steer",
-        compacting: s.compacting,
       });
   const steers = Array.from({ length: s.steers }, (_, i): PendingSteer => ({
     id: `steer-${String(i + 1)}`,
@@ -109,7 +108,7 @@ function sourceOf(s: Shape): SteerStackSource {
     origin: "user",
   }));
   return {
-    read: () => ({ id: "c1", steers, run }),
+    read: () => ({ id: "c1", steers, run, compacting: s.compacting }),
     edit: () => Promise.resolve(),
     editByClear: () => Promise.resolve(),
     remove: () => Promise.resolve(),

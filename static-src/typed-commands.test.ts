@@ -134,8 +134,16 @@ describe("handleTypedCommand", () => {
 
   it("refuses /compact while the chat's compaction runs", () => {
     seedConversation();
-    runVersion += 1;
-    store.applyRun("c1", runAt(runVersion, [], { compacting: true }));
+    store.upsertHeader({
+      id: "c1",
+      name: "test",
+      run: runAt(++runVersion, []),
+      usage: { context_pct: 0, context_size: 0, credits: 0, last_turn_ms: 0, has_real_data: false },
+      turn_count: 1,
+      created_at: 0,
+      updated_at: 0,
+      compacting: true,
+    });
     expect(handleTypedCommand("c1", "/compact")).toBe(true);
     expect(dispatch).not.toHaveBeenCalled();
     expect(toasts).toEqual(["The context is already being compacted."]);

@@ -557,6 +557,11 @@ export interface ChatHeader {
   supervised_mode?: boolean;
   /** Tangent mirrors Chat's for the merge controls. */
   tangent?: boolean;
+  /**
+   * Compacting mirrors Chat's for the dock's Compacting row and the Compact controls. Outside Run: the run version
+   * does not move with it, so a page takes it from every header.
+   */
+  compacting?: boolean;
 }
 
 /**
@@ -4126,8 +4131,6 @@ export interface RunView {
   /** UnreadWait is where the chat's unsent steers go. */
   unread_wait: RunWait;
   version: number;
-  /** Compacting is true while the reader's Compact call to kiro-cli runs (Chat.Compacting). Nothing waits on it. */
-  compacting?: boolean;
 }
 
 /** RunWait is when an entry runs, counted from the entries ahead of it. */

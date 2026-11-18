@@ -63,22 +63,30 @@ const maxCompactionDetailBytes = 200
 func (t *Translator) handleCompactionFailed(ctx context.Context, chatID marotte.ChatID, errMsg string) {
 	detail := cmp.Or(errMsg, "compaction failed")
 	detail = textsafe.SanitizeSingleLineBounded(detail, maxCompactionDetailBytes)
-	slog.Warn("kiro-cli reported the summary failed", "chat_id", chatID, "reason", detail)
 	// A refused append means the chat is gone: no banner for a chat nobody holds.
-	turnID := ""
+	turnID, first := "", true
 	if !t.appendLaneless(durable.Context(ctx), chatID, marotte.EntryKindCompactionFailed,
 		"", marotte.EntryCompactionFailed{Reason: detail},
 		func(ctx context.Context, turn *turnlog.Turn) ([]turnlog.Sealed, error) {
 			turnID = turn.ID()
-			return turn.CompactionFailed(ctx, detail)
+			sealed, ok, err := turn.CompactionFailed(ctx, detail)
+			first = ok
+			return sealed, err
 		}) {
+		slog.Warn("kiro-cli reported the summary failed", "chat_id", chatID, "reason", detail)
 		return
 	}
-	// TurnScoped though no turn ends here: the entry just appended shows detail in its turn's card, which is all the
-	// client's on-screen suppression needs.
-	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
-		Code: marotte.ErrCodeCompactionFailed, Message: detail, TurnScoped: true,
-	}))
+	if first {
+		slog.Warn("kiro-cli reported the summary failed", "chat_id", chatID, "reason", detail)
+		// TurnScoped though no turn ends here: the entry just appended shows detail in its turn's card, which is all
+		// the client's on-screen suppression needs.
+		t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
+			Code: marotte.ErrCodeCompactionFailed, Message: detail, TurnScoped: true,
+		}))
+	} else {
+		slog.Warn("kiro-cli reported the summary failed again in this turn", "chat_id", chatID, "turn_id", turnID,
+			"reason", detail)
+	}
 	t.compaction.ObserveCompactionFailed(chatID)
 	// A compaction failure does not prove the turn ended; CompactionFailed decides whether the host bounds it.
 	// Recorded between turns, it names no turn to bound.

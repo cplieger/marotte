@@ -65,6 +65,8 @@ type baseDeps struct {
 	compactionFailures []compactionFailure
 	// failuresObserved counts the summary failures ObserveCompactionFailed heard.
 	failuresObserved int
+	// summaryRunning is each ObserveSummaryRunning call's running, in order.
+	summaryRunning []bool
 	// catalogModels is the last model list SetModels was handed.
 	catalogModels []marotte.SessionModel
 	// parent is returned by ParentACPSession; "" means parent unknown.
@@ -737,6 +739,10 @@ func (d *baseDeps) CompactionFailed(chatID marotte.ChatID, turnID, detail string
 }
 
 func (d *baseDeps) ObserveCompactionFailed(marotte.ChatID) { d.failuresObserved++ }
+
+func (d *baseDeps) ObserveSummaryRunning(_ context.Context, _ marotte.ChatID, running bool) {
+	d.summaryRunning = append(d.summaryRunning, running)
+}
 
 // AccumulateSpend and StageConversationTurnSummary stand in for the host's per-turn
 // accounting by writing the chat's usage directly (the host's no-open-turn path).

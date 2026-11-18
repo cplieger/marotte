@@ -140,7 +140,7 @@ describe("send-state precedence", () => {
   });
 });
 
-// Cancel names what the server would stop (`RunView.cancel`): the reader's compaction call alone is never stopped by it.
+// Cancel names what the server would stop (`RunView.cancel`): a running compaction alone is never stopped by it.
 describe("send-state from the run order", () => {
   it("shows Cancel exactly while the server names something to stop", () => {
     const id = "c1";
@@ -149,8 +149,7 @@ describe("send-state from the run order", () => {
     setSSEStatus("connected");
     expect(lastPushed()).toEqual({ kind: "idle" });
 
-    version += 1;
-    applyRun(id, runAt(version, [], { send: "prompt", compacting: true }));
+    setSessions([{ ...makeSession(id), compacting: true }]);
     expect(lastPushed()).toEqual({ kind: "idle" });
 
     turnRuns(id, true);

@@ -926,9 +926,9 @@ func (l *runList) idleExpired(e *runEntry) bool {
 	return false
 }
 
-// sendNow moves a row to the front of the pending entries and names the entry the press stops: stop's entry only while it is the lone live turn, starting or running (hasStop false names
-// RunView.Cancel's target under the same rule). A named entry marks the press for the stop the caller then makes
-// (readerStop).
+// sendNow moves a row to the front of the pending entries and names the entry the press stops: stop's entry only
+// while it is the lone live turn, starting or running (hasStop false names RunView.Cancel's target under the same
+// rule). A named entry marks the press for the stop the caller then makes (readerStop).
 func (l *runList) sendNow(id, stop string, hasStop bool) (*runEntry, error) {
 	_, e := l.find(id)
 	switch {

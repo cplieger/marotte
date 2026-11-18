@@ -62,7 +62,7 @@ func (s *Store) logFor(ctx context.Context, chatID marotte.ChatID) (*EntryLog, e
 // store-open closer. A row whose id a turn_open already carries was sent and only lost its removal, so it goes; every
 // other row is held, shown and never sent automatically, because nothing in this process saw it queued, and every
 // entry that is not a row (a head, a retry) goes with the process that ran it (marotte.SanitizeRun), as does a
-// Compact call's Chat.Compacting. It answers the header, nil for a chat with no header, which has nothing to settle,
+// compaction's Chat.Compacting. It answers the header, nil for a chat with no header, which has nothing to settle,
 // and whether it saved one, which it does not announce. Caller holds the chat's mutex.
 func (s *Store) holdQueuedLocked(ctx context.Context, chatID marotte.ChatID, l *EntryLog) (*marotte.Chat, bool, error) {
 	c, err := s.load(ctx, chatID)

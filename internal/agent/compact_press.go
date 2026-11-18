@@ -15,8 +15,8 @@ import (
 )
 
 // compactCallBudget bounds one compaction call. Above KAS's 300 s _kiro/session/compact bound, so it only covers a
-// wedged bridge. A var for tests.
-var compactCallBudget = 310 * time.Second
+// wedged bridge.
+const compactCallBudget = 310 * time.Second
 
 // compactRefusedDetail is the toast for KAS's bare {success: false}, which names no cause. KAS discards a finished
 // summary when the session's history moved while it ran (kirodotdev/Kiro#12483).
@@ -38,13 +38,13 @@ type compactPresses struct {
 	bridgeOf func(marotte.ChatID) *sharedBridge
 	compact  func(context.Context, command.CompactBridge) (bool, uint64, error)
 	// budget bounds one call, extended through an engine stall; folded waits until the frames before a reply's lane
-	// position are folded. Both nil in tests.
+	// position are folded.
 	budget func(context.Context, time.Duration) (context.Context, context.CancelFunc)
 	folded func(ctx context.Context, chatID marotte.ChatID, seq uint64) bool
-	// showRunning writes Chat.Compacting, which the header projects (RunView.Compacting).
-	showRunning func(ctx context.Context, chatID marotte.ChatID, on bool)
-	toast       func(ctx context.Context, chatID marotte.ChatID, detail string)
-	spawn       func(func()) bool
+	// setMark writes Chat.Compacting from the chat's life, which the header projects (ChatHeader.Compacting).
+	setMark func(ctx context.Context, lc *chatLifecycle)
+	toast   func(ctx context.Context, chatID marotte.ChatID, detail string)
+	spawn   func(func()) bool
 }
 
 func newCompactPresses(bc *bridgeCoordinator) *compactPresses {
@@ -59,10 +59,10 @@ func newCompactPresses(bc *bridgeCoordinator) *compactPresses {
 			}
 			return nil
 		},
-		compact:     command.Compact,
-		budget:      bc.engine.stallAware,
-		folded:      bc.turns.awaitPosition,
-		showRunning: bc.markCompacting,
+		compact: command.Compact,
+		budget:  bc.engine.stallAware,
+		folded:  bc.turns.awaitPosition,
+		setMark: bc.setMark,
 		toast: func(ctx context.Context, chatID marotte.ChatID, detail string) {
 			bc.broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
 				Code: marotte.ErrCodeCompactionFailed, Message: detail,
@@ -87,14 +87,15 @@ func (p *compactPresses) request(ctx context.Context, chatID marotte.ChatID) (co
 	case lc.ended:
 		lc.mu.Unlock()
 		return command.CompactNoSession, marotte.ErrChatClosedDuringCall
-	case lc.compactPress != nil:
+	case lc.compactPress != nil, lc.summaryRunning:
+		// KAS answers a press during its own summary with a bare {success: false} before that summary lands.
 		lc.mu.Unlock()
 		return command.CompactRunning, nil
 	}
 	call := &compactCall{}
 	lc.compactPress = call
 	lc.mu.Unlock()
-	p.showRunning(ctx, chatID, true)
+	p.setMark(ctx, lc)
 	if !p.spawn(func() { p.run(lc, b, call) }) {
 		p.end(lc, call)
 		return command.CompactNoSession, errRuntimeDraining
@@ -125,16 +126,28 @@ func (p *compactPresses) run(lc *chatLifecycle, b *sharedBridge, call *compactCa
 	}
 }
 
-// end clears the press's running mark, then frees the chat for the next press, so a later press's mark is never
-// cleared by this one. It reports whether kiro-cli reported the call's failure itself.
+// end frees the chat for the next press and rewrites the mark. It reports whether kiro-cli reported the call's
+// failure itself.
 func (p *compactPresses) end(lc *chatLifecycle, call *compactCall) (reported bool) {
-	p.showRunning(lc.ctx, lc.chatID, false)
 	lc.mu.Lock()
-	defer lc.mu.Unlock()
 	if lc.compactPress == call {
 		lc.compactPress = nil
 	}
-	return call.reported
+	reported = call.reported
+	lc.mu.Unlock()
+	p.setMark(lc.ctx, lc)
+	return reported
+}
+
+// setMark writes Chat.Compacting from lc's state as it stands under markMu: each change is followed by a setMark, so
+// the last write holds the last state whatever order two writers ran in.
+func (bc *bridgeCoordinator) setMark(ctx context.Context, lc *chatLifecycle) {
+	lc.markMu.Lock()
+	defer lc.markMu.Unlock()
+	lc.mu.Lock()
+	on := lc.compactPress != nil || lc.summaryRunning
+	lc.mu.Unlock()
+	bc.markCompacting(ctx, lc.chatID, on)
 }
 
 // markCompacting writes Chat.Compacting detached: the clear runs once the chat's life ended the call too.
@@ -162,10 +175,30 @@ func (bc *bridgeCoordinator) ObserveCompactionFailed(chatID marotte.ChatID) {
 	}
 }
 
+// ObserveSummaryRunning marks kiro-cli's own summary in the header between its running frame and its outcome.
+func (bc *bridgeCoordinator) ObserveSummaryRunning(ctx context.Context, chatID marotte.ChatID, running bool) {
+	lc, ok := bc.turns.lookup(chatID)
+	if !ok {
+		bc.markCompacting(ctx, chatID, running)
+		return
+	}
+	lc.mu.Lock()
+	lc.summaryRunning = running
+	lc.mu.Unlock()
+	bc.setMark(ctx, lc)
+}
+
+// closeSummaryMark clears a mark kiro-cli's summary left when its turn closed with no outcome frame.
+func (bc *bridgeCoordinator) closeSummaryMark(ctx context.Context, chatID marotte.ChatID) {
+	if c, ok := bc.chatStore.Get(ctx, chatID); ok && c.Compacting {
+		bc.ObserveSummaryRunning(ctx, chatID, false)
+	}
+}
+
 // call makes one compaction call. A call KAS answered waits for the frames before its reply, so kiro-cli's own
 // failure report is heard before the outcome is settled.
 func (p *compactPresses) call(ctx context.Context, chatID marotte.ChatID, b *sharedBridge) (bool, error) {
-	callCtx, cancel := p.callContext(ctx)
+	callCtx, cancel := p.budget(ctx, compactCallBudget)
 	defer cancel()
 	var (
 		accepted bool
@@ -176,15 +209,8 @@ func (p *compactPresses) call(ctx context.Context, chatID marotte.ChatID, b *sha
 		accepted, seq, cErr = p.compact(ctx, s)
 		return cErr
 	})
-	if err == nil && p.folded != nil && !p.folded(callCtx, chatID, seq) {
+	if err == nil && !p.folded(callCtx, chatID, seq) {
 		slog.Warn("compaction: the frames before its reply never folded", "chat_id", chatID)
 	}
 	return accepted, err
-}
-
-func (p *compactPresses) callContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	if p.budget != nil {
-		return p.budget(ctx, compactCallBudget)
-	}
-	return context.WithTimeout(ctx, compactCallBudget)
 }

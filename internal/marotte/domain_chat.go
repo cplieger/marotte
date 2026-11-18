@@ -576,8 +576,9 @@ type Chat struct {
 	// SpendInherited marks a tangent whose forked session's totals include the parent's spend up to
 	// the fork, until its first session_usage settles the baseline (SetSessionCredits).
 	SpendInherited bool `json:"spend_inherited,omitempty"`
-	// Compacting is set while the reader's Compact call to kiro-cli runs. It goes with the process that ran the
-	// call: the log's first open in a process clears one an earlier process left.
+	// Compacting is set while a compaction runs: the reader's Compact call, or kiro-cli's own summary between its
+	// running and outcome frames. It goes with the process that set it: the log's first open in a process clears one
+	// an earlier process left.
 	Compacting bool `json:"compacting,omitempty"`
 }
 
@@ -751,16 +752,11 @@ func (c *Chat) Header() ChatHeader {
 		PendingEffort:       c.PendingEffort,
 		SupervisedMode:      c.SupervisedMode,
 		CompactionWatermark: c.CompactionWatermark,
-		Run:                 c.runView(),
+		Run:                 RunViewOf(c.Run, c.RunVersion),
 		Tangent:             c.Tangent,
+		Compacting:          c.Compacting,
 		Bot:                 c.Bot.summary(c.LastTurnEndedAt),
 	}
-}
-
-func (c *Chat) runView() RunView {
-	v := RunViewOf(c.Run, c.RunVersion)
-	v.Compacting = c.Compacting
-	return v
 }
 
 // MoveToModel points the chat at model. A move drops what the old model's session reported
@@ -870,6 +866,9 @@ type ChatHeader struct {
 	SupervisedMode bool   `json:"supervised_mode,omitempty"`
 	// Tangent mirrors Chat's for the merge controls.
 	Tangent bool `json:"tangent,omitempty"`
+	// Compacting mirrors Chat's for the dock's Compacting row and the Compact controls. Outside Run: the run version
+	// does not move with it, so a page takes it from every header.
+	Compacting bool `json:"compacting,omitempty"`
 }
 
 // SessionChain returns the same set as Chat.SessionChain.

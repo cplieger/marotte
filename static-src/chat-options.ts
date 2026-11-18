@@ -349,7 +349,7 @@ function compactRow(): HTMLElement {
   effect(() => {
     const session = activeSession.value;
     const empty = isEmptyChat(session);
-    const running = session?.run?.compacting === true;
+    const running = session?.compacting === true;
     const busy = session !== undefined && watchBusy(session.id);
     const nextHint = empty
       ? COMPACT_HINT_EMPTY

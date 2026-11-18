@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -87,6 +88,13 @@ func compactionToasts(t *testing.T, h *Runtime) []string {
 	return out
 }
 
+// compactingShown is the chat header's Compacting, which every header a page takes carries.
+func compactingShown(t *testing.T, cs *testChatStore) bool {
+	t.Helper()
+	c, ok := cs.Get(t.Context(), "c1")
+	return ok && c.Header().Compacting
+}
+
 var pressToolCalls atomic.Int64
 
 // agentToolCallMsg is a tool call the chat's own agent opens, which KAS sends before its response's reading.
@@ -146,15 +154,17 @@ func TestCompactPress_ARefusalIsOneCallAndOneToast(t *testing.T) {
 	}
 }
 
-// A second press while the first one's call runs sends no second call and is answered at once.
+// A second press while the first one's call runs sends no second call and is refused at once, in words the page
+// shows.
 func TestCompactPress_ASecondPressWhileOneRunsSendsNoSecondCall(t *testing.T) {
 	h, _, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	release := holdCall(t, br, marotte.MethodSessionCompact)
 	first := pressCompact(t, h)
 	waitForCall(t, br, marotte.MethodSessionCompact)
 
-	if rec := answeredWithin2s(t, pressCompact(t, h)); rec.Code != http.StatusOK {
-		t.Errorf("second press = %d %s, want 200", rec.Code, rec.Body.String())
+	rec := answeredWithin2s(t, pressCompact(t, h))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "the context is already being compacted") {
+		t.Errorf("second press = %d %s, want 409 saying the context is already being compacted", rec.Code, rec.Body.String())
 	}
 	release()
 	answeredWithin2s(t, first)
@@ -187,41 +197,137 @@ func TestCompactPress_TheHeaderShowsTheCallWhileItRuns(t *testing.T) {
 			h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 			br.setCallResult(marotte.MethodSessionCompact, json.RawMessage(answer))
 			release := holdCall(t, br, marotte.MethodSessionCompact)
-			if runView(t, cs, "c1").Compacting {
+			if compactingShown(t, cs) {
 				t.Fatal("Setup: the header shows a compaction before any press")
 			}
 
 			answeredWithin2s(t, pressCompact(t, h))
 			waitForCall(t, br, marotte.MethodSessionCompact)
-			if !runView(t, cs, "c1").Compacting {
+			if !compactingShown(t, cs) {
 				t.Error("the header does not show the running compaction")
 			}
 			release()
 
-			waitFor(t, func() bool { return !runView(t, cs, "c1").Compacting })
+			waitFor(t, func() bool { return !compactingShown(t, cs) })
 		})
 	}
 }
 
-// kiro-cli's own report that its summary failed is the outcome the reader sees: the press's refusal after it adds
-// no second toast.
+// kiro-cli's own report that its summary failed is the outcome the reader sees. KAS's handleCompact sends no
+// failure frame, so the report comes from a wake turn's own summary while the press's call runs: turn_start, the
+// failed summarization frame, turn_end, then the call answers success false. The refusal after it adds no toast.
 func TestCompactPress_KiroCLIsFailureReportIsTheOneOutcome(t *testing.T) {
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	br.setCallResult(marotte.MethodSessionCompact, json.RawMessage(`{"success":false}`))
-	br.mu.Lock()
-	br.notifsOnCall = map[string][]*marotte.RPCResponse{marotte.MethodSessionCompact: {
-		newSessionInfoMsg(map[string]any{"summarization": map[string]any{"status": "model error"}}),
-	}}
-	br.mu.Unlock()
-
+	release := holdCall(t, br, marotte.MethodSessionCompact)
 	answeredWithin2s(t, pressCompact(t, h))
+	waitForCall(t, br, marotte.MethodSessionCompact)
 
-	waitFor(t, func() bool { return len(compactionToasts(t, h)) >= 1 })
+	send(t, h,
+		newTurnStartMsg(),
+		newSessionInfoMsg(map[string]any{"summarization": map[string]any{"status": "model error"}}),
+		newTurnEndMsg("end_turn"),
+	)
+	waitFor(t, func() bool { return len(compactionToasts(t, h)) == 1 })
+	release()
+
+	waitFor(t, func() bool { return !compactingShown(t, cs) })
 	staysFalse(t, 200*time.Millisecond, func() bool { return len(compactionToasts(t, h)) != 1 },
 		"kiro-cli's failure report and the press's refusal both toasted")
 	if got := failedRows(t, cs, "c1"); len(got) != 1 || got[0] != "model error" {
 		t.Errorf("compaction_failed rows = %q, want kiro-cli's one, \"model error\"", got)
 	}
+}
+
+// kiro-cli's own in-turn summary shows in the header between its running frame and its outcome, and a turn that
+// closes with no outcome frame leaves no mark behind.
+func TestCompaction_KiroCLIsInTurnSummaryShowsWhileItRuns(t *testing.T) {
+	t.Run("running then landed", func(t *testing.T) {
+		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+		send(t, h, newTurnStartMsg(), newSessionInfoMsg(map[string]any{
+			"kind": "summarization_started", "summarization": map[string]any{"status": "running"},
+		}))
+		waitFor(t, func() bool { return compactingShown(t, cs) })
+
+		send(t, h, newSessionInfoMsg(map[string]any{"summarization": map[string]any{
+			"status": "success", "summary": map[string]any{"conversationSummary": "the summary"},
+		}}))
+		waitFor(t, func() bool { return !compactingShown(t, cs) })
+		send(t, h, newTurnEndMsg("end_turn"))
+	})
+	t.Run("running then the turn closes", func(t *testing.T) {
+		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+		send(t, h, newTurnStartMsg(), newSessionInfoMsg(map[string]any{
+			"kind": "summarization_started", "summarization": map[string]any{"status": "running"},
+		}))
+		waitFor(t, func() bool { return compactingShown(t, cs) })
+
+		send(t, h, newTurnEndMsg("end_turn"))
+		waitFor(t, func() bool { return !compactingShown(t, cs) })
+	})
+}
+
+// A press while kiro-cli's own summary runs sends no call and is refused in the page's words: KAS answers one with
+// {success: false} before its summary lands. The header keeps the summary's mark until its outcome.
+func TestCompactPress_DuringKiroCLIsSummaryIsRefused(t *testing.T) {
+	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+	send(t, h, newTurnStartMsg(), newSessionInfoMsg(map[string]any{
+		"kind": "summarization_started", "summarization": map[string]any{"status": "running"},
+	}))
+	waitFor(t, func() bool { return compactingShown(t, cs) })
+
+	rec := answeredWithin2s(t, pressCompact(t, h))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "the context is already being compacted") {
+		t.Errorf("press = %d %s, want 409 saying the context is already being compacted", rec.Code, rec.Body.String())
+	}
+	staysFalse(t, 200*time.Millisecond, func() bool { return compactCallCount(br) != 0 || !compactingShown(t, cs) },
+		"the press sent a call or cleared the summary's mark")
+
+	send(t, h, newSessionInfoMsg(map[string]any{"summarization": map[string]any{
+		"status": "success", "summary": map[string]any{"conversationSummary": "the summary"},
+	}}))
+	waitFor(t, func() bool { return !compactingShown(t, cs) })
+	send(t, h, newTurnEndMsg("end_turn"))
+}
+
+// A press whose call ends while kiro-cli's own summary runs leaves the summary's mark, and the summary's outcome
+// leaves a running press's mark: the header clears only once both ended.
+func TestCompaction_TheMarkOutlivesWhicheverEndsFirst(t *testing.T) {
+	summaryRunning := newSessionInfoMsg(map[string]any{
+		"kind": "summarization_started", "summarization": map[string]any{"status": "running"},
+	})
+	summaryLanded := newSessionInfoMsg(map[string]any{"summarization": map[string]any{
+		"status": "success", "summary": map[string]any{"conversationSummary": "the summary"},
+	}})
+	t.Run("the press ends first", func(t *testing.T) {
+		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+		br.setCallResult(marotte.MethodSessionCompact, json.RawMessage(`{"success":false}`))
+		release := holdCall(t, br, marotte.MethodSessionCompact)
+		answeredWithin2s(t, pressCompact(t, h))
+		waitForCall(t, br, marotte.MethodSessionCompact)
+		send(t, h, newTurnStartMsg(), summaryRunning)
+
+		release()
+		waitFor(t, func() bool { return len(compactionToasts(t, h)) == 1 })
+		staysFalse(t, 200*time.Millisecond, func() bool { return !compactingShown(t, cs) },
+			"the press's end cleared the mark of the summary still running")
+
+		send(t, h, summaryLanded)
+		waitFor(t, func() bool { return !compactingShown(t, cs) })
+		send(t, h, newTurnEndMsg("end_turn"))
+	})
+	t.Run("the summary ends first", func(t *testing.T) {
+		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+		release := holdCall(t, br, marotte.MethodSessionCompact)
+		answeredWithin2s(t, pressCompact(t, h))
+		waitForCall(t, br, marotte.MethodSessionCompact)
+		send(t, h, newTurnStartMsg(), summaryRunning, summaryLanded, newTurnEndMsg("end_turn"))
+
+		staysFalse(t, 200*time.Millisecond, func() bool { return !compactingShown(t, cs) },
+			"the summary's outcome cleared the mark of the press still running")
+		release()
+		waitFor(t, func() bool { return !compactingShown(t, cs) })
+	})
 }
 
 // marotte starts no compaction of its own: neither a turn end over the stored reading nor an in-turn reading at

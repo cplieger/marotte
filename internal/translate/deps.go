@@ -434,6 +434,9 @@ type turnInterruptAccess interface {
 type compactionObserver interface {
 	// ObserveCompactionFailed hears kiro-cli report a summary failed, after its row and toast went out.
 	ObserveCompactionFailed(chatID marotte.ChatID)
+	// ObserveSummaryRunning hears kiro-cli's summary start (true) or reach its outcome (false), for the header's
+	// Compacting mark.
+	ObserveSummaryRunning(ctx context.Context, chatID marotte.ChatID, running bool)
 }
 
 // turnMetering is the per-turn accounting a turn_completion frame writes, split

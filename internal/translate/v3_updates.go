@@ -481,9 +481,12 @@ func logUnconsumedInfoKind(chatID marotte.ChatID, kind string) {
 }
 
 func (t *Translator) handleV3Summarization(ctx context.Context, chatID marotte.ChatID, s *v3Summarization) {
-	switch s.Status {
-	case "running":
+	if s.Status == "running" {
+		t.compaction.ObserveSummaryRunning(ctx, chatID, true)
 		t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventCompactionStarted, chatID, marotte.CompactionStartedPayload{}))
+		return
+	}
+	switch s.Status {
 	case "success":
 		var summary *string
 		if s.Summary != nil {
@@ -496,6 +499,7 @@ func (t *Translator) handleV3Summarization(ctx context.Context, chatID marotte.C
 	default:
 		t.handleCompactionFailed(ctx, chatID, s.Status)
 	}
+	t.compaction.ObserveSummaryRunning(ctx, chatID, false)
 }
 
 // persistTurnSummary routes a chat turn's metering frame to the open turn's aggregate and the
