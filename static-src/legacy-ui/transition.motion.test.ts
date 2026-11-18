@@ -1,7 +1,9 @@
 // Injects real stylesheets and uses real timers so an actual CSS transition can
 // run, which a synthetic transitionend event cannot observe. `transitionend` is
 // the assertion throughout, never elapsed time (flaky on a loaded box).
-import { describe, it, expect, afterEach, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, afterEach, beforeAll, afterAll, vi } from "vitest";
+
+import { until } from "../__test-helpers__/until.js";
 
 import { createDialog } from "./dialog.js";
 import { createDisclosure } from "./disclosure.js";
@@ -78,6 +80,7 @@ describe("the committed start state, against real CSS", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     document.body.innerHTML = "";
   });
 
@@ -226,6 +229,54 @@ describe("the committed start state, against real CSS", () => {
     expect(region.style.height).toBe("");
 
     ctl.dispose();
+  });
+
+  /** A probe running an opacity transition through `runTransition` that outlasts the test, and
+   *  whether its settle has run and ran while the fade still did. */
+  function longFade(): { settled: () => boolean; whileRunning: () => boolean } {
+    const probe = document.createElement("div");
+    probe.style.opacity = "0";
+    probe.style.transition = "opacity 60s linear";
+    document.body.appendChild(probe);
+    let done = false;
+    let running = false;
+    runTransition(probe, {
+      change: () => {
+        probe.style.opacity = "1";
+      },
+      settled: () => {
+        done = true;
+        running = probe.getAnimations().length > 0;
+      },
+    });
+    expect(probe.getAnimations().length, "the premise: the fade runs").toBe(1);
+    return { settled: () => done, whileRunning: () => running };
+  }
+
+  // A hidden page runs no rendering update, so a running transition's `finished` and
+  // `transitionend` wait until it is shown; the mocked visibility stands in for that.
+  it("settles at the ceiling on a hidden page instead of waiting for a transition's end", async () => {
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    const { settled, whileRunning } = longFade();
+
+    await until(settled, "the hidden page's settle");
+    expect(whileRunning(), "settled while the fade still ran").toBe(true);
+  });
+
+  it("settles when the page hides while the ceiling waits on a running transition", async () => {
+    const { settled, whileRunning } = longFade();
+    // Armed after the ceiling's 400 ms timer, so it runs after it.
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 500);
+    });
+    expect(settled(), "the premise: the ceiling waits on the fade").toBe(false);
+
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    document.dispatchEvent(new Event("visibilitychange"));
+    await settle();
+
+    expect(settled(), "the hide settled it").toBe(true);
+    expect(whileRunning(), "settled while the fade still ran").toBe(true);
   });
 
   it("fades a popup on hide, finishing on its own transitionend rather than the ceiling", async () => {

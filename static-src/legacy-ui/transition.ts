@@ -48,13 +48,14 @@ function stillRunning(el: HTMLElement, property: string): boolean {
 /** @internal Arm one settle on `el`: the first `transitionend` whose target is
  *  `el` and whose property no newer transition still runs, or the fallback
  *  ceiling, whichever comes first; at the ceiling, the end of every transition
- *  still running on `el`. Fires once; returns its cancel. */
+ *  still running on `el`, or the page hiding. Fires once; returns its cancel. */
 export function watchSettle(el: HTMLElement, onSettled: () => void): () => void {
   let armed = true;
   let timer: ReturnType<typeof setTimeout> | null = null;
   const detach = (): void => {
     armed = false;
     el.removeEventListener("transitionend", onEnd);
+    document.removeEventListener("visibilitychange", onHide);
     if (timer !== null) {
       clearTimeout(timer);
       timer = null;
@@ -71,6 +72,13 @@ export function watchSettle(el: HTMLElement, onSettled: () => void): () => void 
       fire();
     }
   };
+  // A hidden page runs no rendering update, so a running transition's `finished` would wait
+  // until the page is shown: hidden, the ceiling settles at once.
+  const onHide = (): void => {
+    if (document.visibilityState === "hidden") {
+      fire();
+    }
+  };
   // A cancelled transition rejects `finished`, and one cancelled for a replacement leaves that
   // one running, so each round settles every promise and reads what runs now.
   const onCeiling = (): void => {
@@ -79,10 +87,11 @@ export function watchSettle(el: HTMLElement, onSettled: () => void): () => void 
       return;
     }
     const running = el.getAnimations().filter((a) => a instanceof CSSTransition);
-    if (running.length === 0) {
+    if (running.length === 0 || document.visibilityState === "hidden") {
       fire();
       return;
     }
+    document.addEventListener("visibilitychange", onHide);
     void Promise.allSettled(running.map((a) => a.finished)).then(onCeiling);
   };
   el.addEventListener("transitionend", onEnd);
