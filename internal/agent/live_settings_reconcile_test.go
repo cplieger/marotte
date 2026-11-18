@@ -441,7 +441,7 @@ func TestOpenBridge_ReloadingAMarkedChatWithTheMCPStoreHeldWaitsOnlyThePushBound
 		if err != nil {
 			t.Fatalf("Setup: OpenBridge: %v", err)
 		}
-		writeSetting(t, configDir, settings.KeyMemoryMode, "learn")
+		writeSetting(t, configDir, settings.KeyBackgroundJobs, true)
 		writeSetting(t, configDir, settings.KeyMCPWaitForReady, true)
 
 		if waited := openWithin(t, h, "c1", 3*ignorePushTimeout); waited > ignorePushTimeout {

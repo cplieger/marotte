@@ -2983,26 +2983,18 @@ func TestStdinPublication_IsRaceFree(t *testing.T) {
 	wg.Wait()
 }
 
-// TestLoadSession_ReAssertsMemoryReflection pins that KAS freezes an explicit session's mode, so a resume re-sends reflection
-// as the string KAS's select takes (a boolean is a no-op).
-func TestLoadSession_ReAssertsMemoryReflection(t *testing.T) {
-	for _, on := range []bool{false, true} {
-		want := marotte.ConfigValueAutopilotOff
-		if on {
-			want = marotte.ConfigValueAutopilotOn
-		}
-		line := captureRequest(t, "session/set_config_option",
-			&marotte.SessionOpts{SessionID: "sess_mem", Memory: marotte.MemoryPreference{Mode: "read_write", Reflection: on}},
-			`"configId":"`+marotte.ConfigOptionMemoryReflection+`"`)
-		params := digObject(t, "the memoryReflection set_config_option params", line, "params")
-		if got, ok := params[keyConfigValue].(string); !ok || got != want {
-			t.Errorf("Reflection=%v: memoryReflection value = %#v (%T), want the string %q",
-				on, params[keyConfigValue], params[keyConfigValue], want)
-		}
-	}
-	data := captureRequests(t, &marotte.SessionOpts{Memory: marotte.MemoryPreference{Mode: "read_write", Reflection: true}})
-	if strings.Contains(data, `"`+marotte.ConfigOptionMemoryReflection+`"`) {
-		t.Errorf("a fresh session/new sent memoryReflection; the session door already carries it:\n%s", data)
+// TestLoadSession_SetsNoMemoryReflection pins that neither door writes memoryReflection: a chat session takes the
+// device Memory choice KAS reads at session/new, and a loaded session keeps its recorded one.
+func TestLoadSession_SetsNoMemoryReflection(t *testing.T) {
+	for name, opts := range map[string]*marotte.SessionOpts{
+		"load": {SessionID: "sess_mem", Role: marotte.SessionRoleChat},
+		"new":  {Role: marotte.SessionRoleChat},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if data := captureRequests(t, opts); strings.Contains(data, `"memoryReflection"`) {
+				t.Errorf("the %s door wrote memoryReflection:\n%s", name, data)
+			}
+		})
 	}
 }
 

@@ -87,6 +87,7 @@ type Generator struct {
 	mcpSnapshot   func() MCPSnapshot
 	forgeSnapshot func() ForgeSnapshot
 	toolsSnapshot func() (ToolsSnapshot, bool)
+	memoryOn      func() bool
 	workDir       string
 	configDir     string
 	toolsDir      string
@@ -135,6 +136,14 @@ func (g *Generator) SetToolsSnapshot(fn func() (tools ToolsSnapshot, ok bool)) {
 	g.mu.Unlock()
 }
 
+// SetMemoryOn wires a callback that answers whether the agent's memory is on (kiro-cli's device Memory choice is
+// not Off). Unset, or answering false, omits the Memory section.
+func (g *Generator) SetMemoryOn(fn func() bool) {
+	g.mu.Lock()
+	g.memoryOn = fn
+	g.mu.Unlock()
+}
+
 // Generate renders environment.md and writes it atomically, and skips a byte-identical write (MCP
 // event storms regenerate often). Calls serialise: each one's snapshots, render and write finish
 // before the next call takes its snapshots. The snapshot callbacks run under that serialisation
@@ -152,6 +161,7 @@ func (g *Generator) Generate(ctx context.Context) error {
 	snapshotFn := g.mcpSnapshot
 	forgeFn := g.forgeSnapshot
 	toolsFn := g.toolsSnapshot
+	memoryFn := g.memoryOn
 	g.mu.Unlock()
 	var mcp MCPSnapshot
 	var forges ForgeSnapshot
@@ -166,11 +176,12 @@ func (g *Generator) Generate(ctx context.Context) error {
 	if toolsFn != nil {
 		tools, toolsOK = toolsFn()
 	}
+	memoryOn := memoryFn != nil && memoryFn()
 	if err := stopped(ctx); err != nil {
 		return err
 	}
 
-	content := g.render(ctx, mcp, snapshotFn != nil, forges, forgeFn != nil, tools, toolsOK)
+	content := g.render(ctx, mcp, snapshotFn != nil, forges, forgeFn != nil, tools, toolsOK, memoryOn)
 	if err := stopped(ctx); err != nil {
 		return err
 	}
@@ -203,7 +214,7 @@ func stopped(ctx context.Context) error {
 // hasMCP and hasForges say whether a snapshot callback was wired at all, which decides whether the
 // MCP and forge sections appear; toolsOK says the tools snapshot answered.
 func (g *Generator) render(ctx context.Context, mcp MCPSnapshot, hasMCP bool, forges ForgeSnapshot, hasForges bool,
-	tools ToolsSnapshot, toolsOK bool,
+	tools ToolsSnapshot, toolsOK, memoryOn bool,
 ) []byte {
 	var b strings.Builder
 	writeIntro(&b, g.workDir)
@@ -219,7 +230,9 @@ func (g *Generator) render(ctx context.Context, mcp MCPSnapshot, hasMCP bool, fo
 	writeWorkspace(ctx, &b, g.workDir)
 	granted, _, _ := settings.AgentDirs{Workspace: g.workDir, Config: g.configDir}.Granted(ctx)
 	writeAdditionalDirs(&b, granted, g.configDir)
-	writeMemory(ctx, &b, g.workDir, g.configDir)
+	if memoryOn {
+		writeMemory(ctx, &b, g.workDir)
+	}
 	writeLimitations(&b)
 	writeCapabilities(&b, g.configDir)
 	return []byte(b.String())

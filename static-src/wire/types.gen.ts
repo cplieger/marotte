@@ -862,6 +862,16 @@ export interface DeviceFlowResponse {
 }
 
 /**
+ * DeviceMemory is the Memory choice kiro-cli keeps for the signed-in account on this machine (its memoryMode and
+ * memoryReflection rows at user-local), reduced as kiro-cli's terminal UI reduces them: Mode is "off", "read_only",
+ * "read_write" or "learn", and Lock is set while a layer locks either row.
+ */
+export interface DeviceMemory {
+  lock?: SettingLock;
+  mode: string;
+}
+
+/**
  * DraftChangedPayload is the payload for type="draft_changed": the composer state one chat
  * now holds, sent so an idle device converges on a draft it is not typing. Both halves travel
  * on every frame and BOTH writers fill both, because the event describes the COMPOSER rather
@@ -894,6 +904,8 @@ export interface EffectiveSettings {
    * user has set.
    */
   kiro_defaults: { [key: string]: KiroDefault };
+  /** Memory is kiro-cli's device Memory choice, null until the engine has reported a configuration view. */
+  memory?: DeviceMemory;
   /**
    * AdditionalDirectoriesRefused maps each AdditionalDirectories entry that
    * settings.AgentDirs.Assess refuses at this GET to its reason; it is never stored, and an
@@ -919,11 +931,6 @@ export interface EffectiveSettings {
    * means nothing picked yet.
    */
   last_merge_method: string;
-  /**
-   * MemoryMode is the Memory dropdown's value ("off" and its three
-   * siblings); it defaults to settings.DefaultMemoryMode, kiro-cli's own.
-   */
-  memory_mode: string;
   /** InterruptMode is the composer's default beside a running turn, steer unless queue was chosen. */
   interrupt_mode: InterruptMode;
   /** SpecPlanning is "off", "quick" or "full"; default off, matching kiro-cli. */
@@ -1079,11 +1086,13 @@ export interface EffectiveSettings {
    * SupervisedDefault seeds newly created chats; ScheduledAutoApprove decides an
    * unattended run's permission ask at its deadline and is fail-closed by
    * decision. DebugLogs raises the log level. All three default off.
-   * SpecPlanningAskFirst, SteeringReminders, ChatMessaging and ChatAwareness default off, matching kiro-cli.
-   * WorkflowsEnabled defaults ON (user's choice, where the TUI's default is off).
+   * SpecPlanningAskFirst, SteeringReminders, CodeAnalysis, BackgroundJobs, ChatMessaging and ChatAwareness default
+   * off, matching kiro-cli. WorkflowsEnabled defaults ON (user's choice, where the TUI's default is off).
    */
   spec_planning_ask_first: boolean;
   steering_reminders_enabled: boolean;
+  code_analysis_enabled: boolean;
+  background_jobs: boolean;
   workflows_enabled: boolean;
   chat_messaging_enabled: boolean;
   chat_awareness_enabled: boolean;
@@ -4452,6 +4461,12 @@ export interface SessionModel {
    */
   thinking_toggleable?: boolean;
   thinking_default_off?: boolean;
+}
+
+/** SettingLock names the configuration layer whose lock fixes a kiro-cli setting, with its display name. */
+export interface SettingLock {
+  layer: string;
+  name: string;
 }
 
 /**

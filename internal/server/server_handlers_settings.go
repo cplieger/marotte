@@ -242,14 +242,15 @@ func effectiveOf(stored map[string]json.RawMessage, path string, dirs settings.A
 	return effective
 }
 
-// fillKiroDefaults reports kiro-cli's hooks.showStatus, its fallback per model and its resolution for the three-state
-// settings left unset; a chosen value is never shadowed by one.
+// fillKiroDefaults reports kiro-cli's hooks.showStatus, its fallback per model, its device Memory choice and its
+// resolution for the three-state settings left unset; a chosen value is never shadowed by one.
 func fillKiroDefaults(e *marotte.EffectiveSettings, defaults kiroDefaultsReader) {
 	if defaults == nil {
 		return
 	}
 	e.HookStatusShown = defaults.HookStatusShown()
 	e.ModelFallbacks = defaults.ModelFallbacks()
+	e.Memory = defaults.DeviceMemory()
 	for key, d := range defaults.KiroDefaults() {
 		if choice, threeState := settings.ThreeStateChoice(e, key); threeState && choice == settings.FeatureFollowKiro {
 			e.KiroDefaults[key] = d

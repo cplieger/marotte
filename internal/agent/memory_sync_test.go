@@ -48,11 +48,11 @@ func TestMemorySyncChoiceDecode(t *testing.T) {
 		"locked by the organization": {
 			view: memorySyncView("off", "locked", `[{"layer":"organization","stated":{"value":"off","used":true}},{"layer":"user-synced"}]`,
 				`[{"layer":"organization","compose":"locked"}]`),
-			want: memorySyncChoice{Lock: &memorySyncLock{Layer: "organization", Name: "Your organization"}},
+			want: memorySyncChoice{Lock: &marotte.SettingLock{Layer: "organization", Name: "Your organization"}},
 		},
 		"locked by a layer the view does not name": {
 			view: memorySyncView("on", "locked", `[]`, `[{"layer":"replace-default","compose":"replace"},{"layer":"managed","compose":"locked"}]`),
-			want: memorySyncChoice{Enabled: true, Lock: &memorySyncLock{Layer: "managed", Name: "managed"}},
+			want: memorySyncChoice{Enabled: true, Lock: &marotte.SettingLock{Layer: "managed", Name: "managed"}},
 		},
 		"no row": {
 			view: json.RawMessage(`{"layers":[],"settings":[]}`),

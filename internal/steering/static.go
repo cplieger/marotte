@@ -266,7 +266,7 @@ func writeUIGuide(b *strings.Builder, workDir, configDir string) {
 	b.WriteString("Then \"About\" (versions, \"Run diagnostics\"), \"Chat retention\" ")
 	b.WriteString("(\"Keep forever\" or \"Days kept\", default 7), \"Agent capabilities\" (\"Knowledge base ")
 	b.WriteString("search\", \"Model fallback\", \"Memory\", ")
-	b.WriteString("\"Spec planning\", \"Steering reminders\", \"Work validation\", ")
+	b.WriteString("\"Spec planning\", \"Steering reminders\", \"Kiro Code Analysis\", \"Background jobs\", \"Work validation\", ")
 	b.WriteString("\"AWS CloudFormation safety check\", \"Workflows\", \"Output style\", \"Shell command timeout\"), ")
 	b.WriteString("\"Data sharing\" (\"Share content with AWS for service improvement\", \"kiro-cli telemetry\"), ")
 	b.WriteString("\"Experimental features\" (\"Show hook status in chat\", \"Exclude ")

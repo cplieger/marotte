@@ -367,7 +367,7 @@ var (
 		{"with every gate field on", EngineSpawn{
 			SecretStorage: true, Knowledge: true, InfraSafety: "enforce", ContentCollection: true,
 			AutoRouting: "on", AutoDelegation: "on",
-			TerminalCommandTimeoutMs: 300000, SteeringReminders: true,
+			TerminalCommandTimeoutMs: 300000, SteeringReminders: true, CodeAnalysis: true,
 			DisableTelemetry: true, ModelFallback: true, MessageDeliveryLimit: 12,
 			KnowledgeTuning: marotte.KnowledgeTuning{
 				IndexType: "fast", IncludePatterns: []string{"**/*.md"}, ExcludePatterns: []string{"drafts/**"},
@@ -386,7 +386,7 @@ var (
 			RequireExisting:   true,
 			Presets:           []string{"read-workspace"},
 			SpecPlan:          "full", SpecAskClarification: true, WorkValidation: "on",
-			MemoryMode: "read_write", MemoryReflection: true,
+			MemoryFromDevice: true, BackgroundJobs: true,
 			Workflows: true, WorkflowCreatorEffort: "high", Messaging: true, Awareness: true, AwarenessMode: "consult",
 			DisableAutoCompaction: true, ProfileAgentTurns: true,
 			CustomAgents: []marotte.ClientCustomAgent{probeAgent},

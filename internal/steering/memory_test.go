@@ -88,21 +88,14 @@ func TestMemoryRepoTag_RefusesAnUnsafeTag(t *testing.T) {
 	}
 }
 
-func TestWriteMemory_NamesEachRepoTagUnlessOff(t *testing.T) {
+func TestWriteMemory_NamesEachRepoTag(t *testing.T) {
 	workDir := t.TempDir()
 	writeRepo(t, workDir, "marotte", "git@github.com:cplieger/marotte.git", false)
 	writeRepo(t, workDir, "wt", "https://gitlab.com/g/wt.git", true)
 	writeRepo(t, workDir, "r", "ssh://git@gitea.example:2222/g/r.git", false)
 
-	cfg := t.TempDir()
 	var b strings.Builder
-	writeMemory(t.Context(), &b, workDir, cfg)
-	if b.Len() != 0 {
-		t.Errorf("Memory at its default, Off, wrote a section:\n%s", b.String())
-	}
-	mustWrite(t, filepath.Join(cfg, "config.json"), `{"memory_mode":"learn"}`)
-	b.Reset()
-	writeMemory(t.Context(), &b, workDir, cfg)
+	writeMemory(t.Context(), &b, workDir)
 	out := b.String()
 	for _, want := range []string{
 		"## Memory",
@@ -116,12 +109,41 @@ func TestWriteMemory_NamesEachRepoTagUnlessOff(t *testing.T) {
 			t.Errorf("Memory section is missing %q:\n%s", want, out)
 		}
 	}
+}
 
-	mustWrite(t, filepath.Join(cfg, "config.json"), `{"memory_mode":"off"}`)
-	b.Reset()
-	writeMemory(t.Context(), &b, workDir, cfg)
-	if b.Len() != 0 {
-		t.Errorf("Memory set to Off still wrote a section:\n%s", b.String())
+// TestWriteMemory_FollowsTheDeviceDefault pins that the section follows the memoryOn callback, kiro-cli's device
+// Memory choice, and not config.json: a stale memory_mode left there renders nothing.
+func TestWriteMemory_FollowsTheDeviceDefault(t *testing.T) {
+	workDir := t.TempDir()
+	writeRepo(t, workDir, "marotte", "git@github.com:cplieger/marotte.git", false)
+	cfg := t.TempDir()
+	mustWrite(t, filepath.Join(cfg, "config.json"), `{"memory_mode":"learn"}`)
+	for _, tc := range []struct {
+		name string
+		on   func() bool
+		want bool
+	}{
+		{"unwired", nil, false},
+		{"device off", func() bool { return false }, false},
+		{"device on", func() bool { return true }, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			steeringFile := setupKiroHome(t)
+			g := New(Config{WorkDir: workDir, ConfigDir: cfg, ToolsDir: filepath.Join(cfg, "tools")})
+			if tc.on != nil {
+				g.SetMemoryOn(tc.on)
+			}
+			if err := g.Generate(t.Context()); err != nil {
+				t.Fatalf("Generate: %v", err)
+			}
+			out, err := os.ReadFile(steeringFile)
+			if err != nil {
+				t.Fatalf("read %s: %v", steeringFile, err)
+			}
+			if got := strings.Contains(string(out), "## Memory\n"); got != tc.want {
+				t.Errorf("Memory section rendered = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -129,9 +151,8 @@ func TestRender_IncludesTheMemorySection(t *testing.T) {
 	workDir := t.TempDir()
 	writeRepo(t, workDir, "marotte", "git@github.com:cplieger/marotte.git", false)
 	cfg := t.TempDir()
-	mustWrite(t, filepath.Join(cfg, "config.json"), `{"memory_mode":"read_only"}`)
-	out := string(New(Config{WorkDir: workDir, ConfigDir: cfg, ToolsDir: filepath.Join(cfg, "tools")}).render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false, ToolsSnapshot{}, false))
+	out := string(New(Config{WorkDir: workDir, ConfigDir: cfg, ToolsDir: filepath.Join(cfg, "tools")}).render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false, ToolsSnapshot{}, false, true))
 	if !strings.Contains(out, "## Memory\n") || !strings.Contains(out, "`repo:github/cplieger/marotte`") {
-		t.Errorf("environment.md lacks the Memory section with memory read only")
+		t.Errorf("environment.md lacks the Memory section with memory on")
 	}
 }

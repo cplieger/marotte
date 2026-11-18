@@ -8,24 +8,13 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-
-	"github.com/cplieger/marotte/internal/settings"
 )
 
 // Every chat runs from workDir, so KAS injects only Global-scope memories; this section
 // gives the agent each clone's tag and when to ask.
 
-// writeMemory writes the Memory section, or nothing when the Memory setting is
-// Off (the agent has no memory tool then).
-func writeMemory(ctx context.Context, b *strings.Builder, workDir, configDir string) {
-	mode := settings.DefaultMemoryMode
-	var v string
-	if settings.FieldInto(ctx, configDir, settings.KeyMemoryMode, &v) {
-		mode = v
-	}
-	if settings.MemoryPreferenceFor(mode).Mode == "disabled" {
-		return
-	}
+// writeMemory writes the Memory section; render calls it only while the agent has a memory tool.
+func writeMemory(ctx context.Context, b *strings.Builder, workDir string) {
 	b.WriteString("## Memory\n\n")
 	b.WriteString("Your memory index at session start shows only the Global scope, because every chat starts in `" + workDir + "`. ")
 	b.WriteString("Each repository below has its own scope tag. ")

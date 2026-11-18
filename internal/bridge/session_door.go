@@ -91,8 +91,6 @@ func validIdent(s string) bool { return ids.ValidIdent(s) }
 // sessionSpawnOf is o's session door input.
 func sessionSpawnOf(o *marotte.SessionOpts) kascap.SessionSpawn {
 	return kascap.SessionSpawn{
-		MemoryMode:            o.Memory.Mode,
-		MemoryReflection:      o.Memory.Reflection,
 		SpecPlan:              o.Features.SpecPlan,
 		SpecAskClarification:  o.Features.SpecAskClarification,
 		WorkValidation:        o.Features.WorkValidation,
@@ -105,6 +103,8 @@ func sessionSpawnOf(o *marotte.SessionOpts) kascap.SessionSpawn {
 		CustomAgents:          slices.Clone(o.CustomAgents),
 		DisableAutoCompaction: o.DisableAutoCompaction,
 		ProfileAgentTurns:     o.Role == marotte.SessionRoleChat,
+		MemoryFromDevice:      o.Role != marotte.SessionRoleObserver,
+		BackgroundJobs:        o.Features.BackgroundJobs,
 	}
 }
 
@@ -409,8 +409,6 @@ func (e *Engine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach
 	s.applySupervised(dctx, o.Supervised)
 	// A chat created in another mode, or under another setting, never had the value applied.
 	s.applyWorkflowLaunch(dctx)
-	// A loaded session keeps its memory mode, but reflection has a live setter.
-	s.applyMemoryReflection(dctx, o.Memory.Reflection)
 	if !s.open(false) {
 		return nil, marotte.ErrChatClosedDuringCall
 	}
@@ -606,22 +604,6 @@ func (s *Session) applyWorkflowLaunch(ctx context.Context) {
 	if err := s.ensureWorkflowLaunch(ctx); err != nil {
 		slog.Warn("workflow use not applied; the session keeps its own value",
 			"session_id", s.id, "want", s.workflowLaunchWant, "error", err)
-	}
-}
-
-// applyMemoryReflection sets the memoryReflection option to the preference; best-effort.
-func (s *Session) applyMemoryReflection(ctx context.Context, on bool) {
-	value := marotte.ConfigValueAutopilotOff
-	if on {
-		value = marotte.ConfigValueAutopilotOn
-	}
-	if _, err := s.doorSetConfig(ctx, map[string]any{
-		marotte.KeySessionID: s.id,
-		keyConfigID:          marotte.ConfigOptionMemoryReflection,
-		keyConfigValue:       value,
-	}); err != nil {
-		slog.Warn("memory reflection not re-applied on session/load",
-			"session_id", s.id, "reflection", on, "error", err)
 	}
 }
 

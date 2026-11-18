@@ -443,7 +443,7 @@ func TestWriteUIGuide_NamesTheMemorySetting(t *testing.T) {
 	var b strings.Builder
 	writeUIGuide(&b, "/w", "/cfg")
 	out := b.String()
-	if !strings.Contains(out, `"Knowledge base search", "Model fallback", "Memory", "Spec planning", "Steering reminders", "Work validation", "AWS CloudFormation safety check", "Workflows", "Output style", "Shell command timeout")`) {
+	if !strings.Contains(out, `"Knowledge base search", "Model fallback", "Memory", "Spec planning", "Steering reminders", "Kiro Code Analysis", "Background jobs", "Work validation", "AWS CloudFormation safety check", "Workflows", "Output style", "Shell command timeout")`) {
 		t.Errorf("writeUIGuide output does not list the Memory setting under Agent capabilities:\n%s", out)
 	}
 	if strings.Contains(out, "Remember things between conversations") {

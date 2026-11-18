@@ -308,6 +308,8 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.ModelFallback](),
 	wiregen.TypeRef[marotte.PctRange](),
 	wiregen.TypeRef[marotte.KnowledgeChunking](),
+	wiregen.TypeRef[marotte.SettingLock](),
+	wiregen.TypeRef[marotte.DeviceMemory](),
 	wiregen.TypeRef[marotte.EffectiveSettings](),
 	wiregen.TypeRef[forges.ForgeError](),
 	wiregen.TypeRef[forges.ConfiguredForge](),

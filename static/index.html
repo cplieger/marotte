@@ -773,15 +773,15 @@
                 <div class="section-field">
                   <div class="section-title-status-row">
                     <label class="section-option-label" for="memory-mode">Memory</label>
-                    <span class="settings-save-status hidden" data-save-status="memory_mode" aria-live="polite"></span>
                   </div>
-                  <select id="memory-mode" class="rf-select" aria-describedby="memory-mode-hint">
+                  <select id="memory-mode" class="rf-select" aria-describedby="memory-mode-hint memory-mode-state">
                     <option value="off" selected>Off</option>
                     <option value="read_only">Read only</option>
                     <option value="read_write">Read and write when the agent decides</option>
                     <option value="learn">Read and write, and also learn from conversations in the background</option>
                   </select>
-                  <p class="section-hint" id="memory-mode-hint">Lets the agent remember your preferences and facts about your projects from one chat to the next. Off is the default and matches kiro-cli. Pick Read only to keep what it knows without adding more, or one of the last two to let it add memories. Unless Memory is Off, you can review and delete memories in Docs → Memories.</p>
+                  <p class="section-hint" id="memory-mode-hint">Belongs to the Kiro account signed in on this machine, shared with kiro-cli. Applies to new chats.</p>
+                  <p class="section-hint hidden" id="memory-mode-state" aria-live="polite"><span id="memory-mode-reason"></span> <button type="button" id="memory-mode-sign-in" class="btn-small hidden">Sign in</button></p>
                 </div>
               </div>
               <div class="section-option">
@@ -847,6 +847,43 @@
                     <span class="settings-save-status hidden" data-save-status="steering_reminders_enabled" aria-live="polite"></span>
                   </div>
                   <p class="section-hint">In a long chat, reminds the agent of your steering docs so it keeps following them, at the cost of some context. Off by default.</p>
+                </div>
+              </div>
+              <div class="section-option">
+                <label class="toggle">
+                  <input type="checkbox" id="flag-code-analysis" aria-label="Kiro Code Analysis" aria-describedby="flag-code-analysis-hint">
+                  <span class="toggle-slider"></span>
+                </label>
+                <div>
+                  <div class="section-title-status-row">
+                    <span class="section-option-label">Kiro Code Analysis</span>
+                    <span class="settings-save-status hidden" data-save-status="code_analysis_enabled" aria-live="polite"></span>
+                  </div>
+                  <p class="section-hint" id="flag-code-analysis-hint">Gives the agent a searchable index of the workspace's code. Adds about 3,000 tokens to every request in every chat while on.</p>
+                </div>
+              </div>
+              <div id="code-index-status" hidden>
+                <div class="section-option section-option-fixed">
+                  <div class="section-field">
+                    <span class="section-option-label">Code index</span>
+                    <button type="button" id="code-index-action" class="btn-small" aria-describedby="code-index-status-text code-index-status-detail">Build</button>
+                    <p class="section-hint"><span id="code-index-status-text" aria-live="polite"></span></p>
+                    <p class="section-hint" id="code-index-status-detail" hidden></p>
+                  </div>
+                </div>
+              </div>
+              <div class="section-option">
+                <label class="toggle">
+                  <input type="checkbox" id="flag-background-jobs" aria-label="Background jobs" aria-describedby="flag-background-jobs-hint flag-background-jobs-note">
+                  <span class="toggle-slider"></span>
+                </label>
+                <div>
+                  <div class="section-title-status-row">
+                    <span class="section-option-label">Background jobs</span>
+                    <span class="settings-save-status hidden" data-save-status="background_jobs" aria-live="polite"></span>
+                  </div>
+                  <p class="section-hint" id="flag-background-jobs-hint">Long commands move to the background and the chat is woken when they end. While on, commands run inside kiro-cli, not marotte's terminal: they get kiro-cli's screened environment and the process tools go away.</p>
+                  <p class="section-hint" id="flag-background-jobs-note">Open chats switch at their next message.</p>
                 </div>
               </div>
               <div class="section-option section-option-fixed">

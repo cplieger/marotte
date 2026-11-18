@@ -13,6 +13,7 @@ import (
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 const cloudMemoryKRN = "krn:::setting/cloudMemory"
@@ -40,18 +41,12 @@ type memorySyncStatus struct {
 	LastSyncAt string `json:"last_sync_at,omitempty"`
 }
 
-// memorySyncLock is the layer whose lock fixes the choice, with its display name.
-type memorySyncLock struct {
-	Layer string `json:"layer"`
-	Name  string `json:"name"`
-}
-
 // memorySyncChoice is the composed cloudMemory setting: Enabled is its value, Account whether the account's layer
 // states it on.
 type memorySyncChoice struct {
-	Lock    *memorySyncLock `json:"lock,omitempty"`
-	Enabled bool            `json:"enabled"`
-	Account bool            `json:"account"`
+	Lock    *marotte.SettingLock `json:"lock,omitempty"`
+	Enabled bool                 `json:"enabled"`
+	Account bool                 `json:"account"`
 }
 
 type memorySyncResponse struct {
@@ -87,8 +82,7 @@ func decodeMemorySyncStatus(raw json.RawMessage) memorySyncStatus {
 	return out
 }
 
-// memorySyncChoiceOf reduces the composed row as kiro-cli's terminal UI does: a lock is named by the last
-// assertion's layer, looked up in names.
+// memorySyncChoiceOf reduces the composed row as kiro-cli's terminal UI does (translate.SettingLock names a lock).
 func memorySyncChoiceOf(s *kasSetting, names map[string]string) memorySyncChoice {
 	c := memorySyncChoice{Enabled: settingOn(s.Value)}
 	for _, k := range s.Contributions {
@@ -96,14 +90,11 @@ func memorySyncChoiceOf(s *kasSetting, names map[string]string) memorySyncChoice
 			c.Account = true
 		}
 	}
-	if s.Compose == "locked" && len(s.Assertions) > 0 {
-		raw := s.Assertions[len(s.Assertions)-1].Layer
-		layer, name := configurationText(raw), configurationText(names[raw])
-		if name == "" {
-			name = layer
-		}
-		c.Lock = &memorySyncLock{Layer: layer, Name: name}
+	layers := make([]string, len(s.Assertions))
+	for i, a := range s.Assertions {
+		layers[i] = a.Layer
 	}
+	c.Lock = translate.SettingLock(s.Compose, layers, names)
 	return c
 }
 

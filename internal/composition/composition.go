@@ -253,6 +253,10 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		return steering.MCPSnapshot{Servers: h.MCPSnapshot()}
 	})
 	h.SetMCPOnChange(func() { regenerateSteering(appCtx, steer.Generate) })
+	steer.SetMemoryOn(func() bool {
+		m := h.Config().DeviceMemory()
+		return m != nil && m.Mode != marotte.DeviceMemoryOff
+	})
 	healer := &kasHealer{heal: mcpStore.HealKASConfig, afterHeal: h.SyncPowers, every: kasHealInterval}
 	h.SetPreSessionOpen(func(ctx context.Context) {
 		regenerateSteering(ctx, steer.Generate)

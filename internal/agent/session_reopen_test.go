@@ -80,9 +80,6 @@ func writeSetting(t *testing.T, configDir, key string, value any) {
 	}
 }
 
-// learnMemory is what memory_mode "learn" sends at a door.
-var learnMemory = marotte.MemoryPreference{Mode: "read_write", Reflection: true}
-
 func sessionClosed(br *fakeBridge) bool {
 	br.mu.Lock()
 	defer br.mu.Unlock()
@@ -260,7 +257,8 @@ var configWrites = []struct {
 	key   string
 	reach settingReach
 }{
-	{key: settings.KeyMemoryMode, value: "learn", reach: reachReopen},
+	{key: settings.KeyBackgroundJobs, value: true, reach: reachReopen},
+	{key: settings.KeyCodeAnalysis, value: true, reach: reachEngine},
 	{key: settings.KeySecurityProfile, value: policyfile.ProfileUnrestricted, reach: reachNewChat},
 	{key: settings.KeyWorkflowsEnabled, value: false, reach: reachReopen},
 	{key: settings.KeyChatMessaging, value: true, reach: reachReopen},
@@ -611,18 +609,18 @@ func TestOpenBridge_AHandEditOfConfigReopensTheChatAtItsNextOpen(t *testing.T) {
 	}
 	session := first.session().SessionID()
 
-	rewriteConfigByHand(t, configDir, `{"`+settings.KeyMemoryMode+`":"learn"}`)
+	rewriteConfigByHand(t, configDir, `{"`+settings.KeyBackgroundJobs+`":true}`)
 
 	second, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge after the hand edit: %v", err)
 	}
 	if second == first || !sessionClosed(fakeOf(first)) {
-		t.Fatal("a hand edit of memory_mode left the chat on its old session")
+		t.Fatal("a hand edit of background_jobs left the chat on its old session")
 	}
 	opts := fakeOf(second).lastSessionOpts()
-	if opts.Memory != learnMemory || opts.SessionID != string(session) {
-		t.Errorf("the reopened bridge started with memory %+v loading %q, want %+v loading %q", opts.Memory, opts.SessionID, learnMemory, session)
+	if !opts.Features.BackgroundJobs || opts.SessionID != string(session) {
+		t.Errorf("the reopened bridge started with background jobs %v loading %q, want on loading %q", opts.Features.BackgroundJobs, opts.SessionID, session)
 	}
 }
 
@@ -634,7 +632,7 @@ func TestReconcileSessionSettings_ABusyChatSwitchesAfterItsTurn(t *testing.T) {
 			t.Fatalf("OpenBridge: %v", err)
 		}
 		turnID, _ := h.stagePromptTurn(t, "c1")
-		writeSetting(t, configDir, settings.KeyMemoryMode, "learn")
+		writeSetting(t, configDir, settings.KeyBackgroundJobs, true)
 
 		h.ReconcileSessionSettings(t.Context())
 
@@ -651,8 +649,8 @@ func TestReconcileSessionSettings_ABusyChatSwitchesAfterItsTurn(t *testing.T) {
 			t.Fatal("the first open after the turn kept the session opened under the old settings")
 		}
 		opts := fakeOf(after).lastSessionOpts()
-		if opts.Memory != learnMemory || opts.SessionID != string(first.session().SessionID()) {
-			t.Errorf("the reopened bridge started with memory %+v loading %q, want %+v loading the chat's session", opts.Memory, opts.SessionID, learnMemory)
+		if !opts.Features.BackgroundJobs || opts.SessionID != string(first.session().SessionID()) {
+			t.Errorf("the reopened bridge started with background jobs %v loading %q, want on loading the chat's session", opts.Features.BackgroundJobs, opts.SessionID)
 		}
 	})
 }
@@ -664,7 +662,7 @@ func TestReconcileSessionSettings_AChatHostingALiveRunSwitchesAfterTheRun(t *tes
 		if err != nil {
 			t.Fatalf("OpenBridge: %v", err)
 		}
-		writeSetting(t, configDir, settings.KeyMemoryMode, "learn")
+		writeSetting(t, configDir, settings.KeyBackgroundJobs, true)
 
 		endStep := hostStepOn(t, h, "sess-step")
 		h.ReconcileSessionSettings(t.Context())
@@ -681,8 +679,8 @@ func TestReconcileSessionSettings_AChatHostingALiveRunSwitchesAfterTheRun(t *tes
 		if after == first || !sessionClosed(fakeOf(first)) {
 			t.Fatal("the first open after the run kept the session opened under the old settings")
 		}
-		if got := fakeOf(after).lastSessionOpts().Memory; got != learnMemory {
-			t.Errorf("the reopened bridge's memory = %+v, want %+v", got, learnMemory)
+		if got := fakeOf(after).lastSessionOpts().Features.BackgroundJobs; !got {
+			t.Errorf("the reopened bridge's background jobs = %v, want on", got)
 		}
 	})
 }

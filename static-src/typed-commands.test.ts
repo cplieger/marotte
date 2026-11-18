@@ -47,7 +47,7 @@ vi.mock("./persist.js", async (importOriginal) => {
     loadSettings: vi.fn(() =>
       memoryMode.shared
         ? real.loadSettings()
-        : Promise.resolve(memoryMode.value === null ? null : { memory_mode: memoryMode.value }),
+        : Promise.resolve(memoryMode.value === null ? null : { memory: { mode: memoryMode.value } }),
     ),
   };
 });
@@ -227,7 +227,7 @@ describe("handleTypedCommand /memories over the shared settings read", () => {
           new Promise<Response>((resolve) => {
             gets.push((revision, mode) => {
               resolve(
-                Response.json(settingsPayload({ settings_revision: revision, memory_mode: mode })),
+                Response.json(settingsPayload({ settings_revision: revision, memory: { mode } })),
               );
             });
           }),

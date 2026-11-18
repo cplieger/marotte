@@ -320,11 +320,11 @@ var table = []decl{
 		send:     true,
 	},
 	{
-		key:      "universalBackgroundTool",
-		door:     doorSession,
-		resolver: resolverSetting,
-		value:    enabledIf(false),
-		send:     true,
+		key:         "universalBackgroundTool",
+		door:        doorSession,
+		resolver:    resolverSetting,
+		sessionGate: func(s *SessionSpawn) (any, bool) { return enabledIf(s.BackgroundJobs), true },
+		send:        true,
 	},
 	{
 		key:      "shellType",
@@ -513,10 +513,8 @@ var table = []decl{
 		key:      "memory",
 		door:     doorSession,
 		resolver: resolverSettingObject,
-		// Always present: an absent key leaves the chat's memory to KAS's
-		// fallback config, not the user's choice.
 		sessionGate: func(s *SessionSpawn) (any, bool) {
-			return map[string]any{"mode": cmp.Or(s.MemoryMode, "disabled"), "reflection": s.MemoryReflection}, true
+			return map[string]any{"mode": "disabled", "reflection": false}, !s.MemoryFromDevice
 		},
 		send: true,
 	},
@@ -536,7 +534,8 @@ var table = []decl{
 		key:      "streamingShellContent",
 		door:     doorConnection,
 		resolver: resolverCapability,
-		send:     false,
+		value:    true,
+		send:     true,
 	},
 	{
 		key:      "agentHostsForegroundShell",
@@ -557,10 +556,11 @@ var table = []decl{
 		send:     false,
 	},
 	{
-		key:      "c2s",
-		door:     doorConnection,
-		resolver: resolverSetting,
-		send:     false,
+		key:        "c2s",
+		door:       doorConnection,
+		resolver:   resolverSetting,
+		engineGate: func(s *EngineSpawn) (any, bool) { return enabledIf(s.CodeAnalysis), true },
+		send:       true,
 	},
 	{
 		key:      "c2sViews",

@@ -1,6 +1,7 @@
 // Credential names the kiro-cli child would inherit are dropped and logged by name. A denylist, because build tools
-// read an unenumerable environment; a drop, because refusing would refuse the chat. Agent terminals are screened
-// elsewhere.
+// read an unenumerable environment; a drop, because refusing would refuse the chat. marotte's agent terminals are not
+// screened: they keep the server's environment. A background-jobs chat's commands run inside kiro-cli, which screens
+// their environment itself.
 
 package bridge
 

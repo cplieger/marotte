@@ -343,6 +343,7 @@ func (e *Engine) Start(ctx context.Context, o *marotte.EngineOpts) error {
 		SecretStorage:            o.SecretStorage,
 		Knowledge:                o.Knowledge,
 		SteeringReminders:        o.Features.SteeringReminders,
+		CodeAnalysis:             o.Features.CodeAnalysis,
 		DisableTelemetry:         o.DisableTelemetry,
 		ModelFallback:            o.Features.ModelFallback,
 		MessageDeliveryLimit:     o.Features.MessageDeliveryLimit,
