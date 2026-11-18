@@ -1797,9 +1797,11 @@ func kasJSON(v any) json.RawMessage {
 
 var errHoldFault = errors.New("the engine did not answer")
 
-// holdLogs routes the log records that name a cell's run, chat or session to that cell, so cells run side by side.
+// holdLogs routes the log records that name a cell's run, chat or session to that cell, so cells run side by side,
+// and hands every other record to next, so the tests running beside the matrix log as before.
 type holdLogs struct {
 	sinks *sync.Map
+	next  slog.Handler
 	attrs []slog.Attr
 }
 
@@ -1873,9 +1875,11 @@ func (l *cellLog) errorsLacking(msg, attr string) [][]string {
 
 var _ slog.Handler = (*holdLogs)(nil)
 
-func (*holdLogs) Enabled(_ context.Context, level slog.Level) bool { return level >= slog.LevelInfo }
+func (h *holdLogs) Enabled(ctx context.Context, level slog.Level) bool {
+	return level >= slog.LevelInfo || h.next.Enabled(ctx, level)
+}
 
-func (h *holdLogs) Handle(_ context.Context, rec slog.Record) error {
+func (h *holdLogs) Handle(ctx context.Context, rec slog.Record) error {
 	var keys, attrs []string
 	visit := func(a slog.Attr) bool {
 		text := a.String()
@@ -1889,6 +1893,15 @@ func (h *holdLogs) Handle(_ context.Context, rec slog.Record) error {
 		visit(a)
 	}
 	rec.Attrs(visit)
+	if len(keys) == 0 {
+		if h.next.Enabled(ctx, rec.Level) {
+			return h.next.Handle(ctx, rec)
+		}
+		return nil
+	}
+	if rec.Level < slog.LevelInfo {
+		return nil
+	}
 	seen := map[*cellLog]bool{}
 	for _, key := range keys {
 		if v, ok := h.sinks.Load(key); ok && !seen[v.(*cellLog)] {
@@ -1909,10 +1922,12 @@ func (h *holdLogs) Handle(_ context.Context, rec slog.Record) error {
 }
 
 func (h *holdLogs) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &holdLogs{sinks: h.sinks, attrs: slices.Concat(h.attrs, attrs)}
+	return &holdLogs{sinks: h.sinks, next: h.next.WithAttrs(attrs), attrs: slices.Concat(h.attrs, attrs)}
 }
 
-func (h *holdLogs) WithGroup(string) slog.Handler { return h }
+func (h *holdLogs) WithGroup(name string) slog.Handler {
+	return &holdLogs{sinks: h.sinks, next: h.next.WithGroup(name), attrs: h.attrs}
+}
 
 // spentCounts is the try count each exhausted reader's ERROR reports, as its attribute.
 var spentCounts = map[string]string{
@@ -3337,12 +3352,13 @@ func TestGateHold_EachDoorOpensItsOwnHandleOverTheCellsRun(t *testing.T) {
 const holdCellsAtOnce = 48
 
 // Every cell of the hold matrix, each through the real entry points, held, persisted and resumed as holdModel says.
-// The cells run side by side, each on its own runtime, its logs routed by its run's, chat's and session's names;
-// serial with every other test, since it swaps the global logger. Each cell runs in its own synctest bubble, so its
-// quiet windows and wait caps are bubble time, which moves only once all of the cell's goroutines block: a loaded
-// host cannot stretch a cell's work past them.
+// The cells run side by side, each on its own runtime, its logs routed by its run's, chat's and session's names.
+// Parallel though it swaps the global logger: the parallel phase starts once every serial test, every log capture
+// among them, has returned, and the router passes the other tests' records to stderr. Each cell runs in its own
+// synctest bubble, so its quiet windows and wait caps are bubble time: a loaded host cannot stretch them.
 func TestGateHold_EveryCell(t *testing.T) {
-	router := &holdLogs{sinks: &sync.Map{}}
+	t.Parallel()
+	router := &holdLogs{sinks: &sync.Map{}, next: slog.NewTextHandler(os.Stderr, nil)}
 	capture.SwapDefault(t, slog.New(router))
 	byRow := map[string][]holdCombo{}
 	var rows []string
