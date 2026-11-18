@@ -113,6 +113,7 @@ import {
 import { pushRoute } from "./router.js";
 import { error as toastError } from "./toast.js";
 import { maybeEl, queryEl } from "./dom.js";
+import { afterNextPaint } from "./next-paint.js";
 import { registerFind } from "./find-registry.js";
 import type { PageFind } from "./find-registry.js";
 import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.js";
@@ -199,13 +200,16 @@ function el<T extends HTMLElement>(id: string): T {
   return e;
 }
 
+/** Eight tasks, then past the next paint: queued after any activation half, which runs there. */
 async function settle(): Promise<void> {
   for (let i = 0; i < 8; i++) {
     await new Promise((r) => {
       setTimeout(r, 0);
     });
   }
-  await new Promise((r) => requestAnimationFrame(r));
+  await new Promise<void>((r) => {
+    afterNextPaint(r);
+  });
 }
 
 const SECTIONS = ["tab-list", "pinned-list", "history-list"] as const;
