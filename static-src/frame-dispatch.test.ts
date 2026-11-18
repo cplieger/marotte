@@ -5,6 +5,7 @@ import type * as Reactive from "@cplieger/reactive";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { bootCanned, type CannedApp } from "./__test-helpers__/canned-app.js";
+import { framesBudgetMs, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
 import { installLayoutSpy, type LayoutSpy } from "./__test-helpers__/layout-spy.js";
 import type { CannedStream } from "./__test-helpers__/canned.js";
 import type * as Actions from "./actions/index.js";
@@ -16,6 +17,10 @@ import type * as Versions from "./subject-versions.js";
 import type * as Transport from "./transport.js";
 
 const SLOT_MS = 1000 / 60;
+/** The replay waits one real rendering update per display slot, and the recorded turn's frames
+ *  arrive in 187 slots: under a throttled rAF the default timeout cuts it off mid-turn, and every
+ *  later case then runs inside that open turn. */
+const REPLAY_TIMEOUT_MS = testTimeoutFor(framesBudgetMs(187));
 
 type Envelope = { readonly type: string; readonly chat_id: string } & Record<string, unknown>;
 type Recorded = CannedStream["frames"][number];
@@ -271,28 +276,62 @@ async function queueClosedTurn(turn: string): Promise<void> {
   await task();
 }
 
+const PENDING: Stamp = { kind: "pending", ref: "", version: "" };
+
+function deliverPending(items: readonly Envelope[], version: string): void {
+  app.hub.send(
+    {
+      type: "pending_snapshot",
+      chat_id: "",
+      payload: { items },
+      subject: { ...PENDING, version },
+    },
+    undefined,
+  );
+}
+
+/** Greet the stream the page opened last, and run its animation frames until `applied` holds:
+ *  the stream drains the connect hook's frames only once the hello's revalidation settled. */
+async function greet(applied: () => boolean): Promise<void> {
+  app.hub.tick(Date.now());
+  await vi.advanceTimersByTimeAsync(100);
+  app.hub.tick(Date.now());
+  for (let i = 0; i < 50 && !applied(); i++) {
+    await task();
+    gate.run(Date.now());
+    app.release();
+  }
+  await task();
+}
+
 describe("frame-batch", () => {
-  it("the recorded turn paints at most once and forces at most two scroller layouts per display frame", async () => {
-    expect(document.visibilityState).toBe("visible");
-    const grouped = slots(frames);
-    const from = Date.now();
-    const counts: SlotCount[] = [];
-    for (const slot of grouped) {
-      counts.push(await deliverSlot(slot, from));
-    }
-    const turn = store.get(chatID)?.turns.get(turnID);
-    expect(turn?.entries.at(-1)?.kind, "every recorded frame applied").toBe("turn_close");
-    const over = counts.filter((c) => c.passes > 1 || c.scrollerLayouts > 2);
-    expect(over, "display frames over one pass or two scroller layouts").toEqual([]);
-    const stamps = counts.flatMap((c) => c.stamps);
-    const recordedStamps = frames.filter((f) => (f.envelope as Envelope)["subject"] !== undefined);
-    expect(recordedStamps.length, "the recorded turn carries a stamped frame").toBeGreaterThan(0);
-    expect(stamps, "every stamped frame checked").toHaveLength(recordedStamps.length);
-    expect(
-      stamps.filter((s) => s.before === s.version || s.after !== s.version),
-      "stamps observed before their frame's animation frame, or not after it",
-    ).toEqual([]);
-  });
+  it(
+    "the recorded turn paints at most once and forces at most two scroller layouts per display frame",
+    async () => {
+      expect(document.visibilityState).toBe("visible");
+      const grouped = slots(frames);
+      const from = Date.now();
+      const counts: SlotCount[] = [];
+      for (const slot of grouped) {
+        counts.push(await deliverSlot(slot, from));
+      }
+      const turn = store.get(chatID)?.turns.get(turnID);
+      expect(turn?.entries.at(-1)?.kind, "every recorded frame applied").toBe("turn_close");
+      const over = counts.filter((c) => c.passes > 1 || c.scrollerLayouts > 2);
+      expect(over, "display frames over one pass or two scroller layouts").toEqual([]);
+      const stamps = counts.flatMap((c) => c.stamps);
+      const recordedStamps = frames.filter(
+        (f) => (f.envelope as Envelope)["subject"] !== undefined,
+      );
+      expect(recordedStamps.length, "the recorded turn carries a stamped frame").toBeGreaterThan(0);
+      expect(stamps, "every stamped frame checked").toHaveLength(recordedStamps.length);
+      expect(
+        stamps.filter((s) => s.before === s.version || s.after !== s.version),
+        "stamps observed before their frame's animation frame, or not after it",
+      ).toEqual([]);
+    },
+    REPLAY_TIMEOUT_MS,
+  );
 
   it("a handler that throws leaves the frame's stamp unobserved and re-reads its subject", async () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -323,36 +362,84 @@ describe("frame-batch", () => {
     }
   });
 
-  it("a pending set whose item handler throws leaves the set's stamp unobserved", async () => {
+  it("a pending set whose item handler throws leaves the set's stamp unobserved and asks a fresh hello for it", async () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let thrown = 0;
     const off = bus.onSSE("chat_updated", () => {
+      thrown++;
       throw new Error("item handler fault");
+    });
+    let asks = 0;
+    const offAsks = bus.onSSE("run_asks", () => {
+      asks++;
+    });
+    const sets: (string | undefined)[] = [];
+    const offSets = bus.onSSE("pending_snapshot", (_chat, _set, subject) => {
+      sets.push(subject?.version);
     });
     try {
       const item = recordedOf("chat_updated").envelope as Envelope;
       const version = "9000000";
-      app.hub.send(
-        {
-          type: "pending_snapshot",
-          chat_id: "",
-          payload: { items: [item] },
-          subject: { kind: "pending", ref: "", version },
-        },
-        undefined,
-      );
+      const opened = app.net.connections.length;
+      deliverPending([item], version);
       await task();
       gate.run(Date.now());
       await task();
       app.release();
-      const held = versions
-        .versionMap()
-        .snapshot()
-        .held.find((h) => h.kind === "pending");
-      expect(held?.version, "the partly applied set's stamp").not.toBe(version);
+      expect(thrown, "the item reached its handler").toBe(1);
+      expect(errors).toHaveBeenCalledWith(
+        '[bus] SSE handler error for "chat_updated":',
+        expect.any(Error),
+      );
+      expect(heldVersion(PENDING), "the partly applied set's stamp").not.toBe(version);
+      await task();
+      expect(app.net.connections.length, "one fresh hello asked").toBe(opened + 1);
+      await greet(() => asks > 0);
+      expect(asks, "the fresh hello's set applied").toBe(1);
+      expect(sets, "the refused set, then the fresh hello's").toHaveLength(2);
+      expect(heldVersion(PENDING), "the fresh hello's stamp").toBe(sets[1]);
+    } finally {
+      off();
+      offAsks();
+      offSets();
+      errors.mockRestore();
+    }
+  });
+
+  it("a pending set refused again on the fresh hello it asked for keeps what applied", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const warns = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let thrown = 0;
+    const off = bus.onSSE("pending_snapshot", () => {
+      thrown++;
+      throw new Error("set handler fault");
+    });
+    try {
+      const opened = app.net.connections.length;
+      deliverPending([], "9000001");
+      await task();
+      gate.run(Date.now());
+      await task();
+      app.release();
+      await task();
+      expect(app.net.connections.length, "one fresh hello asked").toBe(opened + 1);
+      await greet(() => thrown > 1);
+      expect(thrown, "the refused set and the fresh hello's").toBe(2);
+      expect(warns).toHaveBeenCalledWith(
+        "sse: pending refused again after a fresh hello, keeping what applied",
+      );
+      expect(app.net.connections.length, "no second hello").toBe(opened + 1);
     } finally {
       off();
       errors.mockRestore();
+      warns.mockRestore();
     }
+    deliverPending([], "9000002");
+    await task();
+    gate.run(Date.now());
+    await task();
+    app.release();
+    expect(heldVersion(PENDING), "a set that applied").toBe("9000002");
   });
 
   it("transport.send posts after a turn_closed that arrived before it", async () => {
