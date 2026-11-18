@@ -961,6 +961,21 @@ describe("on a short screen", () => {
     }
   }
 
+  // The ui owner's worked figures for a phone held sideways (grelot 2963): Runs at its floor, the tabs the rest.
+  for (const [pointer, tabs, runs] of [
+    ["fine", 141, 87],
+    ["coarse", 125, 101],
+  ] as const) {
+    it(`holds Runs at its header and one row, the tab sections taking the rest, on a phone held sideways (${pointer})`, async () => {
+      await crowd(844, 390, pointer, `figures-${pointer}`);
+
+      const tabsH = el("tab-sections").getBoundingClientRect().height;
+      const runsH = section().getBoundingClientRect().height;
+      expect(Math.abs(tabsH - tabs), `tab sections ${String(tabsH)}px`).toBeLessThanOrEqual(1);
+      expect(Math.abs(runsH - runs), `Runs ${String(runsH)}px`).toBeLessThanOrEqual(1);
+    });
+  }
+
   // Below both floors (a small phone held sideways), the tab sections give theirs up before Runs'.
   it("keeps Runs' header and a row in view where the tab sections' floor no longer fits", async () => {
     const middle = await crowd(568, 320, "coarse", "shortest");
