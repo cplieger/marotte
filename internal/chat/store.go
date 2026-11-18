@@ -86,6 +86,7 @@ type Store struct {
 	headers *coalesce.Notifier[marotte.ChatID]
 	// boot is minted once per process; a process-scope keep fact under another boot id is dead.
 	boot    string
+	bots    botSet
 	fileCap chatFileCap
 	tombMu  sync.Mutex
 }
@@ -133,6 +134,7 @@ func NewStore(dir string, opts ...StoreOption) (*Store, error) {
 		tombstone: make(map[marotte.ChatID]tombstone),
 		versions:  &subject.Versions{},
 		keep:      newKeepSets(),
+		bots:      newBotSet(),
 		boot:      randomHex(16),
 	}
 	s.headers = coalesce.New(headerPublishWindow, s.publishHeader)

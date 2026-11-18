@@ -432,7 +432,8 @@ describe("a full queue", () => {
 
     expect(await submitPrompt("c1", "one more")).toBe("failed");
     expect(mockReportSendRefused).toHaveBeenCalledWith(
-      "The queue is full. Send again once a queued message has gone",
+      "The queue is full until a queued message is sent.",
+      { retry: true },
     );
     expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "one more");
   });
@@ -458,9 +459,9 @@ describe("submitPrompt on a 409-starting refusal", () => {
     starting();
 
     await submitPrompt("c1", "hello");
-    expect(mockReportSendRefused).toHaveBeenCalledWith(
-      "The chat is busy right now. Send again to retry",
-    );
+    expect(mockReportSendRefused).toHaveBeenCalledWith("The chat is busy right now.", {
+      retry: true,
+    });
   });
 
   it("hands the text and the attachments back, because nothing was persisted", async () => {

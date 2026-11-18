@@ -29,7 +29,7 @@ func openTestTurn(t *testing.T, reg *turnRegistry, chatID marotte.ChatID) *activ
 	if !lc.slotFreeLocked(marotte.TurnSourcePrompt) {
 		t.Fatalf("open(%q) was refused: the admission slot is held", chatID)
 	}
-	return lc.openLocked(chatID, &marotte.Entry{ID: id}, marotte.TurnSourcePrompt, "", turnlog.Open(id, nil))
+	return lc.openLocked(chatID, &marotte.Entry{ID: id}, marotte.TurnSourcePrompt, "", turnlog.Open(id, nil), nil)
 }
 
 // TestTurnRegistry_InterruptIsFirstWinsPerTurn pins that first-wins because an engine end, a shutdown and a compaction reap
@@ -105,7 +105,7 @@ func TestTurnRegistry_FinalizeWakesAParkedOpen(t *testing.T) {
 	go func() {
 		var next *activeTurn
 		err := reg.withLifecycle(context.WithoutCancel(t.Context()), "c1", func(lc *chatLifecycle) error {
-			next = lc.openLocked("c1", &marotte.Entry{ID: "t-next"}, marotte.TurnSourcePrompt, "", turnlog.Open("t-next", nil))
+			next = lc.openLocked("c1", &marotte.Entry{ID: "t-next"}, marotte.TurnSourcePrompt, "", turnlog.Open("t-next", nil), nil)
 			return nil
 		})
 		if err != nil {

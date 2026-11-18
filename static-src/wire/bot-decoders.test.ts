@@ -18,8 +18,9 @@ function without<T extends object>(arb: fc.Arbitrary<T>): Record<string, unknown
 
 describe("Bot wire facts", () => {
   it("keeps a Bot's state on its chat header", () => {
-    const header = { ...without(arbChatHeader), bot: { state: "paused" } };
-    expect(decodeChatHeader(header).bot).toEqual({ state: "paused" });
+    const bot = { state: "paused", idle_minutes: 0, rules: 2, rules_version: 5 };
+    const header = { ...without(arbChatHeader), bot };
+    expect(decodeChatHeader(header).bot).toEqual(bot);
   });
 
   it("leaves a regular chat's header without bot", () => {

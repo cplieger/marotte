@@ -591,3 +591,64 @@ tests:
       - eval_time: 6m
         alertname: MarotteTriggerCatchUpGap
         exp_alerts: []
+
+  - name: MarotteRuleEngineWriteFailing fires after 5 minutes of failed writes and clears on the first good one
+    interval: 1m
+    input_series:
+      - series: 'marotte_rule_engine_write_failing{job="marotte",instance="a:9847"}'
+        values: "0 1x10 0x5"
+      - series: 'marotte_rule_engine_write_failing{job="marotte",instance="b:9847"}'
+        values: "0x16"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: MarotteRuleEngineWriteFailing
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: MarotteRuleEngineWriteFailing
+        exp_alerts:
+          - exp_labels: {severity: critical, job: marotte, instance: "a:9847"}
+            exp_annotations:
+              summary: "marotte's Bot rules are stopped: it cannot save a Bot"
+              description: >
+                marotte could not write a Bot's record for 5 minutes, so every
+                Bot's rules evaluate and send nothing. Nothing is lost: they
+                resume on the first write that works. Check the config volume's
+                free space and permissions.
+      - eval_time: 12m
+        alertname: MarotteRuleEngineWriteFailing
+        exp_alerts: []
+
+  - name: MarotteRuleDeliveryFailing fires for a prompt given up on in the last 30 minutes
+    interval: 1m
+    input_series:
+      - series: 'marotte_rule_deliveries_total{job="marotte",instance="a:9847",outcome="failed"}'
+        values: "0x5 1x45"
+      - series: 'marotte_rule_deliveries_total{job="marotte",instance="a:9847",outcome="delivered"}'
+        values: "0+1x50"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: MarotteRuleDeliveryFailing
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: MarotteRuleDeliveryFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, job: marotte, instance: "a:9847"}
+            exp_annotations:
+              summary: "marotte gave up on a Bot rule's prompt"
+              description: >
+                marotte gave up on a Bot rule's prompt: 10 tries failed, or the
+                rule could not be evaluated or rendered, or its text was refused.
+                The rule's card says why. Check that the agent engine is up.
+      - eval_time: 30m
+        alertname: MarotteRuleDeliveryFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, job: marotte, instance: "a:9847"}
+            exp_annotations:
+              summary: "marotte gave up on a Bot rule's prompt"
+              description: >
+                marotte gave up on a Bot rule's prompt: 10 tries failed, or the
+                rule could not be evaluated or rendered, or its text was refused.
+                The rule's card says why. Check that the agent engine is up.
+      - eval_time: 40m
+        alertname: MarotteRuleDeliveryFailing
+        exp_alerts: []

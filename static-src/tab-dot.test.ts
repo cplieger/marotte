@@ -2525,7 +2525,7 @@ describe("the real subscriber fills the reserved slot", () => {
   });
 
   it("leaves the slot hidden when no invocation is resident", async () => {
-    // The residual the design accepts: a boot-restored tab whose chat has not been
+    // The accepted residual: a boot-restored tab whose chat has not been
     // fetched. "" is honest, and the row keeps the invisible reserved slot rather
     // than claiming a state.
     const { setSessions } = await import("./store.js");

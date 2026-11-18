@@ -65,7 +65,7 @@ func TestReopenForMessage_OpensAClosedChatsTabAndTheFrameDropsItFromRecent(t *te
 	closeListed(t, mem, "c-a")
 	mark := len(bus.frames(t))
 
-	mem.ReopenForMessage(t.Context(), "c-a")
+	mem.ReopenForMessage(t.Context(), "c-a", grelotCaller)
 
 	tab, ok := chatTabOf(st, "c-a")
 	if !ok {
@@ -104,7 +104,7 @@ func TestReopenForMessage_OpensAChatThatWasNeverListed(t *testing.T) {
 	seedNamed(t, store, "c-old", "Old work")
 	mark := len(bus.frames(t))
 
-	mem.ReopenForMessage(t.Context(), "c-old")
+	mem.ReopenForMessage(t.Context(), "c-old", grelotCaller)
 
 	if _, ok := chatTabOf(st, "c-old"); !ok {
 		t.Fatal("no chat tab for c-old after the message, want its tab opened")
@@ -127,7 +127,7 @@ func TestReopenForMessage_AChatWithAnOpenTabWritesNothing(t *testing.T) {
 	_, version := st.List()
 	mark := len(bus.frames(t))
 
-	mem.ReopenForMessage(t.Context(), "c-a")
+	mem.ReopenForMessage(t.Context(), "c-a", grelotCaller)
 
 	if _, after := st.List(); after != version {
 		t.Errorf("tab version = %d, want %d unchanged", after, version)
@@ -154,7 +154,7 @@ func TestReopenForMessage_At48TabsOpensNothingAndLogsInfo(t *testing.T) {
 	_, version := st.List()
 	mark := len(bus.frames(t))
 
-	mem.ReopenForMessage(t.Context(), "c-x")
+	mem.ReopenForMessage(t.Context(), "c-x", grelotCaller)
 
 	if _, ok := chatTabOf(st, "c-x"); ok {
 		t.Error("c-x has a tab at 48 open, want the reopen skipped")
@@ -202,7 +202,7 @@ func TestReopenForMessage_AGoneOrTearingDownChatOpensNothingQuietly(t *testing.T
 			chats := &refusingHold{keepingStore: &keepingStore{chatStore: store}, err: tc.hold}
 			mem := newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: chats, Tabs: st, Bus: bus, Runs: &fakeRunOwner{}})
 
-			mem.ReopenForMessage(t.Context(), "c-x")
+			mem.ReopenForMessage(t.Context(), "c-x", grelotCaller)
 
 			if open, _ := st.List(); len(open) != 0 {
 				t.Errorf("tabs = %+v, want none", open)
@@ -229,7 +229,7 @@ func TestReopenForMessage_AnyOtherFailureWarnsWithTheChatID(t *testing.T) {
 	failing := &failingOpen{Store: st}
 	mem := newMembership(&membershipDeps{Teardown: &recordingTeardown{}, Chats: withKeep(store), Tabs: failing, Bus: &tabBus{}, Runs: &fakeRunOwner{}})
 
-	mem.ReopenForMessage(t.Context(), "c-x")
+	mem.ReopenForMessage(t.Context(), "c-x", grelotCaller)
 
 	var found bool
 	for _, r := range logs.Records() {

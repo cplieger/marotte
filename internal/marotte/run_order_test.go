@@ -519,9 +519,9 @@ func TestLivePrefix_EndsBeforeASteerInFlight(t *testing.T) {
 	}
 }
 
-// A user's send may later be steered only when it is a plain send that meets a running turn taking steers (DESIGN
-// section 2 "Want"); every send that would queue behind anything else stays a turn of its own ("two prompts, in
-// order"), even once a steerable turn runs.
+// A user's send may later be steered only when it is a plain send that meets a running turn taking steers; every send
+// that would queue behind anything else stays a turn of its own ("two prompts, in order"), even once a steerable turn
+// runs.
 func TestWantFor(t *testing.T) {
 	notSteerable := turn("A", RunRunning)
 	notSteerable.Steerable = false
@@ -634,6 +634,26 @@ func TestSanitizeRun_DropsNotifyRowsOnAProcessStart(t *testing.T) {
 			t.Errorf("got %v, want %v: the user's rows paused, each wake as it waited", got, want)
 		}
 	})
+}
+
+// A rule's prompt queued behind a turn is the one door row a restart keeps, held: its sender is marotte's own engine,
+// which settles it on the next boot (unqueues and sends it once), and a row gone by then was the user's discard.
+func TestSanitizeRun_HoldsARulesRowOnAProcessStart(t *testing.T) {
+	rule := d("n-r", RunPending)
+	rule.Row.Caller = &Caller{Kind: CallerKindRule, Label: "Tidy", Rule: "r1", Event: "every:t1:1", Depth: 1}
+	in := list(d("n-1", RunPending), rule)
+	states := func(es []RunEntry) (out []string) {
+		for _, e := range es {
+			out = append(out, e.ID+":"+string(e.State))
+		}
+		return out
+	}
+	if got, want := states(SanitizeRun(in, true)), []string{"n-r:held"}; !slices.Equal(got, want) {
+		t.Errorf("a process's first life: got %v, want %v", got, want)
+	}
+	if got, want := states(SanitizeRun(in, false)), []string{"n-1:pending", "n-r:pending"}; !slices.Equal(got, want) {
+		t.Errorf("a later life: got %v, want %v", got, want)
+	}
 }
 
 // A row the reader's stop paused keeps the mark into a later life of the chat, so the queue stays paused there; a row

@@ -96,8 +96,7 @@ func (w *tableWorld) wireOpen(turnID string, bracketed bool) {
 	w.l.turnOpened(openFacts{turnID: turnID, wire: true, bracketed: bracketed, seq: w.nextSeq})
 }
 
-// One row per head shape and event, each stating the verb a send gets and the list order after the event, from the
-// design's tables (3.4 operations, 3.6 VerbFor, 3.8 stops).
+// One row per head shape and event, each stating the verb a send gets and the list order after the event.
 func TestRunList_Table(t *testing.T) {
 	type row struct {
 		run       func(t *testing.T, w *tableWorld) string

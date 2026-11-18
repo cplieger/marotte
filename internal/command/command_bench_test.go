@@ -397,9 +397,9 @@ func promptRolesOf(d hostDouble) *promptRoles {
 // nopDoor reopens nothing and answers every message's stamp.
 type nopDoor struct{}
 
-func (nopDoor) ReopenForMessage(context.Context, marotte.ChatID) {}
+func (nopDoor) ReopenForMessage(context.Context, marotte.ChatID, *marotte.Caller) {}
 
-func (nopDoor) BeginMessage(_ context.Context, _ marotte.ChatID, _ bool, stamp func() uint64) (uint64, error) {
+func (nopDoor) BeginMessage(_ context.Context, _ marotte.ChatID, _ *marotte.Caller, stamp func() uint64) (uint64, error) {
 	return stamp(), nil
 }
 

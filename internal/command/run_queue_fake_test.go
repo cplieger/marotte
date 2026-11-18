@@ -114,7 +114,15 @@ func (q *launchingRun) Submit(ctx context.Context, chatID marotte.ChatID, stamp 
 	if err != nil {
 		return SubmitAnswer{}, err
 	}
-	return SubmitAnswer{As: SubmitStarted, TurnID: turnID}, nil
+	return SubmitAnswer{As: SubmitStarted, TurnID: turnID, MessageID: doorID(s)}, nil
+}
+
+// doorID is the id the agent's run list answers for a notify-door send, s's own row here.
+func doorID(s *Submission) string {
+	if s.Origin == marotte.RunFromNotify {
+		return s.Row.ID
+	}
+	return ""
 }
 
 // offerSteer offers s into the running turn as the agent's list does (Dispatcher.SteerEntry): a full steer record refuses
@@ -137,7 +145,7 @@ func (q *launchingRun) queue(s *Submission) SubmitAnswer {
 	if !slices.ContainsFunc(q.rows, func(r marotte.QueuedPrompt) bool { return r.ID == s.Row.ID }) {
 		q.rows = append(q.rows, s.Row)
 	}
-	return SubmitAnswer{As: SubmitQueued, Settle: s.Composer}
+	return SubmitAnswer{As: SubmitQueued, MessageID: doorID(s), Settle: s.Composer}
 }
 
 func (q *launchingRun) steerMode(s *Submission) bool {

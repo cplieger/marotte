@@ -16,6 +16,7 @@ import (
 	"github.com/cplieger/marotte/internal/git"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/mcp"
+	"github.com/cplieger/marotte/internal/rule"
 	"github.com/cplieger/marotte/internal/server"
 )
 
@@ -85,9 +86,41 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.BotSummary](),
 	// GET /api/bots/{id} and /memory. No `Payload` suffix, so the SSE-binding test exempts them.
 	wiregen.TypeRef[marotte.Bot](),
+	wiregen.TypeRef[marotte.BotSaveAnswer](),
 	wiregen.TypeRef[marotte.BotMemoryStat](),
 	wiregen.TypeRef[marotte.BotSetup](),
 	wiregen.TypeRef[marotte.BotMemoryText](),
+	wiregen.TypeRef[marotte.BotEngine](),
+	// A Bot's rules, as the setup reads them; POST /api/bots/{id}/rules/test's answer; GET /api/bots/rule-catalog.
+	wiregen.TypeRef[rule.Rule](),
+	wiregen.TypeRef[rule.Spec](),
+	wiregen.TypeRef[rule.Trigger](),
+	wiregen.TypeRef[rule.TriggerLimits](),
+	wiregen.TypeRef[rule.EveryTrigger](),
+	wiregen.TypeRef[rule.AtTrigger](),
+	wiregen.TypeRef[rule.Cond](),
+	wiregen.TypeRef[rule.Leaf](),
+	wiregen.TypeRef[rule.EventLeaf](),
+	wiregen.TypeRef[rule.TimeLeaf](),
+	wiregen.TypeRef[rule.LastRanLeaf](),
+	wiregen.TypeRef[rule.ByLeaf](),
+	wiregen.TypeRef[rule.Status](),
+	wiregen.TypeRef[rule.Mark](),
+	wiregen.TypeRef[rule.Press](),
+	wiregen.TypeRef[rule.QueuedEvent](),
+	wiregen.TypeRef[rule.TriggerState](),
+	wiregen.TypeRef[rule.DayCount](),
+	wiregen.TypeRef[marotte.RuleTestLeaf](),
+	wiregen.TypeRef[marotte.RuleTestWait](),
+	wiregen.TypeRef[marotte.RuleTestAnswer](),
+	wiregen.TypeRef[rule.Words](),
+	wiregen.TypeRef[rule.Bounds](),
+	wiregen.TypeRef[rule.Param](),
+	wiregen.TypeRef[rule.KindEntry](),
+	wiregen.TypeRef[rule.LeafEntry](),
+	wiregen.TypeRef[rule.OpEntry](),
+	wiregen.TypeRef[rule.LimitBounds](),
+	wiregen.TypeRef[rule.Catalog](),
 	wiregen.TypeRef[marotte.ChatHeader](),
 	wiregen.TypeRef[marotte.PermissionOption](),
 	wiregen.TypeRef[marotte.ApprovalFile](),
@@ -135,7 +168,7 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.SpecTaskNode](),
 	wiregen.TypeRef[marotte.SpecDoc](),
 	wiregen.TypeRef[marotte.SpecApproval](),
-	wiregen.TypeRef[marotte.Spec](),
+	wiregen.TypeRef[marotte.SpecDir](),
 	wiregen.TypeRef[marotte.SpecChangedPayload](),
 	wiregen.TypeRef[marotte.FilesChangedPayload](),
 	wiregen.TypeRef[marotte.SpecApprovedPayload](),
@@ -431,6 +464,19 @@ var wireEnums = []wiregen.EnumRef{
 	wiregen.StringEnum[marotte.TabKind](),
 	// BotSummary.state fails the decoder on an unknown one; the Bot row's meta branches on it.
 	wiregen.StringEnum[marotte.BotState](),
+	// The Rules block's notice, the dry run's words and the editor's pickers branch on these.
+	wiregen.StringEnum[marotte.BotEngineState](),
+	wiregen.StringEnum[marotte.RuleTestOutcome](),
+	wiregen.StringEnum[marotte.RuleTestValue](),
+	wiregen.StringEnum[marotte.RuleWaitReason](),
+	wiregen.StringEnum[rule.TriggerKind](),
+	wiregen.StringEnum[rule.HoldPolicy](),
+	wiregen.StringEnum[rule.Anchor](),
+	wiregen.StringEnum[rule.AtDays](),
+	wiregen.StringEnum[rule.CondOp](),
+	wiregen.StringEnum[rule.LeafKind](),
+	wiregen.StringEnum[rule.FieldOp](),
+	wiregen.StringEnum[rule.PressOutcome](),
 	// The composer's placeholder and the chat-options menu's radio branch on it.
 	wiregen.StringEnum[marotte.InterruptMode](),
 	// The dock and the composer draw the run order from these, and branch on each.
@@ -480,6 +526,15 @@ var wireEnums = []wiregen.EnumRef{
 var enumTSNames = map[string]string{
 	"Kind":   "ForgeKind", // forges.Kind → ForgeKind in TS
 	"Origin": "MCPOrigin", // a bare Origin reads ambiguously beside SteerOrigin
+	"Anchor": "RuleAnchor",
+}
+
+// typeTSNames prefixes the rule package's types, whose bare names read ambiguously in TypeScript's one namespace.
+var typeTSNames = map[string]string{
+	"Spec": "RuleSpec", "Trigger": "RuleTrigger", "Cond": "RuleCond", "Leaf": "RuleLeaf", "Status": "RuleStatus",
+	"Mark": "RuleMark", "QueuedEvent": "RuleQueuedEvent", "DayCount": "RuleDayCount", "Catalog": "RuleCatalog",
+	"Words": "RuleWords", "Bounds": "RuleBounds", "Param": "RuleParam", "KindEntry": "RuleKindEntry",
+	"LeafEntry": "RuleLeafEntry", "OpEntry": "RuleOpEntry", "LimitBounds": "RuleLimitBounds",
 }
 
 // pathNameOverrides pins the snake_case path for a name whose acronym cluster
@@ -554,6 +609,7 @@ func Registry() *wiregen.Registry {
 	return &wiregen.Registry{
 		Types:              wireTypes,
 		Enums:              wireEnums,
+		TSNameOverride:     typeTSNames,
 		EnumTSNameOverride: enumTSNames,
 		PathNameOverride:   pathNameOverrides,
 		Events:             wireEvents,

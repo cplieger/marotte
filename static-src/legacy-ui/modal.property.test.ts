@@ -303,7 +303,7 @@ function scenarioFor(c: Case) {
       }
     };
     w.onHit = seeOpen;
-    // DESIGN §7.1: a lock write is admissible while the newest committed phases hold
+    // A lock write is admissible while the newest committed phases hold
     // the lock, even when a later step of the same drive resolves them to closed.
     const LOCK: Readonly<Record<string, (v: string) => boolean>> = {
       position: (v) => v === "fixed",

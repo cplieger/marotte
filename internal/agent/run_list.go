@@ -457,10 +457,10 @@ func (l *runList) waitingWake(of *runEntry) *runEntry {
 	return nil
 }
 
-// sameWakeCaller reports e as a notify-door row other than of from of's caller; of is a notify-door row, and every
-// one carries its caller (command.Notify).
+// sameWakeCaller reports e as a notify-door row other than of from of's sender (marotte.Caller.SameSender); of is a
+// notify-door row, and every one carries its caller (command.Notify).
 func sameWakeCaller(e, of *runEntry) bool {
-	return e != of && e.origin == marotte.RunFromNotify && e.row.Caller.Label == of.row.Caller.Label
+	return e != of && e.origin == marotte.RunFromNotify && e.row.Caller.SameSender(of.row.Caller)
 }
 
 // pauseRows pauses every pending row but send-now's, stamped with the stop that paused it, and fixes it to a turn of

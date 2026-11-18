@@ -25,7 +25,9 @@ func (rt *Runtime) Notifier() notify.Deliverer {
 		enter:       rt.lifecycle.enterUnlessDraining,
 		engineReady: rt.engine.isReady,
 		chats:       rt.chatStore.List,
-		deliver:     rt.dispatcher.Notify,
+		deliver: func(ctx context.Context, chatID marotte.ChatID, text string, from *marotte.Caller) (string, error) {
+			return rt.dispatcher.Notify(ctx, chatID, text, from, command.NotifyOptions{})
+		},
 	}
 }
 

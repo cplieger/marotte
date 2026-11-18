@@ -59,26 +59,26 @@ func roleOf(file string) marotte.SpecDocRole {
 // a regular file inside the root is not a document. A missing directory
 // wraps fs.ErrNotExist, and so does an invalid name; a directory with no
 // document is ErrNoDocs.
-func Load(ctx context.Context, root Root, name string, maxBytes int64) (marotte.Spec, error) {
+func Load(ctx context.Context, root Root, name string, maxBytes int64) (marotte.SpecDir, error) {
 	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\x00") {
-		return marotte.Spec{}, fmt.Errorf("spec: invalid name %q: %w", name, fs.ErrNotExist)
+		return marotte.SpecDir{}, fmt.Errorf("spec: invalid name %q: %w", name, fs.ErrNotExist)
 	}
 	r, err := os.OpenRoot(root.Dir)
 	if err != nil {
-		return marotte.Spec{}, err
+		return marotte.SpecDir{}, err
 	}
 	defer r.Close()
 	dir := "specs/" + name
 	entries, err := fs.ReadDir(r.FS(), dir)
 	if err != nil {
-		return marotte.Spec{}, err
+		return marotte.SpecDir{}, err
 	}
-	spec := marotte.Spec{Dir: root.Rel + "/" + dir, Name: name}
+	spec := marotte.SpecDir{Dir: root.Rel + "/" + dir, Name: name}
 	if err := loadDocs(ctx, r, dir, entries, maxBytes, &spec); err != nil {
-		return marotte.Spec{}, err
+		return marotte.SpecDir{}, err
 	}
 	if len(spec.Docs) == 0 {
-		return marotte.Spec{}, ErrNoDocs
+		return marotte.SpecDir{}, ErrNoDocs
 	}
 	slices.SortStableFunc(spec.Docs, func(a, b marotte.SpecDoc) int {
 		return cmp.Or(cmp.Compare(Rank(a.File), Rank(b.File)), strings.Compare(a.File, b.File))
@@ -86,7 +86,7 @@ func Load(ctx context.Context, root Root, name string, maxBytes int64) (marotte.
 	return spec, nil
 }
 
-func loadDocs(ctx context.Context, r *os.Root, dir string, entries []fs.DirEntry, maxBytes int64, spec *marotte.Spec) error {
+func loadDocs(ctx context.Context, r *os.Root, dir string, entries []fs.DirEntry, maxBytes int64, spec *marotte.SpecDir) error {
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue

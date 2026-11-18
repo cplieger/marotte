@@ -25,9 +25,14 @@ func (w *tableWorld) door(id, text string) doorPlace {
 
 // doorHolder sends id from grelot through the notify door, answering where it went and the entry holding its text.
 func (w *tableWorld) doorHolder(id, text string) (doorPlace, string) {
+	return w.doorFrom(id, text, &marotte.Caller{Label: "grelot"})
+}
+
+// doorFrom sends id from from through the notify door, answering where it went and the entry holding its text.
+func (w *tableWorld) doorFrom(id, text string, from *marotte.Caller) (doorPlace, string) {
 	e := &runEntry{
 		id: id, kind: marotte.RunKindRow, origin: marotte.RunFromNotify,
-		row: &marotte.QueuedPrompt{ID: id, Text: text, Caller: &marotte.Caller{Label: "grelot"}},
+		row: &marotte.QueuedPrompt{ID: id, Text: text, Caller: from},
 	}
 	if w.mode == marotte.InterruptQueue {
 		e.want = marotte.RunWantPrompt
@@ -81,9 +86,9 @@ func (w *tableWorld) wantOrder(t *testing.T, step, want string) {
 	}
 }
 
-// The list's events, one script per row of DESIGN section 3's table: a door entry (grelot's wake) is steered only
-// with nothing of the user's waiting and never into a turn the user's stop or send-now asked for, waits behind every
-// user entry waiting ahead of it, is never stranded on an idle list, and one prompt never joins two senders.
+// The list's events: a door entry (grelot's wake) is steered only with nothing of the user's waiting and never into a
+// turn the user's stop or send-now asked for, waits behind every user entry waiting ahead of it, is never stranded on
+// an idle list, and one prompt never joins two senders.
 func TestRunList_Events(t *testing.T) {
 	cases := []struct {
 		run       func(t *testing.T, w *tableWorld)
@@ -949,6 +954,40 @@ func TestRunList_ADoorSendNamesTheEntryHoldingItsText(t *testing.T) {
 			t.Errorf("send = %d %q, want too big under no entry", at, holder)
 		}
 	})
+}
+
+// A door send folds only into its own sender's waiting entry. A rule's sender is one event of one rule, whatever its
+// name, so a rule never takes over an API caller's entry under the same label, nor one event's entry another's.
+func TestRunList_ADoorSendFoldsOnlyIntoItsOwnSendersEntry(t *testing.T) {
+	ruleEvent := func(event string) *marotte.Caller {
+		return &marotte.Caller{Kind: marotte.CallerKindRule, Label: "Weekly", Rule: "r1", Event: event, Depth: 1}
+	}
+	cases := []struct {
+		name        string
+		first, next *marotte.Caller
+		want        doorPlace
+		wantHolder  string
+	}{
+		{"an API caller and a rule of the same name", &marotte.Caller{Label: "Weekly"}, ruleEvent("e1"), doorPlaced, "d2"},
+		{"a rule and an API caller of the same name", ruleEvent("e1"), &marotte.Caller{Label: "Weekly"}, doorPlaced, "d2"},
+		{"two events of one rule", ruleEvent("e1"), ruleEvent("e2"), doorPlaced, "d2"},
+		{"one event of one rule sent again", ruleEvent("e1"), ruleEvent("e1"), doorReplaced, "d"},
+		{"one API caller", &marotte.Caller{Label: "Weekly"}, &marotte.Caller{Label: "Weekly"}, doorReplaced, "d"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			w := newTableWorld()
+			w.user("m-a", marotte.RunWantPrompt)
+			w.running("m-a")
+			w.doorFrom("d", "first", c.first)
+			if at, holder := w.doorFrom("d2", "next", c.next); at != c.want || holder != c.wantHolder {
+				t.Errorf("send = %d %q, want %d under %q", at, holder, c.want, c.wantHolder)
+			}
+			if got := w.entry(t, "d").row.Text; (c.want == doorReplaced) != (got == "next") {
+				t.Errorf("the first entry holds %q after the send placed %d", got, c.want)
+			}
+		})
+	}
 }
 
 // withdrawStop stops id before its turn opened, as a press of Stop does: the take is withdrawn, its reservation

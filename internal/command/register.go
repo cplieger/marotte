@@ -106,6 +106,8 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.registerChange(marotte.CmdBotSave, bind1(bots, cmdBotSave))
 	d.register(marotte.CmdBotSetPaused, bind1(bots, cmdBotSetPaused))
 	d.register(marotte.CmdBotClearMemory, bind1(bots, cmdBotClearMemory))
+	d.register(marotte.CmdBotRuleRunNow, bind1(bots, cmdBotRuleRunNow))
+	d.bots = bots
 
 	prompt := &promptRoles{
 		bridges:     r.Bridges,

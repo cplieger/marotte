@@ -124,7 +124,7 @@ func TestHandleSpec_ServesTheOrderedDocs(t *testing.T) {
 	if !strings.HasPrefix(etag, `W/"`) || !strings.HasSuffix(etag, `"`) || len(etag) != 68 {
 		t.Errorf("ETag = %q, want a weak tag over a quoted hex sha256", etag)
 	}
-	var sp marotte.Spec
+	var sp marotte.SpecDir
 	if err := json.Unmarshal(rec.Body.Bytes(), &sp); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestHandleSpec_ResolvesANestedRepoRoot(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
 	}
-	var sp marotte.Spec
+	var sp marotte.SpecDir
 	if err := json.Unmarshal(rec.Body.Bytes(), &sp); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}

@@ -12,5 +12,6 @@ func turnRange(l *EntryLog, turn string, from uint64) ([]marotte.Entry, error) {
 func counters(l *EntryLog) (turnCount uint64, last marotte.TurnOutcome) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.countersLocked()
+	c := l.countersLocked()
+	return c.N, c.Last
 }

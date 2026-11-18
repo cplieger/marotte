@@ -2,6 +2,7 @@
 //   ack                  → its `as`: "sent" (started), "steered" or "queued", and the answer's `run` is held
 //   409 "prompt_only"    → "prompt_only", 409 "full" → "full"
 //   409 "chat_not_found" → "gone", 409 "chat_closed" → "closed"
+//   409 "bot_draft", "bot_closed" → a refusal in the server's sentence
 //   any other 409        → "starting"
 //   anything else        → null
 // It writes no optimistic state: the composer and the dock draw the server's run order.
@@ -141,6 +142,24 @@ describe("sendPrompt — each 409 reason has its own arm", () => {
       // The action stays a PURE send: the steer chip is written only by the server's frame.
       expect(recordSteerQueued).not.toHaveBeenCalled();
       expect(applyRun).not.toHaveBeenCalled();
+    });
+  }
+});
+
+describe("sendPrompt — a Bot's 409 carries the server's words", () => {
+  for (const reason of ["bot_draft", "bot_closed"] as const) {
+    it(`maps 409 reason ${reason} to its own refusal, in the server's sentence`, async () => {
+      mockSend.mockResolvedValue({
+        ok: false,
+        status: 409,
+        error: "this Bot cannot take it",
+        reason,
+      });
+
+      expect(await sendPrompt.dispatch(args)).toEqual({
+        refused: reason,
+        words: "This Bot cannot take it",
+      });
     });
   }
 });

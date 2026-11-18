@@ -9,7 +9,7 @@ import (
 	"github.com/cplieger/marotte/internal/launchrule"
 )
 
-// The lines of the design's test table in which a poll's reads straddle a rule edit, run by TestAttemptTable.
+// The lines of the attempt table in which a poll's reads straddle a rule edit, run by TestAttemptTable.
 
 var pollCases = []attemptCase{
 	{

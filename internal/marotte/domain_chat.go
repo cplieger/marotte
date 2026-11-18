@@ -553,6 +553,9 @@ type Chat struct {
 	// KeepFilledAt is the Unix ms at which a create or the first keep-state reconcile wrote this record's keep
 	// facts; zero on a record that predates them. The purge ages a chat from the later of this and UpdatedAt.
 	KeepFilledAt int64 `json:"keep_filled_at,omitempty"`
+	// LastTurnEndedAt is the unix ms the newest finished non-carrier turn closed, written with TurnCount; an idle
+	// rule trigger counts from it.
+	LastTurnEndedAt int64 `json:"last_turn_ended_at,omitempty"`
 	// RunVersion grows with every write of Run, across lives and restarts, so a page keeps the newest.
 	RunVersion uint64 `json:"run_version,omitempty"`
 	// SessionCredits is KAS's running credit total for ACPSessionID (session_usage), overwritten;
@@ -661,6 +664,9 @@ type QueuedPrompt struct {
 	Resends     []string     `json:"resends,omitempty"`
 }
 
+// FromRule reports whether a Bot's rule sent the row.
+func (q *QueuedPrompt) FromRule() bool { return q.Caller != nil && q.Caller.Kind == CallerKindRule }
+
 // Carried reports whether the row resends dropped steers.
 func (q *QueuedPrompt) Carried() bool { return len(q.Resends) > 0 }
 
@@ -744,7 +750,7 @@ func (c *Chat) Header() ChatHeader {
 		CompactionWatermark: c.CompactionWatermark,
 		Run:                 RunViewOf(c.Run, c.RunVersion),
 		Tangent:             c.Tangent,
-		Bot:                 c.Bot.summary(),
+		Bot:                 c.Bot.summary(c.LastTurnEndedAt),
 	}
 }
 

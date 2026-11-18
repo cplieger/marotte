@@ -136,7 +136,7 @@ func (p *fillPool) close(ctx context.Context) error {
 
 // generation is what a fill started under: conn moves when the fill's
 // connection is dropped, repo when the fill's scope is mutated. Zero is a live
-// generation (ADR-0065), so it is never read as "not recorded".
+// generation, so it is never read as "not recorded".
 type generation struct {
 	conn, repo uint64
 }

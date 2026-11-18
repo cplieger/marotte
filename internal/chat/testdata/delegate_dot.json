@@ -43,7 +43,7 @@
       "page_word": "stopped",
       "terminal": true,
       "sites": [
-        "internal/chat/entrylog.go:1135",
+        "internal/chat/entrylog.go:1136",
         "internal/translate/projection_entries.go:731",
         "internal/translate/streaming_tools.go:500",
         "internal/translate/wire_enums.go:36",
@@ -129,7 +129,7 @@
       "status": "aborted"
     },
     {
-      "site": "internal/chat/entrylog.go:1135",
+      "site": "internal/chat/entrylog.go:1136",
       "form": "status_field",
       "status": "aborted"
     },

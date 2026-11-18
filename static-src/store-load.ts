@@ -95,7 +95,7 @@ function decodeStamps(v: unknown, path: string): SubjectStamp[] {
   return decodeArray(v, decodeSubjectStamp, path);
 }
 
-/** The single-chat GET of section 6.3: `{chat, entries, open_entries, has_more, live, subject,
+/** The single-chat GET: `{chat, entries, open_entries, has_more, live, subject,
  *  draft}`. `entries` is every entry of a window of WHOLE turns in FILE order and `open_entries`
  *  the in-memory tails of the open turns inside it, so the in-flight turn travels on the same
  *  channel as everything else and nothing is pushed on connect. */
@@ -130,7 +130,7 @@ interface TurnRangeResponse {
   subject: SubjectStamp[];
 }
 
-/** The range read of section 6.4: one turn's entries past `after` plus its open tails. */
+/** The range read: one turn's entries past `after` plus its open tails. */
 const decodeTurnRangeResponseLocal: Decoder<TurnRangeResponse> = (v) => {
   const o = asObject(v, "$.turn_range");
   return {
@@ -586,6 +586,7 @@ async function readChatList(signal?: AbortSignal): Promise<boolean> {
       // spread IS a replace here: nothing carries over because nothing is there. `updated_at` needs
       // no guard — it is required on the wire.
       ...(h.last_turn_outcome !== undefined && { last_turn_outcome: h.last_turn_outcome }),
+      ...(h.bot !== undefined && { bot: h.bot }),
       updated_at: h.updated_at,
     };
     next.push(session);
@@ -827,9 +828,9 @@ async function fetchPage(
     // window and asserts nothing new.
     session.residency = "loaded";
   }
-  // Every gap the walk found is MARKED and then asks for the range read of section 6.4 for that
-  // turn alone, BEFORE the repaint: the store's own order, so the window is stale in the same pass
-  // that renders what did arrive.
+  // Every gap the walk found is MARKED and then asks for the range read for that turn alone, BEFORE
+  // the repaint: the store's own order, so the window is stale in the same pass that renders what
+  // did arrive.
   if (page.holes.size > 0) {
     markWindowStale(chatID);
     for (const [turnID, afterSeq] of page.holes) {

@@ -2033,8 +2033,8 @@
     --beat-peak: 0.22;
   }
 
-  /* Something failed, and the control is still CLICKABLE — the tooltip names the
-     failure and the click is the retry, so this must not read as dead. */
+  /* Something failed and the control stays clickable, so this must not read as
+     dead: the tooltip names the failure. */
   &:where(.failed) {
     --send-hue: var(--c-yellow);
 
@@ -2046,11 +2046,10 @@
 
   /* Opts out of the unavailable face (40-a11y.css). Nothing disables the
    * composer — `prompt-input.ts` only ever writes `disabled = false`, and a
-   * failed send keeps this control live because the next click is the retry — so
-   * a dimmed, refused send button would advertise a state the app does not
-   * enter. The declaration stays as the floor's opt-out rather than being
-   * deleted, so a future writer who does disable it gets a readable control
-   * instead of a faded one. */
+   * failed send keeps this control live — so a dimmed, refused send button
+   * would advertise a state the app does not enter. The declaration stays as
+   * the floor's opt-out rather than being deleted, so a future writer who does
+   * disable it gets a readable control instead of a faded one. */
   &:disabled {
     cursor: default;
     opacity: 1;

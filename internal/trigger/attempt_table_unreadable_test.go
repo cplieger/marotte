@@ -9,7 +9,7 @@ import (
 	"github.com/cplieger/marotte/internal/launchrule"
 )
 
-// The lines of the design's test table for a state file that does not parse, run by TestAttemptTable.
+// The lines of the attempt table for a state file that does not parse, run by TestAttemptTable.
 
 // unparseable is a state file cut off mid-write.
 const unparseable = `{"status":`

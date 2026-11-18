@@ -156,6 +156,13 @@ type headerScan struct {
 func (h *headerScan) complete() bool { return h.listed && len(h.skipped) == 0 }
 
 func (s *Store) scanOnce(ctx context.Context) headerScan {
+	s.bots.scanStarted()
+	scan := s.readHeaders(ctx)
+	s.bots.scanDone(&scan)
+	return scan
+}
+
+func (s *Store) readHeaders(ctx context.Context) headerScan {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		slog.Error("chat list", "dir", s.dir, "error", err)

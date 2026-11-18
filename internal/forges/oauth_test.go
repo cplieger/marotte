@@ -297,7 +297,7 @@ func TestGrantRegistry_ConcurrentPollsAreSerialized(t *testing.T) {
 }
 
 // The sweep closes an expired grant while a poll of it is in flight: Close
-// waits for that poll and sends nothing of its own (ADR-0099).
+// waits for that poll and sends nothing of its own.
 func TestGrantRegistry_SweepOverlappingAPollWaitsForIt(t *testing.T) {
 	e := newGrantEndpoint(t, "900", slowDownAnswer)
 	var skew atomic.Int64
