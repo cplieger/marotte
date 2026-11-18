@@ -4,6 +4,10 @@
 // settle, a driver did not finish, or a Chromium page's stream scope was never seen.
 // Usage: node view.mjs --instance DIR --plan PLAN --scenario NAME --engine chromium|webkit|server
 //          --width desktop|phone|none --rep N --out FILE [--windows cold,rest] [--profile]
+//          [--record FILE]
+// --record writes each answer the page read, one line per request with its body, status, content
+// type and a JSON answer's body, and keeps the stream client's frame payloads, which
+// tests/perf/record-canned.sh turns into static-src/perf/canned/.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -14,9 +18,10 @@ import playwright from "playwright";
 
 import { decodeShares } from "./attrprobe.mjs";
 import { windowFailures } from "./failures.mjs";
+import { routeOf } from "./route-of.ts";
 import { donePids } from "./shell-end.mjs";
 import { streamFrames } from "./stream-frames.mjs";
-import { DRIVERS, VIEWS, instanceFacts } from "./views.mjs";
+import { DRIVERS, VIEWS, instanceFacts } from "./views.ts";
 
 const LIVE_PORT = "9847";
 // Milliseconds per /proc/<pid>/stat utime and stime tick (Linux USER_HZ is 100 a second).
@@ -48,6 +53,7 @@ const { values: args } = parseArgs({
     out: { type: "string" },
     windows: { type: "string" },
     profile: { type: "boolean", default: false },
+    record: { type: "string" },
   },
 });
 for (const k of ["instance", "plan", "scenario", "engine", "width", "out"]) {
@@ -155,27 +161,6 @@ function linesIn(file, from, to, scale = 1000) {
     .filter(Boolean)
     .map((l) => JSON.parse(l))
     .filter((e) => e.t * scale >= from && e.t * scale <= to);
-}
-
-const ID_SEGMENTS = [
-  [/\/(steps|turns|tools)\/[^/]+/g, "/$1/{id}"],
-  [/wf_[0-9a-z]+/g, "{run}"],
-  [/c-[0-9a-f]{32}/g, "{chat}"],
-  [/b[0-9a-f]{31}/g, "{tab}"],
-  [/sess_[0-9a-f-]+/g, "{session}"],
-];
-/** A request's route: method, path with its ids named, and its query keys (`view` keeps its value,
- *  since it picks the answer's shape). tests/perf/measure/servercpu.py replays one URL per route. */
-function routeOf(method, url) {
-  const u = new URL(url, origin);
-  let p = u.pathname;
-  for (const [re, name] of ID_SEGMENTS) {
-    p = p.replace(re, name);
-  }
-  const keys = [...new Set(u.searchParams.keys())]
-    .sort()
-    .map((k) => (k === "view" ? `view=${u.searchParams.get(k) ?? ""}` : k));
-  return `${method} ${p}${keys.length ? `?${keys.join("&")}` : ""}`;
 }
 
 // The stream helpers a driver calls; each resolves {done, ms, ...} when its stream ended. `ws`
@@ -394,6 +379,7 @@ function scopeMirror(doc) {
         CAPTURE,
         ...["--port", port, "--out", sseFile],
         ...["--scope-file", scopeFile, "--stop-file", stopFile],
+        ...(args.record ? ["--payloads"] : []),
       ],
       { stdio: ["ignore", "ignore", err] },
     );
@@ -519,16 +505,27 @@ async function browserCell() {
 
   // The page's requests (Chromium's worker requests arrive through watchWorker only).
   const reqs = [];
+  const recorded = [];
   const live = new Map();
   context.on("request", (r) => {
     scope.request(r.url(), r.method(), r.headers(), r.postData());
     const p = new URL(r.url()).pathname;
-    if (!p.startsWith("/api/") || p.startsWith("/api/events")) {
+    const counted = p.startsWith("/api/") && !p.startsWith("/api/events");
+    // A recording also keeps the answers the windows do not count, which a canned server serves.
+    const kept = args.record && (p === "/healthz" || p.startsWith("/api/events/"));
+    if (!counted && !kept) {
       return;
     }
-    const rec = { route: routeOf(r.method(), r.url()), url: r.url(), start: Date.now(), end: null };
+    const rec = {
+      route: routeOf(r.method(), r.url(), origin),
+      url: r.url(),
+      start: Date.now(),
+      end: null,
+    };
     live.set(r, rec);
-    reqs.push(rec);
+    if (counted) {
+      reqs.push(rec);
+    }
   });
   const finish = async (r, failed) => {
     const rec = live.get(r);
@@ -539,7 +536,20 @@ async function browserCell() {
     try {
       const res = failed ? null : await r.response();
       rec.status = failed ? "failed" : (res?.status() ?? null);
-      rec.bytes = res ? (await res.body()).length : 0;
+      const body = res ? await res.body() : null;
+      rec.bytes = body ? body.length : 0;
+      if (args.record && res) {
+        const type = res.headers()["content-type"] ?? "";
+        recorded.push({
+          route: rec.route,
+          method: r.method(),
+          url: r.url(),
+          request: r.method() === "GET" ? null : (r.postData() ?? null),
+          status: rec.status,
+          type,
+          body: body && type.startsWith("application/json") ? body.toString("utf8") : null,
+        });
+      }
     } catch {
       rec.bytes = 0;
     }
@@ -783,6 +793,9 @@ async function browserCell() {
   }
   await scope.stop();
   await withTimeout(browser.close(), 20000);
+  if (args.record) {
+    fs.writeFileSync(args.record, recorded.map((a) => JSON.stringify(a)).join("\n") + "\n");
+  }
   return doc;
 }
 

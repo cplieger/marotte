@@ -75,8 +75,8 @@ def node(script: str) -> str:
 
 
 def harness(name: str) -> set[str]:
-    """The names an export of static-src/perf/views.mjs holds: DRIVERS or VIEWS."""
-    views = ROOT / 'static-src' / 'perf' / 'views.mjs'
+    """The names an export of static-src/perf/views.ts holds: DRIVERS or VIEWS."""
+    views = ROOT / 'static-src' / 'perf' / 'views.ts'
     script = (
         f'import {{ {name} }} from {json.dumps(views.as_uri())};'
         f'console.log(JSON.stringify(Object.keys({name})));'
@@ -398,10 +398,10 @@ READY_SEEDED = {
 
 
 class ReadyScripts(unittest.TestCase):
-    """The ready predicates views.mjs splices for page.evaluate."""
+    """The ready predicates views.ts splices for page.evaluate."""
 
     def ready(self, body: str):
-        views = ROOT / 'static-src' / 'perf' / 'views.mjs'
+        views = ROOT / 'static-src' / 'perf' / 'views.ts'
         script = (
             f'import {{ VIEWS, instanceFacts }} from {json.dumps(views.as_uri())};'
             f'const f = instanceFacts({json.dumps(READY_SEEDED)});'
@@ -702,7 +702,9 @@ def hello(keepalive_event: str) -> str:
 class SseCapture(unittest.TestCase):
     """tests/perf/measure/sse-capture.py: the records it writes for a chunked event stream."""
 
-    def capture(self, chunks: list[str], records: int, close: bool = False) -> list[dict]:
+    def capture(
+        self, chunks: list[str], records: int, close: bool = False, extra: tuple = ()
+    ) -> list[dict]:
         held = threading.Event()
 
         class Stream(http.server.BaseHTTPRequestHandler):
@@ -737,6 +739,7 @@ class SseCapture(unittest.TestCase):
                         str(PERF / 'measure' / 'sse-capture.py'),
                         *('--port', str(srv.server_address[1]), '--out', str(out)),
                         *('--scope-file', str(scope), '--stop-file', str(stop)),
+                        *extra,
                     ]
                 )
                 deadline = time.monotonic() + 10
@@ -784,6 +787,15 @@ class SseCapture(unittest.TestCase):
         self.assertEqual(
             (got[1]['event'], got[1].get('type'), got[1].get('chat_id')), ('chat', 'turn', 'c1')
         )
+
+    def test_payloads_keep_each_frames_id_and_data_as_sent(self):
+        chunks = [hello('heartbeat'), 'id: 7\ndata: {"type":"a",\ndata: "n":1}\n\n', 'data: {}\n\n']
+        got = self.capture(chunks, 3, extra=('--payloads',))
+        self.assertEqual(
+            [(r.get('id'), r['data']) for r in got[1:]],
+            [('7', '{"type":"a",\n"n":1}'), (None, '{}')],
+        )
+        self.assertNotIn('data', self.capture(chunks, 3)[1])
 
     def test_the_stop_file_ends_a_stream_that_closes_its_connection(self):
         # http.client hands such a connection to the response and clears conn.sock.

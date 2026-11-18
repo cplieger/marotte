@@ -1,0 +1,1 @@
+{"route":"POST /api/command","url":"/api/command","decoder":null,"body":{"created":false,"ok":true,"subject":{"id":"b0000000000000000000000000000011","kind":"settings","ref":"","parent":"","pinned":false,"owns":false},"version":1},"request":{"chat_id":"","payload":{"kind":"settings","owns":true},"type":"open_tab"}}

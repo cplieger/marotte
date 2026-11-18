@@ -5,6 +5,7 @@
 // misplaced Node-needing test throws on import, but one needing the DOM ABSENT passes vacuously
 // (`attention-no-dom.node.test.ts` asserts its premise). `*.fuzz.test.ts` is ts-ci's fuzz axis. `channel: "chromium"` is the real
 // browser, not headless-shell: `npx playwright install --with-deps chromium`.
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { configDefaults, defineConfig, type TestProjectInlineConfiguration } from "vitest/config";
 import type { BrowserCommand } from "vitest/node";
 import { playwright } from "@vitest/browser-playwright";
@@ -38,6 +39,28 @@ const dprSessions = new WeakMap<object, { cdp: CDPSession; initialDpr: number }>
 /** A real tap through Playwright's touchscreen, which every engine implements, unlike CDP input. */
 const tapCommand: BrowserCommand<[selector: string]> = async ({ iframe }, selector) => {
   await iframe.locator(selector).tap();
+};
+
+const READ_BUDGETS = new URL("./perf/read-budgets.json", import.meta.url);
+
+/** A view's entry in perf/read-budgets.json (null when it has none), or, under READ_BUDGET_RECORD=1,
+ *  `counts` written as that entry. Synchronous on the one vitest process, so files recording in
+ *  parallel never interleave one's read with another's write. */
+const readBudgetCommand: BrowserCommand<[view: string, counts: unknown]> = (_ctx, view, counts) => {
+  const all = existsSync(READ_BUDGETS)
+    ? (JSON.parse(readFileSync(READ_BUDGETS, "utf8")) as Record<string, unknown>)
+    : {};
+  if (process.env["READ_BUDGET_RECORD"] !== "1") {
+    return { recording: false, budget: Object.hasOwn(all, view) ? all[view] : null };
+  }
+  all[view] = counts;
+  const sorted = Object.fromEntries(
+    Object.keys(all)
+      .sort()
+      .map((k) => [k, all[k]]),
+  );
+  writeFileSync(READ_BUDGETS, `${JSON.stringify(sorted, null, 2)}\n`);
+  return { recording: true, budget: counts };
 };
 
 /** Move the real pointer to (-1, -1), outside the viewport, where it hovers nothing. */
@@ -101,6 +124,7 @@ function browserProject(
         // two nest one line apart and the wrong one type-checks nowhere.
         commands: {
           tap: tapCommand,
+          readBudget: readBudgetCommand,
           parkPointer: parkPointerCommand,
           emulateA11yMedia: emulateA11yMediaCommand,
           /** Set the page's device pixel ratio; null restores the ratio the page had when this command first ran on
@@ -280,8 +304,15 @@ export default defineConfig({
   server: {
     fs: {
       // The `?raw` reads across the package boundary (the shipped page, Go sources the cross-language
-      // tests pin, the scripts a CSS guard reads). Narrowest set; NOT the repo root.
-      allow: ["../static", "../internal", "../scripts"],
+      // tests pin, the scripts a CSS guard reads, the perf plan the read budgets drive, the canned
+      // recorder whose cap the canned test pins). Narrowest set; NOT the repo root.
+      allow: [
+        "../static",
+        "../internal",
+        "../scripts",
+        "../tests/perf/plan.json",
+        "../tests/perf/measure/canned.py",
+      ],
     },
   },
   test: {

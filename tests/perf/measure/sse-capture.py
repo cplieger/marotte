@@ -5,9 +5,10 @@ The scope file holds the page's topics, a JSON array or null for everything: the
 the connect's SSE-Topics header, and each later change is POSTed to /api/events/scope for this
 connection; <out>.scopes.json lists each POST with its status. One JSON line per frame: t (epoch
 ms), event, bytes (the data's), the payload's type, chat_id, workflow_id and kind when it carries
-them, and keepalive: true on a frame of the keepalive event the hello names. Stops when
---stop-file appears, and exits 1 when the stream ends before it.
-Usage: sse-capture.py --port N --out FILE --scope-file FILE [--stop-file FILE]
+them, and keepalive: true on a frame of the keepalive event the hello names; with --payloads,
+also the frame's id and its data as sent. Stops when --stop-file appears, and exits 1 when the
+stream ends before it.
+Usage: sse-capture.py --port N --out FILE --scope-file FILE [--stop-file FILE] [--payloads]
 """
 
 import argparse
@@ -82,6 +83,7 @@ def main() -> None:
     ap.add_argument('--out', required=True)
     ap.add_argument('--scope-file', required=True)
     ap.add_argument('--stop-file', default='')
+    ap.add_argument('--payloads', action='store_true')
     a = ap.parse_args()
     if a.port == LIVE_PORT:
         raise SystemExit(f'sse-capture.py: {LIVE_PORT} is the live marotte')
@@ -112,16 +114,20 @@ def main() -> None:
 
     threading.Thread(target=watch_stop, daemon=True).start()
     try:
-        read_frames(resp, a.out, rescope, stop)
+        read_frames(resp, a.out, rescope, stop, a.payloads)
     finally:
         stop.set()
         pathlib.Path(a.out + '.scopes.json').write_text(json.dumps(rescope.posted))
 
 
 def read_frames(
-    resp: http.client.HTTPResponse, path: str, rescope: Rescope, stop: threading.Event
+    resp: http.client.HTTPResponse,
+    path: str,
+    rescope: Rescope,
+    stop: threading.Event,
+    payloads: bool = False,
 ) -> None:
-    event, data, keepalive = '', [], ''
+    event, data, keepalive, fid = '', [], '', None
     with open(path, 'w') as out:
         while True:
             try:
@@ -142,12 +148,18 @@ def read_frames(
                 field, _, value = line.partition(':')
                 if field == 'event':
                     event = value.strip()
+                elif field == 'id':
+                    fid = value.removeprefix(' ')
                 elif field == 'data':
                     data.append(value.removeprefix(' '))
                 continue
             if not data and not event:
                 continue
             rec = record(event, data)
+            if payloads:
+                rec['data'] = '\n'.join(data)
+                if fid is not None:
+                    rec['id'] = fid
             if event == 'sse:hello':
                 hello = json.loads('\n'.join(data))
                 rescope.conn = hello.get('conn')
@@ -157,7 +169,7 @@ def read_frames(
                 rec['keepalive'] = True
             out.write(json.dumps(rec) + '\n')
             out.flush()
-            event, data = '', []
+            event, data, fid = '', [], None
 
 
 if __name__ == '__main__':
