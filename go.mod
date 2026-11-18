@@ -25,7 +25,7 @@ require (
 	github.com/cplieger/go/httpserver v1.5.0
 	github.com/cplieger/go/keyenc v1.3.0
 	github.com/cplieger/go/keylock v1.1.0
-	github.com/cplieger/go/measure/v2 v2.0.0
+	github.com/cplieger/go/measure/v2 v2.1.0-dev.1
 	github.com/cplieger/go/pathinside v1.1.0
 	github.com/cplieger/go/slogx v1.1.0
 	github.com/cplieger/go/sse/v2 v2.3.0-dev.9
