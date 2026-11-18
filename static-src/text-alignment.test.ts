@@ -2,12 +2,17 @@
 // share a baseline, an icon or a native control sits on its text's centre line, and a label or a
 // box's one line of text sits on its row's or box's centre. Each site is checked whole: every
 // measurement `__test-helpers__/alignment.ts` takes inside it, in both themes. CI runs it in Chromium
-// at a ratio of 1; `ALIGN_ENGINES=1` adds Chromium at 2 and WebKit at 1 and 2 (vitest.config.ts).
+// at ratios 1 and 2; `ALIGN_ENGINES=1` adds WebKit at 1 and 2 (vitest.config.ts).
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { page } from "vitest/browser";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
-import { labelOffset, labelShapes, measureAlignment } from "./__test-helpers__/alignment.js";
+import {
+  inkBand,
+  labelOffset,
+  labelShapes,
+  measureAlignment,
+} from "./__test-helpers__/alignment.js";
 import {
   SURFACES,
   clearSurface,
@@ -42,14 +47,13 @@ const surface = (name: string): Surface => {
 };
 
 const mcpDialog = surface("the MCP dialog");
-const permissions = surface("Settings, Permissions");
 
 /** A registry entry carrying every piece the result row can show: version and status badge. */
 const DEPRECATED_RESULT: Surface = {
   ...mcpDialog,
   name: "the MCP dialog, a deprecated versioned result",
-  setup: (size) => {
-    mcpDialog.setup(size);
+  setup: async (size) => {
+    await mcpDialog.setup(size);
     q("#mcp-search-results").replaceChildren(
       renderRegistryResult({
         name: "io.github.example/github",
@@ -64,48 +68,15 @@ const DEPRECATED_RESULT: Surface = {
   },
 };
 
-/** Read-only rules with globs, in `permissions-ui.ts` `ruleRow`'s shape. */
-const GLOB_RULES: Surface = {
-  ...permissions,
-  name: "Settings, Permissions, a rule with globs",
-  setup: (size) => {
-    permissions.setup(size);
-    const span = (cls: string, t: string): HTMLSpanElement => {
-      const e = document.createElement("span");
-      e.className = cls;
-      e.textContent = t;
-      return e;
-    };
-    for (const [eff, cap, globs, src] of [
-      ["allow", "fs_read", "/workspace/**  /data/**", "default"],
-      ["deny", "shell", "rm -rf *", "~/.kiro/settings/cli.json"],
-    ] as const) {
-      const row = document.createElement("div");
-      row.className = `native-rule native-rule-${eff}`;
-      const words = span("native-rule-text", "");
-      words.append(
-        span("native-rule-cap mono", cap),
-        span("native-rule-globs mono", globs),
-        span("native-rule-src", src),
-      );
-      row.append(span(`native-rule-effect eff-${eff}`, eff), words);
-      q("#native-policy-list").appendChild(row);
-    }
-  },
-};
+const aTurn = surface("a turn");
 
-const question = surface("a question");
-
-/** An option the agent recommends, its badge in `user-input.ts` `optionCard`'s shape. */
-const RECOMMENDED: Surface = {
-  ...question,
-  name: "a question with a recommended option",
-  setup: (size) => {
-    question.setup(size);
-    const badge = document.createElement("span");
-    badge.className = "user-input-recommended";
-    badge.textContent = "Recommended";
-    q(".user-input-option-head").appendChild(badge);
+/** A turn while a search runs: `messages.ts` `setHitCount` writes the count into the header. */
+const TURN_HITS: Surface = {
+  ...aTurn,
+  name: "a turn with search hits",
+  setup: async (size) => {
+    await aTurn.setup(size);
+    q(".turn-hit-count").textContent = "3";
   },
 };
 
@@ -137,10 +108,13 @@ const SITES: readonly Site[] = [
   },
   {
     id: "a policy rule's capability, globs and source",
-    surface: GLOB_RULES,
+    surface: surface("Settings, Permissions"),
     frame: ".native-rule",
     sizes: [1180],
-    must: [/^baseline: .*native-rule-cap\.mono \| .*native-rule-globs/],
+    must: [
+      /^baseline: .*native-rule-cap\.mono \| .*native-rule-globs/,
+      /^baseline: .*native-rule-cap\.mono \| .*native-rule-src/,
+    ],
   },
   {
     id: "a tool row's name and source chip",
@@ -179,14 +153,14 @@ const SITES: readonly Site[] = [
   },
   {
     id: "a question's option title",
-    surface: question,
+    surface: surface("a question"),
     frame: ".user-input-option",
     sizes: [1180, 390],
     must: [/^box-text: .*button\.user-input-option :: /],
   },
   {
     id: "a recommended option's title and badge",
-    surface: RECOMMENDED,
+    surface: surface("a question with a recommended option"),
     frame: ".user-input-option-head",
     sizes: [1180, 390],
     must: [/^baseline: .*user-input-option-title \| .*user-input-recommended/],
@@ -206,11 +180,16 @@ const SITES: readonly Site[] = [
     must: [/^box-text: .*diff-row-(add|del) :: .*diff-gutter/],
   },
   {
-    id: "a turn header's number",
-    surface: surface("a turn"),
+    id: "a turn header's number, time and hit count",
+    surface: TURN_HITS,
     frame: ".turn-head-row",
     sizes: [1180, 390],
-    must: [/^label: .*turn-head-row > span\.turn-n$/],
+    must: [
+      /^label: .*turn-head-row > span\.turn-n$/,
+      /^label: .*turn-head-row > time\.turn-ts$/,
+      /^label: .*turn-head-row > span\.turn-hit-count$/,
+      /^baseline: .*turn-ts \| .*turn-hit-count/,
+    ],
   },
   {
     id: "an edit's +N -N stats",
@@ -224,7 +203,10 @@ const SITES: readonly Site[] = [
     surface: surface("a turn's code references"),
     frame: ".code-refs-item",
     sizes: [1180, 390],
-    must: [/^label: .*code-refs-license$/],
+    must: [
+      /^label: .*code-refs-license$/,
+      /^baseline: .*code-refs-license \| .*code-refs-link-text/,
+    ],
   },
   {
     id: "a run card's step fraction",
@@ -232,6 +214,17 @@ const SITES: readonly Site[] = [
     frame: ".ev-sum-progress",
     sizes: [1180, 390],
     must: [/^label: .*ev-sum-steps$/],
+  },
+  {
+    id: "a loop's pass, inner pass and step fraction",
+    surface: surface("a run card's nested loop"),
+    frame: ".ev-sum-progress",
+    sizes: [1180, 390],
+    must: [
+      /^baseline: .*ev-sum-frac \| .*ev-sum-inner/,
+      /^baseline: .*ev-sum-inner \| .*ev-sum-dot/,
+      /^baseline: .*ev-sum-dot \| .*ev-sum-steps/,
+    ],
   },
   {
     id: "a file row's size and date",
@@ -260,6 +253,51 @@ const SITES: readonly Site[] = [
     frame: ".entry-name",
     sizes: [1180, 390],
     must: [/^label: .*entry-title$/],
+  },
+  {
+    id: "the model card's Fallback row",
+    surface: surface("the model popup"),
+    frame: ".fallback-open",
+    sizes: [1180, 390],
+    must: [/^baseline: .*pill-model-name \| .*pill-model-meta/, /^icon-text: .*disclosure-chevron/],
+  },
+  {
+    id: "the model card's model rows",
+    surface: surface("the model popup"),
+    frame: ".pill-model-scroll .pill-model-item",
+    sizes: [1180, 390],
+    must: [/^label: .*pill-model-name$/, /^label: .*pill-model-meta$/],
+  },
+  {
+    id: "the role card's name, shadow and scope",
+    surface: surface("the role popup"),
+    frame: ".pill-role-item",
+    sizes: [1180, 390],
+    must: [
+      /^baseline: .*pill-role-name \| .*pill-role-shadow/,
+      /^baseline: .*pill-role-shadow \| .*pill-role-scope/,
+    ],
+  },
+  {
+    id: "a closed chat's name and time",
+    surface: surface("the sidebar"),
+    frame: ".history-row",
+    sizes: [1180, 390],
+    must: [/^label: .*history-row-name$/, /^label: .*history-row-time$/],
+  },
+  {
+    id: "a setting's label and value",
+    surface: surface("Settings, General"),
+    frame: ".section-title-status-row",
+    sizes: [1180, 390],
+    must: [/^label: .*section-option-label$/, /^label: .*auto-compact-pct-value$/],
+  },
+  {
+    id: "a workflow's schedule button",
+    surface: surface("the workflow list"),
+    frame: ".recipe-sched-btn",
+    sizes: [1180],
+    must: [/^label: .*recipe-sched-count$/],
   },
   {
     id: "the run dock's +N button",
@@ -339,5 +377,48 @@ describe("text and icon alignment", () => {
         expect(off, `at DPR ${String(window.devicePixelRatio)}`).toEqual([]);
       });
     }
+  }
+});
+
+/** The air between each model card section's edges and its ink: above the first line's cap top,
+ *  and under the effort bar or the Fallback row's baseline. */
+function sectionGaps(): { section: string; top: number; bottom: number; pad: number }[] {
+  return [...document.querySelectorAll<HTMLElement>(".model-panel-main > .effort-row")].map(
+    (row) => {
+      const r = row.getBoundingClientRect();
+      const cs = getComputedStyle(row);
+      const inner = r.top + parseFloat(cs.borderTopWidth);
+      const knob = row.querySelector(".effort-knob");
+      const text = row.querySelector(".effort-label, .fallback-open")!;
+      const band = inkBand(text);
+      const end = knob === null ? band.baseline : knob.getBoundingClientRect().bottom;
+      return {
+        section: knob === null ? "Fallback" : "effort",
+        top: band.top - inner,
+        bottom: r.bottom - end,
+        pad: parseFloat(cs.paddingTop),
+      };
+    },
+  );
+}
+
+describe("the model card's sections", () => {
+  for (const vp of VPS) {
+    it(`leave as much air above their text as under it at ${String(vp.w)}x${String(vp.h)}`, async () => {
+      await page.viewport(vp.w, vp.h);
+      await mountSurface(surface("the model popup"), vp.size, vp.tier);
+      await frames();
+      const gaps = sectionGaps();
+      expect(gaps.map((g) => g.section)).toEqual(["effort", "Fallback"]);
+      // Equal air is the ink band centred between the edges, held to a centre's tolerance.
+      for (const g of gaps) {
+        expect(Math.abs(g.top - g.bottom) / 2, JSON.stringify(g)).toBeLessThanOrEqual(CENTRE_PX);
+      }
+      const effort = gaps[0]!;
+      expect(
+        Math.abs(effort.top - effort.pad),
+        `the padding is the air: ${JSON.stringify(effort)}`,
+      ).toBeLessThanOrEqual(CENTRE_PX);
+    });
   }
 });

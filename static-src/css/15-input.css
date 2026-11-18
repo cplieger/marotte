@@ -463,18 +463,31 @@
 
 /* Every other label of the class measured over 0.5px off its row's or its own
  * box's centre, and every first line a leading glyph or control centres on:
- * trimmed, then padded back to one line box, so the row or box keeps the height
- * its line gave it and the cap band sits on the centre, with (1lh - 1cap) / 2 under
- * the baseline for a descender. A diff row's marker and code are trimmed with its
- * line number, so they keep one baseline. */
+ * trimmed, then padded to 1lh with the cap band on the box's centre and
+ * (1lh - 1cap) / 2 under the baseline for a descender. Every text run of a row is
+ * listed or none is, since a trimmed run and an untrimmed one of the same size no
+ * longer share a baseline. A diff row's marker and code go with its line number. */
 :where(
   .mcp-result-name,
   .chat-opt-name,
   .pr-merge-method-name,
   .user-input-sub-option > .user-input-option-title,
   .turn-n,
+  .turn-ts,
+  .turn-hit-count,
   .code-refs-license,
+  .code-refs-link-text,
+  .code-refs-source,
+  .ev-sum-frac,
+  .ev-sum-inner,
+  .ev-sum-dot,
   .ev-sum-steps,
+  .history-row-name,
+  .history-row-time,
+  .section-title-status-row > .section-option-label,
+  [id="auto-compact-pct-value"],
+  .recipe-sched-label,
+  .recipe-sched-count,
   .fb-meta,
   .list-row-meta,
   .tool-diff-stats > :is(.diff-add-count, .diff-del-count),
@@ -483,7 +496,7 @@
   .tool-source-chip,
   .mcp-result-status,
   .user-input-recommended,
-  .diff-row > .diff-gutter,
+  .diff-gutter,
   .diff-content > *
 ) {
   text-box: trim-both cap alphabetic;
@@ -1016,6 +1029,17 @@
   font-size: var(--fs-popup-meta);
 }
 
+/* The meta shares the name's baseline. Both are trimmed to their cap band and centred
+ * (the first trim list), so the smaller cap sat (cap - its cap) / 2 high of the name's
+ * baseline; topped up to the name's cap height, the two boxes end on one baseline. */
+.pill-model-item {
+  --row-cap: 1cap;
+
+  & > .pill-model-meta {
+    padding-block-start: calc(var(--row-cap) - 1cap);
+  }
+}
+
 /* Role pill: shows the active chat's agent role; expands to a role list.
  * Mirrors the model pill / model list styling. */
 .pill-role-icon {
@@ -1087,6 +1111,16 @@
     width: 1rem;
     height: 1rem;
   }
+}
+
+/* The name and its chips on ONE baseline, centred in the row as one box: centred one
+ * by one, the 12px chips sat 0.5px off the 13px name's baseline (more in a wider font). */
+.pill-role-text {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: var(--sp-2);
+  min-inline-size: 0;
 }
 
 /* The name takes the free space, which is what keeps the two trailing chips
@@ -1181,6 +1215,9 @@
    over-long name costs card HEIGHT, which the card can absorb and then scroll,
    rather than card width or hidden characters. */
 .effort-label {
+  /* At its cap top, so the section's top padding is the air above the ink, as its
+     bottom padding is the air under the bar (`.effort-track`). */
+  text-box: trim-start cap alphabetic;
   font-size: var(--fs-popup-meta);
   color: var(--c-text-tertiary);
   white-space: normal;
@@ -1203,9 +1240,15 @@
    `max()` so retuning either token cannot leave it short. No border and no
    padding, or `100cqi` and the border box `fracAt` reads diverge. */
 .effort-track {
+  --effort-line-h: max(var(--hit-floor), var(--effort-bar-h));
+
   position: relative;
   container-type: inline-size;
-  block-size: max(var(--hit-floor), var(--effort-bar-h));
+  block-size: var(--effort-line-h);
+
+  /* The line's surplus under the bar lies in the section's bottom padding, so the bar,
+     not the invisible line, ends the padding's distance from the edge. */
+  margin-block-end: calc((var(--effort-bar-h) - var(--effort-line-h)) / 2);
 
   /* The knob has to fit: below this the travel `100cqi - 100%` is negative and
      inverts. */

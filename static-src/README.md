@@ -27,7 +27,7 @@ npm run typecheck:tests # tsc type-check (tests)
 
 ## Test environment
 
-Five vitest projects, and the DEFAULT is the browser (the fifth, `e2e-sse`, runs against a real server binary: CI builds it and runs the project, and locally it skips unless `SSE_FIXTURE` is set; see CONTRIBUTING.md "Checks"):
+Six vitest projects, and the DEFAULT is the browser (the sixth, `e2e-sse`, runs against a real server binary: CI builds it and runs the project, and locally it skips unless `SSE_FIXTURE` is set; see CONTRIBUTING.md "Checks"):
 
 - **browser** — headless Chromium via `@vitest/browser-playwright`. Every test
   runs here unless its filename opts out. No `environment` option and no
@@ -40,6 +40,9 @@ Five vitest projects, and the DEFAULT is the browser (the fifth, `e2e-sse`, runs
   its own, so the real mouse it moves (a `userEvent` click or hover) reaches no
   later file: once a real mouse event reaches a page, Chromium keeps tracking
   hover there, which changes when layout runs in every file after it.
+- **browser-align-dpr2** — `text-alignment.test.ts` again in Chromium at a real
+  device scale of 2, where Chromium rounds text metrics to device pixels and
+  some rows are off only there. `ALIGN_ENGINES=1` adds WebKit at 1 and 2.
 - **node** — the `*.node.test.ts` suffix, for a test that needs genuine Node
   capabilities (spawning a process, walking a directory) or needs the DOM to be
   ABSENT. The reason goes in the stem, the placement in the suffix:

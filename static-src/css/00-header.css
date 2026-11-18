@@ -51,11 +51,21 @@
 
 /* A row's first line height as a LENGTH, computed where the row declares it
    (61-mcp-tools.css): `1lh` on the leading control would resolve in the
-   control's own UA font, not the text's. */
+   control's own UA font, not the text's. The initial value is in px: a `rem` one
+   is not computationally independent (css-properties-values-api-1 §2.1), so the
+   browser drops the registration and `1lh` travels unresolved. */
 @property --lead-lh {
   syntax: "<length>";
   inherits: true;
-  initial-value: 1rem;
+  initial-value: 16px;
+}
+
+/* A row's cap height as a LENGTH, computed where the row declares it (15-input.css),
+   for a smaller label in the row to read against. */
+@property --row-cap {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0;
 }
 
 /* A RING THAT SPINS WHILE WORK RUNS never rotates its own box: a rotated ring is resampled at every angle off a

@@ -278,11 +278,21 @@ const ICONS = "svg, img, input[type=checkbox], input[type=radio]";
 const CONTROL =
   "button, a, label, summary, li, [role=button], [role=tab], [role=option], [role=menuitem]";
 
+/** The unit a run reads in beside its row: an unpainted link is text in the line, so a run inside
+ *  one still pairs with the run before it. */
+function rowUnit(n: Node, root: Element): Element | null {
+  let u = unitOf(n, root, false);
+  while (u?.matches("a") === true && !painted(u)) {
+    u = unitOf(u, root, false);
+  }
+  return u;
+}
+
 /** Two things read as one line when they share a unit, or, when neither has one, when the nearest
  *  box holding both is no taller than a row. */
 function sameRow(a: Node, b: Node, root: Element, lineH: number): Element | null {
-  const ua = unitOf(a, root, false);
-  const ub = unitOf(b, root, false);
+  const ua = rowUnit(a, root);
+  const ub = rowUnit(b, root);
   const c = common(a, b);
   if (ua !== null && !ua.contains(b)) {
     return null;
@@ -441,6 +451,19 @@ export function measureAlignment(root: Element, opts: MeasureOptions = {}): Find
   return out;
 }
 
+/** The cap top and baseline of the first line of `el`'s first rendered text: its ink's band. */
+export function inkBand(el: Element): { top: number; baseline: number } {
+  const t = firstText(el);
+  if (t === null) {
+    throw new Error(`no text in ${selectorKey(el)}`);
+  }
+  const p = piece(t);
+  return {
+    top: r2(p.baseline - fontMetrics(getComputedStyle(t.parentElement!)).cap),
+    baseline: p.baseline,
+  };
+}
+
 /** A box the eye sees an edge of: a fill or a border. */
 function painted(el: Element): boolean {
   const cs = getComputedStyle(el);
@@ -456,7 +479,7 @@ function painted(el: Element): boolean {
   );
 }
 
-/** One instance of the shape 15-input.css's label note counts: a single-line text label that is a
+/** One label of the class 15-input.css's label note describes: a single-line text label that is a
  *  flex item centred in a row, measured against the row's centre. */
 export interface LabelShape {
   readonly el: Element;
