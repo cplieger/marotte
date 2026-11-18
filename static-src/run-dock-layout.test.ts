@@ -446,6 +446,9 @@ describe("the run summary on a phone", () => {
       live: true,
     });
     const dock = byId("run-exec-dock");
+    // The case asserts what a tap toggles, not the motion: eight 200 ms tweens through a busy
+    // page's late frames would spend the test's budget.
+    dock.style.setProperty("--uip-disclosure-duration", "0.01ms");
     const head = dock.querySelector<HTMLElement>(".ev-dock-head")!;
     const toggle = dock.querySelector<HTMLButtonElement>(".ev-box-toggle")!;
     expect(
@@ -474,7 +477,9 @@ describe("the run summary on a phone", () => {
         const hit = document.elementFromPoint(x, y);
         expect(hit !== null && head.contains(hit), `${what} is on the head`).toBe(true);
         expect(hit !== null && row.contains(hit), `${what} is no verb`).toBe(false);
-        await userEvent.click(head, { position: { x: x - r.left, y: y - r.top } });
+        // The hit checks above are this tap's actionability, and the tween before it has ended, so
+        // Playwright's own stable and hit retries would only wait on more frames.
+        await userEvent.click(head, { position: { x: x - r.left, y: y - r.top }, force: true });
         expect(toggle.getAttribute("aria-expanded"), `a tap on ${what}`).toBe(want);
         await animationsDone(region);
       }
