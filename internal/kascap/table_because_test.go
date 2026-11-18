@@ -596,10 +596,10 @@ degrade — every chat refusing to start, which is why VALID_PRESET_IDS is worth
 watching at a bump. And this key is in neither the isSettingEnabled nor the
 isFeatureEnabled population, so the census cannot see it and will not list it in
 unclaimed.txt: this row is the only record it exists.`,
-	"setting.disableAutoCompaction": `SENT on the session door only. Every chat session sends true,
-whatever the compaction switch and point: marotte is the one compactor, queueing a
-compaction when a turn's reading reaches the point (50..90) and running it at the
-turn's end. Every other session sends false.
+	"setting.disableAutoCompaction": `SENT on the session door only. A chat session sends the
+inverse of auto_compaction_enabled (Compact automatically), so kiro-cli compacts inside a
+turn at the Compact at point unless the reader turned it off. Every other session sends
+false.
 
 resolveDisableAutoCompaction reads three inputs, the session call's own _meta, the
 initialize _meta and KAS's persisted session metadata, and freezes the answer per
@@ -614,14 +614,17 @@ context-overflow recovery go with it, so an overflow fails the turn with
 ContextWindowExceededError (-32000) and internal/command names the Compact button.
 In-chat subagents share the parent's session services, so they run without
 compaction too; nothing marotte can call compacts a subagent.`,
-	"setting-object.compaction": `WITHHELD on every chat session; table.go owns the row. Every chat
-door sends disableAutoCompaction true, which short-circuits KAS's summarization node,
-so a threshold would have no reader, and a slider move reloads no chat. KAS reads the
-object through its own resolver, not isSettingEnabled: without enabled === true the
-threshold reads as the default (80), silently. Its validator throws -32602 on a
-value outside 0..80 (initialize advertises autoCompactionThreshold {min, max,
-default}), so sending marotte's 50..90 point here would fail a chat door above 80.
-excludePercent and excludeMessages, the object's other members, are declared in
+	"setting-object.compaction": `SENT on every chat session door as {enabled: true,
+autoCompactionThreshold: auto_compact_pct}; withheld on an observer's and a run host's door,
+which keep KAS's default (80). KAS reads the object through its own resolver
+(resolveSessionAutoCompactionThreshold), not isSettingEnabled: without enabled === true the
+threshold reads as the default, silently. Its validator throws -32602 on a value outside
+0..80 (initialize advertises autoCompactionThreshold {min, max, default}), which is why the
+Compact at slider stops at 80. kiro-cli acp applies no cli.json threshold (only the TUI and
+chat --no-interactive send one), so this row is its only setter. A resident session's
+session/load applies the request's value (applyResidentAutoCompactionThreshold), and the
+value rides the session fingerprint, so a slider move reloads open chats at their next
+message. excludePercent and excludeMessages, the object's other members, are declared in
 KAS's schema with no reader and stay unsent.
 
 thinking, tangentMode, checkpoint, _subagent and _delegate are declared in KAS's
@@ -958,9 +961,8 @@ step message. KAS stores it verbatim on the user row and on the turn_start that 
 (extractUserMessageTag; 1 to 256 characters) and echoes it on that turn_start live and on replay, so
 the bracket names the turn it opens: a turn_start with another tag or none is an agent run and
 never binds the waiting prompt, and the replay merge pairs a turn on the tag it echoes.`,
-	"text.callerLabel": `SENT on every chat prompt a program sent and on marotte's resume, carrying its sender:
-the name a program gave through marotte's API (/api/command or a notify), "api" when it gave none, and
-"marotte" on marotte's own resume after a failsafe compaction. KAS 3.1.0 has no sender field:
+	"text.callerLabel": `SENT on every chat prompt a program sent, carrying its sender: the name a program
+gave through marotte's API (/api/command or a notify), or "api" when it gave none. KAS 3.1.0 has no sender field:
 session/prompt's _meta.kiro schema is passthrough, so runAdmittedPrompt keeps the key on the user row it
 persists and replays, where a client reading the session's transcript tells a typed prompt from one a
 program sent. The model reads only the prompt blocks, so the key frames nothing for the agent. The

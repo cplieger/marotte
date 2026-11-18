@@ -388,7 +388,7 @@ var (
 			SpecPlan:          "full", SpecAskClarification: true, WorkValidation: "on",
 			MemoryFromDevice: true, BackgroundJobs: true,
 			Workflows: true, WorkflowCreatorEffort: "high", Messaging: true, Awareness: true, AwarenessMode: "consult",
-			DisableAutoCompaction: true, ProfileAgentTurns: true,
+			DisableAutoCompaction: true, AutoCompactionThreshold: 80, ProfileAgentTurns: true,
 			CustomAgents: []marotte.ClientCustomAgent{probeAgent},
 		}},
 		{"with every choice off", SessionSpawn{WorkValidation: "off"}},

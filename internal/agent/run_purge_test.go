@@ -156,13 +156,16 @@ func inspectOfRoot(workflowID string, status marotte.RunStatus, started, ended t
 	return raw
 }
 
-// inspectFromList answers an inspect of a listed run with the status and last activity the list gives it.
+// inspectFromList answers an inspect of a listed run with the status, last activity, launching session and recipe
+// the list gives it, as KAS's inspect state carries them.
 func inspectFromList(list json.RawMessage) func(string, map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 	var rows struct {
 		Runs []struct {
-			WorkflowID string            `json:"workflowId"`
-			Status     marotte.RunStatus `json:"status"`
-			UpdatedAt  string            `json:"updatedAt"`
+			WorkflowID      string            `json:"workflowId"`
+			Status          marotte.RunStatus `json:"status"`
+			UpdatedAt       string            `json:"updatedAt"`
+			ParentSessionID string            `json:"parentSessionId"`
+			WorkflowName    string            `json:"workflowName"`
 		} `json:"runs"`
 	}
 	_ = json.Unmarshal(list, &rows)
@@ -174,11 +177,30 @@ func inspectFromList(list json.RawMessage) func(string, map[string]any) (json.Ra
 		for _, r := range rows.Runs {
 			if r.WorkflowID == id {
 				ended, _ := time.Parse(time.RFC3339, r.UpdatedAt)
-				return inspectOf(id, r.Status, ended), nil, true
+				return withRunOrigin(inspectOf(id, r.Status, ended), r.ParentSessionID, r.WorkflowName), nil, true
 			}
 		}
 		return nil, nil, false
 	}
+}
+
+// withRunOrigin adds the launching session and the recipe, when named, to an inspect reply's state.
+func withRunOrigin(raw json.RawMessage, parent, recipe string) json.RawMessage {
+	var reply struct {
+		State      map[string]any `json:"state"`
+		WorkflowID string         `json:"workflowId"`
+	}
+	if json.Unmarshal(raw, &reply) != nil {
+		return raw
+	}
+	if parent != "" {
+		reply.State["parentSessionId"] = parent
+	}
+	if recipe != "" {
+		reply.State["workflowName"] = recipe
+	}
+	out, _ := json.Marshal(reply)
+	return out
 }
 
 // retryEffect is what KAS does with a retry of a purgedRun.
@@ -389,7 +411,7 @@ func expiringContext(t *testing.T, parent context.Context) (ctx context.Context,
 }
 
 func failedAffordance(h *Runtime, workflowID string) *runAffordance {
-	return h.runs.affordance(workflowID, &runHead{Status: string(marotte.RunStatusFailed)})
+	return h.runs.affordance(workflowID, launchedHead(marotte.RunStatusFailed, "sess_host", "publish"))
 }
 
 // The purge judges a run on its list row and again, in full, on a fresh read under the delete's hold, so a retry
@@ -1134,7 +1156,7 @@ func serveRuns(rig *deleteRig, failing map[string]bool, rows ...map[string]strin
 			for _, r := range rows {
 				if r["workflowId"] == id && !gone[id] {
 					ended, _ := time.Parse(time.RFC3339, r["updatedAt"])
-					return inspectOf(id, marotte.RunStatus(r["status"]), ended), true, nil
+					return withRunOrigin(inspectOf(id, marotte.RunStatus(r["status"]), ended), r["parentSessionId"], r["workflowName"]), true, nil
 				}
 			}
 		}

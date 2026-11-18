@@ -309,7 +309,6 @@ describe("ERROR_ROUTES", () => {
     ["auth_token_unavailable", { surface: "toast" }],
     ["rate_limit", { surface: "toast" }],
     ["compaction_failed", { surface: "toast" }],
-    ["resume_not_sent", { surface: "toast" }],
     // The four failed-ATTEMPT codes leave a promptable chat, so none reaches the send button.
     ["switch_failed", { surface: "toast" }],
     ["prompt_failed", { surface: "toast" }],
@@ -902,10 +901,9 @@ describe("turn_closed for a prompt failed on the sign-in", () => {
     }
   });
 
-  it("keeps a prompt the engine took, an automatic one and an API caller's out of the composer", () => {
+  it("keeps a prompt the engine took and an API caller's out of the composer", () => {
     const cases: [string, Record<string, unknown>, boolean][] = [
       ["bound", { text: "sent to the engine" }, true],
-      ["automatic", { text: "marotte's own", automatic: true }, false],
       ["caller", { text: "an API call", caller: { kind: "chat", id: "c-2" } }, false],
     ];
     for (const [name, prompt, bound] of cases) {

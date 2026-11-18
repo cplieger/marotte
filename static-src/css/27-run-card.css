@@ -121,6 +121,10 @@
    flex and no `white-space`: `.run-name` above absorbs the row's free space, so this
    sits at its content width. */
 .run-count {
+  /* A box centring its compact form, so the form's runs sit where the row's alignment rule puts
+     them (15-input.css); on a line of its own the form would sit on the strut's baseline. */
+  display: flex;
+  align-items: center;
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
   font-variant-numeric: tabular-nums;

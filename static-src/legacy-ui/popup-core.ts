@@ -539,7 +539,11 @@ export function createPopupCore<C extends PopupConfig>(
           }
         }
       },
-      terminal(fx) {
+      terminal(fx, d) {
+        // A release inside a show's own realization still owes the peers that show closed.
+        for (const peer of d.peers) {
+          fx.call(peer.flush);
+        }
         disarm();
         cancelLeave();
         syncGroup(null);

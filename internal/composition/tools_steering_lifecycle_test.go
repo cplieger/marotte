@@ -102,7 +102,7 @@ func TestApp_ShutdownStopsTheToolsEngineAfterTheRuntimeAndSignIn(t *testing.T) {
 		tornDownFirst = strings.Contains(logs.String(), "runtime shutdown complete")
 		signInFirst = signInWaited
 		app.Runtime.Broadcast(t.Context(), marotte.NewEvent(marotte.EventToolJobChanged, "",
-			marotte.ToolJobChangedPayload{Job: &toolbelt.Job{ID: "late", State: toolbelt.JobCancelled}}))
+			marotte.ToolJobChangedPayload{Job: toolbelt.Job{ID: "late", State: toolbelt.JobCancelled}}))
 	}
 
 	app.Shutdown()

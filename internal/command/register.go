@@ -54,8 +54,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.records = chats
 	d.register(marotte.CmdCreateChat, bind1(mem, cmdCreateChat))
 	d.register(marotte.CmdResumeSession, bind2(mem, r.Conversations, cmdResumeSession))
-	d.registerChange(marotte.CmdCompact, bind1[compactRequester](r.Compactor, cmdCompact))
-	d.register(marotte.CmdCancelCompact, bind1[compactRequester](r.Compactor, cmdCancelCompact))
+	d.register(marotte.CmdCompact, bind1[compactRequester](r.Compactor, cmdCompact))
 
 	d.register(marotte.CmdOpenTab, bind1(mem, cmdOpenTab))
 	d.register(marotte.CmdCloseTab, bind1(mem, cmdCloseTab))
@@ -73,7 +72,8 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.register(marotte.CmdPermissionResponse, bind1(r.Perms, cmdPermission))
 	d.register(marotte.CmdElicitationResponse, bind1(r.Perms, cmdElicitationResponse))
 	d.register(marotte.CmdUserInputResponse, bind1(r.Perms, cmdUserInputResponse))
-	d.registerChange(marotte.CmdRewindChat, bind6(r.Bridges, chats, r.Admission, r.Run, r.RunCutter, r.Bus, cmdRewindChat))
+	d.registerChange(marotte.CmdRewindChat,
+		bind7(r.Bridges, chats, r.Admission, r.Run, r.RunCutter, r.Bus, r.SummaryStreaks, cmdRewindChat))
 	configLocks := keylock.New(cmp.Compare[marotte.ChatID])
 	d.RegisterBotWriteChange(marotte.CmdSetEffort, bind6(r.Bridges, chats, r.Bus, r.Workspace, r.Effort, configLocks, cmdSetEffort))
 	d.RegisterBotWriteChange(marotte.CmdSetThinking, bind3(r.Bridges, chats, configLocks, cmdSetThinking))
@@ -84,10 +84,6 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.register(marotte.CmdSetSecurityProfile, bind1(r.ProfileMoves, cmdSetSecurityProfile))
 
 	d.register(marotte.CmdCancel, bind6(r.Run, r.Bridges, r.Perms, r.Terminals, r.Stops, r.SteerQueue, cmdCancel))
-	d.carryStop = func(ctx context.Context, chatID marotte.ChatID, rs RunStop) error {
-		_, err := carryOutStop(ctx, r.Run, r.Bridges, r.Perms, r.Terminals, r.Stops, chatID, rs, func() {})
-		return err
-	}
 	d.registerChange(marotte.CmdForkChat, bind4(r.Bridges, chats, r.Workspace, mem, cmdForkChat))
 
 	d.register(marotte.CmdQueuePrompt, bind4(r.Run, r.Admission, messageDoor(mem), chats, cmdQueuePrompt))
@@ -178,5 +174,11 @@ func bind5[A, B, C, D, E any](a A, b B, c C, d D, e E, fn func(context.Context, 
 func bind6[A, B, C, D, E, F any](a A, b B, c C, d D, e E, f F, fn func(context.Context, A, B, C, D, E, F, *marotte.ClientCommand) (any, error)) Handler {
 	return func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
 		return fn(ctx, a, b, c, d, e, f, cmd)
+	}
+}
+
+func bind7[A, B, C, D, E, F, G any](a A, b B, c C, d D, e E, f F, g G, fn func(context.Context, A, B, C, D, E, F, G, *marotte.ClientCommand) (any, error)) Handler {
+	return func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
+		return fn(ctx, a, b, c, d, e, f, g, cmd)
 	}
 }

@@ -885,3 +885,39 @@ func TestRunParents_ReadsItsMemberThroughStateParentKey(t *testing.T) {
 		t.Errorf("runParents() held = %v, want [sess_a]: only the exact key %q names a parent", got, stateParentKey)
 	}
 }
+
+func TestRunsOnDisk_ReadsEachRunsParentAndStatusInEveryPlace(t *testing.T) {
+	root, work := t.TempDir(), t.TempDir()
+	writeRunState(t, filepath.Join(root, "h1"), "wf_a", `{"status":"running","parentSessionId":"sess_a"}`)
+	writeRunState(t, filepath.Join(root, "h2"), "wf_b", `{"status":"completed","parentSessionId":"sess_b"}`)
+	writeRunState(t, filepath.Join(work, ".kiro"), "wf_c", `{"status":"paused"}`)
+	writeRunState(t, filepath.Join(root, "h1"), "wf_bad", `{"status":7,"parentSessionId":"sess_bad"}`)
+	if err := os.MkdirAll(runStateIn(filepath.Join(root, "h1"), "wf_nostate"), 0o755); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+
+	got, err := New(root, work).RunsOnDisk()
+	if err != nil {
+		t.Fatalf("RunsOnDisk() error = %v", err)
+	}
+	slices.SortFunc(got, func(a, b RunState) int { return strings.Compare(a.WorkflowID, b.WorkflowID) })
+	want := []RunState{
+		{WorkflowID: "wf_a", ParentSessionID: "sess_a", Status: "running"},
+		{WorkflowID: "wf_b", ParentSessionID: "sess_b", Status: "completed"},
+		{WorkflowID: "wf_c", Status: "paused"},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("RunsOnDisk() = %+v, want %+v: every decodable state, the undecodable one left out", got, want)
+	}
+}
+
+// A state file that exists but cannot be read may name any session, so the read answers an error, not fewer runs.
+func TestRunsOnDisk_AStateThatCannotBeReadIsAnError(t *testing.T) {
+	root := t.TempDir()
+	writeRunState(t, filepath.Join(root, "h"), "wf_a", `{"status":"running","parentSessionId":"sess_a"}`)
+	selfLoop(t, filepath.Join(runStateIn(filepath.Join(root, "h"), "wf_loop"), runStateFileName))
+
+	if got, err := New(root, t.TempDir()).RunsOnDisk(); err == nil {
+		t.Errorf("RunsOnDisk() = %+v, nil; want an error for a state file whose read fails with ELOOP", got)
+	}
+}

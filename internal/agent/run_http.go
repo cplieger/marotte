@@ -537,10 +537,13 @@ func (rr *runRoutes) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Off the request: a browser that gives up must not abandon a run KAS may already have created.
+	sent := make(chan struct{})
 	rr.runs.lifecycle.answerEngineMutation(w, r, engineMutation{
 		verb: "run launch",
+		sent: sent,
 		call: func(ctx context.Context) engineReply {
-			id, name, warnings, err := rr.runs.launch(ctx, req.Source, req.Inputs, defaults)
+			id, name, warnings, err := rr.runs.launch(ctx, req.Source, req.Inputs, defaults,
+				func() { close(sent) })
 			if err != nil {
 				return engineReply{err: err, write: func(w http.ResponseWriter) { writeLaunchErr(w, req.Source, err) }}
 			}
@@ -682,11 +685,14 @@ func (rr *runRoutes) handleRetry(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "missing workflow id")
 		return
 	}
-	aff, ok := rr.permits(w, r, verbRetry, id)
+	// The gate's read sits inside the retry's own deadline, so the whole retry answers inside the client's budget.
+	ctx, cancel := context.WithTimeout(r.Context(), retryTimeout)
+	defer cancel()
+	aff, ok := rr.permits(w, r.WithContext(ctx), verbRetry, id)
 	if !ok {
 		return
 	}
-	out, err := rr.runs.retry(r.Context(), id, aff)
+	out, err := rr.runs.retry(ctx, id, aff)
 	if err != nil {
 		rr.writeControlErr(w, verbRetry, id, err)
 		return
@@ -727,9 +733,8 @@ func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		httpreply.ServerError(w, errStepUnconfirmed.Error(), nil)
 	case errors.Is(err, errRunNotListed):
 		httpreply.NotFound(w, errRunNotListed.Error())
-	case errors.Is(err, errLaunchSessionUnavailable):
-		httpreply.Conflict(w, launchSessionUnavailableText)
-	case errors.Is(err, errRunHostSlow), engineHoldsSession(err):
+	case errors.Is(err, errRunHostSlow), errors.Is(err, errRunUnread), engineHoldsSession(err),
+		errors.Is(err, runlease.ErrNoHostSecurity), errors.Is(err, errLaunchSessionUnavailable):
 		rr.writeControlErr(w, "answer", id, err)
 	case errors.Is(err, errRunHostStart):
 		// A failed host session is this server's fault.
@@ -900,9 +905,7 @@ func (rr *runRoutes) permits(
 ) (*runAffordance, bool) {
 	head, err := rr.head(r.Context(), id)
 	if err != nil {
-		slog.Warn("run control: status read failed",
-			"verb", verb, "workflow_id", logsafe.Field(id), "error", err, "detail", rpcerr.Details(err))
-		httpreply.InternalError(w, errors.New(verb+" failed"))
+		writeHeadErr(w, verb, id, err)
 		return nil, false
 	}
 	status := head.Status
@@ -931,15 +934,50 @@ const deleteUnconfirmedText = "The delete was sent, but its answer was lost. " +
 const controlUnreadText = "The run control was sent but its answer could not be read. " +
 	"Refresh the run to see where it is."
 
+// writeHeadErr answers a verb whose gate read of the run failed: 503 when kiro-cli did not answer it, since a later
+// try usually reads it, else 500.
+func writeHeadErr(w http.ResponseWriter, verb, id string, err error) {
+	slog.Warn("run control: status read failed",
+		"verb", verb, "workflow_id", logsafe.Field(id), "error", err, "detail", rpcerr.Details(err))
+	if rErr := runReadErr(err); errors.Is(rErr, errRunUnread) {
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(errRunUnread.Error()))
+		return
+	}
+	httpreply.InternalError(w, errors.New(verb+" failed"))
+}
+
+// gaveUpText is the sentence a verb that gave up waiting answers: on the run's read, else on its session or another
+// verb holding it.
+func gaveUpText(err error) string {
+	if errors.Is(err, errRunUnread) {
+		return errRunUnread.Error()
+	}
+	return errRunHostSlow.Error()
+}
+
+// launchRefusalText is what verb answers when its run's launching session cannot be loaded here: the cause (the
+// missing security profile when that is it, since the session itself can be opened), then the controls the run still
+// offers. Retry is the one verb a failed or aborted run offers, and that run offers no cancel (runStatusVerbs).
+func launchRefusalText(verb string, err error) string {
+	cause := launchSessionUnavailableText
+	if errors.Is(err, runlease.ErrNoHostSecurity) {
+		cause = runlease.ErrNoHostSecurity.Error() + "."
+	}
+	if verb == verbRetry {
+		return cause + " Delete still works."
+	}
+	return cause + " Cancel and delete still work."
+}
+
 // writeControlErr answers a verb that reached KAS and failed: a refusal forwards KAS's actionable sentence;
 // InternalError is for faults that are not the reader's.
 func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err error) {
 	switch {
 	case writeStatusErr(w, err):
-	case errors.Is(err, errRunHostSlow):
+	case errors.Is(err, errRunHostSlow), errors.Is(err, errRunUnread):
 		slog.Warn("run control timed out waiting for the run, so nothing was sent",
-			"verb", verb, "workflow_id", logsafe.Field(id))
-		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
+			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(gaveUpText(err)))
 	case engineHoldsSession(err):
 		slog.Warn("run control refused: kiro-cli has not released the run's launching session",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
@@ -953,11 +991,11 @@ func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err er
 		httpreply.NotFound(w, errRunNotListed.Error())
 	case workflowNotFound(err):
 		httpreply.NotFound(w, "run not found")
-	case errors.Is(err, errLaunchSessionUnavailable):
+	case errors.Is(err, errLaunchSessionUnavailable), errors.Is(err, runlease.ErrNoHostSecurity):
 		// A state of the run.
-		slog.Info("run control unavailable: the run's launching session cannot be opened here",
+		slog.Info("run control unavailable: the run's launching session cannot be loaded here",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
-		httpreply.Conflict(w, launchSessionUnavailableText)
+		httpreply.Conflict(w, launchRefusalText(verb, err))
 	case errors.Is(err, errRunDeleting):
 		httpreply.Conflict(w, "This run is already being deleted.")
 	case errors.Is(err, errDeleteUnconfirmed):
@@ -1040,9 +1078,7 @@ func (rr *runRoutes) controlHandler(w http.ResponseWriter, r *http.Request, verb
 		head, err := rr.head(r.Context(), id)
 		status := head.Status
 		if err != nil {
-			slog.Warn("run control: status read failed",
-				"verb", verb.name, "workflow_id", logsafe.Field(id), "error", err, "detail", rpcerr.Details(err))
-			httpreply.InternalError(w, errors.New(verb.name+" failed"))
+			writeHeadErr(w, verb.name, id, err)
 			return
 		}
 		if status == "" {

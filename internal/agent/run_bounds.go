@@ -665,7 +665,7 @@ func (rs *Runs) restartLife(ctx context.Context, workflowID string) {
 }
 
 // An already-hosted retry may still carry its old deadline; one after a terminal frame needs a new
-// lease, named from KAS's run list for the single-run rule. The slot stays zero.
+// lease, named from the gate's read of the run for the single-run rule. The slot stays zero.
 func (rs *Runs) rearmRetried(ctx context.Context, workflowID string, o *runOrigin, holders []marotte.ChatID) {
 	rs.clearEnd(workflowID)
 	rs.disarmDeadline(ctx, workflowID)
@@ -773,6 +773,11 @@ func (rs *Runs) idleExpiry(workflowID string, armedFor time.Time) expiryOutcome 
 			rs.refillDeadline(ctx, workflowID)
 		}
 		return expiryHandled
+	case idleUnread:
+		slog.Warn("a run's idle window ran out, but kiro-cli did not answer a read of it; refilling the window",
+			"workflow_id", workflowID)
+		rs.refillDeadline(ctx, workflowID)
+		return expiryHandled
 	case idleStalled:
 	}
 	return expiryStalled
@@ -785,13 +790,16 @@ const (
 	idleStalled idleVerdict = iota
 	idleWorking
 	idleParked
+	// idleUnread is a run its chat resumes whose state kiro-cli did not answer a read of, so whether it is paused is
+	// unknown.
+	idleUnread
 )
 
 // idleVerdict reads an expired idle window. A run with open work (runLog.hasOpenWork) is working: a KAS-side tool or a
 // model reasoning silently sends no frame, and actOnSilence bounds how long a step may stay silent. A run its chat
 // resumes that KAS reports paused is parked: KAS reconciles a dead owner's run to paused on its next read and emits no
-// frame, so its pause never reached observePaused. Anything else, an unreadable run, a parentless orphan and a
-// container open with no child included, is stalled.
+// frame, so its pause never reached observePaused; one whose read kiro-cli did not answer is unread. Anything else, a
+// run kiro-cli refuses to read, a parentless orphan and a container open with no child included, is stalled.
 func (rs *Runs) idleVerdict(ctx context.Context, workflowID string) idleVerdict {
 	if rs.log != nil && rs.log.hasOpenWork(workflowID) {
 		return idleWorking
@@ -799,7 +807,11 @@ func (rs *Runs) idleVerdict(ctx context.Context, workflowID string) idleVerdict 
 	if !rs.chatResumes(workflowID) {
 		return idleStalled
 	}
-	if rs.kasPaused(ctx, workflowID) {
+	paused, err := rs.kasPaused(ctx, workflowID)
+	switch {
+	case err != nil:
+		return idleUnread
+	case paused:
 		return idleParked
 	}
 	return idleStalled
@@ -813,17 +825,21 @@ func (rs *Runs) chatResumes(workflowID string) bool {
 	return held && l.Origin == runlease.OriginAgent
 }
 
-// kasPaused reports whether KAS's own read says the run is paused; false on any RPC or decode failure.
-func (rs *Runs) kasPaused(ctx context.Context, workflowID string) bool {
+// kasPaused reports whether KAS's own read says the run is paused. The error is a read kiro-cli did not answer
+// (errRunUnread); a refusal or an undecodable reply is not paused.
+func (rs *Runs) kasPaused(ctx context.Context, workflowID string) (bool, error) {
 	raw, err := rs.rawInspect(ctx, workflowID)
 	if err != nil {
-		return false
+		if rErr := runReadErr(err); errors.Is(rErr, errRunUnread) {
+			return false, rErr
+		}
+		return false, nil
 	}
 	var res inspectRunState
 	if !unmarshalKeepingReadable(raw, &res) {
-		return false
+		return false, nil
 	}
-	return res.WorkflowID == workflowID && res.State.Status == marotte.RunStatusPaused
+	return res.WorkflowID == workflowID && res.State.Status == marotte.RunStatusPaused, nil
 }
 
 // parkExpired disarms a run the idle verdict found parked, reporting whether it did. It refuses when

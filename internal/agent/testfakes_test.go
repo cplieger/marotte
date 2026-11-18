@@ -1051,12 +1051,16 @@ type testChatStore struct {
 	onGet atomic.Pointer[func(id marotte.ChatID)]
 	// Gets counts Get calls, for a test about how often the store is read.
 	Gets atomic.Int64
+	// OwnerScans counts SessionOwners calls, for a test about how often the whole store is scanned.
+	OwnerScans atomic.Int64
 	// runtime receives the store's broadcasts once wire names it (storeRelay).
 	runtime atomic.Pointer[Runtime]
 	// mutated runs after each Mutate returns, and beforeDeleteIf before each DeleteIf, for a test that lands a write
 	// in another command's window.
 	mutated        atomic.Pointer[func(id marotte.ChatID)]
 	beforeDeleteIf atomic.Pointer[func(id marotte.ChatID)]
+	// mutateFault, when set, fails every Mutate with it and writes nothing, for a test about a header write lost.
+	mutateFault atomic.Pointer[error]
 	// tornDown names sessions SessionInTeardown reports in teardown besides the store's own, set through tearDown.
 	tornDown   map[string]bool
 	tornDownMu sync.Mutex
@@ -1080,6 +1084,7 @@ func (s *testChatStore) SessionInTeardown(sessionID string) bool {
 }
 
 func (s *testChatStore) SessionOwners(ctx context.Context) chat.OwnerScan {
+	s.OwnerScans.Add(1)
 	scan := s.Store.SessionOwners(ctx)
 	if s.ownerScan != nil {
 		return s.ownerScan(ctx, scan)
@@ -1131,6 +1136,9 @@ func (s *testChatStore) Get(ctx context.Context, id marotte.ChatID) (*marotte.Ch
 }
 
 func (s *testChatStore) Mutate(ctx context.Context, id marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error) {
+	if fault := s.mutateFault.Load(); fault != nil {
+		return "", *fault
+	}
 	version, err := s.Store.Mutate(ctx, id, mutate)
 	if hook := s.mutated.Load(); hook != nil {
 		(*hook)(id)

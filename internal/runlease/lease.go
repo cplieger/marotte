@@ -94,15 +94,16 @@ type HostSecurity struct {
 	Presets []string `json:"presets"`
 }
 
-// errNoHostSecurity refuses to reload a parentless run's host session whose launch recorded no
+// ErrNoHostSecurity refuses to reload a parentless run's host session whose launch recorded no
 // security input: any default would be a guess at the run's permissions.
-var errNoHostSecurity = errors.New("this run's security profile was not recorded at launch, so marotte cannot load its session; cancel it and launch it again")
+var ErrNoHostSecurity = errors.New("this run's security profile was not recorded at launch, so marotte cannot " +
+	"load its session. Launch it again")
 
 // HostPresets returns the presets a parentless run's host session reloads with, or
-// errNoHostSecurity when the lease recorded none.
+// ErrNoHostSecurity when the lease recorded none.
 func (l *Lease) HostPresets() ([]string, error) {
 	if l.Host == nil || l.Host.Presets == nil {
-		return nil, errNoHostSecurity
+		return nil, ErrNoHostSecurity
 	}
 	return slices.Clone(l.Host.Presets), nil
 }

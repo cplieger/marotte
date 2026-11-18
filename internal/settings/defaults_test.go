@@ -108,8 +108,8 @@ func TestEffective_AutoCompactionDefaultsAndInvalidPctReadsAsDefault(t *testing.
 		{stored: `50`, want: 50},
 		{stored: `65`, want: 65},
 		{stored: `80`, want: 80},
-		{stored: `85`, want: 85},
-		{stored: `90`, want: 90},
+		{stored: `85`, want: 80, reject: true},
+		{stored: `90`, want: 80, reject: true},
 		{stored: `95`, want: 80, reject: true},
 		{stored: `47`, want: 80, reject: true},
 		{stored: `92`, want: 80, reject: true},
@@ -140,9 +140,10 @@ func TestEffective_AutoCompactionDefaultsAndInvalidPctReadsAsDefault(t *testing.
 }
 
 // The slider's range is served with the settings, from the constants the validator reads, and a pct the page
-// cannot produce is refused there too.
+// cannot produce is refused there too. Its top is kiro-cli's own: KAS refuses an autoCompactionThreshold over 80
+// with -32602 at the session door.
 func TestEffective_ServesTheAutoCompactPctRange(t *testing.T) {
-	want := marotte.PctRange{Min: 50, Max: 90, Step: 5}
+	want := marotte.PctRange{Min: 50, Max: 80, Step: 5}
 	if got := EffectiveDefaults().AutoCompactPctRange; got != want {
 		t.Errorf("EffectiveDefaults().AutoCompactPctRange = %+v, want %+v", got, want)
 	}
@@ -165,8 +166,9 @@ func TestValidateCompactionPatch(t *testing.T) {
 	}{
 		{name: "neither key", patch: map[string]json.RawMessage{KeyTheme: json.RawMessage(`"dark"`)}},
 		{name: "valid pct", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`75`)}},
-		{name: "pct 85", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`85`)}},
-		{name: "pct 90", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`90`)}},
+		{name: "pct 80", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`80`)}},
+		{name: "pct 85", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`85`)}, wantErr: true},
+		{name: "pct 90", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`90`)}, wantErr: true},
 		{name: "pct 45", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`45`)}, wantErr: true},
 		{name: "valid switch", patch: map[string]json.RawMessage{KeyAutoCompactionEnabled: json.RawMessage(`false`)}},
 		{name: "pct 95", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`95`)}, wantErr: true},

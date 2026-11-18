@@ -857,6 +857,8 @@ export function upsertHeader(h: ChatHeader): void {
         pending_effort: h.pending_effort ?? "",
         run: newerRun(s.run, h.run),
         tangent: h.tangent ?? false,
+        // Outside `run`, so a header read is its authority both ways: the run version does not move with it.
+        compacting: h.compacting ?? false,
       };
       if (h.compaction_watermark !== undefined) {
         next.compaction_watermark = h.compaction_watermark;
@@ -902,6 +904,7 @@ export function upsertHeader(h: ChatHeader): void {
     pending_effort: h.pending_effort ?? "",
     run: newerRun(undefined, h.run),
     tangent: h.tangent ?? false,
+    compacting: h.compacting ?? false,
     turns: new Map(),
     turn_order: [],
     // A header carries no window, so this is the DERIVATION and not an answer.

@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -44,24 +43,23 @@ func sendNowCmd(id, stop string) marotte.ClientCommand {
 // steerWrites counts the _session/steer calls kiro-cli received.
 func steerWrites(br *fakeBridge) int { return countOf(br.wireLog(), marotte.MethodSessionSteer) }
 
-// heldCleanClose is c1 whose staged turn closed clean at the point while kiro-cli still reports the run: the close's
-// KAS hold stands until the test reports kiro-cli idle, and the turn end's compaction waits behind it.
+// heldCleanClose is c1 whose staged turn closed clean while kiro-cli still reports the run: the close's KAS hold
+// stands until the test reports kiro-cli idle.
 func heldCleanClose(t *testing.T) (h *Runtime, cs *testChatStore, br *fakeBridge, turnID string) {
 	t.Helper()
 	h, cs, br, _ = idleAfterFirstTurn(t, "/tmp/work")
-	atThePoint(t, h, cs)
 	turnID, _ = h.stagePromptTurn(t, "c1")
 	h.translateACPEvent("c1", h.originOf("c1"), newChunkMsg("an answer"))
 	h.coord.WireTurnActivity("c1", true)
 	endTurn(t, h, "c1", turnID)
-	waitFor(t, func() bool { return slices.Contains(runStates(t, cs, "c1"), "compaction pending") })
+	waitFor(t, func() bool { return slices.Contains(runStates(t, cs, "c1"), turnID+" closing") })
 	return h, cs, br, turnID
 }
 
 // One row per head and event: each states the answer, the order the header lists after it and the
 // session calls kiro-cli received.
 func TestRunOrder_Table(t *testing.T) {
-	inBubble(t, "a prompt during a clean close's hold queues behind the turn end's compaction, unsteered", func(t *testing.T) {
+	inBubble(t, "a prompt during a clean close's hold queues behind the closing turn, unsteered", func(t *testing.T) {
 		h, cs, br, turnID := heldCleanClose(t)
 
 		if got := ackAs(t, postCmd(t, h, promptCmd("m-p", "during the hold"))); got != "queued" {
@@ -70,7 +68,7 @@ func TestRunOrder_Table(t *testing.T) {
 		if n := steerWrites(br); n != 0 {
 			t.Errorf("_session/steer written %d times, want none: the turn closed", n)
 		}
-		want := []string{turnID + " closing", "compaction pending", "m-p pending"}
+		want := []string{turnID + " closing", "m-p pending"}
 		if got := runStates(t, cs, "c1"); !slices.Equal(got, want) {
 			t.Errorf("list = %v, want %v", got, want)
 		}
@@ -118,47 +116,11 @@ func TestRunOrder_Table(t *testing.T) {
 		waitFor(t, func() bool { return slices.Contains(promptIDs(t, cs, "c1"), "m-p") })
 	})
 
-	inBubble(t, "send-now under a running turn with a compaction pending stops it, then compacts, then sends", func(t *testing.T) {
-		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
-		open := promptGates(t, br)
-		atThePoint(t, h, cs)
-		// kiro-cli answers a stopped turn's prompt cancelled.
-		br.setCallResult(marotte.MethodPrompt, json.RawMessage(`{"stopReason":"cancelled"}`))
-		if code := postPrompt(t, h, "a"); code != http.StatusOK {
-			t.Fatalf("Setup: prompt = %d", code)
-		}
-		waitFor(t, func() bool { return countOf(br.callLog(), marotte.MethodPrompt) == 2 })
-		h.coord.ObserveContextUsage(t.Context(), "c1", 92)
-		queueDuring(t, h, "m-q0", "m-q1")
-		if got := entryView(t, cs, "m-q1").SendNow; got != marotte.SendNowStopThenCompaction {
-			t.Errorf("m-q1's arrow = %q, want stop_then_compaction", got)
-		}
-
-		if rec := postCmd(t, h, sendNowCmd("m-q1", "m-a")); rec.Code != http.StatusOK {
-			t.Fatalf("send_queued_now = %d %s", rec.Code, rec.Body.String())
-		}
-		waitFor(t, func() bool { return len(br.notified(marotte.MethodCancel)) == 1 })
-		open(0)
-		// m-q1's turn stays open at its gate, so the row the stop paused is read before any clean close.
-		waitFor(t, func() bool { return countOf(br.callLog(), marotte.MethodPrompt) == 3 })
-		w := orderWrites(br)
-		c, k := slices.Index(w, marotte.MethodCancel), slices.Index(w, marotte.MethodSessionCompact)
-		if c < 0 || k < c || !slices.Contains(w[k+1:], marotte.MethodPrompt) {
-			t.Errorf("writes = %v, want session/cancel, then the compaction, then m-q1's prompt", w)
-		}
-		if slices.Contains(promptIDs(t, cs, "c1"), "m-q0") {
-			t.Error("the row the stop paused was sent at the compaction's end, want only the send-now row")
-		}
-		if got := entryView(t, cs, "m-q0").State; got != marotte.RunPaused {
-			t.Errorf("m-q0 = %q, want paused", got)
-		}
-	})
-
-	inBubble(t, "send-now under a closing head with a compaction pending stops nothing and goes after it", func(t *testing.T) {
+	inBubble(t, "send-now under a closing head stops nothing", func(t *testing.T) {
 		h, cs, br, _ := heldCleanClose(t)
 		queueDuring(t, h, "m-q1", "m-q2")
-		if got := entryView(t, cs, "m-q2").SendNow; got != marotte.SendNowAfterCompaction {
-			t.Errorf("m-q2's arrow = %q, want after_compaction", got)
+		if got := entryView(t, cs, "m-q2").SendNow; got != "now" {
+			t.Errorf("m-q2's arrow = %q, want now", got)
 		}
 		if rec := postCmd(t, h, sendNowCmd("m-q2", "")); rec.Code != http.StatusOK {
 			t.Fatalf("send_queued_now = %d %s", rec.Code, rec.Body.String())
@@ -168,7 +130,7 @@ func TestRunOrder_Table(t *testing.T) {
 		}
 	})
 
-	inBubble(t, "cancel with no target stops the running turn and writes nothing under a compaction", func(t *testing.T) {
+	inBubble(t, "cancel with no target stops the running turn", func(t *testing.T) {
 		h, _, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		open := promptGates(t, br)
 		if code := postPrompt(t, h, "a"); code != http.StatusOK {
@@ -180,12 +142,6 @@ func TestRunOrder_Table(t *testing.T) {
 		}
 		waitFor(t, func() bool { return len(br.notified(marotte.MethodCancel)) == 1 })
 		open(0)
-
-		h2, _, br2, _ := compactingHubIn(t, "/tmp/work")
-		wantStoppedNothing(t, postCmd(t, h2, cancelCmd(`{}`)))
-		if n := len(br2.notified(marotte.MethodCancel)); n != 0 {
-			t.Errorf("session/cancel under a compaction head = %d, want none", n)
-		}
 	})
 
 	inBubble(t, "a fold-opened turn on an idle list hands its place to a prompt", func(t *testing.T) {
@@ -251,29 +207,8 @@ func TestRunOrder_Table(t *testing.T) {
 		if got := ackAs(t, postCmd(t, h, promptCmd("m-p", "beside the fold"))); got != "queued" {
 			t.Errorf("prompt answered %s, want queued", got)
 		}
-		if got := runWait(t, cs, "c1", "m-p"); got != "turn" {
-			t.Errorf("m-p waits for %q, want a turn", got)
-		}
 		h.coord.WireTurnActivity("c1", false)
 		waitFor(t, func() bool { return slices.Contains(promptIDs(t, cs, "c1"), "m-p") })
-	})
-
-	inBubble(t, "kiro-cli's turn beside a compaction closing first leaves the compaction running", func(t *testing.T) {
-		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
-		release := holdCall(t, br, marotte.MethodSessionCompact)
-		go func() { _, _ = h.RequestCompact(context.WithoutCancel(t.Context()), "c1") }()
-		waitForCall(t, br, marotte.MethodSessionCompact)
-		br.deliver(newTurnStartMsg())
-		waitFor(t, func() bool {
-			return slices.Equal(runStates(t, cs, "c1"), []string{"compaction running", "wire running"})
-		})
-		br.deliver(newTurnEndMsg("end_turn"))
-		waitFor(t, func() bool { return slices.Equal(runStates(t, cs, "c1"), []string{"compaction running"}) })
-		release()
-		waitFor(t, func() bool { return !listLive(h, "c1") })
-		if n := countOf(br.callLog(), marotte.MethodSessionCompact); n != 1 {
-			t.Errorf("compactions written = %d, want 1", n)
-		}
 	})
 
 	inBubble(t, "a taken row beside kiro-cli's bracketed turn waits for its close and is never stopped", func(t *testing.T) {
@@ -410,36 +345,8 @@ func TestRunOrder_Table(t *testing.T) {
 		open(1)
 	})
 
-	inBubble(t, "a /compact requeued behind kiro-cli's turn answers queued, and its later failure is toasted", func(t *testing.T) {
-		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
-		calls := onCompactor(h, 90, true, 10)
-		calls.refuse = true
-		release := holdCall(t, br, marotte.MethodSessionCompact)
-		h.coord.autoCompact.compact = func(ctx context.Context, b command.CompactBridge) (bool, uint64, error) {
-			_, _, _ = b.CallAt(ctx, marotte.MethodSessionCompact, map[string]any{})
-			calls.mu.Lock()
-			defer calls.mu.Unlock()
-			calls.calls++
-			return false, 0, nil
-		}
-		out := make(chan command.CompactOutcome, 1)
-		go func() {
-			o, _ := h.RequestCompact(context.WithoutCancel(t.Context()), "c1")
-			out <- o
-		}()
-		waitForCall(t, br, marotte.MethodSessionCompact)
-		br.deliver(newTurnStartMsg())
-		waitFor(t, func() bool { return slices.Contains(runStates(t, cs, "c1"), "wire running") })
-		release()
-		if got := <-out; got != command.CompactQueued {
-			t.Errorf("/compact answered %v, want queued", got)
-		}
-		br.deliver(newTurnEndMsg("end_turn"))
-		waitFor(t, func() bool { return calls.count() == 2 && len(calls.toasts()) == 1 })
-	})
-
-	inBubble(t, "the composer settles at a queued answer behind a compaction, and later drafts stay", func(t *testing.T) {
-		h, cs, _, release := compactingHubIn(t, "/tmp/work")
+	inBubble(t, "the composer settles at a queued answer behind kiro-cli's run, and later drafts stay", func(t *testing.T) {
+		h, cs, _, release := busyHubIn(t, "/tmp/work")
 		if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 			c.Name = marotte.DefaultChatName
 			return true

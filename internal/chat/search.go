@@ -69,8 +69,6 @@ type Hit struct {
 	Segments []SegmentKind `json:"segments"`
 	// Turn is the 1-based session-absolute ordinal (turn_open's n), for marking the rail beyond the window.
 	Turn int `json:"turn"`
-	// Automatic is set on a hit in a prompt marotte sent on its own (EntryPrompt.Automatic).
-	Automatic bool `json:"automatic,omitempty"`
 }
 
 // searchQuery is a parsed query: scoped filters plus the free text's matcher.
@@ -300,8 +298,6 @@ type segment struct {
 	caller *marotte.Caller
 	kind   SegmentKind
 	text   string
-	// automatic marks the spans of a prompt marotte sent on its own (EntryPrompt.Automatic).
-	automatic bool
 }
 
 // sentBy stamps c on every span of a message an API caller sent.
@@ -452,11 +448,7 @@ func turnOpenSegments(payload json.RawMessage) []segment {
 	for i := range p.Prompt.Attachments {
 		segs = append(segs, oneSegment(segmentAttachment, p.Prompt.Attachments[i].Name)...)
 	}
-	segs = sentBy(segs, p.Prompt.Caller)
-	for i := range segs {
-		segs[i].automatic = p.Prompt.Automatic
-	}
-	return segs
+	return sentBy(segs, p.Prompt.Caller)
 }
 
 // toolCallSegments is the card's head: the drawn title, which reads the settled result too, and the input. Diff,

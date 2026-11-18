@@ -252,6 +252,7 @@ import {
   tabServer,
   settleTabs,
 } from "./__test-helpers__/tabs-server.js";
+import { pressAfterScroll, SCROLLER_RESTED_MS } from "./__test-helpers__/fling.js";
 import { until } from "./__test-helpers__/until.js";
 import type { TabKind } from "./types.js";
 
@@ -3961,6 +3962,19 @@ describe("the touch hold on a chat tab", () => {
     window.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 1, pointerType: "touch" }));
   });
 
+  function touchEvent(type: string, dx = 0, pointerId = 1, pointerType = "touch"): PointerEvent {
+    return new PointerEvent(type, {
+      pointerId,
+      pointerType,
+      isPrimary: pointerId === 1,
+      buttons: type === "pointerup" ? 0 : 1,
+      clientX: AT.x + dx,
+      clientY: AT.y,
+      bubbles: true,
+      cancelable: true,
+    });
+  }
+
   function touch(
     type: string,
     target: Element,
@@ -3968,18 +3982,7 @@ describe("the touch hold on a chat tab", () => {
     pointerId = 1,
     pointerType = "touch",
   ): void {
-    target.dispatchEvent(
-      new PointerEvent(type, {
-        pointerId,
-        pointerType,
-        isPrimary: pointerId === 1,
-        buttons: type === "pointerup" ? 0 : 1,
-        clientX: AT.x + dx,
-        clientY: AT.y,
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
+    target.dispatchEvent(touchEvent(type, dx, pointerId, pointerType));
   }
 
   /** Chats `a` and `b`, painted, `b` active; answers `a`'s row. */
@@ -4073,16 +4076,14 @@ describe("the touch hold on a chat tab", () => {
 
   it("opens no menu for a touch that lands while the scroller holding the row is scrolling", async () => {
     const row = await rowA();
-    sections().dispatchEvent(new Event("scroll"));
-    touch("pointerdown", row);
+    pressAfterScroll(sections(), row, touchEvent("pointerdown"));
     vi.advanceTimersByTime(HOLD_MS);
     expect(showContextMenu).not.toHaveBeenCalled();
   });
 
   it("opens no menu from the platform's contextmenu for a touch that caught a fling", async () => {
     const row = await rowA();
-    sections().dispatchEvent(new Event("scroll"));
-    touch("pointerdown", row);
+    pressAfterScroll(sections(), row, touchEvent("pointerdown"));
     vi.advanceTimersByTime(HOLD_MS);
     const menu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
     row.dispatchEvent(menu);
@@ -4092,8 +4093,7 @@ describe("the touch hold on a chat tab", () => {
 
   it("lets a tap that caught a fling click its row", async () => {
     const row = await rowA();
-    sections().dispatchEvent(new Event("scroll"));
-    touch("pointerdown", row);
+    pressAfterScroll(sections(), row, touchEvent("pointerdown"));
     touch("pointerup", row);
     row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
     expect(getActiveTabId()).toBe(chatID("a"));
@@ -4101,8 +4101,7 @@ describe("the touch hold on a chat tab", () => {
 
   it("opens the menu from the platform's contextmenu for the next touch after a fling's lift", async () => {
     const row = await rowA();
-    sections().dispatchEvent(new Event("scroll"));
-    touch("pointerdown", row);
+    pressAfterScroll(sections(), row, touchEvent("pointerdown"));
     touch("pointerup", row);
     row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
     expect(showContextMenu).toHaveBeenCalledTimes(1);
@@ -4110,11 +4109,7 @@ describe("the touch hold on a chat tab", () => {
 
   it("opens the menu for a touch that lands after the scroller holding the row came to rest", async () => {
     const row = await rowA();
-    sections().dispatchEvent(new Event("scroll"));
-    await new Promise((resolve) => {
-      setTimeout(resolve, 150);
-    });
-    touch("pointerdown", row);
+    pressAfterScroll(sections(), row, touchEvent("pointerdown"), SCROLLER_RESTED_MS);
     vi.advanceTimersByTime(HOLD_MS);
     expect(showContextMenu).toHaveBeenCalledTimes(1);
   });
@@ -4131,9 +4126,8 @@ describe("the touch hold on a chat tab", () => {
     const row = await rowA();
     const elsewhere = document.createElement("div");
     document.body.append(elsewhere);
-    elsewhere.dispatchEvent(new Event("scroll"));
+    pressAfterScroll(elsewhere, row, touchEvent("pointerdown"));
     elsewhere.remove();
-    touch("pointerdown", row);
     vi.advanceTimersByTime(HOLD_MS);
     expect(showContextMenu).toHaveBeenCalledTimes(1);
   });
@@ -4318,8 +4312,7 @@ describe("the touch hold on a chat tab", () => {
 
   it("swallows the lift of a touch that caught a fling and stayed down past the hold", async () => {
     const row = await rowA();
-    sections().dispatchEvent(new Event("scroll"));
-    touch("pointerdown", row);
+    pressAfterScroll(sections(), row, touchEvent("pointerdown"));
     vi.advanceTimersByTime(HOLD_MS);
     touch("pointerup", row);
     clickRow(row);
@@ -4329,8 +4322,7 @@ describe("the touch hold on a chat tab", () => {
 
   it("swallows the lift of a touch that caught a fling and got the platform's contextmenu", async () => {
     const row = await rowA();
-    sections().dispatchEvent(new Event("scroll"));
-    touch("pointerdown", row);
+    pressAfterScroll(sections(), row, touchEvent("pointerdown"));
     vi.advanceTimersByTime(300);
     row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
     touch("pointerup", row);
@@ -4341,8 +4333,7 @@ describe("the touch hold on a chat tab", () => {
 
   it("opens no menu from the platform's contextmenu for a pen that caught a fling, and swallows its lift", async () => {
     const row = await rowA();
-    sections().dispatchEvent(new Event("scroll"));
-    touch("pointerdown", row, 0, 1, "pen");
+    pressAfterScroll(sections(), row, touchEvent("pointerdown", 0, 1, "pen"));
     row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
     touch("pointerup", row, 0, 1, "pen");
     clickRow(row);

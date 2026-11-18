@@ -2,7 +2,7 @@ package agent
 
 // The glue between a chat's run list (run_list.go) and everything around it. Every operation runs in one lc.mu
 // section, writes the list's projection to the chat record in that section (lifecycle, then store) and carries out
-// the effects the list recorded: a take's launch on its own goroutine, a compaction's start, a failure toast.
+// the effects the list recorded: a take's launch, or a row's offer as a steer, on its own goroutine.
 
 import (
 	"cmp"
@@ -30,15 +30,10 @@ type runEffectsHost interface {
 	storedRun(chatID marotte.ChatID) ([]marotte.RunEntry, uint64, bool)
 	// writeRun applies mutate to the chat's record, which declines (false) for a missing record.
 	writeRun(chatID marotte.ChatID, mutate func(c *marotte.Chat) bool) error
-	// startEntry carries out a take on its own goroutine: a launch, or a compaction's start.
+	// startEntry carries out a take's launch on its own goroutine.
 	startEntry(lc *chatLifecycle, e *runEntry)
 	// steerEntry carries out a row's offer as a steer on its own goroutine.
 	steerEntry(lc *chatLifecycle, e *runEntry)
-	// toast tells the chat's pages, in detail's words, of a run-list outcome the dock alone does not explain.
-	toast(chatID marotte.ChatID, code marotte.ErrorCode, detail string)
-	// retriesAtTurnEnd reports whether the chat's next turn end attempts a compaction (autoCompactor's). Not called
-	// under lc.mu: it reads the chat store.
-	retriesAtTurnEnd(chatID marotte.ChatID) bool
 	// spawnRun runs fn on the process's in-flight count, refused once shutdown began.
 	spawnRun(fn func())
 }
@@ -71,17 +66,6 @@ func (lc *chatLifecycle) flushRunLocked() {
 	}
 	for _, e := range fx.steer {
 		host.steerEntry(lc, e)
-	}
-	if len(fx.toast) > 0 {
-		failsafe := slices.ContainsFunc(fx.toast, func(e *runEntry) bool { return e.origin == marotte.RunFromFailsafe })
-		cause := compactNotRunCause(fx.toast[len(fx.toast)-1].done.err)
-		host.spawnRun(func() {
-			detail := compactFailedDetail(failsafe, host.retriesAtTurnEnd(lc.chatID), cause)
-			host.toast(lc.chatID, marotte.ErrCodeCompactionFailed, detail)
-		})
-	}
-	for _, detail := range fx.notices {
-		host.spawnRun(func() { host.toast(lc.chatID, marotte.ErrCodeResumeNotSent, detail) })
 	}
 }
 
@@ -136,13 +120,11 @@ func (lc *chatLifecycle) orderFactsLocked() orderFacts {
 			}
 			return a.res, takeGranted
 		},
-		newOffer:    func() uint64 { return r.offerTokens.Add(1) },
-		stamp:       lc.stamp,
-		nextSeq:     lc.nextSeq,
-		stopSeq:     lc.stopSeq,
-		stops:       len(lc.stops),
-		admit:       may.admit,
-		sessionCall: may.sessionCall,
+		newOffer: func() uint64 { return r.offerTokens.Add(1) },
+		stamp:    lc.stamp,
+		nextSeq:  lc.nextSeq,
+		stopSeq:  lc.stopSeq,
+		admit:    may.admit,
 	}
 }
 
@@ -152,7 +134,7 @@ func sourceOfEntry(e *runEntry) marotte.TurnOpenSource {
 		return marotte.TurnSourceEmptyRetry
 	case marotte.RunKindRevert:
 		return marotte.TurnSourceRevert
-	case marotte.RunKindTurn, marotte.RunKindRow, marotte.RunKindCompaction, marotte.RunKindResume:
+	case marotte.RunKindTurn, marotte.RunKindRow:
 	}
 	return marotte.TurnSourcePrompt
 }
@@ -263,24 +245,10 @@ func (bc *bridgeCoordinator) writeRun(chatID marotte.ChatID, mutate func(c *maro
 	return err
 }
 
-func (bc *bridgeCoordinator) retriesAtTurnEnd(chatID marotte.ChatID) bool {
-	return bc.autoCompact.retriesAtTurnEnd(context.Background(), chatID)
-}
-
-func (bc *bridgeCoordinator) toast(chatID marotte.ChatID, code marotte.ErrorCode, detail string) {
-	if bc.autoCompact != nil && bc.autoCompact.toast != nil {
-		bc.autoCompact.toast(context.Background(), chatID, code, detail)
-	}
-}
-
-// startEntry carries out one take: a revert or a summary is its caller's (TakeIdle), a compaction's start runs here,
-// and every other turn-kind entry goes to the command package's launcher. Caller holds lc.mu.
+// startEntry carries out one take: a revert or a summary is its caller's (TakeIdle), and every other turn-kind entry
+// goes to the command package's launcher. Caller holds lc.mu.
 func (bc *bridgeCoordinator) startEntry(lc *chatLifecycle, e *runEntry) {
-	switch {
-	case e.kind == marotte.RunKindRevert, e.origin == marotte.RunFromSummary:
-		return
-	case e.kind == marotte.RunKindCompaction:
-		bc.spawnRun(func() { bc.runCompaction(lc, e.id) })
+	if e.kind == marotte.RunKindRevert || e.origin == marotte.RunFromSummary {
 		return
 	}
 	l := &command.EntryLaunch{
@@ -362,8 +330,9 @@ func (bc *bridgeCoordinator) spawnRun(fn func()) {
 	}
 }
 
-// spawnRole runs a Bot role keeper's set_mode on inflight unless Shutdown began (chatLifecycle.sendRoleLocked).
-func (bc *bridgeCoordinator) spawnRole(work func()) bool {
+// goUnlessDraining runs work on the process's in-flight count unless Shutdown began, reporting whether it did, or on
+// a bare goroutine with no lifetime (tests).
+func (bc *bridgeCoordinator) goUnlessDraining(work func()) bool {
 	if bc.lifecycle == nil {
 		go work()
 		return true

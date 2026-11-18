@@ -57,9 +57,9 @@ func (e *RunEntry) awaitsDelivery() bool {
 }
 
 // Deliver is the one rule for which rows a chat delivers next, and how, from its whole list and its head's facts.
-// Rows only: a compaction, revert, retry or resume pending ahead keeps its own take rule, so Deliver takes no turn
-// past one. A user entry outranks a door entry for the running turn, a door entry never goes while a
-// user entry waits ahead of it, and one prompt never joins two senders.
+// Rows only: a revert or retry pending ahead keeps its own take rule, so Deliver takes no turn past one. A user entry
+// outranks a door entry for the running turn, a door entry never goes while a user entry waits ahead of it, and one
+// prompt never joins two senders.
 func Deliver(entries []RunEntry, h HeadFacts) Delivery {
 	if h.EndsOwed {
 		return Delivery{Kind: DeliverNothing}

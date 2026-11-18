@@ -72,9 +72,10 @@ function chipLabels(): string[] {
   return [...byId("agent-dirs-chips").querySelectorAll(".chip-label")].map((c) => c.textContent);
 }
 
+/** Two real tasks, for the held responses' bodies to be read, firing any timer due at once. */
 async function settled(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await vi.advanceTimersByTimeAsync(0);
+  await vi.advanceTimersByTimeAsync(0);
 }
 
 function dirsAt(revision: number, dirs: string[], epoch = 1): EffectiveSettings {
@@ -86,7 +87,7 @@ function dirsAt(revision: number, dirs: string[], epoch = 1): EffectiveSettings 
 }
 
 async function debounced(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 350));
+  await vi.advanceTimersByTimeAsync(350);
   await settled();
 }
 
@@ -179,6 +180,9 @@ beforeEach(() => {
   gets = [];
   patches = [];
   __testResetTracking();
+  // The write's debounce window runs on this clock alone: on the real one, a busy page's late task
+  // between two clicks of one case would close the window early and split them into two writes.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   // Per case: the config restores stubbed globals after each one.
   vi.stubGlobal("fetch", vi.fn(fakeFetch));
   applyAgentDirs(dirsAt(0, ["/data"]));
@@ -193,6 +197,7 @@ afterEach(async () => {
     }
     await settled();
   }
+  vi.useRealTimers();
 });
 
 afterAll(() => {

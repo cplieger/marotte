@@ -58,6 +58,9 @@ const runStateFileName = "workflow-state.json"
 // a verb on that run loads. TestRunStateParentKeyMatchesBundle pins it to KAS's reader.
 const stateParentKey = "parentSessionId"
 
+// stateStatusKey is the top-level member of a run's state that holds its status.
+const stateStatusKey = "status"
+
 // Reaper removes on-disk KAS session state under sessionsDir, for the one
 // workspace it is entitled to reap.
 type Reaper struct {
@@ -406,13 +409,48 @@ func (r *Reaper) RunStates() (map[string]struct{}, error) {
 	return out, nil
 }
 
+// RunState is one run as the state file KAS keeps for it records it.
+type RunState struct {
+	WorkflowID      string
+	ParentSessionID string
+	Status          string
+}
+
+// RunsOnDisk answers every run whose state file KAS keeps (eachRunState's places), each file read whole. A state file
+// that exists but cannot be read is an error, since it may name any session; one that does not decode is left out,
+// since KAS's reader rejects it too and no verb can load that run. A nil reaper answers none.
+func (r *Reaper) RunsOnDisk() ([]RunState, error) {
+	if r == nil {
+		return nil, nil
+	}
+	var out []RunState
+	if _, err := r.eachDecodedRunState(func(s RunState) { out = append(out, s) }); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // runParents answers the launching session of every run KAS keeps state for. Every bucket is read, because a run's
 // state sits in its workspace's bucket and its launching session in the launcher's. A state file that exists but
 // cannot be read is an error naming it; one that reads but does not decode holds nothing and is listed in corrupt,
 // since KAS's reader rejects it too and no verb can load that run.
 func (r *Reaper) runParents() (held map[string]struct{}, corrupt []string, err error) {
 	held = map[string]struct{}{}
-	err = r.eachRunState(func(_, dir string) error {
+	corrupt, err = r.eachDecodedRunState(func(s RunState) {
+		if s.ParentSessionID != "" {
+			held[s.ParentSessionID] = struct{}{}
+		}
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return held, corrupt, nil
+}
+
+// eachDecodedRunState calls fn with every run state file that decodes, answering the paths of those that do not. A
+// directory with no state file holds none; a state file that cannot be read ends the walk with an error naming it.
+func (r *Reaper) eachDecodedRunState(fn func(RunState)) (corrupt []string, err error) {
+	err = r.eachRunState(func(workflowID, dir string) error {
 		path := filepath.Join(dir, runStateFileName)
 		data, rErr := os.ReadFile(path)
 		if errors.Is(rErr, fs.ErrNotExist) {
@@ -421,36 +459,32 @@ func (r *Reaper) runParents() (held map[string]struct{}, corrupt []string, err e
 		if rErr != nil {
 			return fmt.Errorf("reading run state %s: %w", path, rErr)
 		}
-		parent, ok := decodeStateParent(data)
+		s, ok := decodeRunState(data)
 		if !ok {
 			corrupt = append(corrupt, path)
-		} else if parent != "" {
-			held[parent] = struct{}{}
+			return nil
 		}
+		s.WorkflowID = workflowID
+		fn(s)
 		return nil
 	})
-	if err != nil {
-		return nil, nil, err
-	}
-	return held, corrupt, nil
+	return corrupt, err
 }
 
-// decodeStateParent reads stateParentKey off a run state, ok false when the file is not a JSON object or the member
-// is not a string. The member is looked up by its exact key: a struct tag cannot name a constant, and its decode
-// would also match a differently-cased key KAS's reader ignores.
-func decodeStateParent(data []byte) (parent string, ok bool) {
+// decodeRunState reads stateParentKey and stateStatusKey off a run state, ok false when the file is not a JSON object
+// or either member is not a string. Members are looked up by their exact keys: a struct tag cannot name a constant,
+// and its decode would also match a differently-cased key KAS's reader ignores.
+func decodeRunState(data []byte) (s RunState, ok bool) {
 	var m map[string]json.RawMessage
 	if json.Unmarshal(data, &m) != nil || m == nil {
-		return "", false
+		return RunState{}, false
 	}
-	raw, present := m[stateParentKey]
-	if !present {
-		return "", true
+	for key, dst := range map[string]*string{stateParentKey: &s.ParentSessionID, stateStatusKey: &s.Status} {
+		if raw, present := m[key]; present && json.Unmarshal(raw, dst) != nil {
+			return RunState{}, false
+		}
 	}
-	if json.Unmarshal(raw, &parent) != nil {
-		return "", false
-	}
-	return parent, true
+	return s, true
 }
 
 // sweepCLI reaps orphaned files under sessions/cli/: v3 sess_<id>.* sidecars whose

@@ -226,8 +226,8 @@ type Roles struct {
 	TurnInterrupt turnInterruptAccess
 	// Metering is the per-turn accounting a turn_completion frame writes.
 	Metering turnMetering
-	// Usage hears every live context reading and tool call, which drive the chat's compactor.
-	Usage usageObserver
+	// Compaction hears kiro-cli report a summary failed.
+	Compaction compactionObserver
 	// WorkDir is the workspace root. Last for fieldalignment.
 	WorkDir string
 }
@@ -331,7 +331,7 @@ type Translator struct {
 	runBounds      runBoundsAccess
 	turnInterrupt  turnInterruptAccess
 	metering       turnMetering
-	usage          usageObserver
+	compaction     compactionObserver
 	// steps maps a workflow step's ACP session id to its run and node, fed from the
 	// wire (node_start) and from an inspect read.
 	steps     *stepRegistry
@@ -343,6 +343,7 @@ type Translator struct {
 	// internalCalls are the dropped internal calls awaiting their settle (isInternalTool).
 	internalCalls *internalCalls
 	jobs          *jobRegistry
+	summaryFails  *summaryStreaks
 	workDir       string // last for fieldalignment, as in Roles
 }
 
@@ -372,7 +373,7 @@ func New(r *Roles, opts ...Option) *Translator {
 		runBounds:      r.RunBounds,
 		turnInterrupt:  r.TurnInterrupt,
 		metering:       r.Metering,
-		usage:          r.Usage,
+		compaction:     r.Compaction,
 		steps:          newStepRegistry(),
 		read:           newReadSteers(),
 		wakes:          newWakeLedger(),
@@ -381,6 +382,7 @@ func New(r *Roles, opts ...Option) *Translator {
 		slotWaits:      &slotWaits{},
 		internalCalls:  &internalCalls{},
 		jobs:           &jobRegistry{},
+		summaryFails:   &summaryStreaks{},
 	}
 	for _, o := range opts {
 		o(t)
@@ -432,16 +434,13 @@ type turnInterruptAccess interface {
 	CompactionFailed(chatID marotte.ChatID, turnID, detail string)
 }
 
-// usageObserver hears a chat's in-turn signals for its compactor, whether or not they moved the stored figure.
-type usageObserver interface {
-	// ObserveContextUsage hears each live reading: a model response's own, never KAS's published figure.
-	ObserveContextUsage(ctx context.Context, chatID marotte.ChatID, pct float64)
-	// ObserveToolCall hears each tool call the chat's own agent opens. KAS sends a response's tool_call
-	// frames before that response's reading, so a call since the last reading means the turn goes on.
-	ObserveToolCall(chatID marotte.ChatID)
-	// ObserveCompactionFailed hears kiro-cli report a summary failed with reason, and answers the reason the chat's
-	// compaction_failed row records.
-	ObserveCompactionFailed(ctx context.Context, chatID marotte.ChatID, reason string) string
+// compactionObserver hears kiro-cli's own account of a compaction, which the reader's Compact press defers to.
+type compactionObserver interface {
+	// ObserveCompactionFailed hears kiro-cli report a summary failed, after its row and toast went out.
+	ObserveCompactionFailed(chatID marotte.ChatID)
+	// ObserveSummaryRunning hears kiro-cli's summary start (true) or reach its outcome (false), for the header's
+	// Compacting mark.
+	ObserveSummaryRunning(ctx context.Context, chatID marotte.ChatID, running bool)
 }
 
 // turnMetering is the per-turn accounting a turn_completion frame writes, split

@@ -445,6 +445,26 @@ input[type="radio"] {
   flex-shrink: 0;
 }
 
+/* A 1rem GLYPH OR BOX LEADING A TEXT COLUMN sits on the column's first line,
+ * however many lines follow: the row packs at its top and the control is moved
+ * by half the line's surplus over its own size. A fixed offset fits one font's
+ * line box only, and baseline alignment puts a box's bottom edge on the baseline.
+ * Each row's font is its first line's, so `1lh`
+ * there is that line's height (`--lead-lh`, 00-header.css). */
+:where(.chat-opt-btn, .chat-opt-row, .pr-merge-method, .user-input-sub-option) {
+  --lead-lh: 1lh;
+}
+
+:where(
+  .chat-opt-icon,
+  .chat-opt-row > input,
+  .pr-merge-method > input,
+  .user-input-sub-option > input
+) {
+  align-self: start;
+  margin-block-start: calc((var(--lead-lh) - 1rem) / 2);
+}
+
 /* WCAG 2.5.8's INLINE exception: a target inside a sentence, or one whose size is
  * constrained by the line height of the text around it, is exempt. A link in
  * prose is that case — floor it and every inline citation in the transcript

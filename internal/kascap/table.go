@@ -502,12 +502,16 @@ var table = []decl{
 		send:        true,
 	},
 	{
-		// KAS's own compaction threshold; withheld because disableAutoCompaction turns KAS's compaction off on every
-		// chat session, marotte's compactor running at a turn's end instead.
+		// KAS reads autoCompactionThreshold only beside enabled true (resolveSessionAutoCompactionThreshold) and fails
+		// the door with -32602 outside 0 to 80. kiro-cli acp applies no cli.json threshold, so only this row sets it.
 		key:      "compaction",
 		door:     doorSession,
 		resolver: resolverSettingObject,
-		send:     false,
+		sessionGate: func(s *SessionSpawn) (any, bool) {
+			return map[string]any{enabledMember: true, "autoCompactionThreshold": s.AutoCompactionThreshold},
+				s.AutoCompactionThreshold > 0
+		},
+		send: true,
 	},
 	{
 		key:      "memory",

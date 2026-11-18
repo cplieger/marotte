@@ -60,9 +60,7 @@ function placeholderFor(verb: SendVerb, wait: string): string {
     case "steer":
       return "Steer the agent mid-turn…";
     case "queue":
-      return wait === "the compaction"
-        ? "Queue a message for after the compaction…"
-        : `Queue a follow-up for after ${wait}…`;
+      return `Queue a follow-up for after ${wait}…`;
   }
 }
 

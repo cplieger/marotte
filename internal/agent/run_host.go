@@ -77,12 +77,13 @@ var errLaunchNewUnconfirmed = errors.New("the engine's answer to the launch was 
 // stall (engineOwner.stallAware). A var so a test can shorten it.
 var launchTimeout = 120 * time.Second
 
-// launch starts one parentless attended run of the recipe and returns its workflow id, its name and KAS's
-// launch warnings.
+// launch starts one parentless attended run of the recipe for POST /api/runs and returns its workflow id, its name and
+// KAS's launch warnings. Every step before workflow/new answers within clientAnswerBudget; sent, when set, runs just
+// before workflow/new is written.
 func (rs *Runs) launch(
-	ctx context.Context, source string, inputs map[string]string, defaults marotte.RunDefaults,
+	ctx context.Context, source string, inputs map[string]string, defaults marotte.RunDefaults, sent func(),
 ) (id, name string, warnings []string, err error) {
-	return rs.launchAs(ctx, source, inputs, defaults, manualLaunch())
+	return rs.launchAs(ctx, source, inputs, defaults, manualLaunch(), &launchRequest{sent: sent, prepareBy: clientAnswerBudget})
 }
 
 // LaunchScheduled launches an unattended run for a schedule. slotAt is its next slot; zero leaves the idle window.
@@ -98,7 +99,7 @@ func (rs *Runs) LaunchScheduled(
 		return "", "", errRuntimeDraining
 	}
 	defer release()
-	id, name, _, err = rs.launchAs(ctx, source, inputs, defaults, scheduledLaunch(row, slotAt))
+	id, name, _, err = rs.launchAs(ctx, source, inputs, defaults, scheduledLaunch(row, slotAt), nil)
 	switch {
 	case errors.Is(err, errRunsNeedSignIn) || errors.Is(err, errRunsProviderDown):
 		err = fmt.Errorf("%w: %w", schedule.ErrNoRunCanStart, err)
@@ -133,7 +134,7 @@ func (rs *Runs) LaunchTriggered(
 		return "", classLaunch(dErr)
 	}
 	o := triggeredLaunch(ruleID, eventKey, coalesceKey, trigger.EventLabel(inputs))
-	workflowID, _, _, err = rs.launchAs(ctx, source, inputs, defaults, o)
+	workflowID, _, _, err = rs.launchAs(ctx, source, inputs, defaults, o, nil)
 	if workflowID == "" {
 		err = classLaunch(err)
 	}
@@ -142,6 +143,7 @@ func (rs *Runs) LaunchTriggered(
 
 func (rs *Runs) launchAs(
 	ctx context.Context, source string, inputs map[string]string, defaults marotte.RunDefaults, o launchOrigin,
+	req *launchRequest,
 ) (id, name string, warnings []string, err error) {
 	// One admission from before workflow/new through invoke, so no run is created that the gate then never starts.
 	a, gErr := rs.admitRunWork(refuseClosed, "", "")
@@ -152,8 +154,10 @@ func (rs *Runs) launchAs(
 	budgetEnd := time.Now().Add(launchTimeout)
 	cctx, cancel := rs.engine.stallAware(ctx, launchTimeout)
 	defer cancel()
+	pctx, pcancel := req.prepareContext(cctx)
+	defer pcancel()
 
-	recipe, err := rs.launchRecipe(cctx, source, inputs)
+	recipe, err := rs.launchRecipe(pctx, source, inputs)
 	if err != nil {
 		return "", "", nil, unanswered(ctx, err)
 	}
@@ -161,7 +165,7 @@ func (rs *Runs) launchAs(
 		// A manual run yields to its recipe's next slot.
 		o.slotAt = rs.manualSlot(recipe.Source)
 	}
-	unlock, bErr := rs.lockIdleRecipe(cctx, recipe.Name, &o)
+	unlock, bErr := rs.lockIdleRecipe(pctx, recipe.Name, &o)
 	if bErr != nil {
 		return "", "", nil, unanswered(ctx, bErr)
 	}
@@ -170,19 +174,19 @@ func (rs *Runs) launchAs(
 	if o.origin == runlease.OriginScheduled {
 		// Before the door: KAS's reset reconnects unconditionally, so a reset after the host's acquire began a fresh
 		// connect would connect twice and close the good one.
-		rs.resetFailedMCP(cctx)
+		rs.resetFailedMCP(pctx)
 	}
 
 	// The host session's presets are resolved once and recorded on the lease: a reload after a restart applies
 	// these, never the profile as it is then.
-	settings := rs.doorSettings(cctx)
+	settings := rs.doorSettings(pctx)
 	presets := settings.RunPresets
 	sb := newSharedBridge(runHostLife{ctx: rs.lifecycle.shutdownCtx})
 	var relay *hostRelay
 	door := &marotte.SessionOpts{
 		Role: marotte.SessionRoleHost, Presets: presets, AdditionalDirectories: settings.AdditionalDirectories,
 	}
-	if _, oErr := rs.engine.openSession(cctx, door,
+	if _, oErr := rs.engine.openSession(pctx, door,
 		func(s engineSession) error {
 			relay = newHostRelay(s, func(msg *marotte.RPCResponse) { rs.answerEarly(s, msg) })
 			sb.attach(relay)
@@ -196,6 +200,7 @@ func (rs *Runs) launchAs(
 		return "", "", nil, fmt.Errorf("%w: the host session's door answered no session id", errRunHostStart)
 	}
 	defer rs.launchHosts.claim(string(parent))()
+	req.markSent()
 	var wfID string
 	err = sb.useRun(cctx, func(ctx context.Context, s engineSession) error {
 		var nErr error
@@ -266,7 +271,7 @@ func (rs *Runs) startLaunched(
 	}
 	parent := sb.SessionID()
 	rs.recordParentSession(ctx, wfID, string(parent))
-	rs.recordHost(ctx, wfID, string(parent))
+	rs.recordHost(ctx, wfID, string(parent), host)
 	// Visible to Route before invoke is written, so the run's first frame reaches the host's lane.
 	rs.router.registerOwner(wfID, parent)
 	if _, err := rs.write(ctx, a, sb, wfID, methodKiroWorkflowInvoke,
@@ -340,6 +345,15 @@ func (o *launchOrigin) sentInputs(inputs, declared map[string]string) (sent map[
 		return inputs, nil
 	}
 	return declaredInputs(inputs, declared)
+}
+
+func declaresEvery(declared, inputs map[string]string) bool {
+	for k := range inputs {
+		if _, ok := declared[k]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func declaredInputs(inputs, declared map[string]string) (kept map[string]string, dropped []string) {
@@ -641,7 +655,8 @@ type kasRetryOutcome struct {
 	RetriedNodeIDs []string `json:"retriedNodeIds"`
 }
 
-// retry resets a failed or aborted run's failed work and reports what it reset, hosted from one read of the run's origin.
+// retry resets a failed or aborted run's failed work and reports what it reset, hosted from the origin the gate's read
+// of the run (aff) names. The caller bounds ctx by retryTimeout, the gate's read included (handleRetry).
 func (rs *Runs) retry(
 	ctx context.Context, workflowID string, aff *runAffordance,
 ) (out marotte.RunRetriedResponse, err error) {
@@ -654,46 +669,35 @@ func (rs *Runs) retry(
 		return out, command.StatusError(http.StatusConflict, errRetryRunDeleting)
 	}
 	defer lease.end()
-	// Read before the verb and reused throughout: nothing can learn it once the run re-drives, and two reads can disagree.
-	origin := rs.originOf(ctx, workflowID)
-	if uErr := rs.unroutableOrigin(workflowID, &origin); uErr != nil {
-		return out, uErr
-	}
-	cctx, cancel := context.WithTimeout(ctx, retryTimeout)
-	defer cancel()
-
-	recipe := origin.recipe
-	holders, launchers, err := rs.retryHolders(cctx, workflowID, &origin)
+	origin, holders, err := rs.retryOrigin(ctx, workflowID, aff)
 	if err != nil {
 		return out, err
 	}
-	if refused := rs.refuseClosedLauncher(workflowID, launchers); refused != nil {
-		return out, refused
-	}
-	own, event, err := rs.ownForRetry(cctx, workflowID)
+	recipe := origin.recipe
+	own, event, err := rs.ownForRetry(ctx, workflowID)
 	if err != nil {
 		return out, err
 	}
 	defer own()
 	// The lease before the verb, since retry's `run_start` can beat the reply, and before the host session's load,
 	// which reads its presets from it.
-	minted := rs.leaseForRetry(cctx, workflowID, &origin, holders, aff, event)
-	rs.markRunAlive(cctx, workflowID, holders)
-	host, release, err := rs.ensureResident(cctx, workflowID)
+	minted := rs.leaseForRetry(ctx, workflowID, &origin, holders, aff, event)
+	rs.markRunAlive(ctx, workflowID, holders)
+	host, release, err := rs.ensureResident(ctx, workflowID)
 	defer release()
 	if err != nil {
 		if minted {
-			rs.releaseLease(cctx, workflowID)
+			rs.releaseLease(ctx, workflowID)
 		}
-		return out, rs.retryResidencyErr(cctx, err)
+		return out, rs.retryResidencyErr(ctx, err)
 	}
-	err = rs.controlSerialized(cctx, workflowID, func(sctx context.Context) error {
+	err = rs.controlSerialized(ctx, workflowID, func(sctx context.Context) error {
 		var cErr error
 		out, cErr = rs.retryCall(sctx, host, workflowID)
 		return cErr
 	})
 	if errors.Is(err, errRetryOutcomeUnreadable) || errors.Is(err, errRetryOutcomeUnknown) {
-		// The retry may be running; tearing down would kill the work mid-node. cctx may be spent and the client may
+		// The retry may be running; tearing down would kill the work mid-node. ctx may be spent and the client may
 		// have left, so the re-arm's writes run detached.
 		rs.rearmRetried(durable.Context(ctx), workflowID, &origin, holders)
 		return out, err
@@ -701,16 +705,38 @@ func (rs *Runs) retry(
 	if err != nil {
 		// Return the minted lease, except on a context error, where KAS may have taken the retry and would run deadline-less.
 		if minted && !isCtxErr(err) {
-			rs.releaseLease(cctx, workflowID)
+			rs.releaseLease(ctx, workflowID)
 		}
 		return out, err
 	}
 	// Only on success: a refused retry re-drove nothing.
-	rs.rearmRetried(cctx, workflowID, &origin, holders)
+	rs.rearmRetried(ctx, workflowID, &origin, holders)
 	slog.Info("workflow run retried",
 		"workflow_id", workflowID, "recipe", recipe,
 		"retried_nodes", len(out.RetriedNodeIDs), "status", out.Status)
 	return out, nil
+}
+
+// retryOrigin is the origin a retry hosts the run from and the chats holding its marks, from the gate's read (aff):
+// reused throughout, since nothing can learn it once the run re-drives, and two reads can disagree.
+func (rs *Runs) retryOrigin(
+	ctx context.Context, workflowID string, aff *runAffordance,
+) (runOrigin, []marotte.ChatID, error) {
+	origin := originOfHead(&aff.head)
+	if err := rs.unroutableOrigin(workflowID, &origin); err != nil {
+		return origin, nil, err
+	}
+	holders, launchers, err := rs.retryHolders(ctx, workflowID, &origin)
+	if err != nil {
+		return origin, nil, err
+	}
+	if err := rs.refuseClosedLauncher(workflowID, launchers); err != nil {
+		return origin, nil, err
+	}
+	if err := rs.retryHostSecurity(ctx, workflowID, &origin); err != nil {
+		return origin, nil, err
+	}
+	return origin, holders, nil
 }
 
 // ownForRetry makes the retry the run's owner (runOwners), then hands an abandoned run back to the person
@@ -737,7 +763,7 @@ func (rs *Runs) leaseForRetry(
 	event *trigger.RetriedEvent,
 ) (minted bool) {
 	if l, held := rs.lease(workflowID); held && (l.ScheduleID != "" || l.RuleID != "") {
-		rs.settleMissedEnd(ctx, &l, aff.status)
+		rs.settleMissedEnd(ctx, &l, marotte.RunStatus(aff.head.Status))
 	}
 	if l, held := rs.lease(workflowID); held {
 		// A manual or agent lease is the one this origin would grant; the run under it is a new one all the same.
@@ -946,39 +972,73 @@ type runParent struct {
 	session string
 }
 
-// err says why parent cannot route a verb.
+// err says why parent cannot route a verb. host is the security a parentless retry's host session reloads with, nil
+// for the profile as it is now.
 type runOrigin struct {
 	err    error
+	host   *runlease.HostSecurity
 	parent runParent
 	recipe string
 }
 
-// An ownerless parent is trusted only after a complete chat scan, or as the run's recorded host (parentlessHost):
-// loading a chat's session as a run host replays that chat's transcript into the run.
-func (rs *Runs) originOf(ctx context.Context, workflowID string) runOrigin {
-	runs, err := rs.listRaw(ctx)
-	if err != nil {
-		slog.Warn("could not read the run inventory, so a run's parent chat and recipe are unknown",
-			"workflow_id", workflowID, "error", err)
-		return runOrigin{err: fmt.Errorf("%w: reading the run inventory: %w", errRunHostStart, err)}
+// originOfHead is the origin a run's inspect state names, its chat left for the caller's owner scan to resolve.
+func originOfHead(head *runHead) runOrigin {
+	o := runOrigin{recipe: head.WorkflowName, parent: runParent{session: head.ParentSessionID}}
+	if o.parent.session == "" {
+		o.err = fmt.Errorf("%w: kiro-cli names no launching session for the run", errLaunchSessionUnavailable)
 	}
-	i := slices.IndexFunc(runs, func(r kasWorkflowRun) bool { return r.WorkflowID == workflowID })
-	if i < 0 {
+	return o
+}
+
+// errRunUnread is a person's verb whose read of the run kiro-cli did not answer, before anything was sent. Answered
+// 503: a later try usually succeeds.
+var errRunUnread = errors.New("kiro-cli did not answer a read of this run in time, so nothing was sent to it. " +
+	"Try again in a moment")
+
+// runReadErr labels a failed read of a run errRunUnread when the engine did not answer it (a deadline, a cancel or an
+// engine end), else returns err itself.
+func runReadErr(err error) error {
+	if isCtxErr(err) || errors.Is(err, marotte.ErrBridgeExited) {
+		return fmt.Errorf("%w: %w", errRunUnread, err)
+	}
+	return err
+}
+
+// errLauncherUnread is a verb on an unleased run whose launching chat an unreadable chat file may hide. Answered 503.
+var errLauncherUnread = errors.New("a chat file could not be read, so which chat launched this run is unknown " +
+	"and nothing was sent to it. Try again")
+
+// originOf reads an unleased run's origin by key. An ownerless parent is trusted only after a complete chat scan, or
+// as the run's recorded host (parentlessHost): loading a chat's session as a run host replays that chat's transcript
+// into the run.
+func (rs *Runs) originOf(ctx context.Context, workflowID string) runOrigin {
+	raw, err := rs.rawInspect(ctx, workflowID)
+	if workflowNotFound(err) {
 		return runOrigin{err: errRunNotListed}
 	}
-	// WorkflowName is the recipe the single-run rule compares; Name is `runLabel ?? workflowName`.
-	o := runOrigin{
-		recipe: runs[i].WorkflowName, parent: runParent{session: runs[i].ParentSessionID},
+	if err != nil {
+		slog.Warn("could not read a run, so its parent chat and recipe are unknown",
+			"workflow_id", workflowID, "error", err)
+		if rErr := runReadErr(err); rErr != err {
+			return runOrigin{err: rErr}
+		}
+		return runOrigin{err: fmt.Errorf("%w: reading the run: %w", errRunHostStart, err)}
 	}
-	if o.parent.session == "" {
-		o.err = fmt.Errorf("%w: the run inventory names no launching session", errLaunchSessionUnavailable)
+	head, err := headOf(raw)
+	if err != nil {
+		return runOrigin{err: fmt.Errorf("%w: the run's state is undecodable: %w", errRunHostStart, err)}
+	}
+	if head.Status == "" {
+		return runOrigin{err: errRunNotListed}
+	}
+	o := originOfHead(&head)
+	if o.err != nil {
 		return o
 	}
 	var complete bool
 	o.parent.chat, complete = rs.chatForSession(ctx, o.parent.session)
 	if o.parent.chat == "" && !complete && !rs.parentlessHost(ctx, workflowID, o.parent.session) {
-		o.err = fmt.Errorf("%w: a chat file could not be read, so which chat launched the run is unknown",
-			errRunHostStart)
+		o.err = command.StatusError(http.StatusServiceUnavailable, errLauncherUnread)
 	}
 	return o
 }
@@ -1082,10 +1142,18 @@ var agentNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 func isAgentSource(source string) bool { return strings.HasPrefix(source, agentSourcePrefix) }
 
-// launchRecipe resolves a listed recipe or an agent:// source. An agent run needs a prompt, and its
-// recipe name is KAS's `agent-<name>`, so one live run per agent. KAS refuses an unregistered agent.
+// launchRecipe resolves a recipe source, from the held catalog when it names the source and declares every input the
+// launch names, else from a live listing, or an agent:// source. The launch needs only the recipe's name and declared
+// inputs: KAS's workflow/new validates the source itself, and a scheduled launch drops an input its recipe does not
+// declare (sentInputs), which only a live listing may decide. An agent run needs a prompt, and its recipe name is
+// KAS's `agent-<name>`, so one live run per agent. KAS refuses an unregistered agent.
 func (rs *Runs) launchRecipe(ctx context.Context, source string, inputs map[string]string) (marotte.Recipe, error) {
 	if !isAgentSource(source) {
+		held := rs.recipes.heldCatalog()
+		if i := slices.IndexFunc(held, func(r marotte.Recipe) bool { return r.Source == source }); i >= 0 &&
+			declaresEvery(held[i].Inputs, inputs) {
+			return held[i], nil
+		}
 		return rs.recipeBySource(ctx, source)
 	}
 	name := strings.TrimPrefix(source, agentSourcePrefix)
@@ -1704,6 +1772,26 @@ func (rs *Runs) listRaw(ctx context.Context) ([]kasWorkflowRun, error) {
 	return *list.Runs, nil
 }
 
+// runInventory answers every run with its launching session and status, for a teardown that must reach every run a
+// chat launched: KAS's run list, else the run state KAS keeps on disk, since KAS has no by-parent read and an
+// unanswered list is not a chat that launched nothing.
+func (rs *Runs) runInventory(ctx context.Context) ([]kasWorkflowRun, error) {
+	runs, err := rs.listRaw(ctx)
+	if err == nil || rs.runsOnDisk == nil {
+		return runs, err
+	}
+	states, dErr := rs.runsOnDisk()
+	if dErr != nil {
+		return nil, errors.Join(err, dErr)
+	}
+	slog.Warn("the run list could not be read; using the run state kiro-cli keeps on disk", "error", err, "runs", len(states))
+	out := make([]kasWorkflowRun, len(states))
+	for i := range states {
+		out[i] = kasWorkflowRun{WorkflowID: states[i].WorkflowID, Status: states[i].Status, ParentSessionID: states[i].ParentSessionID}
+	}
+	return out, nil
+}
+
 // deleteForSessions deletes every run these sessions launched, whatever its status: KAS refuses a session
 // delete while the session owns a live run.
 func (rs *Runs) deleteForSessions(ctx context.Context, chatID marotte.ChatID, sessionChain []string, stop runStop) {
@@ -1713,9 +1801,9 @@ func (rs *Runs) deleteForSessions(ctx context.Context, chatID marotte.ChatID, se
 	// The same test RunHolders attributes every run keep fact by, so this deletes exactly the runs whose facts
 	// would have kept the chat.
 	owners := chat.OwnersOfChain(chatID, sessionChain)
-	runs, err := rs.listRaw(ctx)
+	runs, err := rs.runInventory(ctx)
 	if err != nil {
-		slog.Warn("delete: run list unavailable, skipping run delete", "chat_id", chatID, "error", err)
+		slog.Warn("delete: no run inventory could be read, skipping run delete", "chat_id", chatID, "error", err)
 		return
 	}
 	for i := range runs {

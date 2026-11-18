@@ -113,6 +113,7 @@ import {
 import { pushRoute } from "./router.js";
 import { error as toastError } from "./toast.js";
 import { maybeEl, queryEl } from "./dom.js";
+import { afterNextPaint } from "./next-paint.js";
 import { registerFind } from "./find-registry.js";
 import type { PageFind } from "./find-registry.js";
 import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.js";
@@ -199,13 +200,16 @@ function el<T extends HTMLElement>(id: string): T {
   return e;
 }
 
+/** Eight tasks, then past the next paint: queued after any activation half, which runs there. */
 async function settle(): Promise<void> {
   for (let i = 0; i < 8; i++) {
     await new Promise((r) => {
       setTimeout(r, 0);
     });
   }
-  await new Promise((r) => requestAnimationFrame(r));
+  await new Promise<void>((r) => {
+    afterNextPaint(r);
+  });
 }
 
 const SECTIONS = ["tab-list", "pinned-list", "history-list"] as const;
@@ -669,6 +673,49 @@ describe("History from the History section's More, with no tab", () => {
     expectHistoryPane(opens, "runs");
     const runs = queryEl<HTMLElement>('[data-history-panel="runs"]');
     expect(runs?.classList.contains("hidden")).toBe(false);
+  });
+
+  // Both panes scroll in `#history-view`: each is its own page, so it opens at its own place, a
+  // link landing on the other pane included.
+  it("opens each pane at its own scroll position, the top for one not read before", async () => {
+    const { git } = await openSingletons();
+    await pressMore();
+    await settle();
+    const fill = (pane: string): HTMLElement => {
+      const filler = document.createElement("div");
+      filler.style.blockSize = "4000px";
+      queryEl<HTMLElement>(`[data-history-panel="${pane}"]`)?.append(filler);
+      return filler;
+    };
+    const fillers = [fill("chats"), fill("runs")];
+    const view = el("history-view");
+    const readAt = async (top: number): Promise<void> => {
+      const done = new Promise((r) => {
+        view.addEventListener("scroll", r, { once: true });
+      });
+      view.scrollTop = top;
+      await done;
+    };
+    try {
+      await readAt(900);
+      queryEl<HTMLButtonElement>('[data-history-tab="runs"]')?.click();
+      await settle();
+      expect(view.scrollTop, "Runs was never read").toBe(0);
+      await readAt(300);
+      queryEl<HTMLButtonElement>('[data-history-tab="chats"]')?.click();
+      await settle();
+      expect(view.scrollTop, "Chats comes back where it was read").toBe(900);
+
+      await activateTab(git);
+      await settle();
+      await applyRoute({ kind: "history", tab: "runs" }, "deeplink");
+      await settle();
+      expect(view.scrollTop, "a link to Runs lands on Runs' own place").toBe(300);
+    } finally {
+      for (const f of fillers) {
+        f.remove();
+      }
+    }
   });
 
   it("sends Ctrl-F to History's find while it shows", async () => {

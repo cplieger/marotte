@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -65,6 +66,7 @@ func TestCaptureKASCorpus(t *testing.T) {
 	for _, sc := range []scenario{
 		{name: "steer", about: "A prompt that reads a file through fs/read_text_file, steered on its first tool call; then session/close and a same-id session/load on the same engine.", run: runSteer},
 		{name: "compact", about: "Two one-word turns, _kiro/session/compact, a third turn; then a fresh engine and a session/load of the same id.", run: runCompact},
+		{name: "compact_inturn", about: "A chat door at autoCompactionThreshold " + strconv.Itoa(inTurnThreshold) + " whose turn reads a large file and crosses it; while KAS's in-turn summary runs, a steer and a _kiro/session/compact; then a fresh engine and a session/load of the same id.", run: runCompactInTurn},
 		{name: "delegate", about: "A prompt that delegates to a sub-agent with AutoDelegation on; then session/close and a same-id session/load on the same engine.", run: runDelegate},
 		{name: "elicit", about: "An MCP tool that sends elicitation/create, answered accept with marotte.ElicitationResult, and the tool's completion.", run: runElicit},
 		{name: "bot_role", about: "A regular chat's session/new; a Bot's session/new on its role and a prompt; reopens through the Bot door with the same role, with an edited role (goal changed, memory on as a context file, a prompt), with memory off (the file removed), and with no role, then session/set_mode to the role.", run: runBotRole},
@@ -1079,6 +1081,124 @@ func runCompact(ctx context.Context, c *capture) error {
 		return fmt.Errorf("replay: summarization_separator at %d, no summary_message after it", sep)
 	}
 	return nil
+}
+
+// inTurnThreshold sits below marotte's settings range, so the turn's first read of ledger.txt crosses it.
+const (
+	inTurnThreshold = 1
+	bigFileLines    = 300
+	inTurnSteer     = "Also name the last line's number."
+)
+
+// runCompactInTurn records KAS's own in-turn compaction with rows persisted into the session while it runs, the
+// shape a workflow step's send_message gives a busy chat.
+func runCompactInTurn(ctx context.Context, c *capture) error {
+	var big strings.Builder
+	for i := 1; i <= bigFileLines; i++ {
+		fmt.Fprintf(&big, "line %04d: the release train leaves on Thursday and the build cache stays warm.\n", i)
+	}
+	if err := os.WriteFile(filepath.Join(c.work, "ledger.txt"), []byte(big.String()), 0o600); err != nil {
+		return err
+	}
+	e, err := c.startEngine(ctx, marotte.EngineFeatures{})
+	if err != nil {
+		return err
+	}
+	lane, attach := c.attach()
+	c.out(lane, map[string]any{"method": marotte.MethodSessionNew, "params": map[string]any{"cwd": c.work}})
+	s, err := e.NewSession(ctx, &marotte.SessionOpts{Role: marotte.SessionRoleChat, AutoCompactionThreshold: inTurnThreshold}, attach)
+	if err != nil {
+		return fmt.Errorf("session/new: %w", err)
+	}
+	msgID := ids.NewMessageID()
+	var once sync.Once
+	steerErr := make(chan error, 1)
+	var pressed atomic.Value
+	c.mu.Lock()
+	c.onFrame = func(s *bridge.Session, msg *marotte.RPCResponse) {
+		var f frameView
+		if msg.Method != marotte.MethodSessionUpdate || json.Unmarshal(msg.Params, &f.Params) != nil || summarizationStatus(&f) != "running" {
+			return
+		}
+		once.Do(func() {
+			go func() {
+				_, err := c.call(ctx, s, lane, marotte.MethodSessionSteer, map[string]any{
+					marotte.KeySessionID: s.SessionID(), "message": inTurnSteer, "messageId": msgID,
+				})
+				c.t.Logf("steer during the summary answered: %v", err)
+				steerErr <- err
+			}()
+			go func() {
+				resp, err := c.call(ctx, s, lane, marotte.MethodSessionCompact, map[string]any{marotte.KeySessionID: s.SessionID()})
+				switch {
+				case err != nil:
+					pressed.Store(err.Error())
+				default:
+					pressed.Store(string(resp.Result))
+				}
+				c.t.Logf("compact during the summary answered: %v", pressed.Load())
+			}()
+		})
+	}
+	c.mu.Unlock()
+	if err := c.prompt(ctx, s, lane, "Read the file ledger.txt in the workspace with your file-reading tool, then tell me in one sentence what every line says."); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.onFrame = nil
+	c.mu.Unlock()
+	c.t.Logf("the prompt answered")
+	if summarized := indexOf(c.inFrames(lane), 0, func(f *frameView) bool { return summarizationStatus(f) == "running" }); summarized < 0 {
+		return errors.New("the turn crossed no threshold: no summarization running frame")
+	}
+	select {
+	case err := <-steerErr:
+		if err != nil {
+			return fmt.Errorf("steer: %w", err)
+		}
+	case <-ctx.Done():
+		return fmt.Errorf("the steer sent during the summary never answered: %w", ctx.Err())
+	}
+	if p, _ := pressed.Load().(string); strings.Contains(p, `"success":true`) {
+		return fmt.Errorf("a compact pressed during the in-turn summary answered %s", p)
+	}
+	live := c.inFrames(lane)
+	start := indexOf(live, 0, infoKind("turn_start"))
+	running := indexOf(live, start, func(f *frameView) bool { return summarizationStatus(f) == "running" })
+	done := indexOf(live, running, func(f *frameView) bool { return summarizationStatus(f) == "success" })
+	end := indexOf(live, done, infoKind("turn_end"))
+	if start < 0 || running < 0 || done < 0 || end < 0 {
+		return fmt.Errorf("live half: turn_start %d, summarization running %d, success %d, turn_end after it %d", start, running, done, end)
+	}
+	id := s.SessionID()
+	if err := c.closeSession(ctx, s, lane); err != nil {
+		return err
+	}
+	e.Stop()
+	<-e.Done()
+	fresh, err := c.startEngine(ctx, marotte.EngineFeatures{})
+	if err != nil {
+		return err
+	}
+	if err := c.loadSession(ctx, fresh, id); err != nil {
+		return err
+	}
+	replay := c.inFrames(c.lanes)
+	sep := indexOf(replay, 0, infoKind("summarization_separator"))
+	steered := indexOf(replay, 0, func(f *frameView) bool {
+		return f.Params.Update.SessionUpdate == "user_message_chunk" && f.metaString("messageId") == marotte.SteerIDFor(msgID)
+	})
+	if sep < 0 || steered < 0 {
+		return fmt.Errorf("replay: summarization_separator at %d, the steer's row at %d", sep, steered)
+	}
+	return nil
+}
+
+// summarizationStatus is a session_info_update's _meta.kiro.summarization status, or "".
+func summarizationStatus(f *frameView) string {
+	block, _ := f.Params.Update.Meta.Kiro["summarization"].(map[string]any)
+	status, _ := block["status"].(string)
+	return status
 }
 
 func runDelegate(ctx context.Context, c *capture) error {

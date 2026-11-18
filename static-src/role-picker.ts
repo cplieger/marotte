@@ -150,10 +150,10 @@ function renderOptions(list: HTMLElement): void {
   }
 }
 
-function modeOption(mode: SessionMode, currentMode: string): HTMLButtonElement {
+/** One mode's row in the card. */
+export function modeOption(mode: SessionMode, currentMode: string): HTMLButtonElement {
   const isCurrent = mode.id === currentMode;
-  const children: HTMLElement[] = [
-    el("span", { className: "pill-role-item-icon" }, iconEl(iconForMode(mode.id))),
+  const words: HTMLElement[] = [
     el("span", { className: "pill-role-name" }, displayModeName(mode.name || mode.id)),
   ];
   // The shadowed entry, marked. There is one row per id, so without this the collision is
@@ -163,14 +163,14 @@ function modeOption(mode: SessionMode, currentMode: string): HTMLButtonElement {
   let tooltip = mode.description ?? "";
   const shadows = mode.shadows ?? "";
   if (shadows !== "") {
-    children.push(el("span", { className: "pill-role-shadow" }, "shadows " + shadows));
+    words.push(el("span", { className: "pill-role-shadow" }, "shadows " + shadows));
     const own = scope === "" ? "custom" : scope;
     const note = `This ${own} agent shadows the ${shadows} agent of the same name. The ${own} definition is the one a run uses.`;
     tooltip = tooltip === "" ? note : tooltip + " " + note;
   }
   // Scope on the row, so a user looking at two custom agents can tell which tree each came from.
   if (scope !== "") {
-    children.push(el("span", { className: "pill-role-scope" }, scope));
+    words.push(el("span", { className: "pill-role-scope" }, scope));
   }
   const opt = el(
     "button",
@@ -182,7 +182,8 @@ function modeOption(mode: SessionMode, currentMode: string): HTMLButtonElement {
       "data-tooltip": tooltip,
       "data-mode-id": mode.id,
     },
-    ...children,
+    el("span", { className: "pill-role-item-icon" }, iconEl(iconForMode(mode.id))),
+    el("span", { className: "pill-role-text" }, ...words),
   ) as HTMLButtonElement;
   opt.addEventListener("click", (e: MouseEvent) => {
     e.stopPropagation();

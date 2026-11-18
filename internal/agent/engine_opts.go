@@ -86,7 +86,7 @@ type sessionDocument struct {
 	profile    string
 	dirEntries []string
 	features   marotte.SessionFeatures // before any administrator lock
-	// autoCompactPct and autoCompactEnabled are autoCompactionPolicy's answer, read by marotte's compactor.
+	// autoCompactPct and autoCompactEnabled are autoCompactionPolicy's answer, which every chat door sends to KAS.
 	autoCompactPct     int
 	dirsInvalid        bool // additional_directories is present and does not decode: the door grants nothing
 	autoCompactEnabled bool
@@ -165,6 +165,8 @@ type sessionSettings struct {
 	RunPresets            []string                `json:"-"`
 	AdditionalDirectories []string                `json:"additional_directories"`
 	Features              marotte.SessionFeatures `json:"features"`
+	AutoCompactPct        int                     `json:"auto_compact_pct"`
+	AutoCompaction        bool                    `json:"auto_compaction"`
 }
 
 // readSessionSettings is every session door's inputs, from the configDoc owner with the administrator locks applied
@@ -183,6 +185,8 @@ func (rt *Runtime) readSessionSettings(ctx context.Context) sessionSettings {
 		RunPresets:            runPresets(s.profile),
 		AdditionalDirectories: rt.lifecycle.sessionDirs(s.dirEntries, src == fromDefaults || s.dirsInvalid),
 		Features:              features,
+		AutoCompactPct:        s.autoCompactPct,
+		AutoCompaction:        s.autoCompactEnabled,
 	}
 }
 
@@ -203,18 +207,18 @@ func (rt *Runtime) chatSessionOpts(ctx context.Context, rec *marotte.Chat, ask *
 		s.Presets = securityPresets(rec.SecurityProfile)
 	}
 	opts := &marotte.SessionOpts{
-		Role:                  marotte.SessionRoleChat,
-		Model:                 ask.model,
-		Effort:                ask.effort,
-		Mode:                  doorMode(rec),
-		Thinking:              ask.thinking,
-		Presets:               s.Presets,
-		AdditionalDirectories: s.AdditionalDirectories,
-		Steering:              steering,
-		Features:              s.Features,
-		Supervised:            rec.SupervisedMode,
-		// marotte's autoCompactor is a chat's one compactor, at a turn's end.
-		DisableAutoCompaction: true,
+		Role:                    marotte.SessionRoleChat,
+		Model:                   ask.model,
+		Effort:                  ask.effort,
+		Mode:                    doorMode(rec),
+		Thinking:                ask.thinking,
+		Presets:                 s.Presets,
+		AdditionalDirectories:   s.AdditionalDirectories,
+		Steering:                steering,
+		Features:                s.Features,
+		Supervised:              rec.SupervisedMode,
+		DisableAutoCompaction:   !s.AutoCompaction,
+		AutoCompactionThreshold: s.AutoCompactPct,
 	}
 	if rec.IsStartedBot() {
 		opts.CustomAgents = []marotte.ClientCustomAgent{bot.Role(rec, botPaths())}

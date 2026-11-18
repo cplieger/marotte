@@ -1,4 +1,4 @@
-// Every holding-area row (steer, queued, paused, compaction, resume): beside a one-line message the
+// Every holding-area row (steer, queued, paused, compaction): beside a one-line message the
 // state label shares the message's baseline and the glyph sits on that line's x-height middle; beside
 // a longer message the state stays centred on the whole block. The label is a smaller font than the
 // text, so two boxes merely centred on each other leave the text's baseline low of the label's.
@@ -7,13 +7,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { page as browser } from "vitest/browser";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { mountPane, openStack, unmountView } from "./__test-helpers__/holding-area.js";
-import {
-  compactionEntry,
-  resumeEntry,
-  rowEntry,
-  runAt,
-  turnEntry,
-} from "./__test-helpers__/run-order.js";
+import { rowEntry, runAt, turnEntry } from "./__test-helpers__/run-order.js";
 import type { SteerStackSource } from "./pending-steers.js";
 import type { PendingSteer, RunEntryView, RunView } from "./types.js";
 import { LS_UI_STATE_KEY } from "./ls-keys.js";
@@ -46,9 +40,13 @@ afterEach(async () => {
   await browser.viewport(1280, 720);
 });
 
-function sourceOf(steers: readonly PendingSteer[], run: RunView): SteerStackSource {
+function sourceOf(
+  steers: readonly PendingSteer[],
+  run: RunView,
+  compacting = false,
+): SteerStackSource {
   return {
-    read: () => ({ id: "c1", steers: [...steers], run }),
+    read: () => ({ id: "c1", steers: [...steers], run, compacting }),
     edit: () => Promise.resolve(),
     editByClear: () => Promise.resolve(),
     remove: () => Promise.resolve(),
@@ -77,6 +75,7 @@ const STACKS: readonly {
   name: string;
   steers: PendingSteer[];
   run: RunView;
+  compacting?: boolean;
   phoneBaselines?: number;
 }[] = [
   {
@@ -100,8 +99,6 @@ const STACKS: readonly {
         queued("m-q2", LONG),
         queued("m-q3", "", true),
         queued("m-q4", "what does this screenshot show", true),
-        compactionEntry("c1", { after: "turns", turns: 1 }),
-        resumeEntry("r1", "Continue where you left off"),
       ],
       { cancel: "t1", send: "steer" },
     ),
@@ -120,7 +117,8 @@ const STACKS: readonly {
   {
     name: "compacting",
     steers: [],
-    run: runAt(1, [compactionEntry("c2", { after: "running" })]),
+    run: runAt(1, []),
+    compacting: true,
   },
 ];
 
@@ -156,7 +154,12 @@ describe("a holding-area row's state and message", () => {
         await browser.viewport(w, h);
         style = mountAppCSS();
         openStack(true);
-        const chat = await mountPane(h, 0, false, sourceOf(stack.steers, stack.run));
+        const chat = await mountPane(
+          h,
+          0,
+          false,
+          sourceOf(stack.steers, stack.run, stack.compacting),
+        );
         const rows = [...chat.area.querySelectorAll<HTMLElement>(".steer-stack > .steer-row")];
         expect(rows.length, "rows drawn").toBeGreaterThan(0);
         let baselines = 0;

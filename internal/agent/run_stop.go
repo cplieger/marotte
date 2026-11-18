@@ -99,15 +99,16 @@ func (rs *Runs) leasesOfChat(chatID marotte.ChatID, chain []string) map[string][
 	return out
 }
 
-// stopCandidates is leaseHolders less the runs KAS lists as terminal, plus the runs it lists as not terminal whose parent
-// session chatID's chain owns, the test the purge teardown deletes by. A list that fails leaves the leased runs to
-// stop. A leased run KAS lists as terminal gets no stop attempt, so its mark is not refreshed and ages out.
+// stopCandidates is leaseHolders less the runs KAS shows as terminal, plus the runs it shows as not terminal whose
+// parent session chatID's chain owns, the test the purge teardown deletes by, read off runInventory. An inventory that
+// cannot be read leaves the leased runs to stop. A leased run KAS shows as terminal gets no stop attempt, so its mark
+// is not refreshed and ages out.
 func (rs *Runs) stopCandidates(
 	ctx context.Context, chatID marotte.ChatID, chain []string, leaseHolders map[string][]marotte.ChatID,
 ) map[string][]marotte.ChatID {
-	runs, err := rs.listRaw(ctx)
+	runs, err := rs.runInventory(ctx)
 	if err != nil {
-		slog.Warn("close: the run list could not be read; stopping only the runs marotte leases",
+		slog.Warn("close: no run inventory could be read; stopping only the runs marotte leases",
 			"chat_id", chatID, "error", err)
 		return leaseHolders
 	}

@@ -18,11 +18,11 @@ A file search keeps ripgrep's results when ripgrep reports an error after listin
 
 Reported as [kirodotdev/Kiro#12489](https://github.com/kirodotdev/Kiro/issues/12489), open, for the text search. The file search part, [kirodotdev/Kiro#11957](https://github.com/kirodotdev/Kiro/issues/11957), is fixed in kiro-cli 3.4.0.
 
-marotte runs the agent's `grep_search` and `file_search` itself, so kiro-cli's own search and its fallback never run. marotte searches the workspace and the additional directories with ripgrep, honours `.gitignore`, never follows symbolic links, and keeps ripgrep's results when it skips an unreadable path. A search that names a folder, such as `marotte/internal/**/*.go`, reads only that folder. Each search ends after 15 seconds, or when you stop the reply, and the agent receives what was found by then: at most 100 files for a text search.
+marotte runs the agent's `grep_search` and `file_search` itself. kiro-cli's own search and its fallback then run only when marotte's answer reaches kiro-cli more than 30 seconds after the request, which a heavily loaded host can cause. marotte searches the workspace and the additional directories with ripgrep, follows ripgrep's rule for `.gitignore` (it skips the ignored folders the pattern does not match, but reads a file the pattern matches even when `.gitignore` lists it, and everything below a folder the pattern matches, so `marotte/**` reads the ignored files below `marotte/`, while `marotte/**/*.go` skips the ignored folders), never follows symbolic links, and keeps ripgrep's results when it skips an unreadable path. A pattern that starts with a folder, such as `marotte/internal/**/*.go` or the same path written as an absolute path, reads only that folder when the search sets no exclude pattern, and reads it even when `.gitignore` lists it. ripgrep's own glob rules decide which files match, so `marotte/internal` alone names the folder rather than its files and finds nothing. A pattern that starts with `**/` reads every folder, so on a large workspace it is the search that runs out of time. Each search ends after 10 seconds, or when you stop the reply, and the agent receives what was found by then: at most 100 files for a text search. A text search also stops reading after 10 MiB of ripgrep output. An answer cut short by the 10 seconds or by that limit opens with a line saying it is partial and how to narrow the search.
 
 ### A reply hangs after a failed compaction
 
-When kiro-cli's own automatic compaction fails, the reply can stay open with nothing more arriving. marotte turns kiro-cli's automatic compaction off in every chat and compacts at the end of a reply instead, so a chat no longer meets this. A workflow step, which kiro-cli still compacts by itself, can. marotte marks a step that shows no activity for an hour and notifies you, and stops the run instead when no chat started it.
+When kiro-cli's own automatic compaction fails, the reply can stay open with nothing more arriving. kiro-cli compacts chats and workflow steps by itself, so both can meet this. marotte marks a step that shows no activity for an hour and notifies you, and stops the run instead when no chat started it.
 
 Reported in the Kiro Crew tracker as [kirodotdev/KiroCrew#3583](https://github.com/kirodotdev/KiroCrew/issues/3583), closed after Kiro Crew added a time limit in its own client. kiro-cli itself still leaves the reply open. After a failed compaction, marotte ends a reply that shows no new activity for 60 seconds and marks it interrupted.
 
@@ -30,7 +30,7 @@ Reported in the Kiro Crew tracker as [kirodotdev/KiroCrew#3583](https://github.c
 
 kiro-cli summarizes a chat in one to four minutes. If a workflow step's message, a progress row or a reply it starts reaches the chat during that time, kiro-cli discards the finished summary and leaves the chat uncompacted. A chat that many workflow runs report to can fail several compactions in a row, and each failed attempt still costs a model call.
 
-Reported as [kirodotdev/Kiro#12483](https://github.com/kirodotdev/Kiro/issues/12483), open. marotte cannot keep kiro-cli's summary, so it reports the compaction as not run and tries again at the end of the next reply. A `/compact` you send yourself says the same and does not retry.
+Reported as [kirodotdev/Kiro#12483](https://github.com/kirodotdev/Kiro/issues/12483), open. This affects the compaction you start with `/compact` or **Compact the context**. marotte cannot keep the discarded summary, so a notice says the compaction did not run, and nothing tries it again. kiro-cli's automatic compaction runs inside the reply and does not check for new messages, so it is not affected.
 
 ### Replies slow down when many chats and workflow steps run at once
 
@@ -194,9 +194,9 @@ Reported as [kirodotdev/Kiro#11819](https://github.com/kirodotdev/Kiro/issues/11
 
 ### Context use reads the figure from before a compaction
 
-Before kiro-cli 3.4.0, after a compaction kiro-cli kept reporting the context use from before it until the model's next reply measured it again. A chat at 96% before `/compact` could still read 96% at about 30% real use. From kiro-cli 3.4.0 a manual compaction, `/compact` or the one marotte runs at the end of a reply, reports an estimate of the compacted context when it completes. A compaction that completes after a new message has already reached the chat still leaves the figure from before it.
+Before kiro-cli 3.4.0, after a compaction kiro-cli kept reporting the context use from before it until the model's next reply measured it again. A chat at 96% before `/compact` could still read 96% at about 30% real use. From kiro-cli 3.4.0 a compaction you start with `/compact` reports an estimate of the compacted context when it completes. A compaction that completes after a new message has already reached the chat still leaves the figure from before it.
 
-Reported as [kirodotdev/Kiro#12392](https://github.com/kirodotdev/Kiro/issues/12392), closed as fixed in kiro-cli 3.4.0. After a compaction, marotte still clears the chat's context use and ignores the figures kiro-cli sends, its estimate included, until the model's next reply measures it. The **Compact at** point and the 95% stop act only on a figure a model reply measured. marotte therefore does not stop a turn on an old or estimated figure.
+Reported as [kirodotdev/Kiro#12392](https://github.com/kirodotdev/Kiro/issues/12392), closed as fixed in kiro-cli 3.4.0. After a compaction, marotte still clears the chat's context use and ignores the figures kiro-cli sends, its estimate included, until the model's next reply measures it.
 
 ### A message sent just after a stop can run out of view
 

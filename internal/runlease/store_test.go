@@ -733,8 +733,8 @@ func TestLease_HostPresetsRefusesAnUnrecordedLaunch(t *testing.T) {
 		"a host with no list": {WorkflowID: "wf_1", Origin: OriginManual, Host: &HostSecurity{}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := l.HostPresets(); !errors.Is(err, errNoHostSecurity) {
-				t.Errorf("HostPresets() = %v, want errNoHostSecurity", err)
+			if _, err := l.HostPresets(); !errors.Is(err, ErrNoHostSecurity) {
+				t.Errorf("HostPresets() = %v, want ErrNoHostSecurity", err)
 			}
 		})
 	}
@@ -749,8 +749,8 @@ func TestLease_HostPresetsRefusesAnUnrecordedLaunch(t *testing.T) {
 			t.Fatalf("NewStore: %v", err)
 		}
 		l, _ := s.Get("wf_1")
-		if _, err := l.HostPresets(); !errors.Is(err, errNoHostSecurity) {
-			t.Errorf("an old record's HostPresets() = %v, want errNoHostSecurity", err)
+		if _, err := l.HostPresets(); !errors.Is(err, ErrNoHostSecurity) {
+			t.Errorf("an old record's HostPresets() = %v, want ErrNoHostSecurity", err)
 		}
 	})
 }

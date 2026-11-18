@@ -289,6 +289,9 @@ func TestHandleV3Summarization_FailureLandsInTheTurnWithoutAWatermark(t *testing
 	if want := (compactionFailure{chatID: "c1", turnID: turn.ID(), detail: "error"}); len(deps.compactionFailures) != 1 || deps.compactionFailures[0] != want {
 		t.Errorf("CompactionFailed calls = %+v, want one naming the turn it landed in, %+v", deps.compactionFailures, want)
 	}
+	if deps.failuresObserved != 1 {
+		t.Errorf("ObserveCompactionFailed calls = %d, want 1, so a Compact press leaves the account to this row", deps.failuresObserved)
+	}
 }
 
 // TestHandleV3Summarization_GenuineErrorFails pins that a genuine "error" files the entry and
@@ -400,5 +403,101 @@ func TestHandleCompactionFailed_BoundsAndSanitizesTheDetail(t *testing.T) {
 	}
 	if len(deps.compactionFailures) != 1 || deps.compactionFailures[0].detail != failed[0].Reason {
 		t.Errorf("CompactionFailed calls = %+v, want the filed bounded detail %q", deps.compactionFailures, failed[0].Reason)
+	}
+}
+
+// kiro-cli tries its summary again at each response after a failed one, until one lands, across turns: the streak's
+// first failure is its one Compaction failed entry and toast, and every failure still reaches the host's reap.
+func TestHandleCompactionFailed_OneEntryAndToastUntilASummaryLands(t *testing.T) {
+	fail := func(tr *Translator) {
+		tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "model error", ""), FrameAttribution{})
+	}
+	closeTurn := func(t *testing.T, deps *baseDeps) {
+		t.Helper()
+		if _, err := deps.turns.chatTurn("c1").Close(t.Context(), marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCompleted}); err != nil {
+			t.Fatalf("close the turn: %v", err)
+		}
+	}
+	t.Run("two failures in one turn", func(t *testing.T) {
+		deps, events, _ := depsWithStore(t, "c1")
+		tr := New(rolesOf(deps))
+		deps.turns.chatTurn("c1")
+		fail(tr)
+		fail(tr)
+		if got := compactionFailuresOf(t, deps.chatEntries("c1")); len(got) != 1 {
+			t.Errorf("compaction_failed entries = %d, want 1", len(got))
+		}
+		if got := errorPayloads(t, events); len(got) != 1 {
+			t.Errorf("toasts = %d, want 1", len(got))
+		}
+		if deps.failuresObserved != 1 {
+			t.Errorf("ObserveCompactionFailed calls = %d, want 1: only a shown failure answers a press", deps.failuresObserved)
+		}
+		if len(deps.compactionFailures) != 2 {
+			t.Errorf("CompactionFailed host calls = %d, want 2, so each failure re-arms the turn's reap", len(deps.compactionFailures))
+		}
+	})
+	t.Run("two failures in two turns", func(t *testing.T) {
+		deps, events, _ := depsWithStore(t, "c1")
+		tr := New(rolesOf(deps))
+		deps.turns.chatTurn("c1")
+		fail(tr)
+		closeTurn(t, deps)
+		second := deps.turns.chatTurn("c1")
+		fail(tr)
+		if got := compactionFailuresOf(t, deps.turns.chatLog["c1"]); len(got) != 1 {
+			t.Errorf("compaction_failed entries = %d, want 1 for the streak", len(got))
+		}
+		if got := errorPayloads(t, events); len(got) != 1 {
+			t.Errorf("toasts = %d, want 1 for the streak", len(got))
+		}
+		if n := len(deps.compactionFailures); n != 2 || deps.compactionFailures[1].turnID != second.ID() {
+			t.Errorf("CompactionFailed host calls = %+v, want 2, the second naming turn %q", deps.compactionFailures, second.ID())
+		}
+	})
+	t.Run("a failure after a landed summary", func(t *testing.T) {
+		deps, events, _ := depsWithStore(t, "c1")
+		tr := New(rolesOf(deps))
+		deps.turns.chatTurn("c1")
+		fail(tr)
+		tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "the summary"), FrameAttribution{})
+		fail(tr)
+		if got := compactionFailuresOf(t, deps.chatEntries("c1")); len(got) != 2 {
+			t.Errorf("compaction_failed entries = %d, want 2: a landed summary ends the streak", len(got))
+		}
+		if got := errorPayloads(t, events); len(got) != 2 {
+			t.Errorf("toasts = %d, want 2", len(got))
+		}
+	})
+	t.Run("a failure after the streak was ended", func(t *testing.T) {
+		deps, events, _ := depsWithStore(t, "c1")
+		tr := New(rolesOf(deps))
+		deps.turns.chatTurn("c1")
+		fail(tr)
+		tr.EndSummaryStreak("c1")
+		fail(tr)
+		if got := compactionFailuresOf(t, deps.chatEntries("c1")); len(got) != 2 {
+			t.Errorf("compaction_failed entries = %d, want 2: an ended streak shows its next failure", len(got))
+		}
+		if got := errorPayloads(t, events); len(got) != 2 {
+			t.Errorf("toasts = %d, want 2", len(got))
+		}
+	})
+}
+
+// The header's Compacting mark follows kiro-cli's summary: set on its running frame, cleared after every outcome.
+func TestHandleV3Summarization_MarksTheSummaryWhileItRuns(t *testing.T) {
+	for _, status := range []string{"success", "error", "canceled"} {
+		t.Run(status, func(t *testing.T) {
+			deps, _, _ := depsWithStore(t, "c1")
+			tr := New(rolesOf(deps))
+
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "running", ""), FrameAttribution{})
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, status, "the summary"), FrameAttribution{})
+
+			if got := deps.summaryRunning; len(got) != 2 || !got[0] || got[1] {
+				t.Errorf("ObserveSummaryRunning = %v, want [true false]", got)
+			}
+		})
 	}
 }

@@ -117,6 +117,7 @@ import { removeChat } from "./store.js";
 import { error as toastError } from "./toast.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
 import { bindTabsSync, settleTabs, tabServer } from "./__test-helpers__/tabs-server.js";
+import { until } from "./__test-helpers__/until.js";
 import { configureApi } from "@cplieger/reactive/actions";
 
 bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
@@ -322,14 +323,8 @@ function stubSessions(runs: { chat: string; id: string }[] | null): void {
 const ask = (): HTMLDialogElement | null =>
   document.querySelector<HTMLDialogElement>("dialog.uip-ask[open]");
 async function askShown(): Promise<HTMLDialogElement> {
-  for (let i = 0; i < 40 && ask() === null; i++) {
-    await settle();
-  }
-  const d = ask();
-  if (d === null) {
-    throw new Error("no confirm opened");
-  }
-  return d;
+  await until(() => ask() !== null, "a confirm to open");
+  return ask() as HTMLDialogElement;
 }
 
 /** Open the delete's confirm with `open` and press its `button` with the mouse; resolves once it has closed and
@@ -343,10 +338,18 @@ async function deleteBy(open: () => Promise<void>, button: "Delete" | "Cancel"):
   if (b === undefined) {
     throw new Error(`no ${button} in the confirm`);
   }
+  let closed = false;
+  d.addEventListener(
+    "close",
+    () => {
+      closed = true;
+    },
+    { once: true },
+  );
   await userEvent.click(b);
-  await vi.waitFor(() => {
-    expect(d.open, "the confirm closed").toBe(false);
-  });
+  // confirm.ts answers on the close event, a task of its own that a busy page can run after later
+  // timers, not when `open` turns false at the end of the close animation.
+  await until(() => closed, "the confirm's close event");
   await settle();
   await settleTabs();
 }

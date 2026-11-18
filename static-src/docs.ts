@@ -11,6 +11,7 @@ import { onSSE } from "./bus.js";
 import { engineRead } from "./engine-read.js";
 import { $, byId, maybeEl, queryAll, queryEl } from "./dom.js";
 import { swapViews } from "./view-swap.js";
+import { SharedScroll } from "./view-scroll.js";
 import { el } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
 import { ICON_EDIT, ICON_TRASH } from "./icons.js";
@@ -210,6 +211,11 @@ const FIRST_TAB: DocsTab = "steering";
 
 /** The category the docs row's route names, null while no docs row is open. */
 const shownTab = computed(() => subTabOf("docs"));
+/** Every category's panel scrolls in `#docs-view`, so each category keeps its own offset. */
+const panelScroll = new SharedScroll(
+  () => maybeEl("docs-view"),
+  () => shownTab.peek() ?? "",
+);
 /** The Memory setting is Off, which withdraws the Memories tab. Null until the settings answer, so
  *  a Memories deep link waits rather than opening a panel it may have to withdraw. */
 const memoryOff = signal<boolean | null>(null);
@@ -410,6 +416,7 @@ function initDocsView(): void {
     syncTabChrome(tab, paintBar);
     syncNewDoc(tab);
     renderActive();
+    panelScroll.restore(tab);
   });
   subscribe(memoryOff, (off) => {
     setSegmentHidden(bar, "data-docs-tab", "memories", off === true);

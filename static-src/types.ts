@@ -403,6 +403,9 @@ export interface Session {
   run?: RunView;
   /** `ChatHeader.tangent`. */
   tangent?: boolean;
+  /** `ChatHeader.compacting`: a compaction runs, the reader's Compact or kiro-cli's own. Replaced by every header
+   *  read. */
+  compacting?: boolean;
   /** Reasoning-effort level ("low".."max", "" = engine default): a per-chat composer setting. */
   effort?: string;
   /** The chat's thinking choice (`ChatHeader.thinking`: "on", "off", "" = the model's

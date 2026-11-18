@@ -13,8 +13,10 @@
      has something taller than itself to scroll. `flex: 1 1 0; min-height: 0` made
      this column exactly the free space of that box, so `scrollHeight ===
      clientHeight` and no scrollbar could ever appear — every region below was
-     crushed into a cage that scrolled on its own instead. */
-  flex: 1 0 auto;
+     crushed into a cage that scrolled on its own instead. It never GROWS either:
+     under the scroll owner's clamp floor on the body, a grown page measures the
+     floor instead of its content, so a shrink is never seen and never lowered. */
+  flex: none;
   gap: var(--sp-3);
 
   /* A CONTAINER spaces its children and a child never spaces itself: the gap above
@@ -1214,9 +1216,12 @@
   align-items: center;
   gap: 0.125rem;
 
+  /* The glyph goes down with the fraction its row lowers (15-input.css); outside a row
+     `--row-cap` is 0 and so is the margin. */
   & > svg {
     inline-size: 1em;
     block-size: 1em;
+    margin-block-start: max(0px, calc(var(--row-cap) - 1cap));
   }
 }
 

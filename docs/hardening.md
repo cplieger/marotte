@@ -1,6 +1,6 @@
 # Security
 
-This page is for anyone deciding where to run marotte and who can reach it. It covers access, the user the container runs as, tool installs, what marotte sends out, and how kiro-cli is installed.
+This page is for anyone deciding where to run marotte and who can reach it. It covers access, the user the container runs as, a read-only root, tool installs, what marotte sends out, and how kiro-cli is installed.
 
 ## Who can reach it
 
@@ -19,6 +19,38 @@ The file browser shows only the folders it is given, `/workspace`, `/config`, `/
 The example `compose.yaml` runs the container as user 1000, or as the `PUID` and `PGID` from `.env`. The files it writes on the host then belong to you. You can run it as root instead with `user: "0:0"`. You then no longer give the host folders to user 1000, and you can install Debian packages from [OS packages](os-packages.md), which install only as root. It also makes the agent's terminal a root shell inside the container.
 
 The image is built on Debian, which has the shell the terminal needs and runs kiro-cli as its own program.
+
+## Read-only root
+
+marotte runs with `read_only: true`, which stops anything inside the container from changing the image's own files. As user 1000, the example's default, it needs one `tmpfs` beside the three folders the example already mounts. A `tmpfs` is a folder kept in memory that is emptied when the container stops. Add `read_only: true` and the `tmpfs:` lines to the service:
+
+```yaml
+services:
+  marotte:
+    image: ghcr.io/cplieger/marotte:latest
+    user: "${PUID:-1000}:${PGID:-1000}"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,exec,nosuid,nodev,size=512m,mode=1777
+      # when the container runs as root, also:
+      # - /etc/profile.d:rw,noexec,nosuid,nodev,size=1m,mode=755
+    volumes:
+      - "/opt/appdata/marotte/config:/config"
+      - "/opt/appdata/marotte/workspace:/workspace"
+      - "/opt/appdata/marotte/uploads:/uploads"
+```
+
+Each folder holds this:
+
+- `/tmp` holds kiro-cli's logs in `/tmp/kiro-log` and its update check folder. It also holds what the **Shell** panel and the agent's commands write there, such as build files and test binaries. marotte itself uses less than 200 KB, so the 512 MB are room for those programs. Docker mounts a `tmpfs` with `noexec` by default, so the line adds `exec` for test runners that start programs from `/tmp`. Mode 1777 matches the image's own `/tmp`.
+- `/etc/profile.d` is needed only when the container runs as root, with `user: "0:0"`. marotte writes `10-marotte-path.sh` there at each start, which tells the **Shell** panel's login shell where kiro-cli and the installed tools are. Without it, the log warns that marotte could not write that file, and the **Shell** panel no longer finds those programs by name. The folder is empty in the image, so the mount hides nothing.
+- `/config` holds the chats, the Kiro sign-in, the kiro-cli install with its unpacked runtime, and the tools you install.
+- `/workspace` holds your repositories.
+- `/uploads` holds the files you attach. Under `read_only: true` it must stay a mount, or attaching a file fails.
+
+Each `tmpfs` counts against the container's memory limit. A program in the **Shell** panel that writes anywhere else, such as `/var/tmp`, gets `Read-only file system`.
+
+Debian packages from [OS packages](os-packages.md) do not install on a read-only root. apt and dpkg write the package database in `/var/lib/dpkg`, and they unpack each package into `/usr`, `/etc` and `/lib`, which are the image's own folders. A `tmpfs` on `/var/lib/dpkg` would hide the image's record of its installed packages, and one on `/usr` would hide its programs. Leave out `read_only: true` when you install Debian packages.
 
 ## Tool installs
 

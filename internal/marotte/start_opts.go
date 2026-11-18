@@ -143,10 +143,13 @@ type SessionOpts struct {
 	AdditionalDirectories []string
 	// Features are the session half of the Agent-capabilities settings; an observer leaves them zero.
 	Features SessionFeatures
+	// AutoCompactionThreshold is the context use, in percent, at which KAS compacts inside a turn; zero withholds
+	// it, so KAS keeps its default (an observer's and a run host's door).
+	AutoCompactionThreshold int
 	// Supervised sets `autopilot` FALSE after the door, requesting KAS's turn-approval gate.
 	Supervised bool
-	// DisableAutoCompaction turns KAS's own compaction off for this session; every chat door sets
-	// it. KAS freezes it per session, so it takes effect at the next door.
+	// DisableAutoCompaction turns KAS's own compaction off for this session. KAS persists it per session, so every
+	// chat door sends it either way.
 	DisableAutoCompaction bool
 }
 

@@ -990,7 +990,7 @@ describe("the automatic-compaction switch and slider", () => {
       </div>`;
   });
 
-  it("ships a fallback slider matching the server's range and a hint saying when compaction runs", async () => {
+  it("ships a fallback slider matching the server's range and a hint saying who compacts and when", async () => {
     const { default: page } = await import("../static/index.html?raw");
     const doc = new DOMParser().parseFromString(page, "text/html");
     const shipped = doc.getElementById("auto-compact-pct");
@@ -998,13 +998,13 @@ describe("the automatic-compaction switch and slider", () => {
       shipped?.getAttribute("min"),
       shipped?.getAttribute("max"),
       shipped?.getAttribute("step"),
-    ]).toEqual(["50", "90", "5"]);
+    ]).toEqual(["50", "80", "5"]);
     expect(shipped?.getAttribute("aria-describedby")?.split(" ")).toEqual([
       "auto-compact-hint",
       "auto-compact-rejected",
     ]);
     expect(doc.getElementById("auto-compact-hint")?.textContent).toContain(
-      "runs as soon as the turn ends",
+      "kiro-cli summarizes the older messages during the turn that reaches this point",
     );
     expect(doc.getElementById("auto-compact-rejected")?.classList.contains("hidden")).toBe(true);
   });
@@ -1012,15 +1012,15 @@ describe("the automatic-compaction switch and slider", () => {
   it("takes the slider's range from the server", () => {
     applyGeneralPanel(
       settingsPayload({
-        auto_compact_pct: 90,
-        auto_compact_pct_range: { min: 50, max: 90, step: 5 },
+        auto_compact_pct: 70,
+        auto_compact_pct_range: { min: 55, max: 80, step: 5 },
       }),
     );
     expect([range().min, range().max, range().step, range().value]).toEqual([
-      "50",
-      "90",
+      "55",
+      "80",
       "5",
-      "90",
+      "70",
     ]);
   });
 
@@ -1032,9 +1032,9 @@ describe("the automatic-compaction switch and slider", () => {
     );
     expect(rejected().classList.contains("hidden")).toBe(false);
     expect(rejected().textContent).toBe(
-      "The saved value is outside 50–90%, so 80% is used until you pick one.",
+      "The saved value is outside 50–80%, so 80% is used until you pick one.",
     );
-    applyGeneralPanel(settingsPayload({ auto_compact_pct: 85, rejected_keys: [] }));
+    applyGeneralPanel(settingsPayload({ auto_compact_pct: 75, rejected_keys: [] }));
     expect(rejected().classList.contains("hidden")).toBe(true);
     expect(rejected().textContent).toBe("");
   });

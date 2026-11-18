@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -64,7 +65,8 @@ func TestRunOwner_AnswersOneVerdictPerSource(t *testing.T) {
 		}})
 		return raw
 	}
-	notFound := map[string]*marotte.RPCError{methodKiroWorkflowInspect: {Code: -32603, Message: "Workflow not found: wf_1"}}
+	notFound := map[string]*marotte.RPCError{methodKiroWorkflowInspect: workflowNotFoundErr()}
+	listDown := &marotte.RPCError{Code: -32603, Message: "engine draining"}
 	cases := []struct {
 		name    string
 		results map[string]json.RawMessage
@@ -74,42 +76,40 @@ func TestRunOwner_AnswersOneVerdictPerSource(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name:    "a listed run of the chat's session",
-			results: map[string]json.RawMessage{methodKiroWorkflowList: purgeRuns(t, purgeRow("wf_1", "completed", "sess_launcher", time.Now()))},
+			name:    "a run of the chat's session",
+			results: map[string]json.RawMessage{methodKiroWorkflowInspect: inspect("sess_launcher")},
 			want:    command.RunOwner{Verdict: command.RunOwned, Holders: []marotte.ChatID{"c-launcher"}, ParentSessions: []string{"sess_launcher"}},
 		},
 		{
-			name:    "a listed run of a session no chat holds",
-			results: map[string]json.RawMessage{methodKiroWorkflowList: purgeRuns(t, purgeRow("wf_1", "completed", "sess_host", time.Now()))},
+			name:    "a run of a session no chat holds",
+			results: map[string]json.RawMessage{methodKiroWorkflowInspect: inspect("sess_host")},
 			want:    command.RunOwner{Verdict: command.RunParentless, ParentSessions: []string{"sess_host"}},
 		},
 		{
-			name:    "an unlisted run inspect names",
-			results: map[string]json.RawMessage{methodKiroWorkflowList: purgeRuns(t), methodKiroWorkflowInspect: inspect("sess_launcher")},
+			name:    "a run is read by key, so an unreadable inventory does not matter",
+			results: map[string]json.RawMessage{methodKiroWorkflowInspect: inspect("sess_launcher")},
+			rpcErrs: map[string]*marotte.RPCError{methodKiroWorkflowList: listDown},
 			want:    command.RunOwner{Verdict: command.RunOwned, Holders: []marotte.ChatID{"c-launcher"}, ParentSessions: []string{"sess_launcher"}},
 		},
 		{
-			name:    "an unlisted run inspect cannot find is unknown, never parentless",
-			results: map[string]json.RawMessage{methodKiroWorkflowList: purgeRuns(t)},
+			name:    "a run kiro-cli cannot find is unknown, never parentless",
 			rpcErrs: notFound,
 			want:    command.RunOwner{Verdict: command.RunUnknown},
 		},
 		{
 			name:    "a leased run answers from its lease",
-			results: map[string]json.RawMessage{methodKiroWorkflowList: purgeRuns(t)},
 			rpcErrs: notFound,
 			lease:   &runlease.Lease{WorkflowID: "wf_1", ParentSessionID: "sess_launcher", KeepChats: []string{"c-other"}, Origin: runlease.OriginAgent},
 			want:    command.RunOwner{Verdict: command.RunOwned, Holders: []marotte.ChatID{"c-launcher", "c-other"}, ParentSessions: []string{"sess_launcher"}},
 		},
 		{
-			name:    "an unreadable inventory is an error",
-			results: map[string]json.RawMessage{},
-			rpcErrs: map[string]*marotte.RPCError{methodKiroWorkflowList: {Code: -32603, Message: "engine draining"}},
+			name:    "a read kiro-cli refuses is an error, not an unknown run",
+			rpcErrs: map[string]*marotte.RPCError{methodKiroWorkflowInspect: listDown},
 			wantErr: true,
 		},
 		{
-			name:    "a listed run naming no launching session is an error",
-			results: map[string]json.RawMessage{methodKiroWorkflowList: purgeRuns(t, purgeRow("wf_1", "completed", "", time.Now()))},
+			name:    "a run naming no launching session is an error",
+			results: map[string]json.RawMessage{methodKiroWorkflowInspect: inspect("")},
 			wantErr: true,
 		},
 	}
@@ -130,6 +130,24 @@ func TestRunOwner_AnswersOneVerdictPerSource(t *testing.T) {
 				t.Errorf("RunOwner(wf_1) = %+v, want %+v", got, tc.want)
 			}
 		})
+	}
+}
+
+// A read of the run kiro-cli did not answer leaves its owners unknown: an error, never the RunUnknown verdict a
+// keep-state round settles on.
+func TestRunOwner_AnUnansweredReadIsAnError(t *testing.T) {
+	h, rig := newEngineRig(t, map[string]json.RawMessage{}, nil, nil)
+	rig.setAnswer(func(method string, _ map[string]any) (json.RawMessage, bool, error) {
+		if method != methodKiroWorkflowInspect {
+			return nil, false, nil
+		}
+		return nil, true, fmt.Errorf("workflow inspect call: %w", context.DeadlineExceeded)
+	})
+
+	got, err := h.runs.RunOwner(t.Context(), "wf_1")
+
+	if err == nil || got.Verdict == command.RunUnknown {
+		t.Errorf("RunOwner(wf_1) = (%+v, %v), want an error and no verdict", got, err)
 	}
 }
 

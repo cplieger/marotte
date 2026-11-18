@@ -1,0 +1,1 @@
+{"route":"GET /healthz","url":"/healthz","decoder":null,"body":{"status":"ok"}}

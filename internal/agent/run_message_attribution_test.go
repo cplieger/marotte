@@ -60,9 +60,7 @@ func TestStepMessage_AColdRegistryStillAttributesTheStepsSteeringFrames(t *testi
 				h.insertBridgeNow(frameChat, testBridge(br, bridgeReady))
 			} else {
 				frameChat = "c1"
-				br.setCallResult(methodKiroWorkflowList, kasRuns(t, map[string]any{
-					"workflowId": "wf_1", "name": "publish", "status": "running", "parentSessionId": "sess_owned",
-				}))
+				br.setCallResult(methodKiroWorkflowInspect, fromParent(t, stepWorkflowInspect(t), "sess_owned"))
 				if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 					c.RecordSession("sess_owned")
 					return true

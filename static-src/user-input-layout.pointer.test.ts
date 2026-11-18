@@ -206,9 +206,9 @@ function settling(): Animation[] {
  *  timer set at the swap, but the tray's height transition and the card's keyframes start with the
  *  next frame, which a loaded host delivers late, so the phase can clear while the box still grows. */
 async function traySettled(tray: HTMLElement): Promise<void> {
-  await expect
-    .poll(() => tray.dataset["dockPhase"], { message: "the tray settled" })
-    .toBeUndefined();
+  await until(() => tray.dataset["dockPhase"] === undefined, "the tray's phase ended", {
+    detail: () => `data-dock-phase=${tray.dataset["dockPhase"] ?? ""}`,
+  });
   await until(() => settling().length === 0, "the frame's animations finished", {
     detail: () =>
       settling()

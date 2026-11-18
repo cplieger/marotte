@@ -1,0 +1,1 @@
+{"route":"GET /api/slash-commands","url":"/api/slash-commands","decoder":"SlashCommandsResponse","body":{"commands":[],"ready":false}}

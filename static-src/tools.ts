@@ -335,9 +335,6 @@ class ToolsManager {
     this.unsubscribes.push(
       onSSE("tool_job_changed", (_chat, payload) => {
         const job = payload.job;
-        if (job === undefined) {
-          return;
-        }
         // The SSE stream is ordered, so its account of what is running is never
         // stale: this is the authoritative writer for the control faces, and the
         // inventory only ever SEEDS them.
@@ -1338,9 +1335,6 @@ export async function installToolAndWait(
   });
   const unChanged = onSSE("tool_job_changed", (_c, p) => {
     const job = p.job;
-    if (job === undefined) {
-      return;
-    }
     if (jobRef.id === undefined) {
       terminal.set(job.id, {
         state: job.state,

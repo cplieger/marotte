@@ -236,7 +236,6 @@ func supervisedDefaultSetting(ctx context.Context, configDir string) bool {
 func promptEntry(p *marotte.PromptCommand, resends []string) *marotte.EntryPrompt {
 	return &marotte.EntryPrompt{
 		ID: p.MessageID, Text: p.Text, Label: p.DisplayText, Attachments: p.Attachments, Resends: resends, Caller: p.Caller,
-		Automatic: p.Automatic,
 	}
 }
 
@@ -723,19 +722,13 @@ func promptFacts(ctx context.Context, configDir string, p *marotte.PromptCommand
 	return &kascap.Prompt{OutputStyle: style, Label: p.DisplayText, Tag: turnID, Caller: senderLabel(p)}
 }
 
-// Sender names kiro-cli's user row carries for a prompt nobody typed in marotte's page.
-const (
-	unnamedCallerLabel   = "api"
-	automaticCallerLabel = "marotte"
-)
+// unnamedCallerLabel is the sender kiro-cli's user row carries for an API caller with no label.
+const unnamedCallerLabel = "api"
 
 // senderLabel is the sender p names to the engine: "" for a prompt with no caller, the page's (which a reader of the
 // session's rows takes as typed by the user) or a tangent's (which its displayText marks); every other is named.
 func senderLabel(p *marotte.PromptCommand) string {
-	switch {
-	case p.Automatic:
-		return automaticCallerLabel
-	case p.Caller != nil:
+	if p.Caller != nil {
 		return cmp.Or(p.Caller.Label, unnamedCallerLabel)
 	}
 	return ""

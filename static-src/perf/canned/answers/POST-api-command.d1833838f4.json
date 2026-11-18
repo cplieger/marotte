@@ -1,0 +1,1 @@
+{"route":"POST /api/command","url":"/api/command","decoder":null,"body":{"created":false,"ok":true,"subject":{"id":"b000000000000000000000000000000e","kind":"git","ref":"","parent":"","pinned":false,"owns":false},"version":1},"request":{"chat_id":"","payload":{"kind":"git","owns":true},"type":"open_tab"}}

@@ -13,17 +13,12 @@ describe("sentBy", () => {
 });
 
 describe("senderWords", () => {
-  it("names marotte for a prompt it sent on its own", () => {
-    expect(senderWords({ automatic: true })).toBe("Sent by marotte");
-  });
-
   it("names an API caller's prompt by the caller", () => {
     expect(senderWords({ caller: { label: "Agent Mail" } })).toBe("Sent by Agent Mail");
   });
 
   it("names no one for the reader's own prompt", () => {
     expect(senderWords({})).toBeUndefined();
-    expect(senderWords({ automatic: false })).toBeUndefined();
     expect(senderWords(undefined)).toBeUndefined();
   });
 });

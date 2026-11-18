@@ -10,10 +10,12 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/kirosession"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 )
@@ -78,6 +80,34 @@ func TestStopChatRuns_ReadsTheRunInventoryOnce(t *testing.T) {
 	}
 	if got := callsOf(br, methodKiroWorkflowList); got != 1 {
 		t.Errorf("`workflow/list` went out %d times to stop 2 runs, want 1", got)
+	}
+}
+
+// A close whose run list goes unanswered still stops the runs the chat launched that the run state KAS keeps on disk
+// shows live, not only the runs marotte leases: an unanswered list is not a chat that launched nothing.
+func TestStopChatRuns_AnUnansweredRunListStopsTheLiveRunsKASKeepsOnDisk(t *testing.T) {
+	setStopTiming(t, time.Hour, time.Hour)
+	sessionsDir := t.TempDir()
+	writeKASRunState(t, sessionsDir, "wf_disk", marotte.RunStatusRunning, "sess_owner")
+	writeKASRunState(t, sessionsDir, "wf_done", marotte.RunStatusCompleted, "sess_owner")
+	writeKASRunState(t, sessionsDir, "wf_foreign", marotte.RunStatusRunning, "sess_x")
+	h, cs, br := newTestHub(WithSessionReaper(kirosession.New(sessionsDir, testReaperWorkDir)))
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
+		methodKiroWorkflowInspect: inspectReply(t, "wf_other", "running", ""),
+	}
+	br.callErrs = map[string]error{methodKiroWorkflowList: errListUnanswered}
+	cs.seed(t, "c1", func(c *marotte.Chat) { c.RecordSession("sess_owner") })
+	h.insertBridgeNow("c1", testBridge(br, bridgeReady))
+
+	h.runs.stopChatRuns(t.Context(), "c1", &chat.Claim{})
+
+	if got := callsOf(br, methodKiroWorkflowCancel); got != 1 {
+		t.Fatalf("the cancel went out %d times, want once, for the one live run the chat launched", got)
+	}
+	if got := br.paramsFor(methodKiroWorkflowCancel)[keyWorkflowID]; got != "wf_disk" {
+		t.Errorf("the cancel named %v, want wf_disk", got)
 	}
 }
 
@@ -202,28 +232,32 @@ func TestRefuseClosedLauncher_RefusesARunWhoseLaunchingChatIsClosed(t *testing.T
 // close stops nothing.
 func TestStopChatRuns_ADoubtHoldersCloseStopsNothing(t *testing.T) {
 	setStopTiming(t, 50*time.Millisecond, 10*time.Millisecond)
-	h, cs, br := newTestHub()
-	h.coord.chatHasTab = func(marotte.ChatID) bool { return false }
-	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowList: kasRuns(t, map[string]any{
-			"workflowId": "wf_1", "name": "r", "status": "running", "parentSessionId": "sess_launcher",
-		}),
-		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
-		methodKiroWorkflowInspect: inspectReply(t, "wf_1", marotte.RunStatusRunning, ""),
-	}
-	cs.seed(t, "c-launcher", func(c *marotte.Chat) { c.RecordSession("sess_launcher") })
-	cs.seed(t, "c-bystander", func(c *marotte.Chat) { c.RecordSession("sess_bystander") })
-	leaseRun(t, h, runlease.Lease{
-		WorkflowID: "wf_1", ChatID: "c-launcher", ParentSessionID: "sess_launcher", Origin: runlease.OriginAgent,
-		KeepChats: []string{"c-launcher", "c-bystander"},
+	synctest.Test(t, func(t *testing.T) {
+		h, cs, br := newTestHub()
+		t.Cleanup(func() { shutdownHub(t, h) })
+		h.coord.chatHasTab = func(marotte.ChatID) bool { return false }
+		br.callResults = map[string]json.RawMessage{
+			methodKiroWorkflowList: kasRuns(t, map[string]any{
+				"workflowId": "wf_1", "name": "r", "status": "running", "parentSessionId": "sess_launcher",
+			}),
+			methodKiroWorkflowCancel:  json.RawMessage(`{}`),
+			methodKiroWorkflowInspect: inspectReply(t, "wf_1", marotte.RunStatusRunning, ""),
+		}
+		cs.seed(t, "c-launcher", func(c *marotte.Chat) { c.RecordSession("sess_launcher") })
+		cs.seed(t, "c-bystander", func(c *marotte.Chat) { c.RecordSession("sess_bystander") })
+		leaseRun(t, h, runlease.Lease{
+			WorkflowID: "wf_1", ChatID: "c-launcher", ParentSessionID: "sess_launcher", Origin: runlease.OriginAgent,
+			KeepChats: []string{"c-launcher", "c-bystander"},
+		})
+
+		h.runs.stopChatRuns(t.Context(), "c-bystander", &chat.Claim{})
+		time.Sleep(100 * time.Millisecond)
+		synctest.Wait()
+
+		if n := callsOf(br, methodKiroWorkflowCancel) + callsOf(br, methodKiroWorkflowDelete); n != 0 {
+			t.Errorf("closing a chat that only held the run's mark in doubt sent %d stops for a run c-launcher launched", n)
+		}
 	})
-
-	h.runs.stopChatRuns(t.Context(), "c-bystander", &chat.Claim{})
-	time.Sleep(100 * time.Millisecond)
-
-	if n := callsOf(br, methodKiroWorkflowCancel) + callsOf(br, methodKiroWorkflowDelete); n != 0 {
-		t.Errorf("closing a chat that only held the run's mark in doubt sent %d stops for a run c-launcher launched", n)
-	}
 }
 
 // A leased run KAS already lists as terminal is not stopped: no cancel, no delete, and its mark ages out. A list
@@ -257,26 +291,32 @@ func TestStopChatRuns_ALeasedRunListedFinishedIsNotStopped(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			const window = 80 * time.Millisecond
 			setStopTiming(t, window, 10*time.Millisecond)
-			h, cs, br := newStopRig(t)
-			leaseRun(t, h, runlease.Lease{
-				WorkflowID: "wf_1", ChatID: "c1", ParentSessionID: "sess_owner", Origin: runlease.OriginAgent,
-				KeepChats: []string{"c1"},
+			synctest.Test(t, func(t *testing.T) {
+				h, cs, br := newStopRig(t)
+				leaseRun(t, h, runlease.Lease{
+					WorkflowID: "wf_1", ChatID: "c1", ParentSessionID: "sess_owner", Origin: runlease.OriginAgent,
+					KeepChats: []string{"c1"},
+				})
+				tc.list(t, br)
+
+				h.runs.stopChatRuns(t.Context(), "c1", &chat.Claim{})
+				time.Sleep(2 * window)
+				synctest.Wait()
+
+				stops := callsOf(br, methodKiroWorkflowCancel) + callsOf(br, methodKiroWorkflowDelete)
+				if tc.stopped {
+					if callsOf(br, methodKiroWorkflowDelete) == 0 {
+						t.Errorf("the leased run got no delete fallback after the %v window", window)
+					}
+					return
+				}
+				if stops != 0 {
+					t.Errorf("a leased run KAS lists as completed got %d stops, want 0", stops)
+				}
+				if !holdsKey(t, cs, "c1", runKey) {
+					t.Error("a finished run's mark was released; it ages out on its own")
+				}
 			})
-			tc.list(t, br)
-
-			h.runs.stopChatRuns(t.Context(), "c1", &chat.Claim{})
-
-			if tc.stopped {
-				waitUntil(t, "the leased run's delete fallback", func() bool { return callsOf(br, methodKiroWorkflowDelete) > 0 })
-				return
-			}
-			time.Sleep(2 * window)
-			if n := callsOf(br, methodKiroWorkflowCancel) + callsOf(br, methodKiroWorkflowDelete); n != 0 {
-				t.Errorf("a leased run KAS lists as completed got %d stops, want 0", n)
-			}
-			if !holdsKey(t, cs, "c1", runKey) {
-				t.Error("a finished run's mark was released; it ages out on its own")
-			}
 		})
 	}
 }
@@ -300,26 +340,32 @@ func TestStopChatRuns_AnUnreadableRecordStopsTheLeasedRuns(t *testing.T) {
 }
 
 // A chat reopened inside the stop window drops the stop: no further cancel and no delete.
+// In a bubble, so the reopen lands before the first retry however late the test goroutine runs.
 func TestStopChatRuns_AReopenedChatDropsTheStop(t *testing.T) {
 	const window = 150 * time.Millisecond
 	setStopTiming(t, window, 40*time.Millisecond)
 	logs := captureLogs(t)
-	h, _, br := newStopRig(t)
-	var reopened atomic.Bool
-	h.coord.chatHasTab = func(marotte.ChatID) bool { return reopened.Load() }
-	br.setCallErr(methodKiroWorkflowCancel, errors.New("owner pid 979344 is live"))
+	synctest.Test(t, func(t *testing.T) {
+		h, _, br := newStopRig(t)
+		var reopened atomic.Bool
+		h.coord.chatHasTab = func(marotte.ChatID) bool { return reopened.Load() }
+		br.setCallErr(methodKiroWorkflowCancel, errors.New("owner pid 979344 is live"))
 
-	h.runs.stopChatRuns(t.Context(), "c1", &chat.Claim{})
-	reopened.Store(true)
-	waitUntil(t, "the dropped stop", func() bool { return strings.Contains(logs.String(), "its run's stop is dropped") })
-	time.Sleep(2 * window)
+		h.runs.stopChatRuns(t.Context(), "c1", &chat.Claim{})
+		reopened.Store(true)
+		time.Sleep(2 * window)
+		synctest.Wait()
 
-	if n := callsOf(br, methodKiroWorkflowDelete); n != 0 {
-		t.Errorf("a reopened chat's run was deleted %d times", n)
-	}
-	if n := callsOf(br, methodKiroWorkflowCancel); n != 1 {
-		t.Errorf("the cancel went out %d times after the chat was reopened, want only the close's first", n)
-	}
+		if !strings.Contains(logs.String(), "its run's stop is dropped") {
+			t.Errorf("no dropped stop for the reopened chat\nlogs: %s", logs.String())
+		}
+		if n := callsOf(br, methodKiroWorkflowDelete); n != 0 {
+			t.Errorf("a reopened chat's run was deleted %d times", n)
+		}
+		if n := callsOf(br, methodKiroWorkflowCancel); n != 1 {
+			t.Errorf("the cancel went out %d times after the chat was reopened, want only the close's first", n)
+		}
+	})
 }
 
 // An inspect whose pauseDetail drifted in type still reads a terminal status as the stop confirmed.

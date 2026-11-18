@@ -86,8 +86,8 @@ type bridgeCoordinator struct {
 	onTurnClosed func(marotte.ChatID, string)
 	// applyPendingModel is the pending_model idle arm, dispatched by every closer on its own goroutine. Nil in tests.
 	applyPendingModel func(context.Context, marotte.ChatID) `wiring:"optional"`
-	// autoCompact owns every compaction of a chat: the policy's triggers and the reader's requests.
-	autoCompact *autoCompactor `wiring:"optional"`
+	// compact is the reader's Compact presses.
+	compact *compactPresses `wiring:"optional"`
 	// resolveEnds settles a close's steer ends in afterTurnClose.
 	resolveEnds func(context.Context, marotte.ChatID, command.TurnFence) `wiring:"optional"`
 	// launchEntry opens the turn of a run list entry the list's taker took (command.Dispatcher.LaunchEntry).
@@ -222,7 +222,7 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 	}
 	turns.runHost = bc
 	turns.sendRole = bc.reassertBotRole
-	turns.spawnRole = bc.spawnRole
+	turns.spawnRole = bc.goUnlessDraining
 	return bc
 }
 

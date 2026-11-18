@@ -94,7 +94,7 @@ import {
   requestTurnRange,
 } from "./store-load.js";
 import { IDLE_RUN } from "./run-order.js";
-import { compactionEntry, rowEntry, runAt } from "./__test-helpers__/run-order.js";
+import { rowEntry, runAt } from "./__test-helpers__/run-order.js";
 
 function usage(): Usage {
   return {
@@ -465,10 +465,10 @@ describe("loadList rebuilds each row from the header", () => {
     expect(older.run?.entries.map((e) => e.id)).toEqual(["m-old"]);
 
     seedSession("c1", { run: runAt(2, [rowEntry("m-old")]) });
-    const running = compactionEntry("compact-1", { after: "running" });
+    const running = rowEntry("m-run", { after: "running" }, { state: "running" });
     const newer = await rebuild(header("c1", { run: runAt(3, [running, rowEntry("m-q1")]) }));
     expect(newer.run?.entries.map((e) => [e.id, e.state])).toEqual([
-      ["compact-1", "running"],
+      ["m-run", "running"],
       ["m-q1", "pending"],
     ]);
   });

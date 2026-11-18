@@ -261,12 +261,21 @@ function fillRow(row: HTMLElement, c: KnowledgeContext, stalled: boolean): void 
 function rowChildren(c: KnowledgeContext): HTMLElement[] {
   const name = el("span", { className: "list-row-name" }, c.name);
   if (c.indexing === true) {
-    return [name, el("span", { className: "knowledge-progress" }), cancelBtn(c.name)];
+    return [
+      name,
+      el("span", { className: "knowledge-progress" }),
+      el("span", { className: "list-row-actions" }, cancelBtn(c.name)),
+    ];
   }
   const count = `${String(c.item_count)} item${c.item_count === 1 ? "" : "s"}`;
   const metaText = c.path !== undefined && c.path !== "" ? `${count} · ${c.path}` : count;
   const meta = el("span", { className: "list-row-meta knowledge-meta" }, metaText);
-  return [name, meta, reindexBtn(c.name), removeBtn(c.name)];
+  // The action cluster spaces two buttons' targets apart (18-pages.css).
+  return [
+    name,
+    meta,
+    el("span", { className: "list-row-actions" }, reindexBtn(c.name), removeBtn(c.name)),
+  ];
 }
 
 /** The leading integer percentage ("42%", "42% · ETA 3s"); null for "Cancelled" or "Failed". */
