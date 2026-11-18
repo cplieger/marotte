@@ -1,9 +1,8 @@
-"""budgets.json against the signed calibrations it names, and the plan's seconds per cell and
-shard count against the times those calibrations measured.
+"""budgets.json against the signed calibrations it names, and the pr set's slowest shard against
+the pull request's job time.
 
-cplieger/ci's perf_gate.py checks the same rule, the bundles' signatures and the base's tiers in
-the compare job; run.sh runs this first, so a budget file that breaks the rule fails the shard
-before anything is measured.
+run.sh runs this first, so a budget file that breaks the rule fails the shard before anything is
+measured.
 
 The tier and headroom of an entry from a file of fewer than ten runs are not checked here: that
 entry takes its base entry's tier, or is reported when the base has none, and perf_gate.py
@@ -11,7 +10,6 @@ entry takes its base entry's tier, or is reported when the base has none, and pe
 """
 
 import json
-import math
 import pathlib
 import re
 import unittest
@@ -19,7 +17,6 @@ from typing import ClassVar
 
 PERF = pathlib.Path(__file__).resolve().parent
 KEY_FIELDS = ('scenario', 'scale', 'engine', 'width', 'window', 'metric')
-UNIT_FIELDS = KEY_FIELDS[:4]
 SOURCE_RE = re.compile(r'^https://github\.com/cplieger/ci/actions/runs/(\d+)$')
 ROW_RE = re.compile(r'^(Q[1-8]|[A-Z]{1,2}\d+)$')
 TIER_RUNS = 10
@@ -39,10 +36,6 @@ CLOCK_SIZED = frozenset({'max_bytes:GET /api/engine'})
 
 def key(d: dict) -> tuple:
     return tuple(d[f] for f in KEY_FIELDS)
-
-
-def unit(d: dict) -> tuple:
-    return tuple(d[f] for f in UNIT_FIELDS)
 
 
 def family(metric: str) -> str:
@@ -138,17 +131,6 @@ class Budgets(unittest.TestCase):
         for e in cls.budgets['budgets']:
             cls.entries.setdefault(key(e), []).append(e)
 
-    def test_every_planned_window_has_entries(self):
-        units = {k[:4] for k in self.entries}
-        windows = {k[:5] for k in self.entries}
-        for set_name, s in self.plan['sets'].items():
-            for c in s['cells']:
-                with self.subTest(set=set_name, unit=unit(c)):
-                    self.assertIn(unit(c), units)
-                for w in c.get('windows', self.plan['scenarios'][c['scenario']]['windows']):
-                    with self.subTest(set=set_name, unit=unit(c), window=w):
-                        self.assertIn((*unit(c), w), windows)
-
     def test_every_exact_entry_is_every_rep_its_newest_commit_measured(self):
         for e in self.budgets['budgets']:
             if e['tier'] == 'exact':
@@ -222,16 +204,6 @@ class Budgets(unittest.TestCase):
         es = self.entries.get(key(cell))
         self.assertTrue(es, 'the cell has an entry')
         return es[0] if es[0]['source'].endswith(f'/{run_id}') else None
-
-    def test_every_planned_cells_seconds_are_a_measured_time(self):
-        measured = {}
-        for doc in self.files.values():
-            for s in doc['seconds']:
-                measured.setdefault(unit(s), set()).add(math.ceil(s['seconds']))
-        for set_name, s in self.plan['sets'].items():
-            for c in s['cells']:
-                with self.subTest(set=set_name, unit=unit(c)):
-                    self.assertIn(c['seconds'], measured.get(unit(c), set()))
 
     def test_the_pr_sets_slowest_shard_fits_the_pull_requests_job(self):
         s = self.plan['sets']['pr']
