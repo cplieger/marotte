@@ -1,0 +1,1 @@
+{"route":"GET /api/version","url":"/api/version","decoder":null,"body":{"config_dir":"/perf/config","kiro_cli":"kiro-cli 3.1.0","marotte":"dev"}}

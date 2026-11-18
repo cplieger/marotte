@@ -1,0 +1,2202 @@
+{
+  "chat-long": {
+    "cold": {
+      "routes": {
+        "GET /api/slash-commands": {
+          "count": 1,
+          "maxBytes": 29
+        },
+        "GET /api/permissions/profile": {
+          "count": 1,
+          "maxBytes": 464
+        },
+        "GET /api/mcp/status": {
+          "count": 1,
+          "maxBytes": 96
+        },
+        "GET /api/config/standing": {
+          "count": 1,
+          "maxBytes": 32
+        },
+        "GET /api/settings": {
+          "count": 1,
+          "maxBytes": 1618
+        },
+        "GET /api/whoami": {
+          "count": 1,
+          "maxBytes": 135
+        },
+        "GET /api/chats": {
+          "count": 2,
+          "maxBytes": 15469
+        },
+        "POST /api/events/view": {
+          "count": 3,
+          "maxBytes": 0
+        },
+        "GET /api/mcp": {
+          "count": 1,
+          "maxBytes": 890
+        },
+        "GET /api/governance": {
+          "count": 1,
+          "maxBytes": 200
+        },
+        "GET /api/version": {
+          "count": 1,
+          "maxBytes": 73
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        },
+        "GET /healthz": {
+          "count": 1,
+          "maxBytes": 15
+        },
+        "GET /api/engine": {
+          "count": 1,
+          "maxBytes": 301
+        },
+        "GET /api/config-template": {
+          "count": 1,
+          "maxBytes": 305
+        },
+        "GET /api/tabs": {
+          "count": 1,
+          "maxBytes": 2453
+        },
+        "GET /api/chats/{chat}": {
+          "count": 1,
+          "maxBytes": 943665
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 1,
+          "maxBytes": 4429
+        }
+      },
+      "topics": []
+    },
+    "rest": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    },
+    "live": {
+      "routes": {
+        "GET /api/chats/{chat}/turns/{id}?after": {
+          "count": 1,
+          "maxBytes": 1656
+        },
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 1,
+          "maxBytes": 4429
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        }
+      },
+      "topics": []
+    },
+    "away": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 2,
+          "maxBytes": 0
+        },
+        "GET /api/chats/{chat}": {
+          "count": 1,
+          "maxBytes": 204467
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 2,
+          "maxBytes": 4429
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        }
+      },
+      "topics": []
+    },
+    "back": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    }
+  },
+  "chat-stream": {
+    "cold": {
+      "routes": {
+        "GET /api/slash-commands": {
+          "count": 1,
+          "maxBytes": 29
+        },
+        "GET /api/permissions/profile": {
+          "count": 1,
+          "maxBytes": 464
+        },
+        "GET /api/mcp/status": {
+          "count": 1,
+          "maxBytes": 96
+        },
+        "GET /api/config/standing": {
+          "count": 1,
+          "maxBytes": 32
+        },
+        "GET /api/settings": {
+          "count": 1,
+          "maxBytes": 1618
+        },
+        "GET /api/whoami": {
+          "count": 1,
+          "maxBytes": 135
+        },
+        "GET /api/chats": {
+          "count": 2,
+          "maxBytes": 15469
+        },
+        "POST /api/events/view": {
+          "count": 4,
+          "maxBytes": 0
+        },
+        "GET /api/mcp": {
+          "count": 1,
+          "maxBytes": 890
+        },
+        "GET /api/governance": {
+          "count": 1,
+          "maxBytes": 200
+        },
+        "GET /api/version": {
+          "count": 1,
+          "maxBytes": 73
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        },
+        "GET /healthz": {
+          "count": 1,
+          "maxBytes": 15
+        },
+        "GET /api/engine": {
+          "count": 1,
+          "maxBytes": 301
+        },
+        "GET /api/config-template": {
+          "count": 1,
+          "maxBytes": 305
+        },
+        "GET /api/tabs": {
+          "count": 1,
+          "maxBytes": 2453
+        },
+        "GET /api/chats/{chat}": {
+          "count": 1,
+          "maxBytes": 377991
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 1,
+          "maxBytes": 466
+        }
+      },
+      "topics": []
+    },
+    "rest": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    },
+    "live": {
+      "routes": {
+        "GET /api/chats/{chat}/turns/{id}?after": {
+          "count": 1,
+          "maxBytes": 1656
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 1,
+          "maxBytes": 466
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        },
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    },
+    "away": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 2,
+          "maxBytes": 0
+        },
+        "GET /api/chats/{chat}": {
+          "count": 1,
+          "maxBytes": 204467
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 2,
+          "maxBytes": 1402
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        }
+      },
+      "topics": []
+    },
+    "back": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    }
+  },
+  "docs": {
+    "cold": {
+      "routes": {
+        "GET /api/slash-commands": {
+          "count": 1,
+          "maxBytes": 29
+        },
+        "GET /api/permissions/profile": {
+          "count": 1,
+          "maxBytes": 464
+        },
+        "GET /api/mcp/status": {
+          "count": 1,
+          "maxBytes": 96
+        },
+        "GET /api/config/standing": {
+          "count": 2,
+          "maxBytes": 32
+        },
+        "GET /api/settings": {
+          "count": 2,
+          "maxBytes": 1618
+        },
+        "GET /api/whoami": {
+          "count": 1,
+          "maxBytes": 135
+        },
+        "GET /api/chats": {
+          "count": 2,
+          "maxBytes": 15469
+        },
+        "POST /api/events/view": {
+          "count": 4,
+          "maxBytes": 0
+        },
+        "GET /api/mcp": {
+          "count": 1,
+          "maxBytes": 890
+        },
+        "GET /api/governance": {
+          "count": 1,
+          "maxBytes": 200
+        },
+        "GET /api/version": {
+          "count": 1,
+          "maxBytes": 73
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        },
+        "GET /healthz": {
+          "count": 1,
+          "maxBytes": 15
+        },
+        "GET /api/engine": {
+          "count": 1,
+          "maxBytes": 301
+        },
+        "GET /api/config-template": {
+          "count": 1,
+          "maxBytes": 305
+        },
+        "GET /api/tabs": {
+          "count": 1,
+          "maxBytes": 2453
+        },
+        "POST /api/command": {
+          "count": 1,
+          "maxBytes": 154
+        },
+        "GET /api/workspace/kiro-docs": {
+          "count": 1,
+          "maxBytes": 24251
+        },
+        "GET /api/hooks": {
+          "count": 1,
+          "maxBytes": 12
+        },
+        "GET /api/steering/issues": {
+          "count": 1,
+          "maxBytes": 13
+        }
+      },
+      "topics": []
+    },
+    "rest": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    },
+    "live": {
+      "routes": {
+        "GET /api/chats/{chat}/turns/{id}?after": {
+          "count": 1,
+          "maxBytes": 1652
+        },
+        "GET /api/git/status-all?paths": {
+          "count": 32,
+          "maxBytes": 5591
+        },
+        "GET /api/git/status-all": {
+          "count": 33,
+          "maxBytes": 5046
+        },
+        "POST /api/events/view": {
+          "count": 2,
+          "maxBytes": 0
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 1,
+          "maxBytes": 604
+        }
+      },
+      "topics": []
+    },
+    "away": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 3,
+          "maxBytes": 0
+        },
+        "GET /api/chats/{chat}": {
+          "count": 1,
+          "maxBytes": 204467
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 2,
+          "maxBytes": 1402
+        },
+        "GET /api/git/status-all?paths": {
+          "count": 32,
+          "maxBytes": 5591
+        },
+        "GET /api/git/status-all": {
+          "count": 33,
+          "maxBytes": 5046
+        }
+      },
+      "topics": []
+    },
+    "back": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "GET /api/workspace/kiro-docs": {
+          "count": 1,
+          "maxBytes": 24251
+        },
+        "GET /api/hooks": {
+          "count": 1,
+          "maxBytes": 12
+        },
+        "GET /api/steering/issues": {
+          "count": 1,
+          "maxBytes": 13
+        },
+        "GET /api/config/standing": {
+          "count": 1,
+          "maxBytes": 32
+        }
+      },
+      "topics": []
+    }
+  },
+  "docs-workflows": {
+    "cold": {
+      "routes": {
+        "GET /api/slash-commands": {
+          "count": 1,
+          "maxBytes": 29
+        },
+        "GET /api/permissions/profile": {
+          "count": 1,
+          "maxBytes": 464
+        },
+        "GET /api/mcp/status": {
+          "count": 1,
+          "maxBytes": 96
+        },
+        "GET /api/config/standing": {
+          "count": 2,
+          "maxBytes": 32
+        },
+        "GET /api/settings": {
+          "count": 3,
+          "maxBytes": 1618
+        },
+        "GET /api/whoami": {
+          "count": 1,
+          "maxBytes": 135
+        },
+        "GET /api/chats": {
+          "count": 2,
+          "maxBytes": 15469
+        },
+        "POST /api/events/view": {
+          "count": 4,
+          "maxBytes": 0
+        },
+        "GET /api/mcp": {
+          "count": 1,
+          "maxBytes": 890
+        },
+        "GET /api/governance": {
+          "count": 1,
+          "maxBytes": 200
+        },
+        "GET /api/version": {
+          "count": 1,
+          "maxBytes": 73
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        },
+        "GET /healthz": {
+          "count": 1,
+          "maxBytes": 15
+        },
+        "GET /api/engine": {
+          "count": 1,
+          "maxBytes": 301
+        },
+        "GET /api/config-template": {
+          "count": 1,
+          "maxBytes": 305
+        },
+        "GET /api/tabs": {
+          "count": 1,
+          "maxBytes": 2453
+        },
+        "POST /api/command": {
+          "count": 1,
+          "maxBytes": 154
+        },
+        "GET /api/recipes": {
+          "count": 2,
+          "maxBytes": 5291
+        },
+        "GET /api/sessions": {
+          "count": 2,
+          "maxBytes": 15716
+        },
+        "GET /api/workspace/kiro-docs": {
+          "count": 1,
+          "maxBytes": 24251
+        },
+        "GET /api/hooks": {
+          "count": 1,
+          "maxBytes": 12
+        },
+        "GET /api/steering/issues": {
+          "count": 1,
+          "maxBytes": 13
+        },
+        "GET /api/launch-rules": {
+          "count": 2,
+          "maxBytes": 1275
+        }
+      },
+      "topics": []
+    },
+    "rest": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    },
+    "live": {
+      "routes": {
+        "GET /api/runs/{run}?view=header": {
+          "count": 5,
+          "maxBytes": 710
+        },
+        "GET /api/sessions": {
+          "count": 5,
+          "maxBytes": 15716
+        },
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    },
+    "away": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 2,
+          "maxBytes": 0
+        },
+        "GET /api/chats/{chat}": {
+          "count": 1,
+          "maxBytes": 204467
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 1,
+          "maxBytes": 1402
+        },
+        "GET /api/runs/{run}?view=header": {
+          "count": 5,
+          "maxBytes": 710
+        },
+        "GET /api/sessions": {
+          "count": 5,
+          "maxBytes": 15716
+        }
+      },
+      "topics": []
+    },
+    "back": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "GET /api/workspace/kiro-docs": {
+          "count": 1,
+          "maxBytes": 24251
+        },
+        "GET /api/hooks": {
+          "count": 1,
+          "maxBytes": 12
+        },
+        "GET /api/steering/issues": {
+          "count": 1,
+          "maxBytes": 13
+        },
+        "GET /api/config/standing": {
+          "count": 1,
+          "maxBytes": 32
+        },
+        "GET /api/recipes": {
+          "count": 1,
+          "maxBytes": 5291
+        },
+        "GET /api/sessions": {
+          "count": 1,
+          "maxBytes": 15716
+        },
+        "GET /api/launch-rules": {
+          "count": 1,
+          "maxBytes": 1275
+        },
+        "GET /api/settings": {
+          "count": 1,
+          "maxBytes": 1618
+        }
+      },
+      "topics": []
+    }
+  },
+  "files": {
+    "cold": {
+      "routes": {
+        "GET /api/slash-commands": {
+          "count": 1,
+          "maxBytes": 29
+        },
+        "GET /api/permissions/profile": {
+          "count": 1,
+          "maxBytes": 464
+        },
+        "GET /api/mcp/status": {
+          "count": 1,
+          "maxBytes": 96
+        },
+        "GET /api/config/standing": {
+          "count": 1,
+          "maxBytes": 32
+        },
+        "GET /api/settings": {
+          "count": 1,
+          "maxBytes": 1618
+        },
+        "GET /api/whoami": {
+          "count": 1,
+          "maxBytes": 135
+        },
+        "GET /api/chats": {
+          "count": 2,
+          "maxBytes": 15469
+        },
+        "POST /api/events/view": {
+          "count": 4,
+          "maxBytes": 0
+        },
+        "GET /api/mcp": {
+          "count": 1,
+          "maxBytes": 890
+        },
+        "GET /api/governance": {
+          "count": 1,
+          "maxBytes": 200
+        },
+        "GET /api/version": {
+          "count": 1,
+          "maxBytes": 73
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        },
+        "GET /healthz": {
+          "count": 1,
+          "maxBytes": 15
+        },
+        "GET /api/engine": {
+          "count": 1,
+          "maxBytes": 301
+        },
+        "GET /api/config-template": {
+          "count": 1,
+          "maxBytes": 305
+        },
+        "GET /api/tabs": {
+          "count": 1,
+          "maxBytes": 2453
+        },
+        "GET /api/files?path": {
+          "count": 1,
+          "maxBytes": 28702
+        }
+      },
+      "topics": []
+    },
+    "rest": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    },
+    "live": {
+      "routes": {
+        "GET /api/chats/{chat}/turns/{id}?after": {
+          "count": 1,
+          "maxBytes": 1646
+        },
+        "GET /api/git/status-all?paths": {
+          "count": 12,
+          "maxBytes": 5050
+        },
+        "GET /api/git/status-all": {
+          "count": 13,
+          "maxBytes": 5046
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 1,
+          "maxBytes": 604
+        },
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    },
+    "away": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 2,
+          "maxBytes": 0
+        },
+        "GET /api/chats/{chat}": {
+          "count": 1,
+          "maxBytes": 204467
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 2,
+          "maxBytes": 1402
+        },
+        "GET /api/git/status-all?paths": {
+          "count": 12,
+          "maxBytes": 5050
+        },
+        "GET /api/git/status-all": {
+          "count": 13,
+          "maxBytes": 5046
+        }
+      },
+      "topics": []
+    },
+    "back": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "GET /api/files?path": {
+          "count": 1,
+          "maxBytes": 28702
+        }
+      },
+      "topics": []
+    }
+  },
+  "git-changes": {
+    "cold": {
+      "routes": {
+        "GET /api/slash-commands": {
+          "count": 1,
+          "maxBytes": 29
+        },
+        "GET /api/permissions/profile": {
+          "count": 1,
+          "maxBytes": 464
+        },
+        "GET /api/mcp/status": {
+          "count": 1,
+          "maxBytes": 96
+        },
+        "GET /api/config/standing": {
+          "count": 1,
+          "maxBytes": 32
+        },
+        "GET /api/settings": {
+          "count": 1,
+          "maxBytes": 1618
+        },
+        "GET /api/whoami": {
+          "count": 1,
+          "maxBytes": 135
+        },
+        "GET /api/chats": {
+          "count": 2,
+          "maxBytes": 15469
+        },
+        "POST /api/events/view": {
+          "count": 4,
+          "maxBytes": 0
+        },
+        "GET /api/mcp": {
+          "count": 1,
+          "maxBytes": 890
+        },
+        "GET /api/governance": {
+          "count": 1,
+          "maxBytes": 200
+        },
+        "GET /api/version": {
+          "count": 1,
+          "maxBytes": 73
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        },
+        "GET /healthz": {
+          "count": 1,
+          "maxBytes": 15
+        },
+        "GET /api/engine": {
+          "count": 1,
+          "maxBytes": 301
+        },
+        "GET /api/config-template": {
+          "count": 1,
+          "maxBytes": 305
+        },
+        "GET /api/tabs": {
+          "count": 1,
+          "maxBytes": 2453
+        },
+        "POST /api/command": {
+          "count": 1,
+          "maxBytes": 153
+        },
+        "GET /api/forges": {
+          "count": 2,
+          "maxBytes": 251
+        },
+        "GET /api/git/repos": {
+          "count": 1,
+          "maxBytes": 41
+        },
+        "GET /api/git/status-all?fetch": {
+          "count": 1,
+          "maxBytes": 5046
+        },
+        "GET /api/forges/gitea%3A127.0.0.1%5C%3A19980/repos": {
+          "count": 1,
+          "maxBytes": 4058
+        }
+      },
+      "topics": []
+    },
+    "rest": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    },
+    "live": {
+      "routes": {
+        "GET /api/chats/{chat}/turns/{id}?after": {
+          "count": 1,
+          "maxBytes": 1648
+        },
+        "GET /api/git/status-all?paths": {
+          "count": 12,
+          "maxBytes": 5745
+        },
+        "GET /api/git/status-all": {
+          "count": 14,
+          "maxBytes": 5046
+        },
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 1,
+          "maxBytes": 604
+        }
+      },
+      "topics": []
+    },
+    "away": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 3,
+          "maxBytes": 0
+        },
+        "GET /api/chats/{chat}": {
+          "count": 1,
+          "maxBytes": 204467
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 2,
+          "maxBytes": 1402
+        },
+        "GET /api/git/status-all?paths": {
+          "count": 12,
+          "maxBytes": 5745
+        },
+        "GET /api/git/status-all": {
+          "count": 14,
+          "maxBytes": 5046
+        }
+      },
+      "topics": []
+    },
+    "back": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "GET /api/git/status-all?fetch": {
+          "count": 1,
+          "maxBytes": 5046
+        }
+      },
+      "topics": []
+    }
+  },
+  "git-prs": {
+    "cold": {
+      "routes": {
+        "GET /api/slash-commands": {
+          "count": 1,
+          "maxBytes": 29
+        },
+        "GET /api/permissions/profile": {
+          "count": 1,
+          "maxBytes": 464
+        },
+        "GET /api/mcp/status": {
+          "count": 1,
+          "maxBytes": 96
+        },
+        "GET /api/config/standing": {
+          "count": 1,
+          "maxBytes": 32
+        },
+        "GET /api/settings": {
+          "count": 1,
+          "maxBytes": 1618
+        },
+        "GET /api/whoami": {
+          "count": 1,
+          "maxBytes": 135
+        },
+        "GET /api/chats": {
+          "count": 2,
+          "maxBytes": 15469
+        },
+        "POST /api/events/view": {
+          "count": 4,
+          "maxBytes": 0
+        },
+        "GET /api/mcp": {
+          "count": 1,
+          "maxBytes": 890
+        },
+        "GET /api/governance": {
+          "count": 1,
+          "maxBytes": 200
+        },
+        "GET /api/version": {
+          "count": 1,
+          "maxBytes": 73
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        },
+        "GET /healthz": {
+          "count": 1,
+          "maxBytes": 15
+        },
+        "GET /api/engine": {
+          "count": 1,
+          "maxBytes": 301
+        },
+        "GET /api/config-template": {
+          "count": 1,
+          "maxBytes": 305
+        },
+        "GET /api/tabs": {
+          "count": 1,
+          "maxBytes": 2453
+        },
+        "POST /api/command": {
+          "count": 1,
+          "maxBytes": 153
+        },
+        "GET /api/forges": {
+          "count": 2,
+          "maxBytes": 251
+        },
+        "GET /api/git/repos": {
+          "count": 1,
+          "maxBytes": 41
+        },
+        "POST /api/forges/inventory/watch": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "GET /api/forges/inventory": {
+          "count": 1,
+          "maxBytes": 69179
+        },
+        "GET /api/forges/gitea%3A127.0.0.1%5C%3A19980/repos": {
+          "count": 1,
+          "maxBytes": 4058
+        }
+      },
+      "topics": []
+    },
+    "rest": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    },
+    "live": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 9,
+          "maxBytes": 0
+        },
+        "POST /api/forges/inventory/watch": {
+          "count": 2,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    },
+    "away": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 9,
+          "maxBytes": 0
+        },
+        "GET /api/chats/{chat}": {
+          "count": 1,
+          "maxBytes": 204467
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 1,
+          "maxBytes": 1402
+        },
+        "POST /api/forges/inventory/watch": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    },
+    "back": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "POST /api/forges/inventory/watch": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "GET /api/forges/inventory": {
+          "count": 1,
+          "maxBytes": 69179
+        }
+      },
+      "topics": []
+    }
+  },
+  "history": {
+    "cold": {
+      "routes": {
+        "GET /api/slash-commands": {
+          "count": 1,
+          "maxBytes": 29
+        },
+        "GET /api/permissions/profile": {
+          "count": 1,
+          "maxBytes": 464
+        },
+        "GET /api/mcp/status": {
+          "count": 1,
+          "maxBytes": 96
+        },
+        "GET /api/config/standing": {
+          "count": 1,
+          "maxBytes": 32
+        },
+        "GET /api/settings": {
+          "count": 1,
+          "maxBytes": 1618
+        },
+        "GET /api/whoami": {
+          "count": 1,
+          "maxBytes": 135
+        },
+        "GET /api/chats": {
+          "count": 2,
+          "maxBytes": 15469
+        },
+        "POST /api/events/view": {
+          "count": 4,
+          "maxBytes": 0
+        },
+        "GET /api/mcp": {
+          "count": 1,
+          "maxBytes": 890
+        },
+        "GET /api/governance": {
+          "count": 1,
+          "maxBytes": 200
+        },
+        "GET /api/version": {
+          "count": 1,
+          "maxBytes": 73
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        },
+        "GET /healthz": {
+          "count": 1,
+          "maxBytes": 15
+        },
+        "GET /api/engine": {
+          "count": 1,
+          "maxBytes": 301
+        },
+        "GET /api/config-template": {
+          "count": 1,
+          "maxBytes": 305
+        },
+        "GET /api/tabs": {
+          "count": 1,
+          "maxBytes": 2453
+        },
+        "GET /api/sessions": {
+          "count": 1,
+          "maxBytes": 15716
+        }
+      },
+      "topics": []
+    },
+    "rest": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    },
+    "live": {
+      "routes": {
+        "GET /api/chats/{chat}/turns/{id}?after": {
+          "count": 1,
+          "maxBytes": 1656
+        },
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 1,
+          "maxBytes": 604
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        }
+      },
+      "topics": []
+    },
+    "away": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 2,
+          "maxBytes": 0
+        },
+        "GET /api/chats/{chat}": {
+          "count": 1,
+          "maxBytes": 204467
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 2,
+          "maxBytes": 1402
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        }
+      },
+      "topics": []
+    },
+    "back": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "GET /api/sessions": {
+          "count": 1,
+          "maxBytes": 15716
+        }
+      },
+      "topics": []
+    }
+  },
+  "history-runs": {
+    "cold": {
+      "routes": {
+        "GET /api/slash-commands": {
+          "count": 1,
+          "maxBytes": 29
+        },
+        "GET /api/permissions/profile": {
+          "count": 1,
+          "maxBytes": 464
+        },
+        "GET /api/mcp/status": {
+          "count": 1,
+          "maxBytes": 96
+        },
+        "GET /api/config/standing": {
+          "count": 1,
+          "maxBytes": 32
+        },
+        "GET /api/settings": {
+          "count": 1,
+          "maxBytes": 1618
+        },
+        "GET /api/whoami": {
+          "count": 1,
+          "maxBytes": 135
+        },
+        "GET /api/chats": {
+          "count": 2,
+          "maxBytes": 15469
+        },
+        "POST /api/events/view": {
+          "count": 4,
+          "maxBytes": 0
+        },
+        "GET /api/mcp": {
+          "count": 1,
+          "maxBytes": 890
+        },
+        "GET /api/governance": {
+          "count": 1,
+          "maxBytes": 200
+        },
+        "GET /api/version": {
+          "count": 1,
+          "maxBytes": 73
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        },
+        "GET /healthz": {
+          "count": 1,
+          "maxBytes": 15
+        },
+        "GET /api/engine": {
+          "count": 1,
+          "maxBytes": 301
+        },
+        "GET /api/config-template": {
+          "count": 1,
+          "maxBytes": 305
+        },
+        "GET /api/tabs": {
+          "count": 1,
+          "maxBytes": 2453
+        },
+        "GET /api/sessions": {
+          "count": 1,
+          "maxBytes": 15716
+        }
+      },
+      "topics": []
+    },
+    "rest": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    },
+    "live": {
+      "routes": {
+        "GET /api/runs/{run}?view=header": {
+          "count": 5,
+          "maxBytes": 710
+        },
+        "GET /api/sessions": {
+          "count": 5,
+          "maxBytes": 15716
+        },
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    },
+    "away": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 2,
+          "maxBytes": 0
+        },
+        "GET /api/chats/{chat}": {
+          "count": 1,
+          "maxBytes": 204467
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 1,
+          "maxBytes": 1402
+        },
+        "GET /api/runs/{run}?view=header": {
+          "count": 5,
+          "maxBytes": 710
+        }
+      },
+      "topics": []
+    },
+    "back": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "GET /api/sessions": {
+          "count": 1,
+          "maxBytes": 15716
+        }
+      },
+      "topics": []
+    }
+  },
+  "run-dock": {
+    "cold": {
+      "routes": {
+        "GET /api/slash-commands": {
+          "count": 1,
+          "maxBytes": 29
+        },
+        "GET /api/permissions/profile": {
+          "count": 1,
+          "maxBytes": 464
+        },
+        "GET /api/mcp/status": {
+          "count": 1,
+          "maxBytes": 96
+        },
+        "GET /api/config/standing": {
+          "count": 1,
+          "maxBytes": 32
+        },
+        "GET /api/settings": {
+          "count": 1,
+          "maxBytes": 1618
+        },
+        "GET /api/whoami": {
+          "count": 1,
+          "maxBytes": 135
+        },
+        "GET /api/chats": {
+          "count": 2,
+          "maxBytes": 15469
+        },
+        "POST /api/events/view": {
+          "count": 4,
+          "maxBytes": 0
+        },
+        "GET /api/mcp": {
+          "count": 1,
+          "maxBytes": 890
+        },
+        "GET /api/governance": {
+          "count": 1,
+          "maxBytes": 200
+        },
+        "GET /api/version": {
+          "count": 1,
+          "maxBytes": 73
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        },
+        "GET /healthz": {
+          "count": 1,
+          "maxBytes": 15
+        },
+        "GET /api/engine": {
+          "count": 1,
+          "maxBytes": 301
+        },
+        "GET /api/config-template": {
+          "count": 1,
+          "maxBytes": 305
+        },
+        "GET /api/tabs": {
+          "count": 1,
+          "maxBytes": 2453
+        },
+        "GET /api/runs/{run}?view=glance": {
+          "count": 1,
+          "maxBytes": 61788
+        },
+        "GET /api/chats/{chat}": {
+          "count": 1,
+          "maxBytes": 219989
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 1,
+          "maxBytes": 939
+        }
+      },
+      "topics": []
+    },
+    "rest": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    },
+    "live": {
+      "routes": {
+        "GET /api/runs/{run}?view=glance": {
+          "count": 44,
+          "maxBytes": 61788
+        }
+      },
+      "topics": []
+    },
+    "away": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 2,
+          "maxBytes": 0
+        },
+        "GET /api/chats/{chat}": {
+          "count": 1,
+          "maxBytes": 204467
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 1,
+          "maxBytes": 1402
+        }
+      },
+      "topics": []
+    },
+    "back": {
+      "routes": {
+        "GET /api/runs/{run}?view=glance": {
+          "count": 1,
+          "maxBytes": 61788
+        },
+        "POST /api/events/view": {
+          "count": 2,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    }
+  },
+  "run-page": {
+    "cold": {
+      "routes": {
+        "GET /api/slash-commands": {
+          "count": 1,
+          "maxBytes": 29
+        },
+        "GET /api/permissions/profile": {
+          "count": 1,
+          "maxBytes": 464
+        },
+        "GET /api/mcp/status": {
+          "count": 1,
+          "maxBytes": 96
+        },
+        "GET /api/config/standing": {
+          "count": 1,
+          "maxBytes": 32
+        },
+        "GET /api/settings": {
+          "count": 1,
+          "maxBytes": 1618
+        },
+        "GET /api/whoami": {
+          "count": 1,
+          "maxBytes": 135
+        },
+        "GET /api/chats": {
+          "count": 2,
+          "maxBytes": 15469
+        },
+        "POST /api/events/view": {
+          "count": 4,
+          "maxBytes": 0
+        },
+        "GET /api/mcp": {
+          "count": 1,
+          "maxBytes": 890
+        },
+        "GET /api/governance": {
+          "count": 1,
+          "maxBytes": 200
+        },
+        "GET /api/version": {
+          "count": 1,
+          "maxBytes": 73
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        },
+        "GET /healthz": {
+          "count": 1,
+          "maxBytes": 15
+        },
+        "GET /api/engine": {
+          "count": 1,
+          "maxBytes": 301
+        },
+        "GET /api/config-template": {
+          "count": 1,
+          "maxBytes": 305
+        },
+        "GET /api/tabs": {
+          "count": 1,
+          "maxBytes": 2453
+        },
+        "POST /api/command": {
+          "count": 1,
+          "maxBytes": 281
+        },
+        "GET /api/runs/{run}?view=glance": {
+          "count": 1,
+          "maxBytes": 61788
+        },
+        "GET /api/runs/{run}/steps/{id}": {
+          "count": 1,
+          "maxBytes": 7363
+        }
+      },
+      "topics": [
+        "run:wf_5y00000000000001"
+      ]
+    },
+    "rest": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": [
+        "run:wf_5y00000000000001"
+      ]
+    },
+    "live": {
+      "routes": {
+        "GET /api/runs/{run}?view=glance": {
+          "count": 36,
+          "maxBytes": 61788
+        }
+      },
+      "topics": [
+        "run:wf_5y00000000000001"
+      ]
+    },
+    "away": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 2,
+          "maxBytes": 0
+        },
+        "GET /api/chats/{chat}": {
+          "count": 1,
+          "maxBytes": 204467
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 1,
+          "maxBytes": 1402
+        }
+      },
+      "topics": []
+    },
+    "back": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 2,
+          "maxBytes": 0
+        },
+        "GET /api/runs/{run}?view=glance": {
+          "count": 2,
+          "maxBytes": 61788
+        }
+      },
+      "topics": [
+        "run:wf_5y00000000000001"
+      ]
+    }
+  },
+  "settings": {
+    "cold": {
+      "routes": {
+        "GET /api/slash-commands": {
+          "count": 1,
+          "maxBytes": 29
+        },
+        "GET /api/permissions/profile": {
+          "count": 1,
+          "maxBytes": 464
+        },
+        "GET /api/mcp/status": {
+          "count": 1,
+          "maxBytes": 96
+        },
+        "GET /api/config/standing": {
+          "count": 1,
+          "maxBytes": 32
+        },
+        "GET /api/settings": {
+          "count": 1,
+          "maxBytes": 1618
+        },
+        "GET /api/whoami": {
+          "count": 1,
+          "maxBytes": 135
+        },
+        "GET /api/chats": {
+          "count": 2,
+          "maxBytes": 15469
+        },
+        "POST /api/events/view": {
+          "count": 4,
+          "maxBytes": 0
+        },
+        "GET /api/mcp": {
+          "count": 1,
+          "maxBytes": 890
+        },
+        "GET /api/governance": {
+          "count": 1,
+          "maxBytes": 200
+        },
+        "GET /api/version": {
+          "count": 1,
+          "maxBytes": 73
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        },
+        "GET /healthz": {
+          "count": 1,
+          "maxBytes": 15
+        },
+        "GET /api/engine": {
+          "count": 1,
+          "maxBytes": 301
+        },
+        "GET /api/config-template": {
+          "count": 1,
+          "maxBytes": 305
+        },
+        "GET /api/tabs": {
+          "count": 1,
+          "maxBytes": 2453
+        },
+        "POST /api/command": {
+          "count": 1,
+          "maxBytes": 158
+        },
+        "GET /api/kiro-settings?keys": {
+          "count": 1,
+          "maxBytes": 103
+        },
+        "GET /api/tools": {
+          "count": 1,
+          "maxBytes": 3077
+        }
+      },
+      "topics": []
+    },
+    "rest": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    },
+    "live": {
+      "routes": {
+        "GET /api/chats/{chat}/turns/{id}?after": {
+          "count": 1,
+          "maxBytes": 1656
+        },
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 1,
+          "maxBytes": 604
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        }
+      },
+      "topics": []
+    },
+    "away": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 2,
+          "maxBytes": 0
+        },
+        "GET /api/chats/{chat}": {
+          "count": 1,
+          "maxBytes": 204467
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 2,
+          "maxBytes": 1402
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        }
+      },
+      "topics": []
+    },
+    "back": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "GET /api/kiro-settings?keys": {
+          "count": 1,
+          "maxBytes": 103
+        },
+        "GET /api/tools": {
+          "count": 1,
+          "maxBytes": 3077
+        }
+      },
+      "topics": []
+    }
+  },
+  "settings-tools": {
+    "cold": {
+      "routes": {
+        "GET /api/slash-commands": {
+          "count": 1,
+          "maxBytes": 29
+        },
+        "GET /api/permissions/profile": {
+          "count": 1,
+          "maxBytes": 464
+        },
+        "GET /api/mcp/status": {
+          "count": 1,
+          "maxBytes": 96
+        },
+        "GET /api/config/standing": {
+          "count": 1,
+          "maxBytes": 32
+        },
+        "GET /api/settings": {
+          "count": 1,
+          "maxBytes": 1618
+        },
+        "GET /api/whoami": {
+          "count": 1,
+          "maxBytes": 135
+        },
+        "GET /api/chats": {
+          "count": 2,
+          "maxBytes": 15469
+        },
+        "POST /api/events/view": {
+          "count": 4,
+          "maxBytes": 0
+        },
+        "GET /api/mcp": {
+          "count": 1,
+          "maxBytes": 890
+        },
+        "GET /api/governance": {
+          "count": 1,
+          "maxBytes": 200
+        },
+        "GET /api/version": {
+          "count": 1,
+          "maxBytes": 73
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        },
+        "GET /healthz": {
+          "count": 1,
+          "maxBytes": 15
+        },
+        "GET /api/engine": {
+          "count": 1,
+          "maxBytes": 301
+        },
+        "GET /api/config-template": {
+          "count": 1,
+          "maxBytes": 305
+        },
+        "GET /api/tabs": {
+          "count": 1,
+          "maxBytes": 2453
+        },
+        "POST /api/command": {
+          "count": 1,
+          "maxBytes": 158
+        },
+        "GET /api/tools/{id}": {
+          "count": 1,
+          "maxBytes": 268
+        },
+        "GET /api/tools": {
+          "count": 1,
+          "maxBytes": 3077
+        }
+      },
+      "topics": []
+    },
+    "rest": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    },
+    "live": {
+      "routes": {
+        "GET /api/chats/{chat}/turns/{id}?after": {
+          "count": 1,
+          "maxBytes": 1656
+        },
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 1,
+          "maxBytes": 604
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        }
+      },
+      "topics": []
+    },
+    "away": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 2,
+          "maxBytes": 0
+        },
+        "GET /api/chats/{chat}": {
+          "count": 1,
+          "maxBytes": 204467
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 2,
+          "maxBytes": 1402
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        }
+      },
+      "topics": []
+    },
+    "back": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "GET /api/tools/{id}": {
+          "count": 1,
+          "maxBytes": 268
+        },
+        "GET /api/tools": {
+          "count": 1,
+          "maxBytes": 3077
+        }
+      },
+      "topics": []
+    }
+  },
+  "shell": {
+    "cold": {
+      "routes": {
+        "GET /api/slash-commands": {
+          "count": 1,
+          "maxBytes": 29
+        },
+        "GET /api/permissions/profile": {
+          "count": 1,
+          "maxBytes": 464
+        },
+        "GET /api/mcp/status": {
+          "count": 1,
+          "maxBytes": 96
+        },
+        "GET /api/config/standing": {
+          "count": 1,
+          "maxBytes": 32
+        },
+        "GET /api/settings": {
+          "count": 1,
+          "maxBytes": 1618
+        },
+        "GET /api/whoami": {
+          "count": 1,
+          "maxBytes": 135
+        },
+        "GET /api/chats": {
+          "count": 2,
+          "maxBytes": 15469
+        },
+        "POST /api/events/view": {
+          "count": 5,
+          "maxBytes": 0
+        },
+        "GET /api/mcp": {
+          "count": 1,
+          "maxBytes": 890
+        },
+        "GET /api/governance": {
+          "count": 1,
+          "maxBytes": 200
+        },
+        "GET /api/version": {
+          "count": 1,
+          "maxBytes": 73
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        },
+        "GET /healthz": {
+          "count": 1,
+          "maxBytes": 15
+        },
+        "GET /api/engine": {
+          "count": 1,
+          "maxBytes": 301
+        },
+        "GET /api/config-template": {
+          "count": 1,
+          "maxBytes": 305
+        },
+        "GET /api/tabs": {
+          "count": 1,
+          "maxBytes": 2453
+        },
+        "GET /api/chats/{chat}": {
+          "count": 1,
+          "maxBytes": 204467
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 1,
+          "maxBytes": 1402
+        }
+      },
+      "topics": []
+    },
+    "rest": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    },
+    "live": {
+      "routes": {},
+      "topics": []
+    },
+    "away": {
+      "routes": {
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        }
+      },
+      "topics": []
+    },
+    "back": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    }
+  },
+  "tabs": {
+    "cold": {
+      "routes": {
+        "GET /api/slash-commands": {
+          "count": 1,
+          "maxBytes": 29
+        },
+        "GET /api/permissions/profile": {
+          "count": 1,
+          "maxBytes": 464
+        },
+        "GET /api/mcp/status": {
+          "count": 1,
+          "maxBytes": 96
+        },
+        "GET /api/config/standing": {
+          "count": 1,
+          "maxBytes": 32
+        },
+        "GET /api/settings": {
+          "count": 1,
+          "maxBytes": 1618
+        },
+        "GET /api/whoami": {
+          "count": 1,
+          "maxBytes": 135
+        },
+        "GET /api/chats": {
+          "count": 2,
+          "maxBytes": 15469
+        },
+        "POST /api/events/view": {
+          "count": 4,
+          "maxBytes": 0
+        },
+        "GET /api/mcp": {
+          "count": 1,
+          "maxBytes": 890
+        },
+        "GET /api/governance": {
+          "count": 1,
+          "maxBytes": 200
+        },
+        "GET /api/version": {
+          "count": 1,
+          "maxBytes": 73
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        },
+        "GET /healthz": {
+          "count": 1,
+          "maxBytes": 15
+        },
+        "GET /api/engine": {
+          "count": 1,
+          "maxBytes": 301
+        },
+        "GET /api/config-template": {
+          "count": 1,
+          "maxBytes": 305
+        },
+        "GET /api/tabs": {
+          "count": 1,
+          "maxBytes": 2453
+        },
+        "GET /api/chats/{chat}": {
+          "count": 1,
+          "maxBytes": 204467
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 1,
+          "maxBytes": 1402
+        }
+      },
+      "topics": []
+    },
+    "rest": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    },
+    "live": {
+      "routes": {
+        "GET /api/chats/{chat}/turns/{id}?after": {
+          "count": 1,
+          "maxBytes": 1656
+        },
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 1,
+          "maxBytes": 604
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        }
+      },
+      "topics": []
+    },
+    "away": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 2,
+          "maxBytes": 0
+        },
+        "GET /api/chats/{chat}": {
+          "count": 1,
+          "maxBytes": 69993
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 2,
+          "maxBytes": 707
+        },
+        "GET /api/git/status-all": {
+          "count": 1,
+          "maxBytes": 5046
+        }
+      },
+      "topics": []
+    },
+    "back": {
+      "routes": {
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        }
+      },
+      "topics": []
+    }
+  }
+}

@@ -2,3 +2,7 @@
 **/*.gen.js
 .vitest-cache/
 .vitest/
+# Recorded by tests/perf/record-canned.sh
+perf/canned/
+# Written by the read-budget tests under READ_BUDGET_RECORD=1
+perf/read-budgets.json

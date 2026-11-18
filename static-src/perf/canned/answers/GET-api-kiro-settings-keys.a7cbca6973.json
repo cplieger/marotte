@@ -1,0 +1,1 @@
+{"route":"GET /api/kiro-settings?keys","url":"/api/kiro-settings?keys=hooks.showStatus%2Ctelemetry.enabled%2Cchat.disableInheritingDefaultResources","decoder":null,"body":{"settings":{"chat.disableInheritingDefaultResources":"","hooks.showStatus":"","telemetry.enabled":""}}}
