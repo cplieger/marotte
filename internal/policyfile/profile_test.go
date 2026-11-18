@@ -158,9 +158,10 @@ func TestDelegatesToSafetyCheck_OnlyTheDelegatedProfile(t *testing.T) {
 	}
 }
 
-// TestHoldsGrant_NamesWhatAFileGrantsOnItsOwn: the chat pill warns that a profile does not take away
-// what the files grant, so a grant missed here is a chat that looks tighter than it is.
-func TestHoldsGrant_NamesWhatAFileGrantsOnItsOwn(t *testing.T) {
+// TestRulesGrant_NamesWhatAFileGrantsOnItsOwn: the chat pill warns that a profile does not take away
+// what the files grant, so a grant missed here is a chat that looks tighter than it is. A `policies`
+// reference is KAS's to report (PresetStore.Grants), so a file holding only one grants nothing here.
+func TestRulesGrant_NamesWhatAFileGrantsOnItsOwn(t *testing.T) {
 	cases := []struct {
 		name, file, body string
 		want             bool
@@ -174,11 +175,14 @@ func TestHoldsGrant_NamesWhatAFileGrantsOnItsOwn(t *testing.T) {
 		},
 		{"an allow rule", filename, "rules:\n  - capability: fs_write\n    effect: allow\n", true},
 		{"an evaluate rule", filename, "rules:\n  - capability: shell\n    effect: evaluate\n", true},
-		{"a preset reference", filename, "policies:\n  - dev-shell\nrules: []\n", true},
-		{"an empty preset list", filename, "policies: []\n", false},
+		{"a preset reference", filename, "policies:\n  - dev-shell\nrules: []\n", false},
 		{
-			"the json sibling KAS reads while the yaml is missing", jsonFilename,
-			`{"policies":["read-all"],"rules":[]}`, true,
+			"a preset reference in the json sibling", jsonFilename,
+			`{"policies":["read-all"],"rules":[]}`, false,
+		},
+		{
+			"an allow rule in the json sibling KAS reads while the yaml is missing", jsonFilename,
+			`{"rules":[{"capability":"fs_write","effect":"allow"}]}`, true,
 		},
 	}
 	for _, tc := range cases {
@@ -187,21 +191,61 @@ func TestHoldsGrant_NamesWhatAFileGrantsOnItsOwn(t *testing.T) {
 			if tc.file != "" {
 				writeFixture(t, filepath.Join(dir, tc.file), tc.body)
 			}
-			got, err := HoldsGrant(t.Context(), filepath.Join(dir, filename))
+			got, err := RulesGrant(t.Context(), filepath.Join(dir, filename))
 			if err != nil {
-				t.Fatalf("HoldsGrant: %v", err)
+				t.Fatalf("RulesGrant: %v", err)
 			}
 			if got != tc.want {
-				t.Errorf("HoldsGrant = %v, want %v", got, tc.want)
+				t.Errorf("RulesGrant = %v, want %v", got, tc.want)
 			}
 		})
 	}
 }
 
-func TestHoldsGrant_AnUnparseableFileIsAnError(t *testing.T) {
+func TestRulesGrant_AnUnparseableFileIsAnError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), filename)
 	writeFixture(t, path, "rules: [\n")
-	if _, err := HoldsGrant(t.Context(), path); err == nil {
-		t.Error("HoldsGrant read an unparseable file as granting nothing; the caller cannot tell it from an empty one")
+	if _, err := RulesGrant(t.Context(), path); err == nil {
+		t.Error("RulesGrant read an unparseable file as granting nothing; the caller cannot tell it from an empty one")
 	}
+}
+
+// TestPresetStore_Grants: only a preset KAS applies counts, and a file KAS skipped is never read for rules,
+// because KAS loads nothing from it.
+func TestPresetStore_Grants(t *testing.T) {
+	const allow = "rules:\n  - capability: fs_write\n    effect: allow\n"
+	ok := func(presets ...PresetReference) PresetStoreRead { return PresetStoreRead{OK: true, Presets: presets} }
+	cases := []struct {
+		name, body string
+		read       PresetStoreRead
+		want       bool
+	}{
+		{"a file KAS refused", allow, PresetStoreRead{Error: "bad file"}, false},
+		{"a preset KAS applies", "", ok(PresetReference{ID: "dev-shell", Status: "applies"}), true},
+		{"a preset that needs the classifier", "", ok(PresetReference{ID: "approve-for-me", Status: "needs-classifier"}), false},
+		{"an unknown preset", "", ok(PresetReference{ID: "dev-shel", Status: "unknown"}), false},
+		{"a status KAS adds later", "", ok(PresetReference{ID: "dev-shell", Status: "withheld"}), false},
+		{"an allow rule and no preset", allow, ok(), true},
+		{"no preset and no file", "", ok(), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), filename)
+			if tc.body != "" {
+				writeFixture(t, path, tc.body)
+			}
+			got, err := PresetStore{Scope: ScopeWorkspace, File: path, Read: tc.read}.Grants(t.Context())
+			if err != nil {
+				t.Fatalf("Grants: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("Grants = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	t.Run("a row naming no file is an error", func(t *testing.T) {
+		if _, err := (PresetStore{Scope: ScopeUser, Read: PresetStoreRead{OK: true}}).Grants(t.Context()); err == nil {
+			t.Error("Grants read a row naming no file as granting nothing; a malformed reply would pass for an empty file")
+		}
+	})
 }

@@ -87,7 +87,8 @@ type fakeReload struct{ profileChanges int }
 
 func (f *fakeReload) SecurityProfileChanged(context.Context) { f.profileChanges++ }
 
-// profileFixture stages a HOME and a workspace and returns the server plus both policy paths.
+// profileFixture stages a HOME and a workspace and returns the server plus both policy paths, its policy
+// reporting the user and workspace stores over them as KAS would with no file referencing a preset.
 // t.Setenv because policyfile.PathFor reads os.UserHomeDir, so this file is not parallel.
 func profileFixture(t *testing.T, live []marotte.PolicyRule) (*Server, *fakeReload, string, string) {
 	t.Helper()
@@ -97,8 +98,9 @@ func profileFixture(t *testing.T, live []marotte.PolicyRule) (*Server, *fakeRelo
 	configDir := t.TempDir()
 	eng := &fakeEngine{configDir: configDir}
 	reload := &fakeReload{}
+	pol := &fakePolicy{rules: live}
 	s := &Server{
-		policy:       &fakePolicy{rules: live},
+		policy:       pol,
 		policyReload: reload,
 		agent:        eng,
 		workDir:      work,
@@ -111,6 +113,10 @@ func profileFixture(t *testing.T, live []marotte.PolicyRule) (*Server, *fakeRelo
 	wsPath, err := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
 	if err != nil {
 		t.Fatalf("workspace path: %v", err)
+	}
+	pol.stores = []policyfile.PresetStore{
+		{Scope: policyfile.ScopeUser, File: userPath, Read: policyfile.PresetStoreRead{OK: true}},
+		{Scope: policyfile.ScopeWorkspace, WorkspaceRoot: work, File: wsPath, Read: policyfile.PresetStoreRead{OK: true}},
 	}
 	return s, reload, userPath, wsPath
 }
@@ -638,7 +644,7 @@ func TestProfileViews_ReportTheEnginesChoiceOverAnUnreadableConfig(t *testing.T)
 }
 
 // TestProfileView_SavedGrants: a chat's profile adds presets on top of the files and cannot subtract, so the
-// pill must know when either file grants on its own.
+// pill must know when any file a chat session reads grants on its own.
 func TestProfileView_SavedGrants(t *testing.T) {
 	t.Run("no files", func(t *testing.T) {
 		s, _, _, _ := profileFixture(t, nil)
@@ -659,27 +665,86 @@ func TestProfileView_SavedGrants(t *testing.T) {
 	})
 	t.Run("an allow rule in the user file", func(t *testing.T) {
 		s, _, userPath, _ := profileFixture(t, nil)
-		if err := savePolicy(t.Context(), userPath, &policyfile.File{Rules: []policyfile.Rule{
-			{Capability: "shell", Effect: policyfile.EffectAllow, Match: []string{"make *"}},
-		}}); err != nil {
-			t.Fatalf("Setup: %v", err)
-		}
+		saveAllowRule(t, userPath)
 		if !getProfileView(t, s).SavedGrants {
 			t.Error("saved_grants = false with an allow rule in the user file")
 		}
 	})
-	t.Run("a preset reference in the workspace file", func(t *testing.T) {
-		s, _, _, wsPath := profileFixture(t, nil)
-		if err := os.MkdirAll(filepath.Dir(wsPath), 0o700); err != nil {
-			t.Fatalf("Setup: %v", err)
-		}
-		if err := os.WriteFile(wsPath, []byte("policies:\n  - dev-shell\n"), 0o600); err != nil {
-			t.Fatalf("Setup: %v", err)
-		}
+	t.Run("an additional directory file grants", func(t *testing.T) {
+		s, _, _, _ := profileFixture(t, nil)
+		extra := t.TempDir()
+		path := filepath.Join(extra, ".kiro", "settings", "permissions.yaml")
+		saveAllowRule(t, path)
+		pol := s.policy.(*fakePolicy)
+		pol.stores = append(pol.stores, policyfile.PresetStore{
+			Scope: policyfile.ScopeWorkspace, WorkspaceRoot: extra, File: path, Read: policyfile.PresetStoreRead{OK: true},
+		})
 		if !getProfileView(t, s).SavedGrants {
-			t.Error("saved_grants = false with a preset reference in the workspace file")
+			t.Error("saved_grants = false with an allow rule in an additional directory's file")
 		}
 	})
+	t.Run("an unknown preset grants nothing", func(t *testing.T) {
+		s, _, _, wsPath := profileFixture(t, nil)
+		writePolicyBytes(t, wsPath, "policies:\n  - dev-shel\n")
+		s.policy.(*fakePolicy).stores[1].Read.Presets = []policyfile.PresetReference{{ID: "dev-shel", Status: "unknown"}}
+		if getProfileView(t, s).SavedGrants {
+			t.Error("saved_grants = true for a preset id KAS does not know and applies nothing from")
+		}
+	})
+	t.Run("a preset kas applies", func(t *testing.T) {
+		s, _, _, _ := profileFixture(t, nil)
+		s.policy.(*fakePolicy).stores[1].Read.Presets = []policyfile.PresetReference{{ID: "dev-shell", Status: "applies"}}
+		if !getProfileView(t, s).SavedGrants {
+			t.Error("saved_grants = false with a preset KAS applies from the workspace file")
+		}
+	})
+	t.Run("a file kas refused", func(t *testing.T) {
+		s, _, _, wsPath := profileFixture(t, nil)
+		saveAllowRule(t, wsPath)
+		s.policy.(*fakePolicy).stores[1].Read = policyfile.PresetStoreRead{Error: "unknown capability 'teleport'"}
+		if getProfileView(t, s).SavedGrants {
+			t.Error("saved_grants = true for a file KAS skipped and loads nothing from")
+		}
+	})
+	t.Run("engine error", func(t *testing.T) {
+		s, _, userPath, _ := profileFixture(t, nil)
+		saveAllowRule(t, userPath)
+		s.policy.(*fakePolicy).storesErr = context.DeadlineExceeded
+		view := getProfileView(t, s)
+		if view.SavedGrants {
+			t.Error("saved_grants = true while the engine could not say which files a session reads")
+		}
+		if len(view.Profiles) != len(policyfile.Profiles()) || view.Default != policyfile.DefaultProfile {
+			t.Errorf("view = %+v, want the ladder and the default despite the engine error", view)
+		}
+	})
+	t.Run("no engine wired", func(t *testing.T) {
+		s, _, userPath, _ := profileFixture(t, nil)
+		saveAllowRule(t, userPath)
+		s.policy = nil
+		if getProfileView(t, s).SavedGrants {
+			t.Error("saved_grants = true with no engine to name the files a session reads")
+		}
+	})
+}
+
+func saveAllowRule(t *testing.T, path string) {
+	t.Helper()
+	if err := savePolicy(t.Context(), path, &policyfile.File{Rules: []policyfile.Rule{
+		{Capability: "shell", Effect: policyfile.EffectAllow, Match: []string{"make *"}},
+	}}); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+}
+
+func writePolicyBytes(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
 }
 
 func TestPolicyProfile_RefusesOtherMethods(t *testing.T) {

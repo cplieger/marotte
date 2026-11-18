@@ -25,13 +25,14 @@ const (
 )
 
 // KAS native Cedar policy methods: list/explain are observer-pass requests for the read-only
-// view; changed/error are notifications. policy/check is never used: it raises a real
-// session/request_permission. explain raises none.
+// view; presets/stores is sessionless (a sessionId is -32602); changed/error are notifications.
+// policy/check is never used: it raises a real session/request_permission. explain raises none.
 const (
-	methodV3PermissionsList    = "_kiro/permissions/list"    // C→A request: {sessionId, scope?} → {rules[]}
-	methodV3PermissionsExplain = "_kiro/permissions/explain" // C→A request: {sessionId, capability|toolId, resource?} → {effect, matchedRule?, scope, source, isExplicitAsk}
-	methodV3PolicyChanged      = "_kiro/policy/changed"      // A→C notification: {sessionId, status, errors?}
-	methodV3PolicyError        = "_kiro/policy/error"        // A→C notification: {sessionId, errors[]}
+	methodV3PermissionsList           = "_kiro/permissions/list"           // C→A request: {sessionId, scope?} → {rules[]}
+	methodV3PermissionsExplain        = "_kiro/permissions/explain"        // C→A request: {sessionId, capability|toolId, resource?} → {effect, matchedRule?, scope, source, isExplicitAsk}
+	methodKiroPermissionsPresetStores = "_kiro/permissions/presets/stores" // C→A request: {workspaceRoots?: absolute paths} → {stores: [{scope, workspaceRoot?, file, read}]}
+	methodV3PolicyChanged             = "_kiro/policy/changed"             // A→C notification: {sessionId, status, errors?}
+	methodV3PolicyError               = "_kiro/policy/error"               // A→C notification: {sessionId, errors[]}
 )
 
 // v3 request names outside the notification set: openExternalUrl is A→C (bridge_v3_hostreq.go), the others C→A on the engine.

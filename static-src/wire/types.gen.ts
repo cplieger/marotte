@@ -4330,8 +4330,9 @@ export interface SecurityProfile {
 
 /**
  * SecurityProfileView is the GET /api/permissions/profile response, the chat profile pill's read: the ladder in
- * picker order, the Settings profile a new chat starts on, and whether the user or workspace file grants on its
- * own (policyfile.HoldsGrant), which no chat's profile takes away.
+ * picker order, the Settings profile a new chat starts on, and whether a permissions file a chat session reads (the
+ * user file, the workspace's and each additional directory's, as KAS's preset-stores read names them) grants on its
+ * own (policyfile.PresetStore.Grants), which no chat's profile takes away.
  */
 export interface SecurityProfileView {
   default: string;

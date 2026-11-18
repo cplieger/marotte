@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/policyfile"
 )
 
 // The interfaces below are declared at their consumer, each naming only the methods this
@@ -67,14 +68,17 @@ type AccountUsageProvider interface {
 	UsageAccount() (key uint64, ok bool)
 }
 
-// policyProvider READS kiro-cli's native Cedar policy, backing GET /api/permissions and
-// POST /api/permissions/explain. Read-only: policy/check is never called (it can raise a
-// consent prompt), and the rule writer is a file write KAS hot-reloads.
+// policyProvider READS kiro-cli's native Cedar policy, backing GET /api/permissions,
+// POST /api/permissions/explain and the profile view's saved grants. Read-only: policy/check is
+// never called (it can raise a consent prompt), and the rule writer is a file write KAS hot-reloads.
 type policyProvider interface {
 	PolicyList(ctx context.Context, scope string) ([]marotte.PolicyRule, error)
 	// PolicyListing is PolicyList plus the rules KAS reported skipping at the same pass's door.
 	PolicyListing(ctx context.Context, scope string) ([]marotte.PolicyRule, []marotte.PolicyErrorItem, error)
 	PolicyExplain(ctx context.Context, req marotte.PolicyExplainRequest) (*marotte.PolicyExplainResult, error)
+	// PresetStores is the sessionless read of which permission files a chat session reads and the presets each
+	// applies.
+	PresetStores(ctx context.Context) ([]policyfile.PresetStore, error)
 }
 
 // Separate from the read-only policyProvider because it mutates process state: it recycles the
