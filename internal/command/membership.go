@@ -57,6 +57,8 @@ var (
 	errRunUnknown = errors.New("this run could not be found, so the chat that launched it is unknown")
 	// errSessionParentsRun is the 409 for a resume of a session that launched a live or shown run.
 	errSessionParentsRun = errors.New("this session launched a run that is still live or open; open that run's chat instead")
+	// errSessionHostsRun is the 409 for a resume of the session marotte opened to host a parentless run.
+	errSessionHostsRun = errors.New("this session hosts a run marotte launched, so it cannot be opened as a chat; open the run instead")
 	// errSuppliedParentClosed is OpenTab's retry signal, never answered: the
 	// caller's parent tab closed before mu, so the run owner is asked after all.
 	errSuppliedParentClosed = errors.New("the supplied parent tab is not open")
@@ -126,6 +128,9 @@ type runOwner interface {
 	// RunsParentedBy answers the runs whose parent is sessionID: live is every leased or
 	// non-terminal one, all adds the terminal ones. An error means some source could not be read.
 	RunsParentedBy(ctx context.Context, sessionID string) (live, all []string, err error)
+	// RunHostedBy answers whether sessionID hosts a parentless run, and which one ("" while its launch has not
+	// created it). An error means the run records could not be read.
+	RunHostedBy(ctx context.Context, sessionID string) (workflowID string, hosted bool, err error)
 	// RunReadBound is the run's read position now, the clamp for an ack_tab.
 	RunReadBound(ctx context.Context, workflowID string) (uint64, error)
 }
@@ -372,12 +377,12 @@ type TabOpened struct {
 
 // CreateChatAndOpen writes a chat record, holds its tab fact and opens its tab as one operation, so
 // the final slot cannot be consumed between mint and open and no delete lands between the writes.
-// Returns errOpenChatUnknown (404) when a required chat is absent, errChatUnread (503) when it, the
-// session owners or the session's runs could not be read, errSessionClaimed (409) when another chat
-// holds ClaimSession, errSessionParentsRun (409) when ClaimSession launched a live or shown run,
-// errTabsFull (409) at MaxOpenTabs, and errChatNotCreated (409) when the record is absent after a
-// Mutate that reported no error. A failed tab write leaves the chat created with its hold rolled
-// back; a retry with the same op_id finishes it.
+// Returns errOpenChatUnknown (404) when a required chat is absent, errChatUnread (503) when it, the session owners or
+// the session's runs could not be read, errSessionHostsRun (409) when ClaimSession hosts a parentless run,
+// errSessionClaimed (409) when another chat holds it, errSessionParentsRun (409) when it launched a live or shown run,
+// errTabsFull (409) at MaxOpenTabs, and errChatNotCreated (409) when the record is absent after a Mutate that reported
+// no error. A failed tab write leaves the chat created with its hold rolled back; a retry with the same op_id
+// finishes it.
 func (m *Membership) CreateChatAndOpen(ctx context.Context, req *ChatCreate) (ChatOpened, error) {
 	// Hoisted above every lock because the read is file I/O; resolved unconditionally (it is
 	// cached) so no conditional resolve has to run inside the lock.
@@ -1363,9 +1368,12 @@ func (m *Membership) rollback(ctx context.Context, claim *chat.Claim) {
 	}
 }
 
-// refuseClaim is a claimed session's two refusals: another chat owns it, or it launched a live or shown run.
-// Caller holds mu.
+// refuseClaim is a claimed session's refusals: it hosts a parentless run, another chat owns it, or it launched a live
+// or shown run. The host refusal leads because no owner scan can make that bind safe. Caller holds mu.
 func (m *Membership) refuseClaim(ctx context.Context, sessionID string, chatID marotte.ChatID, runs *parentedRuns) error {
+	if err := refuseRunHost(sessionID, runs); err != nil {
+		return err
+	}
 	if err := m.refuseClaimedSession(ctx, sessionID, chatID); err != nil {
 		return err
 	}
@@ -1397,8 +1405,13 @@ func (m *Membership) refuseClaimedSession(ctx context.Context, sessionID string,
 
 // parentedRuns is the run owner's answer for a claimed session, read before mu.
 type parentedRuns struct {
-	err       error
+	err error
+	// hostedErr is the failure to read whether the session hosts a run.
+	hostedErr error
+	// hostedRun names the parentless run hosted reports, "" until its launch created it.
+	hostedRun string
 	live, all []string
+	hosted    bool
 }
 
 func (m *Membership) sessionRuns(ctx context.Context, sessionID string) parentedRuns {
@@ -1409,15 +1422,27 @@ func (m *Membership) sessionRuns(ctx context.Context, sessionID string) parented
 		return parentedRuns{err: errRunsUnavailable}
 	}
 	live, all, err := m.runs.RunsParentedBy(ctx, sessionID)
-	return parentedRuns{live: live, all: all, err: err}
+	hostedRun, hosted, hostedErr := m.runs.RunHostedBy(ctx, sessionID)
+	return parentedRuns{live: live, all: all, err: err, hostedRun: hostedRun, hosted: hosted, hostedErr: hostedErr}
+}
+
+// refuseRunHost refuses binding the session marotte opened to host a parentless run: the run's retry and owner reads
+// trust that no chat owns it, whatever an owner scan could not read.
+func refuseRunHost(sessionID string, runs *parentedRuns) error {
+	switch {
+	case runs.hostedErr != nil:
+		slog.Warn("could not read whether a session hosts a run, so it was not bound", "acp_session", sessionID, keyError, runs.hostedErr)
+		return StatusError(http.StatusServiceUnavailable, fmt.Errorf("%w: %w", errChatUnread, runs.hostedErr))
+	case runs.hosted:
+		slog.Info("refused binding a session that hosts a parentless run", "acp_session", sessionID, "workflow_id", runs.hostedRun)
+		return StatusError(http.StatusConflict, errSessionHostsRun)
+	}
+	return nil
 }
 
 // refuseRunParent refuses binding a session that launched a live run or one an open run tab shows: the new chat
 // would own that run, and its purge would delete it. Caller holds mu.
 func (m *Membership) refuseRunParent(sessionID string, runs *parentedRuns) error {
-	if sessionID == "" {
-		return nil
-	}
 	if runs.err != nil {
 		slog.Warn("could not read the runs a session launched, so it was not bound", "acp_session", sessionID, keyError, runs.err)
 		return StatusError(http.StatusServiceUnavailable, fmt.Errorf("%w: %w", errChatUnread, runs.err))

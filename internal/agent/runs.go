@@ -35,9 +35,10 @@ type Runs struct {
 	// launchLocks serializes, per recipe name, a launch's single-run check through its lease grant (launchAs).
 	launchLocks *keylock.Set[string]
 	// log is the run record: one entry log per run under <configDir>/runs, its open step turns and hosts.
-	log     *runLog `wiring:"optional"`
-	bridges *bridgeManager
-	coord   *bridgeCoordinator
+	log         *runLog `wiring:"optional"`
+	launchHosts launchHosts
+	bridges     *bridgeManager
+	coord       *bridgeCoordinator
 	// notices queues per launching chat the finished runs whose notice KAS put in its steering buffer (run_notices.go).
 	notices map[marotte.ChatID][]runNotice
 	// plans holds each run's newest plan revision (run_plan.go), under mu.
