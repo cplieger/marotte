@@ -12,12 +12,12 @@ import (
 	"go/token"
 	"go/types"
 	"maps"
-	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/command"
@@ -108,8 +108,7 @@ type leaseCensus struct {
 
 func newLeaseCensus(t *testing.T, fixtures map[string]string) *leaseCensus {
 	t.Helper()
-	fset := token.NewFileSet()
-	files := parseAgentSources(t, fset)
+	fset, files := parseAgentSources(t)
 	for _, name := range slices.Sorted(mapsKeys(fixtures)) {
 		f, err := parser.ParseFile(fset, name, fixtures[name], parser.SkipObjectResolution)
 		if err != nil {
@@ -573,7 +572,7 @@ func (c *leaseCensus) sessionTaking() []string {
 	return bad
 }
 
-func recordSessionCallers(fset *token.FileSet, files []*ast.File) map[string]int {
+func recordSessionCallers(files []*ast.File) map[string]int {
 	out := map[string]int{}
 	for _, f := range files {
 		for _, decl := range f.Decls {
@@ -591,35 +590,23 @@ func recordSessionCallers(fset *token.FileSet, files []*ast.File) map[string]int
 			})
 		}
 	}
-	_ = fset
 	return out
 }
 
-func parseCommandSources(t *testing.T, fset *token.FileSet) []*ast.File {
+var commandSources = sync.OnceValues(func() (sourceSet, error) {
+	return parseSources(filepath.Join("..", "command"), parser.SkipObjectResolution)
+})
+
+func parseCommandSources(t *testing.T) []*ast.File {
 	t.Helper()
-	names, err := filepath.Glob(filepath.Join("..", "command", "*.go"))
+	set, err := commandSources()
 	if err != nil {
-		t.Fatalf("glob: %v", err)
+		t.Fatalf("Setup: %v", err)
 	}
-	var files []*ast.File
-	for _, name := range names {
-		if strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		src, rErr := os.ReadFile(name)
-		if rErr != nil {
-			t.Fatalf("read %s: %v", name, rErr)
-		}
-		f, pErr := parser.ParseFile(fset, name, src, parser.SkipObjectResolution)
-		if pErr != nil {
-			t.Fatalf("parse %s: %v", name, pErr)
-		}
-		files = append(files, f)
+	if len(set.files) < commandFileFloor {
+		t.Fatalf("parsed %d command files, want at least %d", len(set.files), commandFileFloor)
 	}
-	if len(files) < commandFileFloor {
-		t.Fatalf("parsed %d command files, want at least %d", len(files), commandFileFloor)
-	}
-	return files
+	return slices.Clip(set.files)
 }
 
 func recordWriterViolations(pkg string, callers map[string]int) []string {
@@ -810,16 +797,16 @@ func TestSessionLease_EverySessionTakingFunctionIsListed(t *testing.T) {
 }
 
 func TestSessionLease_OnlyTheListedFunctionsWriteTheSessionID(t *testing.T) {
-	fset := token.NewFileSet()
-	reportAll(t, recordWriterViolations("agent", recordSessionCallers(fset, parseAgentSources(t, fset))))
-	reportAll(t, recordWriterViolations("command", recordSessionCallers(fset, parseCommandSources(t, fset))))
+	fset, agentFiles := parseAgentSources(t)
+	reportAll(t, recordWriterViolations("agent", recordSessionCallers(agentFiles)))
+	reportAll(t, recordWriterViolations("command", recordSessionCallers(parseCommandSources(t))))
 	t.Run("another writer fails", func(t *testing.T) {
 		f, err := parser.ParseFile(fset, "prompt.go",
 			"package command\nfunc refresh(c interface{ RecordSession(string) }) { c.RecordSession(\"\") }\n", 0)
 		if err != nil {
 			t.Fatalf("parse fixture: %v", err)
 		}
-		wantCaught(t, recordWriterViolations("command", recordSessionCallers(fset, []*ast.File{f})), "refresh writes")
+		wantCaught(t, recordWriterViolations("command", recordSessionCallers([]*ast.File{f})), "refresh writes")
 	})
 }
 
