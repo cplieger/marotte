@@ -1216,9 +1216,12 @@
   align-items: center;
   gap: 0.125rem;
 
+  /* The glyph goes down with the fraction its row lowers (15-input.css); outside a row
+     `--row-cap` is 0 and so is the margin. */
   & > svg {
     inline-size: 1em;
     block-size: 1em;
+    margin-block-start: max(0px, calc(var(--row-cap) - 1cap));
   }
 }
 

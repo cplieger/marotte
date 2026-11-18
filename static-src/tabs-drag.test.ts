@@ -27,6 +27,7 @@ import {
 } from "./tabs-drag.js";
 import { announce } from "./legacy-ui/announce.js";
 import { bindContextPress } from "./context-hold.js";
+import { pressAfterScroll, SCROLLER_RESTED_MS } from "./__test-helpers__/fling.js";
 import shellCss from "./css/10-shell-app.css?raw";
 import tabsCss from "./css/12-tabs.css?raw";
 
@@ -255,8 +256,10 @@ describe("what may start a drag", () => {
   });
 
   it("drags a mouse press that lands while the strip's scroller is scrolling", () => {
-    inSections().dispatchEvent(new Event("scroll"));
-    startRealDrag(rows["b"] as HTMLElement);
+    const row = rows["b"] as HTMLElement;
+    pressAfterScroll(inSections(), row, ptr("pointerdown", { clientY: mid(row), buttons: 1 }));
+    row.dispatchEvent(ptr("pointermove", { clientY: mid(row) + ROW_H * 2, buttons: 1 }));
+    expect(ghost()).not.toBeNull();
   });
 
   // The keyboard's blur closes the visual viewport offset, moving the row under a still mouse.
@@ -511,23 +514,25 @@ describe("the touch hold", () => {
   it.each(["touch", "pen"] as const)(
     "lifts no row for a %s press that lands while the strip's scroller is scrolling",
     (pointerType) => {
-      inSections().dispatchEvent(new Event("scroll"));
       const row = rows["b"] as HTMLElement;
-      row.dispatchEvent(ptr("pointerdown", { clientY: mid(row), buttons: 1, pointerType }));
+      pressAfterScroll(
+        inSections(),
+        row,
+        ptr("pointerdown", { clientY: mid(row), buttons: 1, pointerType }),
+      );
       vi.advanceTimersByTime(TOUCH_HOLD);
       expectStripQuiet(START);
     },
   );
 
-  it("lifts a row for a touch that lands after the strip's scroller came to rest", async () => {
-    inSections().dispatchEvent(new Event("scroll"));
-    vi.useRealTimers();
-    await new Promise((resolve) => {
-      setTimeout(resolve, 150);
-    });
-    vi.useFakeTimers();
+  it("lifts a row for a touch that lands after the strip's scroller came to rest", () => {
     const row = rows["b"] as HTMLElement;
-    row.dispatchEvent(ptr("pointerdown", { clientY: mid(row), buttons: 1, pointerType: "touch" }));
+    pressAfterScroll(
+      inSections(),
+      row,
+      ptr("pointerdown", { clientY: mid(row), buttons: 1, pointerType: "touch" }),
+      SCROLLER_RESTED_MS,
+    );
     vi.advanceTimersByTime(TOUCH_HOLD);
     expect(ghost()).not.toBeNull();
   });
@@ -1597,8 +1602,9 @@ describe("a strip split into sections", () => {
     it("lifts nothing for a touch landing while #tab-sections scrolls, though the row's list never does", () => {
       build(true);
       const row = rows["b"] as HTMLElement;
-      sections.dispatchEvent(new Event("scroll"));
-      row.dispatchEvent(
+      pressAfterScroll(
+        sections,
+        row,
         ptr("pointerdown", { clientY: mid(row), buttons: 1, pointerType: "touch" }),
       );
       vi.advanceTimersByTime(TOUCH_HOLD);
@@ -1608,8 +1614,9 @@ describe("a strip split into sections", () => {
     it("lifts a touch landing while another scroller scrolls, so a streaming reply blocks no drag", () => {
       build(true);
       const row = rows["b"] as HTMLElement;
-      transcript.dispatchEvent(new Event("scroll"));
-      row.dispatchEvent(
+      pressAfterScroll(
+        transcript,
+        row,
         ptr("pointerdown", { clientY: mid(row), buttons: 1, pointerType: "touch" }),
       );
       vi.advanceTimersByTime(TOUCH_HOLD);

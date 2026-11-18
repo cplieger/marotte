@@ -424,12 +424,60 @@ func withTerminalSessionGrace(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { terminalSessionGrace = prev })
 }
 
-// Not parallel-safe: it writes a package var.
-func withTerminalDrainGrace(t *testing.T, d time.Duration) {
+// awaitExitWaits hands a test the end of each of awaitExit's waits. Not parallel-safe: it writes
+// package vars.
+type awaitExitWaits struct {
+	drainWaiting   chan struct{}
+	fireDrain      chan struct{}
+	sessionWaiting chan struct{}
+	sessionGone    chan bool
+}
+
+func waitRing(t *testing.T, term *agentTerminal, want string) {
 	t.Helper()
-	prev := terminalDrainGrace
-	terminalDrainGrace = d
-	t.Cleanup(func() { terminalDrainGrace = prev })
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(term.rawOutput(), want) {
+		if time.Now().After(deadline) {
+			t.Fatalf("ring = %q after 5s, want %q", term.rawOutput(), want)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func withAwaitExitWaits(t *testing.T) *awaitExitWaits {
+	t.Helper()
+	w := &awaitExitWaits{
+		drainWaiting:   make(chan struct{}),
+		fireDrain:      make(chan struct{}),
+		sessionWaiting: make(chan struct{}),
+		sessionGone:    make(chan bool),
+	}
+	prevDrain, prevSession := afterDrainGrace, waitSessionGone
+	// t.Context ends before the cleanups run, so a failed case still lets the hub's shutdown
+	// drain this terminal.
+	afterDrainGrace = func() <-chan time.Time {
+		close(w.drainWaiting)
+		c := make(chan time.Time)
+		go func() {
+			select {
+			case <-w.fireDrain:
+			case <-t.Context().Done():
+			}
+			close(c)
+		}()
+		return c
+	}
+	waitSessionGone = func(int, time.Duration) bool {
+		close(w.sessionWaiting)
+		select {
+		case gone := <-w.sessionGone:
+			return gone
+		case <-t.Context().Done():
+			return false
+		}
+	}
+	t.Cleanup(func() { afterDrainGrace, waitSessionGone = prevDrain, prevSession })
+	return w
 }
 
 func TestTerminalSessionGrace_IsTwoSeconds(t *testing.T) {
@@ -445,30 +493,26 @@ func TestTerminalSessionGrace_IsTwoSeconds(t *testing.T) {
 // is what releases the pump and lets the exit broadcast.
 func TestAwaitTerminalExit_ForceClosesTheReaderWhenAGrandchildHoldsThePipe(t *testing.T) {
 	logs := captureLogs(t) // not parallel: swaps the slog default
-	withTerminalDrainGrace(t, 500*time.Millisecond)
-	withTerminalSessionGrace(t, 500*time.Millisecond)
+	waits := withAwaitExitWaits(t)
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
-	// The head prints and exits; `sleep` inherits the write end past the grace.
+	// The head prints and exits; `sleep` inherits the write end and stays in the session.
 	h.translateACPEvent("c1", h.originOf("c1"), termCreateMsgArgs(t, 1,
 		`sleep 30 & printf 'head done\n'`, nil))
 	term := singleTerm(t, h)
 
-	start := time.Now()
+	// Bounded by ONE grace: both waits are running before either ends, so a backgrounded daemon
+	// never pays the two in sequence.
+	waitClosed(t, waits.sessionWaiting, "the session wait, with the drain's grace not yet ended")
+	waitClosed(t, waits.drainWaiting, "the drain's grace, with the session wait not yet ended")
+	// The grace ends on a pump idle on the pipe the grandchild holds: a release closes the read
+	// end, and bytes still unread in the pipe go with it.
+	waitRing(t, term, "head done")
+	close(waits.fireDrain)
+	waits.sessionGone <- false
 	waitClosed(t, term.done, "terminal exit")
-	elapsed := time.Since(start)
 
-	// Bounded by ONE grace: sequencing the session wait and the drain pays both.
-	if elapsed >= terminalDrainGrace+terminalSessionGrace {
-		t.Errorf("exit took %v, want it bounded near ONE %v grace: either the reader was "+
-			"never force-closed, or the session wait and the drain were sequenced rather "+
-			"than overlapped and a backgrounded daemon now pays both", elapsed, terminalDrainGrace)
-	}
 	if !strings.Contains(logs.String(), "output still open after exit") {
 		t.Errorf("no line about the forced release\nlogs: %s", logs.String())
-	}
-	// The head's own line still reached the wire before the exit.
-	if got := term.rawOutput(); !strings.Contains(got, "head done") {
-		t.Errorf("ring = %q, want the head's line: the drain dropped it", got)
 	}
 }
 
@@ -493,11 +537,6 @@ func TestAwaitTerminalExit_WaitsForTheCommandsSessionToEmpty(t *testing.T) {
 		t.Errorf("exit took %v, want at least the %v session grace: awaitExit published "+
 			"terminal_exited while the command's session still had a live member, so the "+
 			"agent reads a file a grandchild is still writing", elapsed, terminalSessionGrace)
-	}
-	// One grace, not two.
-	if elapsed > terminalSessionGrace+3*time.Second {
-		t.Errorf("exit took %v, want it bounded near ONE %v grace: the session wait and the "+
-			"drain were sequenced rather than overlapped", elapsed, terminalSessionGrace)
 	}
 	const msg = "the command exited but its session did not empty"
 	if !strings.Contains(logs.String(), msg) {

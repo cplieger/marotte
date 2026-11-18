@@ -433,7 +433,12 @@ describe("the run summary on a phone", () => {
     });
   }
 
-  it("toggles the panel from a tap anywhere on the head row at 360px but its verbs", async () => {
+  const mountHead = async (): Promise<{
+    head: HTMLElement;
+    toggle: HTMLButtonElement;
+    row: HTMLElement;
+    region: Element;
+  }> => {
     await browser.viewport(360, 844);
     document.documentElement.setAttribute("data-pointer", "coarse");
     style = mountAppCSS();
@@ -446,40 +451,55 @@ describe("the run summary on a phone", () => {
       live: true,
     });
     const dock = byId("run-exec-dock");
-    const head = dock.querySelector<HTMLElement>(".ev-dock-head")!;
-    const toggle = dock.querySelector<HTMLButtonElement>(".ev-box-toggle")!;
+    // The cases assert what a tap toggles, not the motion: a 200 ms tween through a busy page's
+    // late frames would spend the test's budget.
+    dock.style.setProperty("--uip-disclosure-duration", "0.01ms");
+    return {
+      head: dock.querySelector<HTMLElement>(".ev-dock-head")!,
+      toggle: dock.querySelector<HTMLButtonElement>(".ev-box-toggle")!,
+      row,
+      region: dock.querySelector(".ev-dock-panel")!,
+    };
+  };
+
+  it("keeps the head row at the floor's height at 360px, its toggle focusable and named", async () => {
+    const { head, toggle } = await mountHead();
     expect(
       head.getBoundingClientRect().height,
       "the row keeps the floor's height",
     ).toBeGreaterThanOrEqual(44);
     expect(toggle.tabIndex).toBe(0);
     expect(toggle.getAttribute("aria-label")).toBe("Run details");
-    const centre = (sel: string): number => {
-      const b = head.querySelector(sel)!.getBoundingClientRect();
-      return b.left + b.width / 2;
-    };
-    // Read per tap: the head rises as the panel opens.
-    const points: [string, (r: DOMRect) => number][] = [
-      ["the chevron", () => centre(".disclosure-chevron")],
-      ["the row's start", (r) => r.left + 2],
-      ["the state word", () => centre(".ev-sum-state")],
-      ["the clock", () => centre(".ev-sum-clock")],
-    ];
-    const region = dock.querySelector(".ev-dock-panel")!;
-    for (const [what, at] of points) {
+  });
+
+  const centre = (head: HTMLElement, sel: string): number => {
+    const b = head.querySelector(sel)!.getBoundingClientRect();
+    return b.left + b.width / 2;
+  };
+  // Read per tap: the head rises as the panel opens.
+  for (const [what, at] of [
+    ["the chevron", (head) => centre(head, ".disclosure-chevron")],
+    ["the row's start", (_head, r) => r.left + 2],
+    ["the state word", (head) => centre(head, ".ev-sum-state")],
+    ["the clock", (head) => centre(head, ".ev-sum-clock")],
+  ] as const satisfies readonly (readonly [string, (head: HTMLElement, r: DOMRect) => number])[]) {
+    it(`toggles the panel from a tap on ${what} of the head row at 360px, no verb under it`, async () => {
+      const { head, toggle, row, region } = await mountHead();
       for (const want of ["true", "false"]) {
         const r = head.getBoundingClientRect();
-        const x = at(r);
+        const x = at(head, r);
         const y = r.top + r.height / 2;
         const hit = document.elementFromPoint(x, y);
         expect(hit !== null && head.contains(hit), `${what} is on the head`).toBe(true);
         expect(hit !== null && row.contains(hit), `${what} is no verb`).toBe(false);
-        await userEvent.click(head, { position: { x: x - r.left, y: y - r.top } });
+        // The hit checks above are this tap's actionability, and the tween before it has ended, so
+        // Playwright's own stable and hit retries would only wait on more frames.
+        await userEvent.click(head, { position: { x: x - r.left, y: y - r.top }, force: true });
         expect(toggle.getAttribute("aria-expanded"), `a tap on ${what}`).toBe(want);
         await animationsDone(region);
       }
-    }
-  });
+    });
+  }
 });
 
 describe("the permission card on a phone", () => {

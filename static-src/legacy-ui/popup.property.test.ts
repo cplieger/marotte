@@ -542,6 +542,13 @@ describe("popup: re-entry property", () => {
               injections: [{ at: 4, hit: "attr:class@panel", actions: [{ k: "show" }] }],
             },
           ],
+          // A dispose at the show's first panel write, before it flushed the peer it closed.
+          [
+            {
+              script: [{ k: "show" }, { k: "peerShow" }, { k: "show" }],
+              injections: [{ at: 4, hit: "attr:class@panel", actions: [{ k: "dispose" }] }],
+            },
+          ],
         ],
       },
     );

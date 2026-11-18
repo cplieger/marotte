@@ -733,8 +733,11 @@
 }
 
 /* A row holds its Keep box's and its diff's targets inside the list's scroll clip,
-   so the next row's stay clear and the clip cuts neither. */
+   so the next row's stay clear and the clip cuts neither. `flex-shrink: 0`: a
+   `min-block-size` replaces a flex item's automatic minimum, so in the phone's 8rem
+   list a row would shrink below its content and the path would leave its centre. */
 .dock-file-row {
+  flex-shrink: 0;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;

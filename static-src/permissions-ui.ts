@@ -715,10 +715,14 @@ class NativePolicyController {
     } else {
       row.append(el("span", { className: `native-rule-effect eff-${r.effect}` }, r.effect));
     }
-    row.append(el("span", { className: "native-rule-cap mono" }, r.capability));
+    const words = el(
+      "span",
+      { className: "native-rule-text" },
+      el("span", { className: "native-rule-cap mono" }, r.capability),
+    );
     const globs = globLabels(r);
     if (globs.length > 0) {
-      row.append(el("span", { className: "native-rule-globs mono" }, globs.join("  ")));
+      words.append(el("span", { className: "native-rule-globs mono" }, globs.join("  ")));
     }
     const src = el("span", { className: "native-rule-src" }, shortSource(r.source));
     if (r.source !== "") {
@@ -727,7 +731,8 @@ class NativePolicyController {
       src.setAttribute("data-tooltip", r.source);
       src.setAttribute("aria-label", `Defined in ${r.source}`);
     }
-    row.append(src);
+    words.append(src);
+    row.append(words);
     if (r.editable) {
       const rm = el(
         "button",

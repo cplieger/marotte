@@ -85,7 +85,7 @@ function browserProject(
   name: string,
   include: string[],
   exclude: string[],
-  hasTouch = false,
+  context: { readonly hasTouch?: boolean; readonly deviceScaleFactor?: number } = {},
 ): TestProjectInlineConfiguration {
   return {
     extends: true,
@@ -104,7 +104,7 @@ function browserProject(
         headless: true,
         traceView,
         provider: playwright({
-          ...(hasTouch ? { contextOptions: { hasTouch } } : {}),
+          contextOptions: context,
           launchOptions: {
             channel: "chromium",
             // Past ~49 test files in one browser session Chromium drops animation-frame
@@ -283,6 +283,14 @@ const pointerEngineFiles = [
   "messages-rewind-focus.pointer.test.ts",
 ];
 
+/** The alignment suite in WebKit at ratios 1 and 2. Opt-in (`ALIGN_ENGINES=1`): it needs
+ *  `npx playwright install webkit`, which CI does not. */
+const alignInstances = ([1, 2] as const).map((dpr) => ({
+  browser: "webkit" as const,
+  name: `align-webkit-dpr${String(dpr)}`,
+  provider: playwright({ contextOptions: { deviceScaleFactor: dpr } }),
+}));
+
 export default defineConfig({
   // Serves the MSW worker script from the package for the browser tests that mock the network;
   // each such test starts its own worker.
@@ -364,7 +372,12 @@ export default defineConfig({
       // mouse event Chromium keeps the page's hover tracking on, and its hit tests force layouts a later file never
       // sees otherwise. Moving the pointer out of the viewport does not turn it off.
       browserProject("browser-pointer", ["**/*.pointer.test.ts"], sharedExclude),
-      browserProject("browser-touch", ["**/*.touch.test.ts"], sharedExclude, true),
+      browserProject("browser-touch", ["**/*.touch.test.ts"], sharedExclude, { hasTouch: true }),
+      // A real device scale: Chromium rounds text metrics to device pixels only under one, not under
+      // `setDeviceScaleFactor`'s emulation, and some rows are off only at a ratio of 2.
+      browserProject("browser-align-dpr2", ["text-alignment.test.ts"], sharedExclude, {
+        deviceScaleFactor: 2,
+      }),
       ...(process.env["SCROLL_ENGINES"] === "1"
         ? [
             {
@@ -406,6 +419,32 @@ export default defineConfig({
                   provider: playwright(),
                   instances: [{ browser: "webkit" }, { browser: "firefox" }],
                   viewport: { width: 1440, height: 900 },
+                },
+              },
+            } satisfies TestProjectInlineConfiguration,
+          ]
+        : []),
+      ...(process.env["ALIGN_ENGINES"] === "1"
+        ? [
+            {
+              extends: true,
+              test: {
+                name: "browser-align-engines",
+                include: ["text-alignment.test.ts"],
+                exclude: sharedExclude,
+                setupFiles: [
+                  "./ro-loop-gate.ts",
+                  "./storage-reset-setup.ts",
+                  "./pointer-park-setup.ts",
+                ],
+                browser: {
+                  enabled: true,
+                  headless: true,
+                  screenshotFailures: false,
+                  provider: playwright(),
+                  instances: alignInstances,
+                  viewport: { width: 1280, height: 720 },
+                  commands: { parkPointer: parkPointerCommand },
                 },
               },
             } satisfies TestProjectInlineConfiguration,
@@ -510,7 +549,9 @@ export default defineConfig({
     // deadline. `frame-budget.ts` owns why 10s is the floor: deep into the run this browser delivers
     // frames at 1Hz. A FAILURE bound only; a file needing more states its own.
     testTimeout: testTimeoutFor(FRAME_BUDGET_MS),
-    hookTimeout: 5000,
+    // No hookTimeout: vitest's own default bounds a hook (30 s in the browser, 10 s in node). A hook's
+    // cold module-graph import, or a teardown closing a case's 40 tabs, takes seconds on a busy host,
+    // and a teardown cut short goes on closing the next case's tabs of the same ids.
 
     // Flag tests slower than 100ms. Root-only: `slowTestThreshold` is a
     // NonProjectOption, so vitest rejects it inside a project.

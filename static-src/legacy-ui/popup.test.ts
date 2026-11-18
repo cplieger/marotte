@@ -847,6 +847,36 @@ describe("popup: re-shown from the class write that ends its leave", () => {
   });
 });
 
+describe("popup: disposed inside the show that closes its peer", () => {
+  it("still closes the peer: onClose once and the panel fading", () => {
+    const panel = reactingElement();
+    panel.hidden = true;
+    const peerPanel = document.createElement("div");
+    peerPanel.hidden = true;
+    document.body.append(panel, peerPanel);
+    const onClose = vi.fn();
+    const popup = createPopup(panel, { group: "g" });
+    const peer = createPopup(peerPanel, { group: "g", onClose });
+    popup.show();
+    peer.show();
+    panel.onAttr = (name, value) => {
+      if (name === "class" && !classHas(value, "is-leaving")) {
+        panel.onAttr = null;
+        popup.dispose();
+      }
+    };
+    popup.show();
+
+    expect(peer.isOpen).toBe(false);
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(peerPanel.classList.contains("is-open")).toBe(false);
+    expect(peerPanel.classList.contains("is-leaving")).toBe(true);
+    finishLeave();
+    expect(peerPanel.hidden).toBe(true);
+    peer.dispose();
+  });
+});
+
 describe("popup: the trigger's ARIA is written whole", () => {
   it("a hide from the trigger's aria-expanded write still leaves aria-haspopup on it", () => {
     const trigger = reactingElement();

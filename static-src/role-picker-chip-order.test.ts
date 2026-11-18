@@ -180,7 +180,9 @@ describe("the open mode card and the catalog", () => {
 describe("the mode card's trailing chips", () => {
   it("builds the shadow badge ahead of the scope chip", () => {
     const list = openList();
-    const classes = Array.from(rowFor(list, "Reviewer").children).map((c) => c.className);
+    const classes = Array.from(
+      rowFor(list, "Reviewer").querySelectorAll(".pill-role-shadow, .pill-role-scope"),
+    ).map((c) => c.className);
 
     expect(classes.indexOf("pill-role-shadow")).toBeGreaterThan(-1);
     expect(
