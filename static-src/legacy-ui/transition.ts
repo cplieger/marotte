@@ -1,11 +1,5 @@
-/**
- * transition.ts — Run one CSS transition on an element and finalize it once it
- * ends. A transition needs its start state flushed before the change, or the
- * browser coalesces both writes into one frame and nothing animates;
- * `runTransition` does that flush. The primitives' fades settle through
- * `watchSettle`.
- * @module
- */
+/** Run one CSS transition on an element and finalize it once it ends.
+ *  @module */
 
 /**
  * Ceiling (ms) on how long a settle waits for `transitionend` before assuming
@@ -72,8 +66,8 @@ export function watchSettle(el: HTMLElement, onSettled: () => void): () => void 
       fire();
     }
   };
-  // A hidden page runs no rendering update, so a running transition's `finished` would wait
-  // until the page is shown: hidden, the ceiling settles at once.
+  // A hidden page runs no rendering update, so a running transition's `finished` waits until it
+  // is shown (https://html.spec.whatwg.org/multipage/webappapis.html#update-the-rendering).
   const onHide = (): void => {
     if (document.visibilityState === "hidden") {
       fire();
