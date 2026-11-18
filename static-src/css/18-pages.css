@@ -972,20 +972,6 @@ label.toggle-inline:has(> .toggle) {
   min-inline-size: 0;
 }
 
-/* Both glyphs ship in the button so the swap moves no nodes and cannot resize the
- * row. `is-busy` is what `bindLoadingState("tools.search", …)` adds. */
-.tool-search-go > .tool-search-spinner {
-  display: none;
-}
-
-.tool-search-go.is-busy > .tool-search-glyph {
-  display: none;
-}
-
-.tool-search-go.is-busy > .tool-search-spinner {
-  display: block;
-}
-
 /* --- History: two panes behind the segmented bar ------------------------- */
 
 /* A pane is NOT the `.list-container`: it holds the pane's card, and a search

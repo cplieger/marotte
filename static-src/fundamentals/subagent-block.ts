@@ -157,7 +157,8 @@ function buildShell(name: string, status: ToolStatus, opener?: SubagentOpener): 
     icon.classList.toggle("is-running", active);
     root.classList.toggle("running", active);
     // The slot empties while active so CSS can spin it as a ring.
-    icon.classList.toggle("subagent-spinner", active);
+    icon.classList.toggle("spinner", active);
+    icon.classList.toggle("spinner-work", active);
     const mark = failed ? outcomeIcon("fail") : aborted ? outcomeIcon("warn") : iconSvg;
     icon.replaceChildren(...(active ? [] : [iconEl(mark)]));
     refreshName(s);

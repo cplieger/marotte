@@ -103,10 +103,11 @@ describe("the New chat button while a create is in flight", () => {
     const idleLeft = labelLeft(btn);
     btn.click();
     const glyph = btn.querySelector("svg") as SVGElement;
-    const ring = getComputedStyle(btn, "::before");
+    const spinner = btn.querySelector(":scope > .spinner") as HTMLElement;
     expect(getComputedStyle(glyph).display, "the pencil gives its place to the ring").toBe("none");
-    expect(ring.content).not.toBe("none");
-    expect(ring.animationName).toBe("vk-spin");
+    expect(getComputedStyle(spinner).display).not.toBe("none");
+    expect([spinner.offsetWidth, spinner.offsetHeight], "at the pencil's size").toEqual([16, 16]);
+    expect(getComputedStyle(spinner, "::before").animationName).toBe("vk-spin-rotate");
     expect(labelLeft(btn)).toBeCloseTo(idleLeft, 0);
     // The busy face, not the unavailable one: 40-a11y.css keeps a busy control at full opacity.
     expect(getComputedStyle(btn).opacity).toBe("1");
@@ -122,6 +123,7 @@ describe("the New chat button while a create is in flight", () => {
     expect(btn.disabled).toBe(false);
     expect(btn.hasAttribute("aria-busy")).toBe(false);
     expect(getComputedStyle(btn.querySelector("svg") as SVGElement).display).not.toBe("none");
+    expect(getComputedStyle(btn.querySelector(".spinner") as HTMLElement).display).toBe("none");
   });
 
   it("comes back when the server refuses the create", async () => {

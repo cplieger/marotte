@@ -31,6 +31,7 @@ import {
   ICON_TRASH,
 } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { spinnerEl } from "./spinner.js";
 import { SENT_BY_MAROTTE, callerName, sentBy } from "./sent-by.js";
 import { wireSignature } from "./paint-sig.js";
 import { dockEntries, entryLive, rowIsSteer, waitWords } from "./run-order.js";
@@ -945,7 +946,7 @@ function updateCompactRow(li: HTMLElement, entry: RunEntryView): void {
   }
   compactShown.set(li, shown);
   li.querySelector(".steer-state-icon")?.replaceChildren(
-    live ? el("span", { className: "steer-spinner" }) : iconEl(ICON_COMPACT),
+    live ? spinnerEl("tool-spinner steer-spinner") : iconEl(ICON_COMPACT),
   );
   li.querySelector(".steer-actions")?.replaceChildren(
     ...(live

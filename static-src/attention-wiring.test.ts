@@ -33,7 +33,6 @@ vi.mock("./icons.js", () => ({
   ICON_CHEVRON_DOWN: "",
   ICON_CHEVRON_UP: "",
   ICON_SEND: "",
-  ICON_SPINNER: "",
   ICON_CANCEL: "",
   ICON_MODEL: "",
   ICON_MODEL_UI: "",

@@ -1,20 +1,28 @@
 // The registry search panel's geometry, measured in a real browser against the assembled cascade (a DOM emulator
-// reports every box as 0). The last case checks the binding asks for the class the pending face keys on.
+// reports every box as 0). The last cases check the pending face and its binding.
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 // Hoisted above module consts, since one factory references both.
-const stubs = vi.hoisted(() => ({
-  bindLoadingState: vi.fn(() => () => undefined),
-  /** Keyed by id, so the wiring case can say which element was bound. */
-  byId: (id: string): HTMLElement => {
-    const tag = id === "mcp-search-input" ? "input" : id === "mcp-search-btn" ? "button" : "div";
-    const el = document.createElement(tag);
-    el.id = id;
-    return el;
-  },
-}));
+const stubs = vi.hoisted(() => {
+  const detached = new Map<string, HTMLElement>();
+  return {
+    bindLoadingState: vi.fn(() => () => undefined),
+    /** The mounted element of that id, else one detached element per id, so a re-open finds the same button. */
+    byId: (id: string): HTMLElement => {
+      const mounted = document.getElementById(id) ?? detached.get(id);
+      if (mounted !== null && mounted !== undefined) {
+        return mounted;
+      }
+      const tag = id === "mcp-search-input" ? "input" : id === "mcp-search-btn" ? "button" : "div";
+      const el = document.createElement(tag);
+      el.id = id;
+      detached.set(id, el);
+      return el;
+    },
+  };
+});
 
 vi.mock("./dom.js", () => ({ byId: stubs.byId }));
 vi.mock("./actions/mcp.js", () => ({
@@ -316,20 +324,23 @@ describe("a result is a compact row", () => {
 });
 
 describe("the search button reports a query in flight", () => {
-  it("swaps its magnifier for the shared spinning ring, at the shared period", () => {
-    // `bindLoadingState` adds the class; the glyph is replaced since the pill is icon-only. Period from `--spin-dur`.
+  it("swaps its magnifier for the app's ring, at the shared period", () => {
     const { searchBtn } = mountPanel(1);
+    initSearchPanel();
     const idle = searchBtn.getBoundingClientRect();
     const glyph = part(searchBtn, "svg");
+    const spinner = part(searchBtn, ":scope > .spinner");
     expect(getComputedStyle(glyph).display).not.toBe("none");
+    expect(getComputedStyle(spinner).display, "dormant while idle").toBe("none");
 
-    searchBtn.classList.add("is-searching");
+    // What `bindLoadingState` sets on the pending button.
     searchBtn.disabled = true;
     searchBtn.setAttribute("aria-busy", "true");
 
     expect(getComputedStyle(glyph).display).toBe("none");
-    const ring = getComputedStyle(searchBtn, "::before");
-    expect(ring.animationName).toBe("vk-spin");
+    expect(getComputedStyle(spinner).display).not.toBe("none");
+    const ring = getComputedStyle(spinner, "::before");
+    expect(ring.animationName).toBe("vk-spin-rotate");
     expect(ring.animationDuration).toBe("0.6s");
     expect(ring.animationIterationCount).toBe("infinite");
     // The busy face reads the aria-busy this binding also sets, so the ring is not dimmed.
@@ -339,18 +350,18 @@ describe("the search button reports a query in flight", () => {
     expect(searchBtn.getBoundingClientRect().height).toBe(idle.height);
   });
 
-  it("asks bindLoadingState for that class, on the search button", () => {
-    // The class must be asked for at the binding; a rule nothing applies looks like no rule.
+  it("binds the search button to the search action, once per open", () => {
     stubs.bindLoadingState.mockClear();
     initSearchPanel();
-    const calls = stubs.bindLoadingState.mock.calls as unknown as [
-      string,
-      HTMLElement,
-      Record<string, unknown>?,
-    ][];
+    initSearchPanel();
+    const calls = stubs.bindLoadingState.mock.calls as unknown as [string, HTMLElement][];
     const bound = calls.filter((c) => c[0] === "mcp.search_registry");
-    expect(bound).toHaveLength(1);
-    expect(bound[0]?.[1].id).toBe("mcp-search-btn");
-    expect(bound[0]?.[2]).toEqual({ pendingClass: "is-searching" });
+    expect(bound).toHaveLength(2);
+    const btn = bound[0]?.[1];
+    expect(btn?.id).toBe("mcp-search-btn");
+    expect(
+      btn?.querySelectorAll(":scope > .spinner"),
+      "one ring however often it opens",
+    ).toHaveLength(1);
   });
 });

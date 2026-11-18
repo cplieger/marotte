@@ -3,6 +3,7 @@
 
 import { outcomeIcon } from "../icons.js";
 import { iconEl } from "../icon-el.js";
+import { spinnerEl } from "../spinner.js";
 import type { ClassifiedRunNodeStatus, ClassifiedRunStatus } from "../run-status.js";
 
 /** A node's state, as every exec surface reports it. */
@@ -12,15 +13,16 @@ export type ExecState =
 /** The one mark a state carries, tagged so a state cannot carry two. */
 type StateMark =
   | { readonly kind: "none" }
+  | { readonly kind: "spinner" }
   | { readonly kind: "char"; readonly text: string }
   | { readonly kind: "icon"; readonly svg: string };
 
 /** Exactly one mark per state, so tint is never the only channel (WCAG 1.4.1).
- *  A `kind: "none"` state is drawn by CSS as a ring, so a new member here needs a
+ *  A `kind: "none"` state is drawn by CSS as a still ring, so a new member here needs a
  *  `.ev-row[data-state=…]` arm or it renders nothing at all. */
 export const STATE_MARK: Readonly<Record<ExecState, StateMark>> = {
   pending: { kind: "none" },
-  running: { kind: "none" },
+  running: { kind: "spinner" },
   waiting: { kind: "none" },
   input: { kind: "char", text: "?" },
   unknown: { kind: "none" },
@@ -42,6 +44,9 @@ export function paintStateMark(slot: HTMLElement, state: ExecState): void {
   switch (mark.kind) {
     case "icon":
       slot.replaceChildren(iconEl(mark.svg));
+      break;
+    case "spinner":
+      slot.replaceChildren(spinnerEl("spinner-work"));
       break;
     case "char":
       slot.replaceChildren(mark.text);

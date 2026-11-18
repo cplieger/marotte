@@ -127,9 +127,7 @@ function mountToolsDOM(): void {
   add("div", "tools-list").className = "list-container";
   add("div", "tool-modal");
   add("input", "tool-search").className = "tool-form-input";
-  // Mirrors index.html's classes: the button's two glyph faces are picked by
-  // `.tool-search-go`, so a bare fixture button would show both at once.
-  add("button", "tool-search-btn").className = "action-pill tool-search-go";
+  add("button", "tool-search-btn").className = "action-pill";
   // The caveat is seeded with a stale claim so the repaint assertions prove an overwrite.
   const note = add("p", "tool-shell-note");
   note.textContent =
@@ -1047,7 +1045,7 @@ describe("a job-owning pill becomes its own cancel control", () => {
   function faceOf(id: string): { label: string; aria: string; tip: string; busy: boolean } {
     const btn = byId<HTMLButtonElement>(id);
     return {
-      label: btn.querySelector("span")?.textContent ?? "",
+      label: btn.querySelector("span:not(.spinner)")?.textContent ?? "",
       aria: btn.getAttribute("aria-label") ?? "",
       tip: btn.getAttribute("data-tooltip") ?? "",
       busy: btn.classList.contains("is-busy"),
@@ -1075,7 +1073,7 @@ describe("a job-owning pill becomes its own cancel control", () => {
     });
     // Clickable, not disabled: the busy face IS the cancel affordance.
     expect(btn.disabled).toBe(false);
-    expect(btn.querySelector(".icon-spinner")).not.toBeNull();
+    expect(btn.querySelector(":scope > .spinner")).not.toBeNull();
     // No second Cancel pill beside it, which is the whole point.
     expect(byId("tool-cancel-btn").classList.contains("hidden")).toBe(true);
 
@@ -1765,23 +1763,20 @@ describe("the search bar reports that a search is running", () => {
   const shown = (el: Element | null): boolean =>
     el !== null && getComputedStyle(el).display !== "none";
 
-  it("swaps the magnifier for a spinning glyph while tools.search is pending", () => {
+  it("swaps the magnifier for the app's ring while tools.search is pending", () => {
     initWith(listWith([]));
     const btn = byId<HTMLButtonElement>("tool-search-btn");
-    const glyph = btn.querySelector(".tool-search-glyph");
-    const spinner = btn.querySelector(".tool-search-spinner");
+    const glyph = btn.querySelector(":scope > svg");
+    const spinner = btn.querySelector(":scope > .spinner");
 
-    // Both faces ship in the button, so the swap moves no nodes and cannot
-    // resize the row. Idle shows the magnifier alone.
+    // Both faces ship in the button, so the swap moves no nodes and cannot resize the row.
     expect(shown(glyph)).toBe(true);
     expect(shown(spinner)).toBe(false);
 
-    // `is-busy` is the pending class `bindLoadingState("tools.search", …)` adds.
-    btn.classList.add("is-busy");
+    // `bindLoadingState` marks the pending button `aria-busy`, which is what shows the ring.
+    btn.setAttribute("aria-busy", "true");
     expect(shown(glyph)).toBe(false);
     expect(shown(spinner)).toBe(true);
-    // And it is a SPINNER rather than a static arc: the registry glyph carries
-    // `.icon-spinner`, which is what 15-input.css rotates.
-    expect(getComputedStyle(spinner as Element).animationName).toBe("vk-spin-rotate");
+    expect(getComputedStyle(spinner as Element, "::before").animationName).toBe("vk-spin-rotate");
   });
 });

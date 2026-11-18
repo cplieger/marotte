@@ -37,7 +37,7 @@ function mountSlots(...keys: string[]): (key: string) => HTMLElement {
   };
 }
 
-const spinner = (slot: HTMLElement): Element | null => slot.querySelector(".spinner-sm");
+const spinner = (slot: HTMLElement): Element | null => slot.querySelector(".spinner");
 const ok = (slot: HTMLElement): Element | null => slot.querySelector("[data-icon='ok']");
 const fail = (slot: HTMLElement): Element | null => slot.querySelector("[data-icon='fail']");
 

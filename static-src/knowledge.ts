@@ -24,6 +24,7 @@ import {
   removeKnowledge,
 } from "./actions/knowledge.js";
 import { ICON_CLOSE_UI, ICON_PLUS_UI, ICON_REFRESH, ICON_TRASH_UI } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import { asObject, decodeArray, optBool, optStr, reqNum, reqStr } from "./wire/validators.gen.js";
 
 // Wire type and decoder, matching internal/hub/knowledge.go knowledgeContext.
@@ -313,7 +314,7 @@ function cancelBtn(name: string): HTMLElement {
     "data-tooltip": "Stop indexing",
     "aria-label": `Stop indexing knowledge base ${name}`,
   }) as HTMLButtonElement;
-  btn.innerHTML = ICON_CLOSE_UI;
+  btn.replaceChildren(iconEl(ICON_CLOSE_UI));
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
     void onCancel(name);
@@ -334,7 +335,7 @@ function reindexBtn(name: string): HTMLElement {
     "data-tooltip": "Re-index",
     "aria-label": `Re-index knowledge base ${name}`,
   }) as HTMLButtonElement;
-  btn.innerHTML = ICON_REFRESH;
+  btn.replaceChildren(iconEl(ICON_REFRESH));
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
     onReindex(name);
@@ -365,7 +366,7 @@ function removeBtn(name: string): HTMLElement {
     "data-tooltip": "Remove",
     "aria-label": `Remove knowledge base ${name}`,
   }) as HTMLButtonElement;
-  btn.innerHTML = ICON_TRASH_UI;
+  btn.replaceChildren(iconEl(ICON_TRASH_UI));
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
     void onRemove(name);
@@ -468,7 +469,7 @@ function hideAddForm(): void {
 
 export function initKnowledge(): void {
   const addBtn = byId<HTMLButtonElement>("knowledge-add-btn");
-  addBtn.innerHTML = ICON_PLUS_UI;
+  addBtn.replaceChildren(iconEl(ICON_PLUS_UI));
 
   const form = buildKnowledgeForm();
   byId<HTMLDivElement>("knowledge-list").before(form);
@@ -482,7 +483,7 @@ export function initKnowledge(): void {
   });
 
   const clearBtn = byId<HTMLButtonElement>("knowledge-clear-btn");
-  clearBtn.innerHTML = ICON_TRASH_UI;
+  clearBtn.replaceChildren(iconEl(ICON_TRASH_UI));
   clearBtn.addEventListener("click", () => {
     void onClearAll();
   });

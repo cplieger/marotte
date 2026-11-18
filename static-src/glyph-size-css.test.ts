@@ -9,6 +9,9 @@ import indexHtml from "../static/index.html?raw";
 
 import { BUTTON_BOX, GLYPH_STEP } from "./__test-helpers__/button-reference.js";
 import { manifestSheets, mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { iconEl } from "./icon-el.js";
+import { modelIcon } from "./icons.js";
+import { spinnerEl } from "./spinner.js";
 
 /** A context naming the touch tier: the attribute, the no-JS width arm's "not fine", or the media
  *  query. A negated coarse (`not (any-pointer: coarse)`, `:not([data-pointer="coarse"])`) is the
@@ -103,12 +106,14 @@ const BUTTON_GLYPH_READERS: readonly string[] = [
   "15-input.css .pill >> & > :where(.ic-ui) block-size",
   "15-input.css .pill >> & > :where(.ic-inline) inline-size",
   "15-input.css .pill >> & > :where(.ic-inline) block-size",
+  "15-input.css .pill-model >> & > .spinner --spinner-size",
   "15-input.css .pill-role-icon >> & svg width",
   "15-input.css .pill-role-icon >> & svg height",
   "15-input.css .send-btn >> & svg width",
   "15-input.css .send-btn >> & svg height",
   "61-mcp-tools.css .turn-action-btn, .turn-rewind >> & > :where(.ic-ui) inline-size",
   "61-mcp-tools.css .turn-action-btn, .turn-rewind >> & > :where(.ic-ui) block-size",
+  "61-mcp-tools.css .turn-action-btn, .turn-rewind >> & > .spinner --spinner-size",
 ];
 
 /** The icon buttons that paint a row action's token or a menu row (`marotte/button-size.md`), each keeping `--icon-ui`. */
@@ -243,6 +248,27 @@ describe("the glyphs, measured over the shipped markup", () => {
         };
       });
   }
+
+  it.each(["fine", "coarse"] as const)(
+    "draws the model pill's busy ring in its glyph's box on %s, so the label holds still",
+    async (tier) => {
+      await mountPage(1440, 900, tier);
+      const pill = document.getElementById("switch-model-btn")!;
+      const label = document.getElementById("ctx-model-pill")!;
+      // The order model-switcher.ts and status.ts leave them in: the glyph prepended before the bound ring.
+      pill.prepend(iconEl(modelIcon("auto", "inline")), spinnerEl("spinner-on-busy"));
+      const glyph = pill.querySelector(":scope > svg")!;
+      const ring = pill.querySelector(":scope > .spinner")!;
+      expect(label.checkVisibility(), "the label is drawn").toBe(true);
+      const idle = glyph.getBoundingClientRect();
+      const idleLeft = label.getBoundingClientRect().left;
+      pill.setAttribute("aria-busy", "true");
+      expect(glyph.checkVisibility(), "the glyph gives way to the ring").toBe(false);
+      const busy = ring.getBoundingClientRect();
+      expect([busy.width, busy.height]).toEqual([idle.width, idle.height]);
+      expect(label.getBoundingClientRect().left).toBe(idleLeft);
+    },
+  );
 
   /** The button box's painted heights: `--btn-h` and `--btn-h-sm` on a mouse, one 44px box on touch. */
   const BOXES = { fine: [BUTTON_BOX.fine, 24], coarse: [BUTTON_BOX.coarse] } as const;

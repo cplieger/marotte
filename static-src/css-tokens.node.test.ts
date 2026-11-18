@@ -382,7 +382,7 @@ describe("an ink is only paired with a fill it clears", () => {
   // token graph). Every offender so far declared both in one block. Exempt: an inactive control (WCAG 1.4.3) and chrome,
   // keyed on the selector.
   const INACTIVE_STATE =
-    /:disabled|\[disabled\]|aria-disabled|aria-busy|-cloning\b|-rejected\b|\.btn-loading\b|-disabled\b/;
+    /:disabled|\[disabled\]|aria-disabled|aria-busy|-cloning\b|-rejected\b|-disabled\b/;
   // Containers whose `color` only feeds an svg's `currentColor` (WCAG 1.4.11's 3:1, not 1.4.3). An explicit list, so a
   // name pattern cannot adopt a control that holds a label. Each entry carries its measured ratio.
   const GRAPHIC_ONLY = new Set([

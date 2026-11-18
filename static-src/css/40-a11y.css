@@ -169,11 +169,7 @@ a.subagent-header:focus-visible,
 }
 
 /* THE BUSY FACE: a control disabled because its own work is in flight, which is
- * a different state from unavailable and now says so in one place. It was three
- * spellings — `.btn-loading` (0.7 plus a `pointer-events: none` that `disabled`
- * already provides), `.conflict-btn` (0.6 and
- * `cursor: wait`), and the reconnect button (0.7, keyed on the attribute) — and
- * every one of them DIMMED it.
+ * a different state from unavailable and says so in one place.
  *
  * Dimming is what this removes rather than re-numbers. A busy control is
  * communicating: it grows a spinner and its label becomes "Delivering…" or

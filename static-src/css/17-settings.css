@@ -40,16 +40,14 @@
 }
 
 /* One size for both faces, overriding the icons' own width/height attributes:
-   12px, whichever label it sits beside. */
-.settings-save-status > svg,
-.settings-save-status > .spinner-sm {
+   12px, whichever label it sits beside; the ring takes a narrower band at 12px. */
+.settings-save-status > svg {
   width: 0.75rem;
   height: 0.75rem;
 }
 
-/* Narrower band at 12px. It is the mask's width now rather than a border's, so
-   this sets the token 15-input.css declares for exactly this override. */
-.settings-save-status > .spinner-sm {
+.settings-save-status > .spinner {
+  --spinner-size: 0.75rem;
   --vk-ring-band: 1.5px;
 }
 

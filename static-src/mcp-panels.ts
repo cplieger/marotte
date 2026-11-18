@@ -36,6 +36,7 @@ import {
   setSwitchMode,
   cleanupSearch,
 } from "./mcp-panels-search.js";
+import { bindLoadingSpinner } from "./spinner.js";
 
 // "registry" has no tab: it is reached only by editing an organization-catalog row.
 type AddMode = "search" | "remote" | "npm" | "raw" | "registry";
@@ -270,10 +271,7 @@ async function submitServer(
     body.disabled_tools = session.disabledToolsList;
   }
 
-  const unbind =
-    saveBtn != null
-      ? bindLoadingState("mcp.save_server", saveBtn, { pendingClass: "btn-loading" })
-      : undefined;
+  const unbind = saveBtn != null ? bindLoadingSpinner("mcp.save_server", saveBtn) : undefined;
 
   // The typed outcome is this dispatch's own, so a concurrent save cannot cross into the inline error.
   const o = await saveServer.dispatch(
@@ -724,7 +722,7 @@ async function submitPaste(
   saveBtn: HTMLButtonElement,
 ): Promise<void> {
   clearFieldMarks();
-  const unbind = bindLoadingState("mcp.import_servers", saveBtn, { pendingClass: "btn-loading" });
+  const unbind = bindLoadingSpinner("mcp.import_servers", saveBtn);
   const o = await importServers.dispatch(block, {
     onSettled: () => {
       unbind();

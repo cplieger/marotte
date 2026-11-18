@@ -906,32 +906,6 @@
   margin-block: calc(-1 * var(--sp-2));
 }
 
-/* THE SEARCH BUTTON IS THE PENDING FACE, for a click and for a typed query alike
- * (both dispatch the one action `bindLoadingState` watches). The glyph is REPLACED
- * rather than joined, because the pill is icon-only and `.btn-loading`'s
- * ring-beside-a-label does not fit one. Ring idiom and period token:
- * `.tool-spinner` (14-tools.css); the full opacity is the busy face in 40-a11y,
- * which reads the `aria-busy` this same binding sets. */
-[id="mcp-search-btn"].is-searching > .ic-ui {
-  display: none;
-}
-
-/* `::before`, because `::after` is the button's hit expander (61-mcp-tools.css). */
-[id="mcp-search-btn"].is-searching::before {
-  content: "";
-  inline-size: var(--icon-ui);
-  block-size: var(--icon-ui);
-  border-radius: 50%;
-  background: conic-gradient(
-      from var(--vk-spin-arc),
-      var(--c-accent) 0deg 90deg,
-      var(--c-border) 90deg 360deg
-    )
-    border-box;
-  mask: radial-gradient(closest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
-  animation: vk-spin var(--spin-dur) linear infinite;
-}
-
 :where(.mcp-search-row) .tool-form-input {
   flex: 1;
   min-width: 0;
@@ -1317,9 +1291,6 @@
 
 /* ---------- Reconnect button + prompts/resources discovery ---------- */
 
-/* The reconnect icon-btn reuses .icon-btn; its spinning state swaps in
- * ICON_SPINNER (.icon-spinner rotates via vk-spin-rotate, 15-input.css). Hidden
- * when idle. */
 .mcp-discovery {
   margin-block-start: 0.25rem;
 }

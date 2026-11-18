@@ -60,25 +60,42 @@ function frame(): Promise<void> {
 const RINGS: readonly (readonly [string, string])[] = [
   [
     "the exec tree's running step",
-    `<div class="ev-page"><div class="ev-row" data-state="running" data-kind="step"><div class="ev-row-main"><span class="ev-state"></span></div></div></div>`,
+    `<div class="ev-page"><div class="ev-row" data-state="running" data-kind="step"><div class="ev-row-main"><span class="ev-state"><span class="spinner spinner-work" aria-hidden="true"></span></span></div></div></div>`,
   ],
   [
     "the run dock's running row",
-    `<div class="ev-dock"><div class="ev-dock-row" data-state="running"><span class="ev-state"></span></div></div>`,
+    `<div class="ev-dock"><div class="ev-dock-row" data-state="running"><span class="ev-state"><span class="spinner spinner-work" aria-hidden="true"></span></span></div></div>`,
   ],
   [
     "the run card's running step",
-    `<div class="run-card"><div class="run-body"><div class="run-steps"><div class="run-step" data-status="running"><div class="run-step-head"><span class="run-step-glyph"></span></div></div></div></div></div>`,
+    `<div class="run-card"><div class="run-body"><div class="run-steps"><div class="run-step" data-status="running"><div class="run-step-head"><span class="run-step-glyph"><span class="spinner spinner-work" aria-hidden="true"></span></span></div></div></div></div></div>`,
   ],
-  ["a running tool card", `<span class="tool-spinner"></span>`],
-  ["a running subagent", `<span class="tool-icon subagent-icon subagent-spinner"></span>`],
+  ["a running tool card", `<span class="spinner tool-spinner"></span>`],
+  ["a running subagent", `<span class="tool-icon subagent-icon spinner spinner-work"></span>`],
   [
     "a compacting steer",
-    `<span class="steer-state-icon"><span class="steer-spinner"></span></span>`,
+    `<span class="steer-state-icon"><span class="spinner tool-spinner steer-spinner"></span></span>`,
   ],
   ["the page spinner", `<div class="spinner"></div>`],
-  ["the small spinner", `<div class="spinner-sm"></div>`],
+  ["the small spinner", `<div class="spinner spinner-sm"></div>`],
+  [
+    "a busy button",
+    `<button type="button" disabled aria-busy="true"><span class="spinner spinner-on-busy"></span>Save</button>`,
+  ],
 ];
+
+describe("a job pill's busy ring", () => {
+  it("draws its arc in the pill's accent ink over the shared track", () => {
+    host.innerHTML = `<button type="button" class="action-pill is-busy"><span class="spinner" aria-hidden="true"></span><span>Cancel</span></button><span class="spinner" aria-hidden="true"></span>`;
+    const [ring, reference] = [...host.querySelectorAll(".spinner")];
+    const ink = getComputedStyle(host.querySelector("button")!).color;
+    const arc = getComputedStyle(ring!, "::before").backgroundImage;
+    const ref = getComputedStyle(reference!, "::before").backgroundImage;
+    const head = `conic-gradient(from -45deg, ${ink} 0deg, ${ink} 90deg, `;
+    expect(arc.slice(0, head.length), "the arc").toBe(head);
+    expect(arc.slice(head.length), "the track").toBe(ref.slice(ref.indexOf("90deg, ") + 7));
+  });
+});
 
 describe("a spinning ring", () => {
   it.each(RINGS)("in %s animates only compositor properties", async (_name, markup) => {

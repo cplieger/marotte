@@ -38,12 +38,22 @@ const loop: ExecNode = {
   children: [pass],
 };
 
-function ring(tree: HTMLElement, path: string): CSSStyleDeclaration {
-  const glyph = tree.querySelector(`.ev-row[data-path="${path}"] > .ev-row-main > .ev-state`);
+function slotOf(tree: HTMLElement, path: string): HTMLElement {
+  const glyph = tree.querySelector<HTMLElement>(
+    `.ev-row[data-path="${path}"] > .ev-row-main > .ev-state`,
+  );
   if (glyph === null) {
     throw new Error(`no row at ${path}`);
   }
-  return getComputedStyle(glyph, "::before");
+  return glyph;
+}
+
+/** The turn of a slot's running ring, or `undefined` when nothing in it spins. */
+function spin(tree: HTMLElement, path: string): string | undefined {
+  const anim = slotOf(tree, path)
+    .getAnimations({ subtree: true })
+    .find((a): a is CSSAnimation => a instanceof CSSAnimation);
+  return anim?.animationName;
 }
 
 describe("the tree spins for running work, never for a container", () => {
@@ -55,9 +65,12 @@ describe("the tree spins for running work, never for a container", () => {
     view.attach(document.body);
     view.render([loop], "");
     try {
-      expect(ring(view.root, "l").content).toBe("none");
-      expect(ring(view.root, "l:p").content).toBe("none");
-      expect(ring(view.root, "l:p:code").animationName).toBe("vk-spin-rotate");
+      for (const container of ["l", "l:p"]) {
+        expect(getComputedStyle(slotOf(view.root, container), "::before").content).toBe("none");
+        expect(spin(view.root, container), `${container} spins nothing`).toBeUndefined();
+      }
+      expect(slotOf(view.root, "l:p:code").querySelector(":scope > .spinner")).not.toBeNull();
+      expect(spin(view.root, "l:p:code")).toBe("vk-spin-rotate");
     } finally {
       view.root.remove();
     }

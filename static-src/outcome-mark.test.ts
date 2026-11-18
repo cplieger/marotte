@@ -179,7 +179,7 @@ describe("the mark reads one ink and one size wherever it renders", () => {
     const rings = allRules(exec).filter(
       (r) => r.selector.includes(".ev-state::before") && r.body.includes("inline-size"),
     );
-    // running + waiting share one rule, pending has its own.
+    // waiting + unknown share one rule, pending has its own; running is the sized `.spinner`.
     expect(rings.length, "the ring rules that size themselves").toBeGreaterThanOrEqual(2);
     for (const ring of rings) {
       expect(ring.body, ring.selector).toContain("inline-size: var(--dot-size)");

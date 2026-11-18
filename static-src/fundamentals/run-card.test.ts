@@ -1161,10 +1161,10 @@ describe("the card shows the run's structure, and only steps and watches as work
   it("keeps a nested running row's animation running when a sibling ahead of it leaves", async () => {
     const c = card();
     document.body.append(c.root);
-    // A real CSS animation on the glyph, standing in for the stylesheet's `vk-spin` ring.
+    // A real CSS animation on the running ring, standing in for the stylesheet's `vk-spin-rotate`.
     const style = document.createElement("style");
     style.textContent =
-      "@keyframes card-spin { to { rotate: 360deg } } .run-step-glyph { animation: card-spin 600ms linear infinite }";
+      "@keyframes card-spin { to { rotate: 360deg } } .run-step-glyph > .spinner { animation: card-spin 600ms linear infinite }";
     document.head.appendChild(style);
     try {
       const first = liveLoop();
@@ -1174,11 +1174,11 @@ describe("the card shows the run's structure, and only steps and watches as work
       }
       pass.children = [{ nodeId: "plan", type: "step", status: "completed" }, ...pass.children];
       c.render(first, NO_ASKS, { plan: PLAN });
-      const glyphOf = (): HTMLElement | null =>
+      const ringOf = (): HTMLElement | null =>
         c.root.querySelector<HTMLElement>(
-          '.run-step[data-node="wf_1:build-loop:iter-0:code"] .run-step-glyph',
+          '.run-step[data-node="wf_1:build-loop:iter-0:code"] .run-step-glyph > .spinner',
         );
-      const anim = glyphOf()?.getAnimations()[0];
+      const anim = ringOf()?.getAnimations()[0];
       expect(anim, "the row needs an animation to probe").toBeDefined();
       anim?.pause();
       if (anim !== undefined) {
@@ -1192,7 +1192,7 @@ describe("the card shows the run's structure, and only steps and watches as work
       c.render(liveLoop(), NO_ASKS, { plan: PLAN });
       await new Promise((r) => requestAnimationFrame(r));
 
-      const after = glyphOf()?.getAnimations()[0];
+      const after = ringOf()?.getAnimations()[0];
       expect(Number(after?.currentTime), "a render must not restart the ring").toBe(250);
       expect(after?.playState).toBe("paused");
     } finally {

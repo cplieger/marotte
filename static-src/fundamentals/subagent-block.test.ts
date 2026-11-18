@@ -49,11 +49,11 @@ function clickWith(head: HTMLElement, init: MouseEventInit): boolean {
 describe("buildSubagentCard icon", () => {
   it("shows the spinner while active, the default hexagon once settled", () => {
     const sa = buildSubagentCard("Subagent", "in_progress");
-    expect(iconSlot(sa.root).classList.contains("subagent-spinner")).toBe(true);
+    expect(iconSlot(sa.root).classList.contains("spinner-work")).toBe(true);
     expect(iconSlot(sa.root).querySelector("svg")).toBeNull();
 
     sa.setStatus("completed");
-    expect(iconSlot(sa.root).classList.contains("subagent-spinner")).toBe(false);
+    expect(iconSlot(sa.root).classList.contains("spinner-work")).toBe(false);
     expect(iconSlot(sa.root).querySelector('svg[data-icon="agent-hexagon"]')).not.toBeNull();
   });
 
@@ -81,7 +81,7 @@ describe("buildSubagentCard icon", () => {
   it("setIcon while active defers the glyph until the subagent settles", () => {
     const sa = buildSubagentCard("Introspect", "in_progress");
     sa.setIcon('<svg data-icon="introspect"></svg>');
-    expect(iconSlot(sa.root).classList.contains("subagent-spinner")).toBe(true);
+    expect(iconSlot(sa.root).classList.contains("spinner-work")).toBe(true);
     expect(iconSlot(sa.root).querySelector("svg")).toBeNull();
 
     sa.setStatus("completed");
@@ -92,12 +92,12 @@ describe("buildSubagentCard icon", () => {
   // not a failure to debug.
   it("leaves the running state for the warn mark when the turn is cancelled", () => {
     const sa = buildSubagentCard("Subagent", "in_progress");
-    expect(iconSlot(sa.root).classList.contains("subagent-spinner")).toBe(true);
+    expect(iconSlot(sa.root).classList.contains("spinner-work")).toBe(true);
     expect(sa.root.classList.contains("running")).toBe(true);
 
     sa.setStatus("aborted");
 
-    expect(iconSlot(sa.root).classList.contains("subagent-spinner")).toBe(false);
+    expect(iconSlot(sa.root).classList.contains("spinner-work")).toBe(false);
     expect(sa.root.classList.contains("running")).toBe(false);
     expect(sa.root.querySelector(".subagent-tail")).toBeNull();
     // Yellow, and its own SHAPE: `is-ok` would claim a result this delegate never
