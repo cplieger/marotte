@@ -159,7 +159,7 @@ func textArgs(root string, q TextQuery) (args []string, ok bool) {
 	if !ok {
 		return nil, false
 	}
-	args = []string{"--json", "--engine", "auto", "-C", "2", "--max-count", maxCountArg, "--max-filesize", "1M", "--hidden", "--no-require-git", "--glob", "!.git"}
+	args = []string{"--json", "--engine", "auto", "-C", "2", "--max-count", maxCountArg, "--max-filesize", "1M", "--hidden", "--no-require-git"}
 	if !q.CaseSensitive {
 		args = append(args, "--ignore-case")
 	}
@@ -169,7 +169,8 @@ func textArgs(root string, q TextQuery) (args []string, ok bool) {
 	if exclude := rootGlob(root, q.ExcludePattern); exclude != "" {
 		args = append(args, "--glob", "!"+exclude)
 	}
-	return runnable(append(args, "--", trimLoneQuote(q.Pattern), dir))
+	// Last: rg's last matching glob wins, so an include matching a .git folder would re-admit it.
+	return runnable(append(args, "--glob", "!.git", "--", trimLoneQuote(q.Pattern), dir))
 }
 
 // runnable is args with ok false when one holds a NUL, which exec refuses, so no rg can run.
@@ -378,14 +379,14 @@ func filesArgs(root string, q FilesQuery) (args []string, ok bool) {
 	if !ok || depth >= maxFileDepth {
 		return nil, false
 	}
-	args = []string{"--files", "--max-depth", strconv.Itoa(maxFileDepth - depth), "--hidden", "--no-require-git", "--glob", "!.git"}
+	args = []string{"--files", "--max-depth", strconv.Itoa(maxFileDepth - depth), "--hidden", "--no-require-git"}
 	if glob != "" && glob != "**/*" {
 		args = append(args, "--glob", glob)
 	}
 	if exclude := rootGlob(root, q.Exclude); exclude != "" {
 		args = append(args, "--glob", "!"+exclude)
 	}
-	return runnable(append(args, "--", dir))
+	return runnable(append(args, "--glob", "!.git", "--", dir)) // last, as in textArgs
 }
 
 func (s Searcher) filesRoot(ctx context.Context, root string, args []string, limit int) (found []string, cut bool) {

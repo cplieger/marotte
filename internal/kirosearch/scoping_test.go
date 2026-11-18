@@ -114,6 +114,7 @@ func scopeCases() map[string]scopeCase {
 		"folder a parent ignores":       named("parentignored/**", "parentignored"),
 		"git folder":                    same(".git/**"),
 		"git segment below a folder":    same("repo/.git/**"),
+		"folder holding a git folder":   same("repo/**"),
 		"start below the depth cap":     same("deep/a/**"),
 		"below an anchored ignore rule": same("repo/**/*.go"),
 		"gitignored folder with a !":    named("a!b/**", "a!b"),
@@ -218,8 +219,8 @@ func globArgs(include, exclude string) []string {
 // search of "hit".
 func wholeRootText(t *testing.T, bin, root, include, exclude, start string) []string {
 	t.Helper()
-	args := []string{"-l", "--max-filesize", "1M", "--hidden", "--no-require-git", "--glob", "!.git", "--ignore-case"}
-	args = append(append(args, globArgs(include, exclude)...), "--", "hit")
+	args := []string{"-l", "--max-filesize", "1M", "--hidden", "--no-require-git", "--ignore-case"}
+	args = append(append(args, globArgs(include, exclude)...), "--glob", "!.git", "--", "hit")
 	if start != "" {
 		args = append(args, start)
 	}
@@ -228,7 +229,7 @@ func wholeRootText(t *testing.T, bin, root, include, exclude, start string) []st
 
 // wholeRootFiles is the files rg run in root, from start ("" for the whole root), lists for a
 // find_files glob, with KAS 3.0.0's own arguments (testdata kas-probe search-files.json
-// kasOwnRgArgs): 50 levels below the root, and no --glob for "**/*".
+// kasOwnRgArgs) but !.git last: 50 levels below the root, and no --glob for "**/*".
 func wholeRootFiles(t *testing.T, bin, root, glob, exclude, start string) []string {
 	t.Helper()
 	depth := 50
@@ -238,8 +239,8 @@ func wholeRootFiles(t *testing.T, bin, root, glob, exclude, start string) []stri
 	if glob == "**/*" {
 		glob = ""
 	}
-	args := []string{"--files", "--max-depth", strconv.Itoa(depth), "--hidden", "--no-require-git", "--glob", "!.git"}
-	args = append(args, globArgs(glob, exclude)...)
+	args := []string{"--files", "--max-depth", strconv.Itoa(depth), "--hidden", "--no-require-git"}
+	args = append(append(args, globArgs(glob, exclude)...), "--glob", "!.git")
 	if start != "" {
 		args = append(args, "--", start)
 	}
@@ -341,6 +342,32 @@ func TestSearch_RealRGScopingMatchesAWholeRootSearch(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// No pattern reads a .git folder, including one whose glob matches every path below a folder
+// holding it.
+func TestSearch_RealRGNeverReadsAGitFolder(t *testing.T) {
+	bin := realRG(t)
+	root := t.TempDir()
+	scopeTree(t, root)
+	s := Searcher{Bin: bin}
+	inGit := func(p string) bool { return slices.Contains(strings.Split(p, "/"), ".git") }
+	patterns := map[string]string{
+		"folder globstar": "repo/**", "globstar": "**", "root-anchored globstar": "/**",
+		"absolute globstar": root + "/**", "doublestar any name": "**/*",
+	}
+	for name, pattern := range patterns {
+		t.Run(name, func(t *testing.T) {
+			text := textFiles(s.Text(t.Context(), []string{root}, TextQuery{Pattern: "hit", IncludePattern: pattern}))
+			if i := slices.IndexFunc(text, inGit); i >= 0 {
+				t.Errorf("Text(include %q) read %q", pattern, text[i])
+			}
+			files := s.Files(t.Context(), []string{root}, FilesQuery{Pattern: pattern, MaxResults: maxFileResults})
+			if i := slices.IndexFunc(files, inGit); i >= 0 {
+				t.Errorf("Files(%q) listed %q", pattern, files[i])
+			}
+		})
 	}
 }
 
