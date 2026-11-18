@@ -555,7 +555,6 @@ describe("server-hit navigation", () => {
   let onHotkey: (e: KeyboardEvent) => void;
   let openAt: typeof ModFindInChat.openChatFindAt;
   let closeFind: () => void;
-  let renderCeilingMs: number;
   let chatSearch: typeof ModChatSearch;
   let store: typeof ModStore;
   let storeLoad: typeof ModStoreLoad;
@@ -583,7 +582,6 @@ describe("server-hit navigation", () => {
     onHotkey = mod.handleFindHotkey;
     openAt = mod.openChatFindAt;
     closeFind = mod.closeChatFind;
-    renderCeilingMs = mod.RENDER_WAIT_CEILING_MS;
     chatSearch = await import("./chat-search.js");
     store = await import("./store.js");
     storeLoad = await import("./store-load.js");
@@ -610,17 +608,6 @@ describe("server-hit navigation", () => {
 
   function countText(): string {
     return document.getElementById("chat-find-count")?.textContent ?? "";
-  }
-
-  /** A case about what a rendered miss says needs its frame to beat the render ceiling, which a loaded
-   *  host can delay past; with the ceiling never armed, the frame lands however late it is. */
-  function frameAlwaysDelivered(): void {
-    const real = globalThis.setTimeout;
-    vi.spyOn(globalThis, "setTimeout").mockImplementation(((
-      handler: TimerHandler,
-      ms?: number,
-      ...args: unknown[]
-    ) => (ms === renderCeilingMs ? 0 : real(handler, ms, ...args))) as typeof setTimeout);
   }
 
   function noteText(): string {
@@ -857,7 +844,6 @@ describe("server-hit navigation", () => {
   });
 
   it("selects the entry and says so when its subtree is not rendered", async () => {
-    frameAlwaysDelivered();
     // `content-visibility: hidden` blocks marking either way; the fallback tells the reader and lands on the row.
     stageChat(["u1"]);
     const row = mountTurnCard(
@@ -911,7 +897,6 @@ describe("server-hit navigation", () => {
   });
 
   it("selects the entry and says so for a syntax-only hit (match not in rendered text)", async () => {
-    frameAlwaysDelivered();
     stageChat(["u1"]);
     mountTurnCard(
       "u1",
@@ -1006,8 +991,8 @@ describe("server-hit navigation", () => {
     expect(countText()).toBe("1 of 1");
   });
 
-  it("releases next/prev when the frame the re-walk waits for is never delivered", async () => {
-    // A hidden page gets no animation frames, so the rAF re-walk inside `navBusy` needs a ceiling.
+  /** A hidden-section card whose words a rendered frame cannot reach: the re-walk misses after any frame. */
+  function stageUnreachableHit(): void {
     stageChat(["u1"]);
     mountTurnCard(
       "u1",
@@ -1022,14 +1007,52 @@ describe("server-hit navigation", () => {
         excerpt: "see the retry backoff here",
       }),
     ]);
+  }
+
+  it("releases next/prev on a hidden page, which gets no frame for the re-walk", async () => {
+    stageUnreachableHit();
     await openAndSearch("retry");
 
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
     vi.stubGlobal("requestAnimationFrame", () => 0);
     typeAndEnter("retry");
 
-    // The ceiling released the wait, and the verdict names the miss kind.
     await vi.waitFor(() => {
       expect(countText()).toBe("1 of 1 \u00b7 not rendered yet");
+    });
+  });
+
+  it("releases next/prev when the page hides while the re-walk waits for its frame", async () => {
+    stageUnreachableHit();
+    await openAndSearch("retry");
+
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    const jumps = vi.mocked(scroll.jumpTo).mock.calls.length;
+    typeAndEnter("retry");
+    // The jump is the re-walk's last step before it waits for the frame.
+    await vi.waitFor(() => {
+      expect(vi.mocked(scroll.jumpTo).mock.calls.length).toBeGreaterThan(jumps);
+    });
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    await vi.waitFor(() => {
+      expect(countText()).toBe("1 of 1 \u00b7 not rendered yet");
+    });
+  });
+
+  it("judges the miss from the frame a busy page delivers late", async () => {
+    // A rendered frame makes the miss conclusive however long the page took to paint it.
+    stageUnreachableHit();
+    const paint = requestAnimationFrame.bind(window);
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) =>
+      setTimeout(() => paint(cb), 100),
+    );
+
+    await openAndSearch("retry");
+
+    await vi.waitFor(() => {
+      expect(countText()).toBe("1 of 1 \u00b7 not in rendered text");
     });
   });
 
@@ -1428,7 +1451,7 @@ describe("server-hit navigation", () => {
     into?: HTMLElement,
   ): { requests: () => number } {
     let requests = 0;
-    // Past `RENDER_WAIT_CEILING_MS` (64ms) on purpose, so only the deferred-diff wait can cover it.
+    // Several frames past the re-walk's two on purpose, so only the deferred-diff wait can cover it.
     const bulkMs = 120;
     const toggle = card.querySelector<HTMLElement>(".tool-disclosure");
     if (toggle === null) {
@@ -1538,7 +1561,6 @@ describe("server-hit navigation", () => {
   });
 
   it("says the match is not in the SHOWN hunks when the card renders a preview", async () => {
-    frameAlwaysDelivered();
     // `windowHunks` keeps 24 rows, so a longer diff's preview can lack the match.
     stageEditChat();
     mountEditCard("return fetchOnce(ctx)");
@@ -1562,7 +1584,6 @@ describe("server-hit navigation", () => {
   });
 
   it("opens no disclosure and requests no bulk when the card already renders its diff", async () => {
-    frameAlwaysDelivered();
     // A diff already on screen must stay exactly as it was: nothing opened, nothing fetched.
     stageEditChat();
     const card = mountEditCard("return fetchOnce(ctx)");
@@ -1586,7 +1607,6 @@ describe("server-hit navigation", () => {
   });
 
   it("says the diff did not load when the open brings nothing back", async () => {
-    frameAlwaysDelivered();
     // The third state's wording: opening the card is what find just did.
     stageEditChat();
     const card = mountEditCard(null);
@@ -1619,7 +1639,6 @@ describe("server-hit navigation", () => {
   }
 
   it("answers a second visit to a dead diff hit AT ONCE rather than waiting again", async () => {
-    frameAlwaysDelivered();
     // An empty bulk leaves the preview absent and `detailsBody` will not run again.
     stageEditChat();
     const card = mountEditCard(null);
@@ -1737,7 +1756,7 @@ describe("server-hit navigation", () => {
     expect(countText()).toBe("1 of 1");
   });
 
-  it("says only NOT RENDERED YET for a diff miss with no frame delivered", async () => {
+  it("says only NOT RENDERED YET for a diff miss on a hidden page", async () => {
     // A hidden tab's diff is unpainted rather than windowed out; that arm outranks the kind.
     stageEditChat();
     mountEditCard("return fetchOnce(ctx)");
@@ -1750,6 +1769,7 @@ describe("server-hit navigation", () => {
     ]);
     await openAndSearch("retry");
 
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
     vi.stubGlobal("requestAnimationFrame", () => 0);
     typeAndEnter("retry");
 
@@ -1978,7 +1998,6 @@ describe("server-hit navigation", () => {
   });
 
   it("selects the turn card and says so when the reason is not rendered", async () => {
-    frameAlwaysDelivered();
     // A cancelled turn renders no reason; the hit still counts and steps.
     stageTurnLevelChat();
     const reason = "the retry budget ran out";
