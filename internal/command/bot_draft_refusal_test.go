@@ -85,7 +85,7 @@ func TestDraftBot_ANotifyIsRefused(t *testing.T) {
 	d := New()
 	d.prompts = roles
 
-	_, err := d.Notify(t.Context(), "c-bot", "1 new message", &marotte.Caller{Label: "grelot"})
+	_, err := d.Notify(t.Context(), "c-bot", "1 new message", &marotte.Caller{Label: "grelot"}, NotifyOptions{})
 
 	wantBotDraft(t, err, run)
 	if got := ClassifyNotifyError(err); got != NotifyRetryLater {

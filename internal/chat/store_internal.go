@@ -44,9 +44,10 @@ func (s *Store) remove(chatID marotte.ChatID) (string, error) {
 			_ = l.Remove()
 		}
 	}
-	// The index entry goes whatever the remove reports: a chat that was already gone
+	// The index entry and the Bot set's go whatever the remove reports: a chat that was already gone
 	// has no business staying findable.
 	s.index.drop(chatID)
+	s.bots.drop(chatID)
 	//nolint:gosec,nolintlint // G703: dir is pathFor's join over a validated chat id
 	if _, err := os.Stat(filepath.Join(dir, headerFileName)); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -228,7 +229,11 @@ func (s *Store) writeHeader(ctx context.Context, chatID marotte.ChatID, chat *ma
 	if err := headerWriteFault(chatID); err != nil {
 		return err
 	}
-	return s.header(chatID).write(ctx, chat)
+	if err := s.header(chatID).write(ctx, chat); err != nil {
+		return err
+	}
+	s.bots.note(chatID, chat.Bot != nil)
+	return nil
 }
 
 // headerWriteFault is a test seam: a root-run test cannot make a header unwritable with file modes.

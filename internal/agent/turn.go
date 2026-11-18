@@ -57,6 +57,8 @@ type activeTurn struct {
 	lc *chatLifecycle
 	// opened is the turn_open entry as written, which the turn_opened frame carries.
 	opened *marotte.Entry
+	// caller is the opening prompt's caller, nil for a turn no prompt opened or the user's.
+	caller *marotte.Caller
 	// graceTimer is a stop's budget on this turn's call (armCallGraceLocked).
 	graceTimer *time.Timer
 	// messageID and resends are the turn's prompt id and the unread steer keys it carries, set at openTurn: the ids
@@ -254,6 +256,8 @@ type turnRegistry struct {
 	claimHook func()
 	// openHook runs at the top of openTurn, before its section; nil in production, set as claimHook is.
 	openHook func()
+	// rules is the rule engine's turn taps (Runtime.SetRuleEngine); nil taps nothing. Set before the runtime serves.
+	rules ruleTaps
 	// tailHook runs in a close tail just before its end (ended false), where the run list takes what runs next, and
 	// again once a live life's tail ended (ended true); nil in production, set as claimHook is.
 	tailHook func(chatID marotte.ChatID, ended bool)
@@ -463,15 +467,19 @@ func (lc *chatLifecycle) awaitNotFinalizing(ctx context.Context) bool {
 }
 
 // openLocked records a turn whose turn_open the caller just appended: prompt-class to pending (and own when own is
-// nil), every other source to own. Caller holds mu and checked the slot.
-func (lc *chatLifecycle) openLocked(chatID marotte.ChatID, opened *marotte.Entry, source marotte.TurnOpenSource, model string, log *turnlog.Turn) *activeTurn {
-	return lc.openTurnLocked(chatID, opened, source, model, log, false)
+// nil), every other source to own. from is the opening prompt's caller, nil for none. Caller holds mu and checked the
+// slot.
+func (lc *chatLifecycle) openLocked(
+	chatID marotte.ChatID, opened *marotte.Entry, source marotte.TurnOpenSource, model string, log *turnlog.Turn, from *marotte.Caller,
+) *activeTurn {
+	return lc.openTurnLocked(chatID, opened, source, model, log, false, from)
 }
 
 // openTurnLocked is openLocked for a wire turn whose bracket is known (bracketed): the run list places the open in
 // the same section, before the wake runs its taker.
 func (lc *chatLifecycle) openTurnLocked(
 	chatID marotte.ChatID, opened *marotte.Entry, source marotte.TurnOpenSource, model string, log *turnlog.Turn, bracketed bool,
+	from *marotte.Caller,
 ) *activeTurn {
 	lc.nextSeq++
 	t := &activeTurn{
@@ -483,6 +491,7 @@ func (lc *chatLifecycle) openTurnLocked(
 		Seq:    lc.nextSeq,
 		Log:    log,
 		Source: source,
+		caller: from,
 		done:   make(chan struct{}),
 		lc:     lc,
 	}
@@ -508,6 +517,9 @@ func (lc *chatLifecycle) openTurnLocked(
 		slog.Debug("run list: a turn opened that no entry was taken for", "chat_id", chatID, "turn", t.ID)
 	}
 	lc.setStateLocked(turnOpen)
+	if lc.reg != nil && lc.reg.rules != nil {
+		lc.reg.rules.TurnOpened(chatID, t.ID, from)
+	}
 	return t
 }
 

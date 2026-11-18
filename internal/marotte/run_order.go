@@ -461,8 +461,8 @@ func unreadWait(entries []RunEntry) RunWait {
 
 // SanitizeRun is the list a new life starts from: only rows whose turn never opened, and no steer handed to kiro-cli
 // (offered or in its buffer), whose words the life's end or the shutdown recorded. A process's first life drops the
-// notify door's entries (their callers send again while unread) and holds the rest, so a restart sends nothing
-// unasked; a later life keeps a door entry as it was, pending or paused (a close never undoes a stop), keeps held rows
+// notify door's entries (their callers send again while unread) but a rule's, whose engine settles it at boot, and
+// holds the rest, so a restart sends nothing unasked; a later life keeps a door entry as it was, pending or paused (a close never undoes a stop), keeps held rows
 // held and pauses the rest, so they wait for that life's next clean turn end; a row paused there keeps its StopPaused.
 func SanitizeRun(entries []RunEntry, firstLifeInProcess bool) []RunEntry {
 	var out []RunEntry
@@ -473,7 +473,7 @@ func SanitizeRun(entries []RunEntry, firstLifeInProcess bool) []RunEntry {
 		if (e.State.Live() && e.State != RunStarting) || e.State == RunOffered || e.State == RunInKAS {
 			continue
 		}
-		if e.Origin == RunFromNotify && firstLifeInProcess {
+		if e.Origin == RunFromNotify && firstLifeInProcess && !e.Row.FromRule() {
 			continue
 		}
 		e.Next, e.State = false, sanitizedState(&e, firstLifeInProcess)
@@ -487,6 +487,8 @@ func SanitizeRun(entries []RunEntry, firstLifeInProcess bool) []RunEntry {
 // sanitizedState is the state SanitizeRun gives a row it keeps.
 func sanitizedState(e *RunEntry, firstLifeInProcess bool) RunEntryState {
 	switch {
+	case e.Origin == RunFromNotify && firstLifeInProcess:
+		return RunHeld
 	case e.Origin == RunFromNotify && e.State == RunPaused:
 		return RunPaused
 	case e.Origin == RunFromNotify:

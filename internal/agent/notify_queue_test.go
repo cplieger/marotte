@@ -23,7 +23,7 @@ func notifyWake(t *testing.T, h *Runtime, chatID marotte.ChatID) <-chan error {
 	t.Helper()
 	got := make(chan error, 1)
 	go func() {
-		_, err := h.dispatcher.Notify(t.Context(), chatID, grelotWake, &marotte.Caller{Label: "grelot"})
+		_, err := h.dispatcher.Notify(t.Context(), chatID, grelotWake, &marotte.Caller{Label: "grelot"}, command.NotifyOptions{})
 		got <- err
 	}()
 	return got
@@ -569,7 +569,7 @@ func TestNotify_ASteerCommandWithNothingRunningPlacesNothing(t *testing.T) {
 // wakeWith delivers text from grelot through the door's own deliver and answers its refusal, nil once accepted.
 func wakeWith(t *testing.T, h *Runtime, chatID marotte.ChatID, text string) error {
 	t.Helper()
-	_, err := h.dispatcher.Notify(t.Context(), chatID, text, &marotte.Caller{Label: "grelot"})
+	_, err := h.dispatcher.Notify(t.Context(), chatID, text, &marotte.Caller{Label: "grelot"}, command.NotifyOptions{})
 	return err
 }
 
@@ -614,7 +614,7 @@ func TestNotify_AWakeIntoAnIdleChatOpensItsTurn(t *testing.T) {
 }
 
 // A later wake from the same caller while its earlier one waits replaces that row's text and keeps its id and its
-// place behind the user's row: one waiting row per caller.
+// place behind the user's row: one waiting row per caller, whose id Notify answers.
 func TestNotify_ALaterWakeReplacesTheWaitingOnesTextInPlace(t *testing.T) {
 	s, _, br := steerOpsHub(t)
 	id, _ := s.h.stagePromptTurn(t, "c1")
@@ -625,8 +625,12 @@ func TestNotify_ALaterWakeReplacesTheWaitingOnesTextInPlace(t *testing.T) {
 	}
 	first, _ := grelotRows(s.h, "c1")
 
-	if err := wakeWith(t, s.h, "c1", "2 new; run grelot inbox"); err != nil {
+	holder, err := s.h.dispatcher.Notify(t.Context(), "c1", "2 new; run grelot inbox", &marotte.Caller{Label: "grelot"}, command.NotifyOptions{})
+	if err != nil {
 		t.Errorf("second wake = %v, want accepted", err)
+	}
+	if len(first) != 1 || holder != first[0] {
+		t.Errorf("second wake answered %q, want the waiting row %v that took its text", holder, first)
 	}
 	joinInflight(s.h)
 	ids, texts := grelotRows(s.h, "c1")

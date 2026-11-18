@@ -91,6 +91,7 @@ var commandDischarges = map[marotte.CommandType]dischargeVerdict{
 	marotte.CmdBotSave:          dischargeNo,
 	marotte.CmdBotSetPaused:     dischargeNo,
 	marotte.CmdBotClearMemory:   dischargeNo,
+	marotte.CmdBotRuleRunNow:    dischargeNo,
 }
 
 // chatStatus is the one thing a command handler needs of the agent's self-declared

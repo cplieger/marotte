@@ -106,9 +106,9 @@ func cmdForkChat(ctx context.Context, bridges bridgeAccess, chats chatStore, ws 
 
 	slog.Info("tangent opened",
 		"chat", opened.Chat.ID, "parent", p.ParentChatID, "at_message", p.MessageID,
-		"outcome", outcome, "acp_session", opened.Chat.ACPSessionID, "tab", opened.Subject.ID)
+		keyOutcome, outcome, "acp_session", opened.Chat.ACPSessionID, "tab", opened.Subject.ID)
 	return openedResponse(&opened, map[string]any{
-		"outcome":    outcome,
+		keyOutcome:   outcome,
 		"session_id": opened.Chat.ACPSessionID,
 	}), nil
 }
@@ -137,7 +137,7 @@ func replayedFork(ctx context.Context, bridges bridgeAccess, chats chatStore, me
 	slog.Info("tangent: repeat op resolved to the chat it already opened",
 		"chat", chatID, "parent", p.ParentChatID, "outcome", outcome)
 	return openedResponse(&opened, map[string]any{
-		"outcome":    outcome,
+		keyOutcome:   outcome,
 		"session_id": opened.Chat.ACPSessionID,
 	}), true, nil
 }

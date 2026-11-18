@@ -65,6 +65,8 @@ const (
 	CmdBotSave        CommandType = "bot_save"
 	CmdBotSetPaused   CommandType = "bot_set_paused"
 	CmdBotClearMemory CommandType = "bot_clear_memory"
+	// CmdBotRuleRunNow fires one of a Bot's rules now. Payload: BotRuleRunNowCommand.
+	CmdBotRuleRunNow CommandType = "bot_rule_run_now"
 )
 
 // ClientCommand is the envelope for every command the browser posts. Type
@@ -308,6 +310,10 @@ type BotSaveCommand struct {
 	// Model and Effort go through the model pill's switch when they differ from BotSetup's; empty keeps it.
 	Model  string `json:"model,omitempty"`
 	Effort string `json:"effort,omitempty"`
+	// OpID is required when a rule has no RuleID: a retry of the same op_id answers the ids the first one minted.
+	OpID string `json:"op_id,omitempty"`
+	// Rules is the Bot's whole rule list in the user's order; absent keeps the stored rules, empty deletes them.
+	Rules []BotRuleSave `json:"rules,omitempty"`
 	// BaseVersion is the Bot.SpecVersion the page loaded; another answers 409 bot_changed and saves nothing.
 	// bot_supervised, whatever its status, leaves the base stale, and so does a refused model pick whose stop already
 	// landed; the page reloads the setup after any refused save that is not 400 or 409 bot_changed.
@@ -315,6 +321,19 @@ type BotSaveCommand struct {
 	Memory      bool `json:"memory"`
 	// Start on a draft stamps started_at and sends the kickoff prompt; on a started Bot it is ignored.
 	Start bool `json:"start,omitempty"`
+}
+
+// BotRuleSave is one rule of a bot_save: a kept rule names its RuleID, a new one has none. Spec is a rule.Spec,
+// decoded strictly so an unknown or server-held field is refused at its path.
+type BotRuleSave struct {
+	RuleID string          `json:"rule_id,omitempty"`
+	Spec   json.RawMessage `json:"spec"`
+}
+
+// BotRuleRunNowCommand is the payload for type="bot_rule_run_now"; OpID makes the press its event id.
+type BotRuleRunNowCommand struct {
+	RuleID string `json:"rule_id"`
+	OpID   string `json:"op_id"`
 }
 
 // BotSetPausedCommand is the payload for type="bot_set_paused". bot_clear_memory has no payload.

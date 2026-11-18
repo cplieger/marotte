@@ -227,7 +227,7 @@ func TestAwaitPosition_DoesNotStopAtTheAwaitedTurnsOwnClose(t *testing.T) {
 	// Opened at the registry alone; the store append is not the subject.
 	lc := r.testLifecycle(chatID)
 	lc.mu.Lock()
-	turn := lc.openLocked(chatID, &marotte.Entry{ID: "t-1"}, marotte.TurnSourcePrompt, "", turnlog.Open("t-1", nil))
+	turn := lc.openLocked(chatID, &marotte.Entry{ID: "t-1"}, marotte.TurnSourcePrompt, "", turnlog.Open("t-1", nil), nil)
 	lc.mu.Unlock()
 	claimed, won := r.claimTurn(ctx, chatID, turn.ID, nil)
 	if !won {

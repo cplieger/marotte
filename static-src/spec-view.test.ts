@@ -2,7 +2,7 @@
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { signal } from "@cplieger/reactive";
-import type { Spec, SpecDoc, SpecTaskNode } from "./wire/types.gen.js";
+import type { SpecDir, SpecDoc, SpecTaskNode } from "./wire/types.gen.js";
 import type * as StoreModule from "./store.js";
 import type * as ApiModule from "./api-client.js";
 import type * as ChatCommandsModule from "./chat-commands.js";
@@ -23,6 +23,8 @@ const m = vi.hoisted(() => ({
   chatTabs: new Set<string>(),
   thinking: new Map<string, boolean>(),
   names: new Map<string, string>(),
+  /** The chats that are Bots, by their state. */
+  bots: new Map<string, string>(),
 }));
 
 /** Reactive versions the mocked tracked reads bump, so the page's one effect re-runs the way the
@@ -89,7 +91,13 @@ vi.mock("./store.js", async (importOriginal) => {
   const actual = await importOriginal<typeof StoreModule>();
   return {
     ...actual,
-    get: (id: string) => (m.names.has(id) ? { id, name: m.names.get(id) } : undefined),
+    get: (id: string) => {
+      if (!m.names.has(id)) {
+        return undefined;
+      }
+      const state = m.bots.get(id);
+      return { id, name: m.names.get(id), ...(state !== undefined ? { bot: { state } } : {}) };
+    },
     isBusy: (id: string) => m.thinking.get(id) ?? false,
     watchBusy: (id: string) => {
       void thinkVersion.value;
@@ -156,11 +164,11 @@ function prose(file: string, role: SpecDoc["role"], content = `# ${file}`): Spec
   return { file, role, hash: `hash-${file}`, content };
 }
 
-function spec(docs: SpecDoc[], dir = DIR): Spec {
+function spec(docs: SpecDoc[], dir = DIR): SpecDir {
   return { dir, name: dir.split("/").pop() ?? dir, updated_at: "2026-09-17T10:00:00Z", docs };
 }
 
-function reply(s: Spec, etag = '"e1"'): { status: number; data: unknown; etag: string } {
+function reply(s: SpecDir, etag = '"e1"'): { status: number; data: unknown; etag: string } {
   return { status: 200, data: s, etag };
 }
 
@@ -205,6 +213,7 @@ beforeEach(() => {
   m.chatTabs.clear();
   m.thinking.clear();
   m.names.clear();
+  m.bots.clear();
   document.body.replaceChildren();
   const viewEl = document.createElement("div");
   viewEl.id = "spec-view";
@@ -522,6 +531,18 @@ describe("dispatch", () => {
     expect(body().querySelector(".spec-run")).not.toBeNull();
   });
 
+  it("renders a Bot's refusal as a failure line in the server's words, never as busy", async () => {
+    openParented();
+    m.replies = [reply(spec([tasksDoc([node("L1", "Pending one")])]))];
+    view.showSpec(DIR);
+    await settle();
+    for (const refused of ["bot_draft", "bot_closed"] as const) {
+      view.applyResult(DIR, "L1", { refused, words: "This Bot cannot take it" });
+      expect(body().querySelector(".spec-failure")?.textContent).toBe("This Bot cannot take it");
+      expect(body().querySelector(".spec-run")?.classList.contains("spec-busy")).toBe(false);
+    }
+  });
+
   it("sends Run all to the parent chat", async () => {
     openParented("c1");
     m.replies = [reply(spec([tasksDoc([node("L1", "Pending one")])]))];
@@ -551,6 +572,27 @@ describe("dispatch", () => {
     await settle();
     expect(body().querySelector<HTMLButtonElement>(".spec-run-all")?.disabled).toBe(true);
     expect(body().querySelector<HTMLButtonElement>(".spec-run")?.disabled).toBe(true);
+  });
+
+  it("leaves a Bot not yet created out of the Run-in picker", async () => {
+    m.specTabs.set(DIR, "");
+    m.chatTabs.add("c1");
+    m.chatTabs.add("b1");
+    m.chatTabs.add("b2");
+    m.names.set("c1", "First chat");
+    m.names.set("b1", "Draft Bot");
+    m.names.set("b2", "Running Bot");
+    m.bots.set("b1", "draft");
+    m.bots.set("b2", "active");
+    tabsVersion.value++;
+    m.replies = [reply(spec([tasksDoc([node("L1", "Pending one")])]))];
+    view.showSpec(DIR);
+    await settle();
+    const select = body().querySelector<HTMLSelectElement>(".spec-run-in-select");
+    expect([...(select?.options ?? [])].map((o) => o.textContent)).toEqual([
+      "First chat",
+      "Running Bot",
+    ]);
   });
 
   it("offers a Run-in picker over the open chats on a parentless page and re-parents on pick", async () => {
@@ -965,6 +1007,7 @@ describe("header", () => {
     expect(bar?.getAttribute("aria-valuemin")).toBe("0");
     expect(bar?.getAttribute("aria-valuemax")).toBe("3");
     expect(bar?.getAttribute("aria-valuetext")).toBe("1 of 3 done, 1 in progress, 1 queued");
+    expect(bar?.getAttribute("aria-label")).toBe("Tasks done");
     const labels = [...body().querySelectorAll(".spec-seg .seg-label")].map((e) => e.textContent);
     expect(labels).toEqual(["Requirements", "Design", "Tasks", "analysis"]);
     expect(
@@ -972,6 +1015,44 @@ describe("header", () => {
         .querySelector('[data-spec-doc="design.md"] .spec-seg-dot')
         ?.classList.contains("spec-seg-missing"),
     ).toBe(true);
+  });
+
+  it("points every segment's aria-controls at the pane, which names the shown segment", async () => {
+    openParented();
+    m.replies = [
+      reply(spec([prose("requirements.md", "requirements"), tasksDoc([node("L1", "One")])])),
+    ];
+    view.showSpec(DIR);
+    await settle();
+    const segs = [...body().querySelectorAll<HTMLElement>(".spec-seg")];
+    expect(segs.length).toBeGreaterThan(1);
+    for (const seg of segs) {
+      const panel = document.getElementById(seg.getAttribute("aria-controls") ?? "");
+      expect(panel?.classList.contains("spec-pane")).toBe(true);
+      expect(panel?.getAttribute("role")).toBe("tabpanel");
+    }
+    const pane = body().querySelector(".spec-pane");
+    const shown = body().querySelector('.spec-seg[aria-selected="true"]');
+    expect(pane?.getAttribute("aria-labelledby")).toBe(shown?.id);
+  });
+
+  it("labels the pane with a shown document whose name has a space", async () => {
+    openParented();
+    m.replies = [reply(spec([prose("my notes.md", "other"), prose("design.md", "design")]))];
+    view.showSpec(DIR);
+    await settle();
+    body()
+      .querySelector<HTMLButtonElement>(`[data-spec-doc="${CSS.escape("my notes.md")}"]`)
+      ?.click();
+    await settle();
+    // aria-labelledby is an ID reference list, split on whitespace (WAI-ARIA 1.2 "ID Reference List").
+    const refs = (body().querySelector(".spec-pane")?.getAttribute("aria-labelledby") ?? "").split(
+      /\s+/,
+    );
+    expect(refs).toHaveLength(1);
+    const label = document.getElementById(refs[0] ?? "");
+    expect(label?.getAttribute("data-spec-doc")).toBe("my notes.md");
+    expect(label?.getAttribute("aria-selected")).toBe("true");
   });
 
   it("renders a segment for a document whose name would break an attribute selector", async () => {

@@ -854,6 +854,11 @@ export function upsertHeader(h: ChatHeader): void {
       } else {
         delete next.last_turn_outcome;
       }
+      if (h.bot !== undefined) {
+        next.bot = h.bot;
+      } else {
+        delete next.bot;
+      }
       next.updated_at = h.updated_at;
       return next;
     });
@@ -889,6 +894,7 @@ export function upsertHeader(h: ChatHeader): void {
     // The row is REBUILT from the header rather than spread from `s`, so a conditional spread IS a
     // replace here: nothing carries over because nothing is there.
     ...(h.last_turn_outcome !== undefined && { last_turn_outcome: h.last_turn_outcome }),
+    ...(h.bot !== undefined && { bot: h.bot }),
     updated_at: h.updated_at,
   };
   if (h.compaction_watermark !== undefined) {

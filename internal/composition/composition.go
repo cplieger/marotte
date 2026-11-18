@@ -35,6 +35,7 @@ import (
 	"github.com/cplieger/marotte/internal/powers"
 	"github.com/cplieger/marotte/internal/preview"
 	"github.com/cplieger/marotte/internal/push"
+	"github.com/cplieger/marotte/internal/ruleengine"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/server"
@@ -91,6 +92,8 @@ type App struct {
 	stopKASHeal func()
 	// stopRecentExpiry stops the Recently closed expiry runner and waits for its goroutine.
 	stopRecentExpiry func()
+	// stopRuleEngine stops the Bots' rule engine and waits for its pass in flight.
+	stopRuleEngine func()
 	// stopToolsSteering waits for the boot's environment.md regeneration, which reads the tools engine.
 	stopToolsSteering func()
 	// stopKeepState stops the keep-state reconcile and waits: a round in flight reads KAS over the agent engine.
@@ -214,6 +217,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	chat.WithEpoch(h.Epoch)(chatStore)
 	pruneTabs(ctx, tabStore, chatStore)
 	stopRecentExpiry := runBackground(appCtx, "recently closed expiry", h.Membership().RunRecentExpiry)
+	stopRuleEngine := startRuleEngine(appCtx, chatStore, h)
 	// Once at boot, so a Power installed from a shell before this start gets its
 	// servers with no tab open; the runtime renders it again on every lock change.
 	h.SyncPowers(ctx)
@@ -405,6 +409,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		stopTriggerRunner:    stopTriggerRunner,
 		stopKASHeal:          stopKASHeal,
 		stopRecentExpiry:     stopRecentExpiry,
+		stopRuleEngine:       stopRuleEngine,
 		stopToolsSteering:    stopToolsSteering,
 		stopKeepState:        stopKeepState,
 		stopSessionSweep:     stopSessionSweep,
@@ -446,6 +451,8 @@ func (a *App) Shutdown() {
 	callIfSet(a.stopKASHeal)
 	// Before the runtime's teardown: an expiry in flight emits through the runtime's hub.
 	callIfSet(a.stopRecentExpiry)
+	// Before the runtime's teardown: a delivery in flight places its prompt through the runtime.
+	callIfSet(a.stopRuleEngine)
 	// Before the runtime's teardown: a sweep in flight launches its run through the runtime.
 	callIfSet(a.stopScheduleRunner)
 	// Before the runtime's teardown: a launch in flight runs through the runtime, and its cancels go to the
@@ -1109,6 +1116,18 @@ func openRunLeaseStore(dir string) *runlease.Store {
 		slog.Warn("run leases unread: no chat from before this boot is purged until the aside is removed or restored", "aside", aside)
 	}
 	return st
+}
+
+// startRuleEngine builds the Bots' rule engine over the chat store and the runtime, wires it into the runtime, and
+// runs it until ctx ends.
+func startRuleEngine(ctx context.Context, store ruleengine.Store, h *agent.Runtime) (stop func()) {
+	eng := ruleengine.New(h.RuleDeps(store))
+	h.SetRuleEngine(eng)
+	return runBackground(ctx, "rule engine", func(bctx context.Context) {
+		if err := eng.Run(bctx); err != nil {
+			slog.Error("the rule engine stopped", "error", err)
+		}
+	})
 }
 
 // startOrphanSweep runs the boot orphan sweep and RETRIES it once the first agent engine

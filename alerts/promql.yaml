@@ -323,3 +323,34 @@ groups:
             An event rule could not read back over a time range, so events in
             it may never launch. The rule's row names the range: check it by
             hand, then dismiss the gap there. The alert fires until you do.
+
+      # marotte retries the write every minute and loses nothing meanwhile, so
+      # a passing fault does not page.
+      - alert: MarotteRuleEngineWriteFailing
+        expr: marotte_rule_engine_write_failing == 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "marotte's Bot rules are stopped: it cannot save a Bot"
+          description: >
+            marotte could not write a Bot's record for 5 minutes, so every
+            Bot's rules evaluate and send nothing. Nothing is lost: they
+            resume on the first write that works. Check the config volume's
+            free space and permissions.
+
+      # A failed delivery is a prompt marotte gave up on: 10 tries failed,
+      # or the rule could not be evaluated, rendered or sent at all.
+      - alert: MarotteRuleDeliveryFailing
+        expr: |
+          sum by (job, instance) (
+            increase(marotte_rule_deliveries_total{outcome="failed"}[30m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "marotte gave up on a Bot rule's prompt"
+          description: >
+            marotte gave up on a Bot rule's prompt: 10 tries failed, or the
+            rule could not be evaluated or rendered, or its text was refused.
+            The rule's card says why. Check that the agent engine is up.

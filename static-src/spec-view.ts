@@ -13,20 +13,24 @@ import { openFile } from "./editor-openers.js";
 import { paintStatus } from "./fundamentals/work-status.js";
 import { releaseMarkdownIn, renderMarkdownInto } from "./markdown.js";
 import { paintIfChanged, sigChanged } from "./paint-sig.js";
-import { initSegmentedBar } from "./segmented-bar.js";
+import { initSegmentedBar, segmentId } from "./segmented-bar.js";
 import { editorDocSkeleton } from "./skeleton.js";
 import { get, isBusy, watchBusy } from "./store.js";
 import { openChatRefs, openSpecRefs, parentChatRef, setTabParent, tabIdFor } from "./tabs.js";
 import { SharedScroll } from "./view-scroll.js";
 import { swapViews } from "./view-swap.js";
-import { decodeSpec } from "./wire/decoders.gen.js";
-import type { Spec, SpecDoc, SpecDocRole, SpecTaskNode } from "./wire/types.gen.js";
+import { decodeSpecDir } from "./wire/decoders.gen.js";
+import type { SpecDir, SpecDoc, SpecDocRole, SpecTaskNode } from "./wire/types.gen.js";
 import { absPath } from "./workspace.js";
 import { formatFullStamp } from "./locale-time.js";
 import { maybeEl, queryEl } from "./dom.js";
 
 /** Tree depth, read by css/32-spec.css to indent a row, its note and its detail. */
 const DEPTH_PROP = "--depth";
+
+/** The segmented bar's id prefix, and the one pane every segment shows its document in. */
+const SPEC_ID_PREFIX = "spec";
+const SPEC_PANE_ID = "spec-panel";
 
 /** The server's prompt cap: `maxPromptBytes` in internal/command/validate.go (512 KiB, enforced
  *  over the text's bytes). A deliberate duplicate, because the constant is unexported and this
@@ -95,7 +99,7 @@ interface SpecPageState {
   armedRunAll: RunScope | undefined;
   lastThinking: boolean;
   failure: string;
-  spec: Spec | null;
+  spec: SpecDir | null;
   /** The directory answered 404. */
   gone: boolean;
   page: PageEls | null;
@@ -402,7 +406,7 @@ async function doFetch(ref: string, st: SpecPageState): Promise<void> {
   const ctl = new AbortController();
   st.controller = ctl;
   const gen = ++st.generation;
-  const r = await apiGetConditional(specPath(ref), st.etag, decodeSpec, ctl.signal);
+  const r = await apiGetConditional(specPath(ref), st.etag, decodeSpecDir, ctl.signal);
   if (st.generation !== gen || !states.has(ref)) {
     return;
   }
@@ -420,7 +424,7 @@ async function doFetch(ref: string, st: SpecPageState): Promise<void> {
   armPoll(ref);
 }
 
-function adopt(st: SpecPageState, spec: Spec, etag: string): void {
+function adopt(st: SpecPageState, spec: SpecDir, etag: string): void {
   st.gone = false;
   st.spec = spec;
   st.etag = etag;
@@ -449,7 +453,7 @@ function adopt(st: SpecPageState, spec: Spec, etag: string): void {
 }
 
 /** Which document opens first: the phase's own, else the first listed. */
-function defaultDoc(spec: Spec): string | null {
+function defaultDoc(spec: SpecDir): string | null {
   const phase = phaseOf(spec);
   const doc = phase === null ? undefined : spec.docs.find((d) => d.role === phase.role);
   return doc?.file ?? segmentsFor(spec)[0]?.file ?? null;
@@ -490,7 +494,7 @@ function pageVisible(ref: string): boolean {
   return view !== null && view.offsetParent !== null;
 }
 
-function tasksDoc(spec: Spec): SpecDoc | undefined {
+function tasksDoc(spec: SpecDir): SpecDoc | undefined {
   return spec.docs.find((d) => d.role === "tasks");
 }
 
@@ -509,7 +513,7 @@ function findNode(nodes: readonly SpecTaskNode[], id: string): SpecTaskNode | un
 
 /** The phase pill's word, from the known roles only. Null when no expected document exists (an
  *  `other` document never names a phase). */
-function phaseOf(spec: Spec): { role: Exclude<SpecDocRole, "other">; label: string } | null {
+function phaseOf(spec: SpecDir): { role: Exclude<SpecDocRole, "other">; label: string } | null {
   for (const e of [...EXPECTED].reverse()) {
     if (spec.docs.some((d) => d.role === e.role)) {
       return { role: e.role, label: e.label };
@@ -528,7 +532,7 @@ interface Segment {
 
 /** One segment per expected role (present or missing) then every `other` document, in the
  *  reply's order. */
-function segmentsFor(spec: Spec): Segment[] {
+function segmentsFor(spec: SpecDir): Segment[] {
   const out: Segment[] = [];
   for (const e of EXPECTED) {
     const doc = spec.docs.find((d) => d.role === e.role);
@@ -653,7 +657,7 @@ export function eligibility(
 
 /** Why a row's Run is withheld at render time, or "" when it is offered. */
 function runBlocker(
-  spec: Spec,
+  spec: SpecDir,
   node: SpecTaskNode,
   chat: string,
   thinking: boolean,
@@ -735,6 +739,11 @@ export function applyResult(ref: string, id: string, result: SendPromptResult): 
     return;
   }
   st.failure = "";
+  if (typeof result === "object") {
+    st.failure = result.words;
+    paint(ref);
+    return;
+  }
   switch (result) {
     // Accepted: the server started it, or queued it behind what runs, which sends it in order.
     case "sent":
@@ -785,7 +794,7 @@ const NO_APPROVAL: ApprovalView = { badge: "", detail: "", offer: false, label: 
 /** Resolve one segment's approval state. */
 function approvalView(
   seg: { readonly role: SpecDocRole; readonly doc: SpecDoc | undefined },
-  spec: Spec,
+  spec: SpecDir,
   approving: ReadonlySet<string>,
 ): ApprovalView {
   if (seg.role === "other" || seg.doc === undefined) {
@@ -817,7 +826,7 @@ function approvalView(
  *  field added to `ApprovalView` and forgotten here would leave the badge frozen at whatever it
  *  last painted, which is the failure mode `paint-sig.ts`'s totality rule exists to make
  *  unrepresentable. */
-function approvalParts(seg: Segment, spec: Spec, approving: ReadonlySet<string>): string[] {
+function approvalParts(seg: Segment, spec: SpecDir, approving: ReadonlySet<string>): string[] {
   const v = approvalView(seg, spec, approving);
   const parts: Record<keyof ApprovalView, string> = {
     badge: v.badge,
@@ -873,7 +882,7 @@ function pageFor(ref: string, st: SpecPageState): PageEls {
   }
   const head = el("div", { className: "spec-head" });
   const barHost = el("div", { className: "spec-bar-host" });
-  const pane = el("div", { className: "spec-pane" });
+  const pane = el("div", { id: SPEC_PANE_ID, className: "spec-pane" });
   // The dock's own classes and roles, byte-for-byte the two hosts in static/index.html:
   // `css/26-dock.css` owns every rule and the module owns the `hidden` class, which it lands at the
   // end of the leaving phase.
@@ -912,7 +921,7 @@ function paint(ref: string): void {
     st.failure,
     chat === ""
       ? openChatRefs()
-          .map((id) => `${id}=${get(id)?.name ?? ""}`)
+          .map((id) => `${id}=${get(id)?.name ?? ""}=${get(id)?.bot?.state ?? ""}`)
           .join(",")
       : "",
   ];
@@ -922,6 +931,8 @@ function paint(ref: string): void {
     page.barHost.replaceChildren();
     page.barKey = "";
     page.paintBar = null;
+    page.pane.removeAttribute("role");
+    page.pane.removeAttribute("aria-labelledby");
     const parts = [String(st.gone)];
     if (sigChanged(page.pane, parts)) {
       replacePane(page.pane, [
@@ -944,7 +955,8 @@ function paint(ref: string): void {
     page.barHost.replaceChildren(bar);
     page.paintBar = initSegmentedBar(bar, {
       attr: "data-spec-doc",
-      idPrefix: "spec",
+      idPrefix: SPEC_ID_PREFIX,
+      sharedPanel: SPEC_PANE_ID,
       tabs: segments.map((s) => ({ id: s.file, label: s.label })),
       onSelect: (file) => {
         if (st.doc === file) {
@@ -958,6 +970,8 @@ function paint(ref: string): void {
   paintDots(page.barHost, segments, st, thinking);
   const active = st.doc ?? segments[0]?.file ?? "";
   page.paintBar?.(active);
+  page.pane.setAttribute("role", "tabpanel");
+  page.pane.setAttribute("aria-labelledby", segmentId(SPEC_ID_PREFIX, active));
 
   const seg = segments.find((s) => s.file === active);
   const paneParts = [
@@ -1080,7 +1094,7 @@ function runInPicker(ref: string, disabled: boolean): HTMLElement {
     "aria-label": "Chat to run tasks in",
     disabled,
   }) as HTMLSelectElement;
-  const chats = openChatRefs();
+  const chats = openChatRefs().filter((id) => get(id)?.bot?.state !== "draft");
   for (const id of chats) {
     select.appendChild(el("option", { value: id }, get(id)?.name ?? "Chat"));
   }
@@ -1124,6 +1138,7 @@ function progressBar(p: {
   const bar = el("div", {
     className: "spec-progressbar",
     role: "progressbar",
+    "aria-label": "Tasks done",
     "aria-valuenow": String(p.completed),
     "aria-valuemin": "0",
     "aria-valuemax": String(p.total),
@@ -1184,7 +1199,7 @@ function paintDots(
 function buildPane(
   ref: string,
   st: SpecPageState,
-  spec: Spec,
+  spec: SpecDir,
   seg: Segment,
   chat: string,
   thinking: boolean,
@@ -1223,7 +1238,7 @@ function buildPane(
 function docActions(
   ref: string,
   st: SpecPageState,
-  spec: Spec,
+  spec: SpecDir,
   seg: Segment,
   doc: SpecDoc,
 ): HTMLElement[] {
@@ -1283,7 +1298,7 @@ function editButton(ref: string, file: string): HTMLElement {
 function buildTasks(
   ref: string,
   st: SpecPageState,
-  spec: Spec,
+  spec: SpecDir,
   doc: SpecDoc,
   chat: string,
   thinking: boolean,
@@ -1315,7 +1330,7 @@ function buildTasks(
 interface NodeCtx {
   readonly ref: string;
   readonly st: SpecPageState;
-  readonly spec: Spec;
+  readonly spec: SpecDir;
   readonly chat: string;
   readonly thinking: boolean;
   readonly truncated: boolean;

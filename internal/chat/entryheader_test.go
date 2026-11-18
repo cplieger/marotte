@@ -152,7 +152,7 @@ func TestEntryHeader_CachesAndFlagsWriteOnlyOnAChange(t *testing.T) {
 	h, root := newHeaderFixture(t)
 	stored := &marotte.Chat{
 		ID: "c-abcdef01", TurnCount: 2,
-		LastTurnOutcome: marotte.TurnOutcomeCompleted,
+		LastTurnOutcome: marotte.TurnOutcomeCompleted, LastTurnEndedAt: 500,
 	}
 	if err := h.write(t.Context(), stored); err != nil {
 		t.Fatalf("write header: %v", err)
@@ -160,23 +160,31 @@ func TestEntryHeader_CachesAndFlagsWriteOnlyOnAChange(t *testing.T) {
 	path := filepath.Join(root, headerFileName)
 	stamp := backdate(t, path)
 
-	if err := h.Counters(t.Context(), 2, marotte.TurnOutcomeCompleted); err != nil {
+	if err := h.Counters(t.Context(), TurnCounters{N: 2, Last: marotte.TurnOutcomeCompleted, EndedAt: 500}); err != nil {
 		t.Fatalf("counters: %v", err)
 	}
 	if !modTime(t, path).Equal(stamp) {
 		t.Error("a write that changes nothing still rewrote the header")
 	}
 	got := mustReadHeader(t, h)
-	if got.TurnCount != 2 || got.LastTurnOutcome != marotte.TurnOutcomeCompleted {
+	if got.TurnCount != 2 || got.LastTurnOutcome != marotte.TurnOutcomeCompleted || got.LastTurnEndedAt != 500 {
 		t.Fatalf("an agreeing write changed the header to %+v", got)
 	}
 
-	if err := h.Counters(t.Context(), 3, marotte.TurnOutcomeFailed); err != nil {
+	if err := h.Counters(t.Context(), TurnCounters{N: 2, Last: marotte.TurnOutcomeCompleted, EndedAt: 900}); err != nil {
+		t.Fatalf("counters: %v", err)
+	}
+	if got = mustReadHeader(t, h); got.LastTurnEndedAt != 900 {
+		t.Errorf("a moved turn end left last_turn_ended_at at %d, want 900", got.LastTurnEndedAt)
+	}
+
+	if err := h.Counters(t.Context(), TurnCounters{N: 3, Last: marotte.TurnOutcomeFailed, EndedAt: 1200}); err != nil {
 		t.Fatalf("counters: %v", err)
 	}
 	got = mustReadHeader(t, h)
-	if got.TurnCount != 3 || got.LastTurnOutcome != marotte.TurnOutcomeFailed {
-		t.Errorf("the corrected header is (%d, %q), want (3, failed)", got.TurnCount, got.LastTurnOutcome)
+	if got.TurnCount != 3 || got.LastTurnOutcome != marotte.TurnOutcomeFailed || got.LastTurnEndedAt != 1200 {
+		t.Errorf("the corrected header is (%d, %q, %d), want (3, failed, 1200): the three are one write",
+			got.TurnCount, got.LastTurnOutcome, got.LastTurnEndedAt)
 	}
 }
 

@@ -1053,6 +1053,17 @@ describe("upsertHeader re-syncs an existing row", () => {
     expect(get("a")?.last_turn_outcome).toBeUndefined();
   });
 
+  it("takes the header's Bot summary, and an absent one as a regular chat's", () => {
+    const draft = { state: "draft", idle_minutes: 0, rules: 1, rules_version: 0 } as const;
+    resetStore("a");
+    upsertHeader({ ...headerFor("a"), bot: draft });
+    expect(get("a")?.bot?.state).toBe("draft");
+    upsertHeader(headerFor("a"));
+    expect(get("a")?.bot).toBeUndefined();
+    upsertHeader({ ...headerFor("b"), bot: draft });
+    expect(get("b")?.bot?.state).toBe("draft");
+  });
+
   it("takes pending_model in both directions, which is what clears the badge everywhere", () => {
     resetStore("a");
     upsertHeader({ ...headerFor("a"), pending_model: "model-a" });
