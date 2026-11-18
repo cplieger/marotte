@@ -135,16 +135,16 @@ var hookTriggerNames = map[string]string{
 	"afterfileedit": triggerPostFileSave,
 }
 
-// CanonicalHookTrigger maps a trigger spelling to its canonical name and reports whether KAS
-// loads it.
+// CanonicalHookTrigger maps a trigger name to its canonical spelling, false for a name that is no
+// trigger. Callers pass a trigger KAS listed (_kiro/hooks/list sends a loaded hook's canonical name)
+// or one of marotte's own, so its case-folded lookup never decides whether KAS loads a hook file.
 func CanonicalHookTrigger(eventType string) (string, bool) {
 	name, ok := hookTriggerNames[strings.ToLower(strings.TrimSpace(eventType))]
 	return name, ok
 }
 
-// HookTriggerSubject is what a trigger spelling's matcher is tested against, and whether KAS
-// loads the trigger at all; KAS's parseHookDocument drops a hook whose trigger it does not
-// recognise.
+// HookTriggerSubject is what a trigger's matcher is tested against, false for a name that is no
+// trigger (CanonicalHookTrigger).
 func HookTriggerSubject(eventType string) (HookMatcherSubject, bool) {
 	name, ok := CanonicalHookTrigger(eventType)
 	if !ok {

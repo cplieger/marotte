@@ -75,11 +75,11 @@ func deathSignalOf(state *os.ProcessState) syscall.Signal {
 	return 0
 }
 
-// reapProcess reaps the kiro-cli process's group, then the node engine's: on 2.18.0 a head-only kill left the kiro-cli
-// process and its node child alive at about 250 MB (procgroup.Kill), and the node engine leads its own group
-// (sweepEngineGroups). When closed says teardown closed its stdin, a process that had not ended itself gets
-// stdinEOFGrace to exit on that EOF; only one still alive after it does the SIGTERM do real work. pgid and owns are
-// GroupOf's answer and endedItself is endedOnItsOwn's, both from before the stdin close.
+// reapProcess reaps the kiro-cli process's group, then the node engine's: a head-only kill leaves the kiro-cli process
+// and its node child alive (procgroup.Kill), and the node engine leads its own group (sweepEngineGroups). When closed
+// says teardown closed its stdin, a process that had not ended itself gets stdinEOFGrace to exit on that EOF; only one
+// still alive after it does the SIGTERM do real work. pgid and owns are GroupOf's answer and endedItself is
+// endedOnItsOwn's, both from before the stdin close.
 func (e *Engine) reapProcess(pgid int, owns, endedItself, closed bool) {
 	if closed && !endedItself {
 		awaitExit(e.cmd.Process.Pid, stdinEOFGrace)

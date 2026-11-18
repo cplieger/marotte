@@ -88,8 +88,8 @@ func (reg *mcpRegistry) sendOrgSignIn(h engineHandle, attempt uint64) {
 }
 
 // settleOrgSignIn ends attempt's sign-in with its reply: a success reads signed-in until the next report names the
-// account, an error stays on the card. A sign-in no longer attempt's (signed out, reported signed-in, or the engine
-// ended) has its state already, so nothing is recorded.
+// account, an error stays on the card. When attempt is no longer the standing sign-in (signed out, reported
+// signed-in, or the engine ended), its state is already recorded, so nothing is.
 func (reg *mcpRegistry) settleOrgSignIn(attempt uint64, err error) {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
