@@ -129,6 +129,13 @@ func TestNotifyDoor_MapsRefusals(t *testing.T) {
 			t.Errorf("err = %v, want ErrUnknownSession", err)
 		}
 	})
+	t.Run("a chat the user closed is session closed", func(t *testing.T) {
+		rig := newDoorRig(header("c1", "s1"))
+		rig.answer = command.StatusErrorReason(http.StatusGone, "session_closed", errors.New("this chat was closed by the user"))
+		if _, err := rig.door.Deliver(t.Context(), "s1", "wake", "grelot"); !errors.Is(err, notify.ErrSessionClosed) {
+			t.Errorf("err = %v, want ErrSessionClosed", err)
+		}
+	})
 	t.Run("a saturated chat is unavailable", func(t *testing.T) {
 		rig := newDoorRig(header("c1", "s1"))
 		rig.answer = command.StatusErrorReason(http.StatusConflict, "full", errors.New("full"))

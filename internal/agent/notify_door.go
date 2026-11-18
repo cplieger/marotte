@@ -77,6 +77,8 @@ func notifyError(err error) error {
 	switch command.ClassifyNotifyError(err) {
 	case command.NotifyUnknownChat:
 		return notify.ErrUnknownSession
+	case command.NotifySessionClosed:
+		return notify.ErrSessionClosed
 	case command.NotifyRetryLater:
 		return notify.ErrUnavailable
 	case command.NotifyBadText:

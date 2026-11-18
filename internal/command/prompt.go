@@ -313,6 +313,13 @@ const reasonChatGone = "chat_not_found"
 // Bot with no tab when its message began (Membership.BeginMessage). The client keeps the text as the chat's draft.
 const reasonChatClosed = "chat_closed"
 
+// reasonSessionClosed is the 410 refusal class for an outside caller's message into a chat with no tab: the user
+// closed it, so the message is not placed and the chat stays closed (Membership.BeginMessage).
+const reasonSessionClosed = "session_closed"
+
+// errSessionClosed is reasonSessionClosed's message.
+var errSessionClosed = errors.New("this chat was closed by the user")
+
 // reasonPromptOnly is the 409 refusal class for prompt-only text that would be steered. The client keeps the text
 // in the composer.
 const reasonPromptOnly = "prompt_only"
@@ -340,8 +347,8 @@ func cmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComma
 		return nil, err
 	}
 	p.Caller = cmd.From
-	// Before the submit: a prompt into an idle chat starts a turn, whose tab must exist first. The prompt's intent
-	// begins at the stamp: a close that commits after it ends the prompt wherever it waits.
+	// Before the submit: the prompt's intent begins at the stamp, so a close that commits after it ends the prompt
+	// wherever it waits.
 	stamp, err := roles.door.BeginMessage(ctx, cmd.ChatID, cmd.From, roles.admission.LifeStamp)
 	if err != nil {
 		return nil, err

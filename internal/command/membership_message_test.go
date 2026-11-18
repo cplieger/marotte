@@ -1,16 +1,14 @@
 package command
 
-// BeginMessage: where a message's intent toward a chat begins. A Bot is checked and stamped in one hold, so a Bot
-// left with no tab refuses the message, and a regular chat takes its stamp as before.
+// BeginMessage: where a message's intent toward a chat begins. The chat's tab is checked and the stamp taken in one
+// hold, so a message into a chat with no tab is refused by who sent it, and no message opens a tab.
 
 import (
-	"fmt"
 	"net/http"
 	"reflect"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
@@ -52,45 +50,27 @@ func TestBeginMessage_AnOpenBotTakesItsStamp(t *testing.T) {
 	}
 }
 
-func TestBeginMessage_AnOutsideCallersMessageReopensAClosedBotAndStamps(t *testing.T) {
+func TestBeginMessage_AnOutsideCallersMessageIntoAClosedBotIsSessionClosed(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, st, _ := newTabbedMembership(t, store)
 	seedBot(t, store, "c-bot", "CI watcher", &marotte.Bot{Goal: "Keep CI green.", StartedAt: 1, ClosedAt: 2})
 	var stamps stampCounter
 
-	got, err := mem.BeginMessage(t.Context(), "c-bot", grelotCaller, stamps.stamp)
-
-	if err != nil || got != 7 {
-		t.Fatalf("BeginMessage = %d %v, want stamp 7", got, err)
-	}
-	if _, ok := chatTabOf(st, "c-bot"); !ok {
-		t.Error("the Bot has no tab after an outside caller's message, want it reopened")
-	}
-	if c := botOf(t, store, "c-bot"); c.Bot.ClosedAt != 0 {
-		t.Errorf("closed_at = %d, want 0 once reopened", c.Bot.ClosedAt)
-	}
-}
-
-func TestBeginMessage_ABotTheReopenCannotOpenIsRefused(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	mem, _, _ := newTabbedMembership(t, store)
-	for i := range tabs.MaxOpenTabs {
-		id := marotte.ChatID(fmt.Sprintf("c-%02d", i))
-		seedNamed(t, store, id, "Open")
-		openChatTab(t, mem, id, "")
-	}
-	seedBot(t, store, "c-bot", "CI watcher", &marotte.Bot{Goal: "Keep CI green.", StartedAt: 1, ClosedAt: 2})
-	var stamps stampCounter
-
 	_, err := mem.BeginMessage(t.Context(), "c-bot", grelotCaller, stamps.stamp)
 
-	if statusOf(err) != http.StatusConflict || reasonOf(err) != reasonChatClosed || stamps.taken != 0 {
-		t.Errorf("BeginMessage at 48 tabs = %d %q, stamps taken %d; want 409 %s and no stamp",
-			statusOf(err), reasonOf(err), stamps.taken, reasonChatClosed)
+	if statusOf(err) != http.StatusGone || reasonOf(err) != reasonSessionClosed || stamps.taken != 0 {
+		t.Errorf("BeginMessage = %d %q, stamps taken %d; want 410 %s and no stamp",
+			statusOf(err), reasonOf(err), stamps.taken, reasonSessionClosed)
+	}
+	if _, ok := chatTabOf(st, "c-bot"); ok {
+		t.Error("an outside caller's message opened the closed Bot's tab")
+	}
+	if c := botOf(t, store, "c-bot"); c.Bot.ClosedAt != 2 {
+		t.Errorf("closed_at = %d, want 2 kept", c.Bot.ClosedAt)
 	}
 }
 
-func TestBeginMessage_ARegularChatWithNoTabTakesItsStampAndOpensNothing(t *testing.T) {
+func TestBeginMessage_APagesMessageIntoARegularChatWithNoTabTakesItsStampAndOpensNothing(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, st, _ := newTabbedMembership(t, store)
 	seedNamed(t, store, "c-a", "Alpha")
@@ -106,14 +86,9 @@ func TestBeginMessage_ARegularChatWithNoTabTakesItsStampAndOpensNothing(t *testi
 	}
 }
 
-func TestNotify_ABotItsReopenCannotOpenIsRefusedForALaterRetry(t *testing.T) {
+func TestNotify_IntoAClosedBotIsSessionClosedAndSubmitsNothing(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, _, _ := newTabbedMembership(t, store)
-	for i := range tabs.MaxOpenTabs {
-		id := marotte.ChatID(fmt.Sprintf("c-%02d", i))
-		seedNamed(t, store, id, "Open")
-		openChatTab(t, mem, id, "")
-	}
 	seedBot(t, store, "c-bot", "CI watcher", &marotte.Bot{Goal: "Keep CI green.", StartedAt: 1, ClosedAt: 2})
 	roles := promptRolesOf(newTestHost(t, store))
 	run := &countingRun{}
@@ -121,13 +96,13 @@ func TestNotify_ABotItsReopenCannotOpenIsRefusedForALaterRetry(t *testing.T) {
 	d := New()
 	d.prompts = roles
 
-	_, err := d.Notify(t.Context(), "c-bot", "1 new message", &marotte.Caller{Label: "grelot"}, NotifyOptions{})
+	_, err := d.Notify(t.Context(), "c-bot", "1 new message", grelotCaller, NotifyOptions{})
 
-	if reasonOf(err) != reasonChatClosed || ClassifyNotifyError(err) != NotifyRetryLater {
-		t.Errorf("notify = %v reason %q, want 409 %s classed NotifyRetryLater", err, reasonOf(err), reasonChatClosed)
+	if reasonOf(err) != reasonSessionClosed || ClassifyNotifyError(err) != NotifySessionClosed {
+		t.Errorf("notify = %v reason %q, want 410 %s classed NotifySessionClosed", err, reasonOf(err), reasonSessionClosed)
 	}
 	if got := run.submitted(); got != 0 {
-		t.Errorf("%d submission(s) reached the run order, want none for a Bot with no tab", got)
+		t.Errorf("%d submission(s) reached the run order, want none for a closed Bot", got)
 	}
 }
 
@@ -148,7 +123,7 @@ func TestPrompt_APagesPromptToAClosedBotIsRefusedAndSubmitsNothing(t *testing.T)
 		t.Errorf("%d submission(s) reached the run order, want none for a closed Bot", got)
 	}
 	if _, ok := chatTabOf(st, "c-bot"); ok {
-		t.Error("a page's prompt reopened the Bot, want only an outside caller's message to")
+		t.Error("a page's prompt opened the closed Bot's tab")
 	}
 }
 
@@ -209,21 +184,6 @@ func TestBeginMessage_ARulesMessageIntoAnOpenBotTakesItsStamp(t *testing.T) {
 
 	if err != nil || got != 7 || stamps.taken != 1 {
 		t.Errorf("BeginMessage = %d %v, stamps taken %d; want stamp 7 taken once", got, err, stamps.taken)
-	}
-}
-
-func TestReopenForMessage_ARulesMessageOpensNoClosedBot(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	mem, st, _ := newTabbedMembership(t, store)
-	seedBot(t, store, "c-bot", "CI watcher", &marotte.Bot{Goal: "Keep CI green.", StartedAt: 1, ClosedAt: 2})
-
-	mem.ReopenForMessage(t.Context(), "c-bot", ruleCaller)
-
-	if _, ok := chatTabOf(st, "c-bot"); ok {
-		t.Error("a rule's message reopened a closed Bot")
-	}
-	if c := botOf(t, store, "c-bot"); c.Bot.ClosedAt != 2 {
-		t.Errorf("closed_at = %d, want 2 kept", c.Bot.ClosedAt)
 	}
 }
 

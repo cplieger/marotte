@@ -32,7 +32,7 @@ func TestQueuePrompt_QueuesTheRowWithItsAttachments(t *testing.T) {
 	att := marotte.Attachment{Path: "notes.md", Name: "notes.md"}
 
 	for range 2 {
-		if _, err := cmdQueuePrompt(t.Context(), q, q.roles.admission, nil, testsupport.NewInMemoryChatStore(), queueReq(t, "then run the tests", "m-1", att)); err != nil {
+		if _, err := cmdQueuePrompt(t.Context(), q, q.roles.admission, nopDoor{}, testsupport.NewInMemoryChatStore(), queueReq(t, "then run the tests", "m-1", att)); err != nil {
 			t.Fatalf("CmdQueuePrompt: %v", err)
 		}
 	}
@@ -48,10 +48,10 @@ func TestQueuePrompt_QueuesTheRowWithItsAttachments(t *testing.T) {
 
 func TestQueuePrompt_AcceptsAnAttachmentOnlyRow(t *testing.T) {
 	q := liveRun()
-	if _, err := cmdQueuePrompt(t.Context(), q, q.roles.admission, nil, testsupport.NewInMemoryChatStore(), queueReq(t, "", "m-1", marotte.Attachment{Path: "shot.png"})); err != nil {
+	if _, err := cmdQueuePrompt(t.Context(), q, q.roles.admission, nopDoor{}, testsupport.NewInMemoryChatStore(), queueReq(t, "", "m-1", marotte.Attachment{Path: "shot.png"})); err != nil {
 		t.Fatalf("CmdQueuePrompt(attachment only): %v", err)
 	}
-	if _, err := cmdQueuePrompt(t.Context(), q, q.roles.admission, nil, testsupport.NewInMemoryChatStore(), queueReq(t, "  ", "m-2")); statusOf(err) != http.StatusBadRequest {
+	if _, err := cmdQueuePrompt(t.Context(), q, q.roles.admission, nopDoor{}, testsupport.NewInMemoryChatStore(), queueReq(t, "  ", "m-2")); statusOf(err) != http.StatusBadRequest {
 		t.Errorf("CmdQueuePrompt(blank, no attachment) status = %d, want 400", statusOf(err))
 	}
 }
@@ -59,7 +59,7 @@ func TestQueuePrompt_AcceptsAnAttachmentOnlyRow(t *testing.T) {
 func TestQueuePrompt_IdleIsNoTurn(t *testing.T) {
 	q := runOver(&benchDeps{})
 
-	_, err := cmdQueuePrompt(t.Context(), q, q.roles.admission, nil, testsupport.NewInMemoryChatStore(), queueReq(t, "later", "m-1"))
+	_, err := cmdQueuePrompt(t.Context(), q, q.roles.admission, nopDoor{}, testsupport.NewInMemoryChatStore(), queueReq(t, "later", "m-1"))
 
 	if statusOf(err) != http.StatusConflict || reasonOf(err) != reasonNoTurn {
 		t.Errorf("status = %d reason = %q, want 409 %q", statusOf(err), reasonOf(err), reasonNoTurn)
@@ -92,7 +92,7 @@ func TestQueuePrompt_RefusesPastItsCaps(t *testing.T) {
 	})
 	t.Run("text", func(t *testing.T) {
 		q := liveRun()
-		_, err := cmdQueuePrompt(t.Context(), q, q.roles.admission, nil, testsupport.NewInMemoryChatStore(), queueReq(t, strings.Repeat("x", MaxPromptBytes+1), "m-1"))
+		_, err := cmdQueuePrompt(t.Context(), q, q.roles.admission, nopDoor{}, testsupport.NewInMemoryChatStore(), queueReq(t, strings.Repeat("x", MaxPromptBytes+1), "m-1"))
 		if statusOf(err) != http.StatusRequestEntityTooLarge {
 			t.Errorf("status = %d, want 413", statusOf(err))
 		}
@@ -103,7 +103,7 @@ func TestQueuePrompt_RefusesPastItsCaps(t *testing.T) {
 		for i := range atts {
 			atts[i] = marotte.Attachment{Path: "a.txt", Name: "a.txt"}
 		}
-		_, err := cmdQueuePrompt(t.Context(), q, q.roles.admission, nil, testsupport.NewInMemoryChatStore(), queueReq(t, "with files", "m-1", atts...))
+		_, err := cmdQueuePrompt(t.Context(), q, q.roles.admission, nopDoor{}, testsupport.NewInMemoryChatStore(), queueReq(t, "with files", "m-1", atts...))
 		if statusOf(err) != http.StatusBadRequest {
 			t.Errorf("status = %d, want 400", statusOf(err))
 		}
@@ -158,7 +158,7 @@ func TestQueuePrompt_ALabelledRowIsSentWithItsLabel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdQueuePrompt(t.Context(), q, q.roles.admission, nil, testsupport.NewInMemoryChatStore(), &marotte.ClientCommand{Type: marotte.CmdQueuePrompt, ChatID: "c1", Payload: payload}); err != nil {
+	if _, err := cmdQueuePrompt(t.Context(), q, q.roles.admission, nopDoor{}, testsupport.NewInMemoryChatStore(), &marotte.ClientCommand{Type: marotte.CmdQueuePrompt, ChatID: "c1", Payload: payload}); err != nil {
 		t.Fatalf("CmdQueuePrompt: %v", err)
 	}
 	row := q.queued()[0]

@@ -537,52 +537,36 @@ func (m *Membership) openChatTabUnderMu(ctx context.Context, spec marotte.OpenTa
 	return opened, err
 }
 
-// ReopenForMessage opens chatID's tab, owning and top level, when a message from an outside caller, from, reaches a
-// chat with none; a chat with a tab costs one lookup and writes nothing. A rule's message reopens nothing: a Bot the
-// user closed stays closed. It never refuses the message: at MaxOpenTabs the open is skipped at Info, a gone or
-// tearing-down chat is left to the prompt's own refusal, and any other failure is logged at Warn.
-func (m *Membership) ReopenForMessage(ctx context.Context, chatID marotte.ChatID, from *marotte.Caller) {
-	if m.tabs == nil || !reopensFor(from) {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.reopenUnderMu(ctx, chatID)
-}
-
 // BeginMessage answers stamp(), the life stamp a message from from (nil for a page's) into chatID presents to its
-// submit, where its intent begins: a close that commits after it ends the message. An outside caller's message first
-// opens the chat's tab (ReopenForMessage) in the same hold of mu. A Bot is checked and stamped in one hold, so a Bot
-// left with no tab, by a close that committed first or a reopen that opened none, refuses with 409 chat_closed: no
-// turn runs in a closed Bot. A rule's message into a Bot with no tab or with closed_at set refuses with 409
-// bot_closed, which tells the rule engine to drop the event, and opens or writes nothing.
+// submit, where its intent begins: a close that commits after it ends the message. The chat's tab is checked and the
+// stamp taken in one hold of mu, and no message opens a tab. Into a chat with no tab, a chat the user closed, a rule's
+// message refuses with 409 bot_closed, which tells the rule engine to drop the event; any other outside caller's
+// refuses with 410 session_closed; a page's refuses with 409 chat_closed for a Bot, since no turn runs in a closed
+// Bot, and takes its stamp for any other chat. A rule's message into a Bot whose closed_at is set refuses with 409
+// bot_closed too. A chat with no record takes its stamp, left to the submit's own refusal.
 func (m *Membership) BeginMessage(ctx context.Context, chatID marotte.ChatID, from *marotte.Caller, stamp func() uint64) (uint64, error) {
 	c, ok := m.chats.Get(ctx, chatID)
-	bot := ok && c.Bot != nil
-	reopen := from != nil && reopensFor(from)
-	if m.tabs == nil || (!reopen && !bot) {
+	if m.tabs == nil || !ok || (from == nil && c.Bot == nil) {
 		return stamp(), nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if reopen {
-		m.reopenUnderMu(ctx, chatID)
-	}
 	shown := m.tabForChat(chatID) != ""
-	if bot && !reopensFor(from) {
-		if c, ok = m.chats.Get(ctx, chatID); !shown || !ok || c.Bot == nil || c.Bot.ClosedAt != 0 {
+	rule := from != nil && from.Kind == marotte.CallerKindRule
+	switch {
+	case rule && !shown:
+		return 0, StatusErrorReason(http.StatusConflict, reasonBotClosed, errBotClosed)
+	case rule && c.Bot != nil:
+		if c, ok = m.chats.Get(ctx, chatID); !ok || c.Bot == nil || c.Bot.ClosedAt != 0 {
 			return 0, StatusErrorReason(http.StatusConflict, reasonBotClosed, errBotClosed)
 		}
-	}
-	if bot && !shown {
+	case shown:
+	case from != nil:
+		return 0, StatusErrorReason(http.StatusGone, reasonSessionClosed, errSessionClosed)
+	default:
 		return 0, StatusErrorReason(http.StatusConflict, reasonChatClosed, errChatClosed)
 	}
 	return stamp(), nil
-}
-
-// reopensFor reports whether a message from from may reopen its chat: every caller's but a rule's.
-func reopensFor(from *marotte.Caller) bool {
-	return from == nil || from.Kind != marotte.CallerKindRule
 }
 
 // SetRuleIndex wires the rule engine, which every Bot close and reopen tells to read the Bot again; a setter because
@@ -591,21 +575,6 @@ func (m *Membership) SetRuleIndex(rules RuleIndex) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.rules = rules
-}
-
-// reopenUnderMu is ReopenForMessage's body. Caller holds mu.
-func (m *Membership) reopenUnderMu(ctx context.Context, chatID marotte.ChatID) {
-	if m.tabForChat(chatID) != "" {
-		return
-	}
-	_, err := m.openChatTabUnderMu(ctx, marotte.OpenTab{Kind: marotte.TabKindChat, Ref: string(chatID), Owns: true}, "")
-	switch {
-	case err == nil, errors.Is(err, errOpenChatUnknown), errors.Is(err, errChatPurging):
-	case errors.Is(err, errTabsFull):
-		slog.Info("command: a messaged chat's tab was not reopened; 48 tabs are open", "chat_id", chatID)
-	default:
-		slog.Warn("command: a messaged chat's tab was not reopened", "chat_id", chatID, keyError, err)
-	}
 }
 
 // openRunTabLocked opens a run tab. An open one only gains focus. A new one is refused unless its owners were

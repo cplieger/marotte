@@ -73,9 +73,6 @@ func TestOpenTab_EveryChatTabOpenerTakesTheBotFactFromTheRecord(t *testing.T) {
 				t.Fatalf("OpenTab(run wf_1) = %v", err)
 			}
 		}},
-		{name: "a message from an outside caller", open: func(t *testing.T, h *openerHost) {
-			h.mem.ReopenForMessage(t.Context(), "c-target", grelotCaller)
-		}},
 	}
 	for _, o := range openers {
 		t.Run(o.name+" opens a Bot top level with the Bot fact", func(t *testing.T) {

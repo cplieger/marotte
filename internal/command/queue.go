@@ -25,8 +25,7 @@ const reasonSending = "sending"
 const reasonHeld = "held"
 
 // cmdQueuePrompt holds a message for the end of what runs. An idle chat is a 409 no_turn, the refusal a steer gives,
-// so the caller sends a prompt instead. An outside caller's row reopens the chat's tab only once the queue took it:
-// before the submit, a row the queue refuses would open a tab on every device.
+// so the caller sends a prompt instead.
 func cmdQueuePrompt(
 	ctx context.Context, runq runQueue, admission turnAdmission, door messageDoor, chats chatStore, cmd *marotte.ClientCommand,
 ) (any, error) {
@@ -40,14 +39,17 @@ func cmdQueuePrompt(
 	if refusal := refuseBotDraft(ctx, chats, cmd.ChatID); refusal != nil {
 		return nil, refusal
 	}
-	ans, err := runq.Submit(ctx, cmd.ChatID, admission.LifeStamp(), &Submission{
+	stamp, err := door.BeginMessage(ctx, cmd.ChatID, cmd.From, admission.LifeStamp)
+	if err != nil {
+		return nil, err
+	}
+	ans, err := runq.Submit(ctx, cmd.ChatID, stamp, &Submission{
 		Row: row, Origin: marotte.RunFromQueue, Kind: marotte.SendQueuePrompt, NoSteer: true,
 		Retry: !kasClaimsPromptText(row.Text),
 	})
 	if err != nil {
 		return nil, submitRefusal(err)
 	}
-	reopenForCaller(ctx, door, cmd)
 	slog.Info("prompt queued", "chat", cmd.ChatID, "message_id", row.ID)
 	return responseWith(map[string]any{"message_id": row.ID, "as": ans.As, "run": ans.Run}), nil
 }

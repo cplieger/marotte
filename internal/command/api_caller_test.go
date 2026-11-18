@@ -38,17 +38,27 @@ func (o *openRecorder) prompts() []*marotte.EntryPrompt {
 	return out
 }
 
+// fixtureDoor is the fixture's message door: inner when set, else every message takes its stamp.
+type fixtureDoor struct{ inner messageDoor }
+
+func (f *fixtureDoor) BeginMessage(ctx context.Context, chatID marotte.ChatID, from *marotte.Caller, stamp func() uint64) (uint64, error) {
+	if f.inner != nil {
+		return f.inner.BeginMessage(ctx, chatID, from, stamp)
+	}
+	return stamp(), nil
+}
+
 // callerFixture serves prompt, steer and queue_prompt for chat c1, whose composer holds a draft and a staged file,
 // through the real dispatcher. The prompt's session open fails at once, so no turn outlives the test.
 type callerFixture struct {
-	d       *Dispatcher
-	opens   *openRecorder
-	store   *testsupport.InMemoryChatStore
-	steers  *stubSteerQueue
-	queue   *launchingRun
-	join    *promptJoin
-	reopens *reopenRecorder
-	host    *admissionHost
+	d      *Dispatcher
+	opens  *openRecorder
+	store  *testsupport.InMemoryChatStore
+	steers *stubSteerQueue
+	queue  *launchingRun
+	join   *promptJoin
+	door   *fixtureDoor
+	host   *admissionHost
 }
 
 func newCallerFixture(t *testing.T) *callerFixture {
@@ -81,8 +91,8 @@ func newCallerFixture(t *testing.T) *callerFixture {
 	roles.lifecycle = join
 	queue := runOf(roles)
 	queue.live = true
-	reopens := &reopenRecorder{opens: opens, queue: queue}
-	roles.door = reopens
+	door := &fixtureDoor{}
+	roles.door = door
 
 	d := New()
 	d.status = &fakeChatStatus{}
@@ -92,14 +102,14 @@ func newCallerFixture(t *testing.T) *callerFixture {
 	})
 	// benchDeps holds a prompt turn for the steer to join.
 	steerRoles := steerRolesOf(newBenchDeps(), NewSteerLedger(), steers)
-	steerRoles.door = reopens
+	steerRoles.door = door
 	d.register(marotte.CmdSteer, func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
 		return cmdSteer(ctx, steerRoles, cmd)
 	})
 	d.register(marotte.CmdQueuePrompt, func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
-		return cmdQueuePrompt(ctx, queue, roles.admission, reopens, roles.chats, cmd)
+		return cmdQueuePrompt(ctx, queue, roles.admission, door, roles.chats, cmd)
 	})
-	return &callerFixture{d: d, opens: opens, store: store, steers: steers, queue: queue, join: join, reopens: reopens, host: host}
+	return &callerFixture{d: d, opens: opens, store: store, steers: steers, queue: queue, join: join, door: door, host: host}
 }
 
 // post sends a command the way the poller does (no fetch metadata, no Origin), with headers adding a page's, and

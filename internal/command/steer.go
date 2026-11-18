@@ -125,7 +125,11 @@ func cmdSteer(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComman
 	if err != nil {
 		return nil, err
 	}
-	if err := refuseBotDraft(ctx, roles.chats, cmd.ChatID); err != nil {
+	if refusal := refuseBotDraft(ctx, roles.chats, cmd.ChatID); refusal != nil {
+		return nil, refusal
+	}
+	stamp, err := roles.door.BeginMessage(ctx, cmd.ChatID, cmd.From, roles.admission.LifeStamp)
+	if err != nil {
 		return nil, err
 	}
 	s := Submission{
@@ -133,7 +137,7 @@ func cmdSteer(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComman
 		Origin: marotte.RunFromPrompt, Kind: marotte.SendPlain, SteerOnly: true, Wait: true,
 		Retry: !kasClaimsPromptText(text),
 	}
-	if _, err := roles.runq.Submit(ctx, cmd.ChatID, roles.admission.LifeStamp(), &s); err != nil {
+	if _, err := roles.runq.Submit(ctx, cmd.ChatID, stamp, &s); err != nil {
 		return nil, submitRefusal(err)
 	}
 	slog.Info("steer accepted", "chat", cmd.ChatID, "steer_id", steerID)
