@@ -1274,13 +1274,49 @@ describe("the Hooks tab: staying current", () => {
     });
   });
 
-  it("ignores a change event that is not a hook toggle", () => {
+  it("ignores a change event that is not a hook toggle", async () => {
+    const { setHookEnabled } = await import("./actions/hooks.js");
     // The listener is delegated on the whole page, so it must ignore other controls.
     const other = document.createElement("input");
     other.type = "checkbox";
     document.getElementById("docs-view")?.appendChild(other);
+    vi.mocked(setHookEnabled.dispatch).mockClear();
     other.dispatchEvent(new Event("change", { bubbles: true }));
-    expect(true).toBe(true);
+    expect(vi.mocked(setHookEnabled.dispatch)).not.toHaveBeenCalled();
+    other.remove();
+  });
+
+  // Every category scrolls in `#docs-view`: each one is its own page, so it opens at its own place.
+  it("opens each category at its own scroll position, the top for one not read before", async () => {
+    const view = document.getElementById("docs-view") as HTMLElement;
+    const panels = ["steering", "hooks", "specs"].map(
+      (tab) => document.querySelector<HTMLElement>(`[data-docs-panel="${tab}"]`) as HTMLElement,
+    );
+    view.style.cssText = "overflow-y: auto; block-size: 200px";
+    for (const p of panels) {
+      p.style.minBlockSize = "4000px";
+    }
+    const readAt = async (top: number): Promise<void> => {
+      const done = new Promise((r) => {
+        view.addEventListener("scroll", r, { once: true });
+      });
+      view.scrollTop = top;
+      await done;
+    };
+    try {
+      docsRoute.value = "steering";
+      await readAt(900);
+      docsRoute.value = "specs";
+      expect(view.scrollTop, "Specs was never read").toBe(0);
+      docsRoute.value = "steering";
+      expect(view.scrollTop, "Steering comes back where it was read").toBe(900);
+    } finally {
+      view.style.cssText = "";
+      for (const p of panels) {
+        p.style.minBlockSize = "";
+      }
+      docsRoute.value = "hooks";
+    }
   });
 });
 

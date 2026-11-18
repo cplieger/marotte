@@ -799,6 +799,29 @@ describe("the Steps tree on open", () => {
     expect(body().scrollTop).toBe(0);
   });
 
+  // The two segments share the body; the Timeline has no focus step, so it is the reader's place that it keeps.
+  it("lands the Timeline at its top the first time and where the reader left it after", async () => {
+    page.render(run(many((i) => (i === 30 ? "running" : "ok"))));
+    await opened("root/s30");
+    const stepsAt = body().scrollTop;
+    expect(stepsAt, "Steps opened scrolled to its focus step").toBeGreaterThan(0);
+    segment("timeline").click();
+    expect(body().scrollTop, "the Timeline was never read").toBe(0);
+    expect(body().scrollHeight).toBeGreaterThan(body().clientHeight + 120);
+    body().scrollTop = 120;
+    segment("steps").click();
+    expect(centred("root/s30")).toBe(true);
+    segment("timeline").click();
+    expect(body().scrollTop, "the Timeline comes back where it was read").toBe(120);
+    toggle().click();
+    await settledPanel();
+    toggle().click();
+    await settledPanel();
+    await vi.waitFor(() => {
+      expect(body().scrollTop, "and after the panel closes and opens on it").toBe(120);
+    });
+  });
+
   it("never moves the page scroller", async () => {
     const scroller = document.createElement("div");
     scroller.style.cssText = "block-size: 200px; overflow: auto";

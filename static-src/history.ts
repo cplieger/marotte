@@ -13,6 +13,7 @@ import { reconcile } from "./reconcile.js";
 import { paintPlaceholder } from "./skeleton.js";
 import { creditFigure } from "./strings.js";
 import { swapViews } from "./view-swap.js";
+import { SharedScroll } from "./view-scroll.js";
 import { initSegmentedBar } from "./segmented-bar.js";
 import { setPageSubtitle } from "./page-title.js";
 import { entryRow, entrySkeleton } from "./entry-row.js";
@@ -335,6 +336,11 @@ const CHATS_UNREADABLE = "Could not read previous conversations.";
 
 /** The pane History shows, null while it is not on screen. */
 const shownTab = computed(() => historyPaneTab());
+/** Both panes scroll in `#history-view`, so each pane keeps its own offset. */
+const paneScroll = new SharedScroll(
+  () => maybeEl("history-view"),
+  () => shownTab.peek() ?? "",
+);
 
 function chatsContainer(): HTMLElement | null {
   return maybeEl("history-table");
@@ -884,6 +890,7 @@ function initHistoryView(): void {
       }
       return active;
     });
+    paneScroll.restore(tab);
     setPageSubtitle("history", TAB_LABELS[tab]);
   });
 }

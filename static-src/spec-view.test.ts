@@ -1092,4 +1092,35 @@ describe("the page's scroll position", () => {
     view.showSpec(OTHER);
     expect(scroller().scrollTop).toBe(400);
   });
+
+  // The documents of one spec share the scroller too: each is its own page, so a pick opens it at its own place.
+  it("is per document: a long one read, then another, then back, lands each where it was left", async () => {
+    m.specTabs.set(DIR, "");
+    const requirements = `# Requirements\n\n${Array.from({ length: 200 }, (_, i) => `Clause ${String(i)}.`).join("\n\n")}`;
+    m.replies = [
+      reply(
+        spec([
+          prose("requirements.md", "requirements", requirements),
+          prose("design.md", "design", long),
+        ]),
+      ),
+    ];
+    view.showSpec(DIR);
+    await settle();
+    const pick = async (file: string): Promise<void> => {
+      document.querySelector<HTMLElement>(`[data-spec-doc="${file}"]`)?.click();
+      await settle();
+    };
+    await pick("requirements.md");
+    scroller().scrollTop = 900;
+    await settle();
+    await pick("design.md");
+    expect(scroller().scrollTop, "the design was never read").toBe(0);
+    scroller().scrollTop = 400;
+    await settle();
+    await pick("requirements.md");
+    expect(scroller().scrollTop, "the requirements come back where they were read").toBe(900);
+    await pick("design.md");
+    expect(scroller().scrollTop).toBe(400);
+  });
 });

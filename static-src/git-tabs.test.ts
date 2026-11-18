@@ -126,4 +126,45 @@ describe("git-tabs reads the git row's sub-tab", () => {
       false,
     );
   });
+
+  // The three panels share `#git-view`'s scroll: each sub-tab is its own page, so it opens at its own place.
+  it("opens each sub-tab at its own scroll position, the top for one not read before", async () => {
+    document.body.innerHTML = `
+      <div id="git-view" style="overflow-y: auto; block-size: 200px">
+        <nav id="git-tab-bar">
+          <button data-git-tab="changes"></button>
+          <button data-git-tab="prs"></button>
+          <button data-git-tab="sources"></button>
+        </nav>
+        <div data-git-panel="changes" style="block-size: 3000px"></div>
+        <div data-git-panel="prs" style="block-size: 2000px"></div>
+        <div data-git-panel="sources" style="block-size: 2000px"></div>
+      </div>`;
+    const { initGitTabs } = await boot();
+    initGitTabs();
+    const view = document.getElementById("git-view") as HTMLElement;
+    const pick = (tab: GitTab): void => {
+      document.querySelector<HTMLElement>(`[data-git-tab="${tab}"]`)?.click();
+    };
+    const scrolled = (): Promise<void> =>
+      new Promise((r) => {
+        view.addEventListener("scroll", () => r(), { once: true });
+      });
+
+    const read = scrolled();
+    view.scrollTop = 1500;
+    await read;
+    pick("prs");
+    expect(view.scrollTop, "Pull requests was never read").toBe(0);
+    const readPrs = scrolled();
+    view.scrollTop = 400;
+    await readPrs;
+    pick("changes");
+    expect(view.scrollTop, "Changes comes back where it was read").toBe(1500);
+    pick("prs");
+    expect(view.scrollTop).toBe(400);
+    pick("sources");
+    expect(view.scrollTop).toBe(0);
+    document.body.replaceChildren();
+  });
 });

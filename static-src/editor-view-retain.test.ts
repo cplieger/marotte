@@ -159,6 +159,28 @@ describe("the editor keeps each file's reading position", () => {
     expect(Math.abs(body().scrollTop - 300)).toBeLessThan(lineBox());
   });
 
+  // A file opens with its top pad above line 1, so a file left there comes back the same, not a pad lower.
+  it("brings a file left at its top back at its top after another file was read", async () => {
+    seed(A, lines("a", 400));
+    seed(B, lines("b", 400));
+    activateFile(A);
+    expect(body().scrollTop).toBe(0);
+    expect(
+      seatedRow(0).getBoundingClientRect().top,
+      "the stylesheet pads above line 1",
+    ).toBeGreaterThan(body().getBoundingClientRect().top);
+    // Read down and back up, so the file holds a position of its own: its top.
+    body().scrollTop = 200;
+    await frames();
+    body().scrollTop = 0;
+    await frames();
+    activateFile(B);
+    body().scrollTop = 1200;
+    await frames();
+    activateFile(A);
+    expect(body().scrollTop).toBe(0);
+  });
+
   it("reopens a file taller than the height cap at its first line after a jump past the cap", async () => {
     const text = "\n".repeat((2 << 20) - 1);
     seed(A, text);
