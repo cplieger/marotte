@@ -111,23 +111,19 @@ function statesPast(wrap: HTMLElement, from: number): { states: string[]; off: (
  *  the input window closed, with no `scrollend` before its last position. */
 async function platformGlide(wrap: HTMLElement, to: number): Promise<void> {
   const log = scrollLog(wrap);
-  // Past the 300ms input window of a timer-based owner once the animation is under way, as an engine's own tick
-  // outlives it: stepped once the scroller has left the end's slack, because unthrottled test frames can outrun an
-  // animation's slow start.
-  const from = wrap.scrollTop;
+  // Past the 300ms input window of a timer-based owner at the glide's first scroll event, as an engine's own tick
+  // outlives it. Stepped at the first event, never at a distance moved: a smooth scroll is time-based, so after one
+  // late frame a short glide lands its whole remaining distance in the next event, and a later step sees no move.
   let steppedAt = -1;
   const step = (): void => {
-    if (Math.abs(wrap.scrollTop - from) > 2) {
-      wrap.removeEventListener("scroll", step);
-      steppedAt = log.tops.length;
-      vi.advanceTimersByTime(350);
-    }
+    wrap.removeEventListener("scroll", step);
+    steppedAt = log.tops.length;
+    vi.advanceTimersByTime(350);
   };
   wrap.addEventListener("scroll", step);
   platformScroll(wrap, to, "smooth");
   await scrollEnds(wrap);
   log.off();
-  // The frame count of a short glide varies with runner load; the scene needs only a move after the window.
   expect(
     {
       movesPastWindow: steppedAt > 0 && log.tops.length > steppedAt,
