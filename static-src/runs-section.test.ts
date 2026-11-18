@@ -494,16 +494,59 @@ describe("the section's fold", () => {
     }
   });
 
-  it("slides shut to the height it then rests at", async () => {
+  it("slides shut to the height it then rests at, below its floor on the way", async () => {
     launched("wf_slide", "sliding-run");
     await settle();
+    const floor = Number.parseFloat(getComputedStyle(section()).minBlockSize);
     toggle().click();
     const anims = section().getAnimations();
     expect(anims, "the section slides shut").not.toHaveLength(0);
-    const to = (anims[0]?.effect as KeyframeEffect | null)?.getKeyframes().at(-1)?.["blockSize"];
+    const anim = anims[0];
+    const effect = anim?.effect as KeyframeEffect | null | undefined;
+    if (anim === undefined || effect == null) {
+      throw new Error("no slide");
+    }
+    const frames = effect.getKeyframes();
+    const px = (v: unknown): number => Number.parseFloat(String(v));
+    const [from, to] = [px(frames.at(0)?.["blockSize"]), px(frames.at(-1)?.["blockSize"])];
+
+    anim.pause();
+    try {
+      anim.currentTime = 0.9 * Number(effect.getComputedTiming().duration);
+      const eased = effect.getComputedTiming().progress ?? Number.NaN;
+      const mid = section().getBoundingClientRect().height;
+      expect(mid, "the floor holds no part of the slide").toBeLessThan(floor);
+      expect(Math.abs(mid - (from + (to - from) * eased))).toBeLessThanOrEqual(1);
+    } finally {
+      anim.play();
+    }
+
     await Promise.all(anims.map((a) => a.finished));
     expect(el("runs-list").hidden).toBe(true);
-    expect(to).toBe(`${String(section().getBoundingClientRect().height)}px`);
+    expect(to).toBe(section().getBoundingClientRect().height);
+  });
+
+  it("slides open from the height it rested at folded", async () => {
+    launched("wf_slide_open", "opening-run");
+    setSectionFolded("runs", true);
+    launched("wf_slide_open2", "opening-run-2");
+    await settle();
+    const folded = section().getBoundingClientRect().height;
+
+    toggle().click();
+    const anim = section().getAnimations()[0];
+    if (anim === undefined) {
+      throw new Error("the section does not slide open");
+    }
+    anim.pause();
+    try {
+      anim.currentTime = 0;
+      expect(Math.abs(section().getBoundingClientRect().height - folded)).toBeLessThanOrEqual(1);
+    } finally {
+      anim.play();
+    }
+    await anim.finished;
+    expect(el("runs-list").hidden).toBe(false);
   });
 
   it("opens again from its header", async () => {
@@ -828,74 +871,102 @@ describe("on a short screen", () => {
     );
   };
 
-  it("scrolls the sidebar's middle once both floors are reached, Runs keeping its header and a row", async () => {
-    await page.viewport(844, 340);
-    expect(window.innerHeight, "viewport actually resized").toBe(340);
+  /** Size the frame, set the pointer tier, open the drawer, 20 tabs and three live runs. */
+  async function crowd(
+    width: number,
+    height: number,
+    pointer: "fine" | "coarse",
+    tag: string,
+  ): Promise<HTMLElement> {
+    await page.viewport(width, height);
+    expect([window.innerWidth, window.innerHeight], "viewport actually resized").toEqual([
+      width,
+      height,
+    ]);
+    document.documentElement.dataset["pointer"] = pointer;
+    el("sidebar").classList.add("open");
     for (let i = 0; i < 20; i++) {
-      await openTab({ kind: "chat", ref: `c-shorter-${String(i)}` });
+      await openTab({ kind: "chat", ref: `c-${tag}-${String(i)}` });
     }
     await settleTabs();
     for (let i = 1; i <= 3; i++) {
-      launched(`wf_shorter${String(i)}`, `shorter-${String(i)}`, { started: 10 - i });
+      launched(`wf_${tag}${String(i)}`, `${tag}-${String(i)}`, { started: 10 - i });
     }
     await settle();
-
+    await Promise.all(
+      el("sidebar")
+        .getAnimations()
+        .map((a) => a.finished),
+    );
     const middle = shell.querySelector<HTMLElement>(".sidebar-middle");
     if (middle === null) {
       throw new Error("no .sidebar-middle");
     }
-    expect(middle.scrollHeight).toBeGreaterThan(middle.clientHeight);
-    const list = el("runs-list");
-    const rowH = links()[0]?.getBoundingClientRect().height ?? Number.NaN;
-    expect(list.clientHeight).toBeGreaterThanOrEqual(rowH);
-    for (const a of links()) {
-      a.focus();
-      expect(within(a, list), `${a.textContent ?? ""} scrolled into view on focus`).toBe(true);
+    return middle;
+  }
+
+  const firstRun = (): HTMLAnchorElement => {
+    const a = links()[0];
+    if (a === undefined) {
+      throw new Error("no Runs row");
+    }
+    return a;
+  };
+
+  for (const [width, height, posture] of [
+    [844, 390, "a phone held sideways"],
+    [390, 844, "a phone's drawer"],
+  ] as const) {
+    for (const pointer of ["fine", "coarse"] as const) {
+      it(`keeps Runs' header and first row, and Open's header and a whole tab, in view on ${posture} (${pointer})`, async () => {
+        try {
+          const middle = await crowd(width, height, pointer, `short-${String(width)}-${pointer}`);
+
+          expect(middle.scrollHeight, "the middle itself never scrolls").toBe(middle.clientHeight);
+          expect(within(toggle(), section()), "Runs' header").toBe(true);
+          const list = el("runs-list");
+          expect(within(firstRun(), list), "Runs' first row").toBe(true);
+
+          const sections = el("tab-sections");
+          // The open scrolled the newest tab into view; the floor is measured from the scroller's top.
+          sections.scrollTop = 0;
+          const header = shell.querySelector("#open-section > h2");
+          expect(header !== null && within(header, sections), "Open's header").toBe(true);
+          const tabRows = [
+            ...el("tab-list").querySelectorAll<HTMLElement>(":scope > [data-tab-id]"),
+          ];
+          expect(tabRows.filter((r) => within(r, sections)).length).toBeGreaterThanOrEqual(1);
+
+          for (const r of tabRows) {
+            r.focus();
+            expect(within(r, sections), `tab ${r.dataset["tabId"] ?? ""} scrolled into view`).toBe(
+              true,
+            );
+          }
+          for (const a of links()) {
+            a.focus();
+            expect(within(a, list), `${a.textContent ?? ""} scrolled into view on focus`).toBe(
+              true,
+            );
+          }
+        } finally {
+          delete document.documentElement.dataset["pointer"];
+        }
+      });
+    }
+  }
+
+  // Below both floors (a small phone held sideways), the tab sections give theirs up before Runs'.
+  it("keeps Runs' header and a row in view where the tab sections' floor no longer fits", async () => {
+    try {
+      const middle = await crowd(568, 320, "coarse", "shortest");
+
+      expect(middle.scrollHeight, "the middle itself never scrolls").toBe(middle.clientHeight);
+      expect(within(toggle(), section()), "Runs' header").toBe(true);
+      const list = el("runs-list");
+      expect(within(firstRun(), list), "Runs' first row").toBe(true);
+    } finally {
+      delete document.documentElement.dataset["pointer"];
     }
   });
-
-  // Sideways, the tab scroller keeps its three rows' height, and Open's header takes one of them.
-  for (const [width, height, posture, whole] of [
-    [844, 390, "a phone held sideways", 2],
-    [390, 844, "a phone's drawer", 3],
-  ] as const) {
-    it(`keeps three tab rows' height and Runs' header and a row in view on ${posture}`, async () => {
-      await page.viewport(width, height);
-      expect([window.innerWidth, window.innerHeight], "viewport actually resized").toEqual([
-        width,
-        height,
-      ]);
-      el("sidebar").classList.add("open");
-      for (let i = 0; i < 20; i++) {
-        await openTab({ kind: "chat", ref: `c-short-${String(i)}` });
-      }
-      await settleTabs();
-      for (let i = 1; i <= 3; i++) {
-        launched(`wf_short${String(i)}`, `short-${String(i)}`, { started: 10 - i });
-      }
-      await settle();
-      const sidebar = el("sidebar");
-      await Promise.all(sidebar.getAnimations().map((a) => a.finished));
-
-      const middle = shell.querySelector<HTMLElement>(".sidebar-middle");
-      expect(middle?.scrollHeight, "Runs gives up rows before the middle scrolls").toBe(
-        middle?.clientHeight,
-      );
-      const sections = el("tab-sections");
-      const tabRows = [...el("tab-list").querySelectorAll(":scope > [data-tab-id]")];
-      // The open scrolled the newest tab into view; three rows fit the scroller at its top.
-      sections.scrollTop = 0;
-      const rowH = tabRows[0]?.getBoundingClientRect().height ?? Number.NaN;
-      expect(sections.getBoundingClientRect().height).toBeGreaterThanOrEqual(3 * rowH);
-      expect(tabRows.filter((r) => within(r, sections)).length).toBeGreaterThanOrEqual(whole);
-      expect(within(toggle(), section())).toBe(true);
-      const list = el("runs-list");
-      expect(links().filter((a) => within(a, list)).length).toBeGreaterThanOrEqual(1);
-
-      for (const a of links()) {
-        a.focus();
-        expect(within(a, list), `${a.textContent ?? ""} scrolled into view on focus`).toBe(true);
-      }
-    });
-  }
 });

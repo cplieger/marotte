@@ -1129,11 +1129,11 @@
   text-decoration: none;
 }
 
-/* Runs is docked under the scrolling sections (10-shell-app.css `.sidebar-middle`), so a run that
-   wants you shows at any tab count. Unfolded, it keeps its header and one row however short the
-   sidebar and three rows when there is room, its list scrolling past them; the order puts the runs
-   that want you first. The flex column is what lets the list give up height, so `[hidden]` must
-   out-rank its display. */
+/* Runs is docked under the scrolling sections (10-shell-app.css `.sidebar-middle`, which owns
+   `--runs-floor`), so a run that wants you shows at any tab count. Unfolded, it keeps its header and
+   one row however short the sidebar and three rows when there is room, its list scrolling past them;
+   the order puts the runs that want you first. The flex column is what lets the list give up height,
+   so `[hidden]` must out-rank its display. */
 .runs-section {
   display: flex;
   flex-direction: column;
@@ -1144,11 +1144,9 @@
     display: none;
   }
 
-  /* Its padding, the hairline, the header, the list's inset and one row. Folded, it keeps its header alone. */
+  /* Folded, it keeps its header and its own padding. */
   &:has(> .runs-list:not([hidden])) {
-    min-block-size: calc(
-      3 * var(--sp-1) + var(--hairline) + var(--row-tap-dense) + var(--tab-row-h)
-    );
+    min-block-size: var(--runs-floor);
   }
 }
 
