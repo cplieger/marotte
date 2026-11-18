@@ -838,12 +838,6 @@
   color: var(--c-green);
 }
 
-/* No `.mcp-drift-banner` here. It was a yellow strip with a message slot and no
-   action, and nothing in `static-src/` ever built one — zero producers for both its
-   classes, so it was a fifth banner shape in the audit with no way to see it. Deleted
-   2026-09 rather than given a producer: the drift it was for is reported by the row's
-   own state. */
-
 /* ---------- Add / edit modal ---------- */
 
 .mcp-modal-card {
