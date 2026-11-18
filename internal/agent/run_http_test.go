@@ -556,6 +556,7 @@ func answerReq(t *testing.T, id, askID, text string) *http.Request {
 // An answer whose run lost its lease once its ask was claimed reads the run's origin by key; an engine that ended
 // before answering that read is a 503 naming the cause, never a 400 blaming the answer.
 func TestHandleAnswer_AnEngineExitDuringAnUnleasedRunsReadIsTryAgain(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1"})
@@ -578,6 +579,7 @@ func TestHandleAnswer_AnEngineExitDuringAnUnleasedRunsReadIsTryAgain(t *testing.
 // An answer to a parentless run whose lease recorded no security profile is refused 409 for that cause: its launching
 // session exists, and any profile would be a guess at its permissions.
 func TestHandleAnswer_AParentlessRunWithNoRecordedProfileIsRefusedForIt(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1", ParentSessionID: testLaunchSession})
@@ -625,6 +627,7 @@ func unleasedParentlessLaunch(t *testing.T, presets []string, recorded bool) (*R
 // An unleased live run marotte launched parentless is answered through its launching session, loaded with the
 // security recorded at launch rather than refused as a session this server cannot open.
 func TestHandleAnswer_AnUnleasedParentlessLaunchLoadsItsLaunchProfile(t *testing.T) {
+	t.Parallel()
 	launched, _ := policyfile.ProfileFor(policyfile.ProfileUnrestricted)
 	h, br, askID := unleasedParentlessLaunch(t, launched.Presets, true)
 
@@ -645,6 +648,7 @@ func TestHandleAnswer_AnUnleasedParentlessLaunchLoadsItsLaunchProfile(t *testing
 // An unleased live run marotte launched parentless whose launch security is missing from disk is refused 409 for that
 // cause, opening nothing: its launching session can be opened, and any profile would be a guess.
 func TestHandleAnswer_AnUnleasedParentlessLaunchWithNoProfileOnDiskIsRefusedForIt(t *testing.T) {
+	t.Parallel()
 	h, br, askID := unleasedParentlessLaunch(t, []string{}, false)
 	starts := br.startCount()
 

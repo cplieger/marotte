@@ -442,6 +442,7 @@ func TestConfigTemplate_GetStateFailureServesBaseModes(t *testing.T) {
 // While KAS answers getState unreadable, the catalog serves its base modes once the agent read's own bound ends,
 // not at the template's deadline.
 func TestConfigTemplate_AnUnreadableGetStateServesBaseModesWithinTheAgentBound(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, _, br := newTestHub()
 		t.Cleanup(func() { shutdownHub(t, h) })

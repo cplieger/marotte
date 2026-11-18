@@ -727,6 +727,7 @@ func TestRetry_RefusesARetiredSegmentRunWhileItsChatIsOpen(t *testing.T) {
 // An unleased run's origin is read by key: a read kiro-cli did not answer is errRunUnread (503), a run it does not
 // know is errRunNotListed (404), and any other read failure is a fault on this server (500).
 func TestEnsureResident_AnUnleasedRunsFailedReadSaysWhy(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		rpcErr *marotte.RPCError
 		err    error

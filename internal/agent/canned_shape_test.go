@@ -14,6 +14,7 @@ import (
 
 // The client's canned set must be what these handlers write: its read-budget tests replay it as the server.
 func TestCannedAnswers_ReadAsTheHandlersWrite(t *testing.T) {
+	t.Parallel()
 	type rulesAnswer struct {
 		Rules []launchRuleView `json:"rules"`
 	}

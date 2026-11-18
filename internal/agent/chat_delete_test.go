@@ -261,6 +261,7 @@ func TestDeleteForSessions_DeletesEveryOwnedRunWhateverItsStatus(t *testing.T) {
 // A chat delete whose run list goes unanswered still deletes every run the chain launched, read off the run state KAS
 // keeps on disk: an unanswered list is not a chat that launched nothing.
 func TestDeleteForSessions_AnUnansweredRunListDeletesTheRunsKASKeepsOnDisk(t *testing.T) {
+	t.Parallel()
 	sessionsDir := t.TempDir()
 	writeKASRunState(t, sessionsDir, "wf_done", marotte.RunStatusCompleted, "sess_cur")
 	writeKASRunState(t, sessionsDir, "wf_live", marotte.RunStatusRunning, "sess_old")

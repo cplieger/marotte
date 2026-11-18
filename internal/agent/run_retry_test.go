@@ -629,6 +629,7 @@ func TestRetrySettlesTriggeredMissedEnd(t *testing.T) {
 // A gate read kiro-cli does not answer (its deadline passes or the engine ends) is a 503 naming the cause, never 409
 // "cannot be opened on this server" or 500: a later try usually reads the run. Nothing is sent and no lease minted.
 func TestHandleRetry_AnUnansweredReadOfTheRunIsTryAgain(t *testing.T) {
+	t.Parallel()
 	for name, cause := range map[string]error{
 		"a deadline":    fmt.Errorf("workflow inspect call: %w", context.DeadlineExceeded),
 		"an engine end": fmt.Errorf("workflow inspect call: %w", marotte.ErrBridgeExited),
@@ -658,6 +659,7 @@ func TestHandleRetry_AnUnansweredReadOfTheRunIsTryAgain(t *testing.T) {
 // A retry of a run kiro-cli names no launching session for is refused 409 for that cause, naming delete as what still
 // works: a failed or aborted run offers no cancel.
 func TestHandleRetry_ARunWithNoLaunchingSessionNamesDeleteAsWhatStillWorks(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", marotte.RunStatusFailed, ""))
@@ -681,6 +683,7 @@ func TestHandleRetry_ARunWithNoLaunchingSessionNamesDeleteAsWhatStillWorks(t *te
 // The retry reads the one run it retries: KAS's whole run inventory, which can take longer than the client waits,
 // is not on its path.
 func TestRetry_ReadsNoRunInventory(t *testing.T) {
+	t.Parallel()
 	h, br := seedChatParentedRun(t, true, "final-verify")
 	holdCall(t, br, methodKiroWorkflowList)
 
@@ -693,6 +696,7 @@ func TestRetry_ReadsNoRunInventory(t *testing.T) {
 
 // A chat-parented run's retry scans the chat store once: the gate's origin and the retry's holders share one scan.
 func TestHandleRetry_AChatParentedRunsRetryScansTheChatsOnce(t *testing.T) {
+	t.Parallel()
 	h, _ := seedChatParentedRun(t, true, "final-verify")
 	cs, ok := h.chatStore.(*testChatStore)
 	if !ok {
@@ -731,6 +735,7 @@ func TestHandleRetry_TheRunReadIsBoundedByRetryTimeout(t *testing.T) {
 
 // A person's verb whose status read kiro-cli did not answer is a 503 naming the cause, on every gated route.
 func TestRunControls_AnUnansweredStatusReadIsTryAgain(t *testing.T) {
+	t.Parallel()
 	routes := map[string]func(rr *runRoutes, w http.ResponseWriter, r *http.Request){
 		"resume": (*runRoutes).handleResume,
 		"pause":  (*runRoutes).handlePause,

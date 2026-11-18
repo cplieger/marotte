@@ -167,6 +167,7 @@ var configurationUnreadableRefusal = &marotte.RPCError{
 // KAS answers getState unreadable while the signed-in user is unnamed at engine start, and answers it once the
 // lookup resolves, so the read asks again rather than failing the Memories tab.
 func TestMemorySyncGet_AsksAgainWhileTheConfigurationIsUnreadable(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.setCallResult(methodKiroMemoryGetSyncStatus, json.RawMessage(`{"state":"off"}`))
@@ -193,6 +194,7 @@ func TestMemorySyncGet_AsksAgainWhileTheConfigurationIsUnreadable(t *testing.T) 
 
 // A read whose deadline ends while KAS still cannot read the configuration answers a retryable 503.
 func TestMemorySyncGet_AnUnreadableConfigurationAtTheDeadlineIsUnavailable(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.setCallResult(methodKiroMemoryGetSyncStatus, json.RawMessage(`{"state":"off"}`))
@@ -208,6 +210,7 @@ func TestMemorySyncGet_AnUnreadableConfigurationAtTheDeadlineIsUnavailable(t *te
 }
 
 func TestConfigurationRetryDelay(t *testing.T) {
+	t.Parallel()
 	for n, want := range map[int]time.Duration{1: time.Second, 2: 2 * time.Second, 3: 4 * time.Second, 4: 8 * time.Second, 9: 8 * time.Second} {
 		if got := configurationRetryDelay(n); got != want {
 			t.Errorf("configurationRetryDelay(%d) = %v, want %v", n, got, want)

@@ -128,6 +128,7 @@ func TestTangentParent_AnUnreadableListIsNeitherAnswer(t *testing.T) {
 
 // A chat whose file cannot be read may hold the forked-from session, so its parent is neither gone nor found.
 func TestTangentParent_AnUnreadableChatFileIsNeitherAnswer(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	seedChain(t, cs, "c-tangent", "s-fork")
 	unreadableChat(t, cs, "c-parent")

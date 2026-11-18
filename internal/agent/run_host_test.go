@@ -601,6 +601,7 @@ func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testin
 
 // TestRetry_AReloadedHostRunTakesItsRecipeFromItsState pins that the lease needs the recipe the single-run rule compares.
 func TestRetry_AReloadedHostRunTakesItsRecipeFromItsState(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{

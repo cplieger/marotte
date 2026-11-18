@@ -129,6 +129,7 @@ func TestCancelExpired_ARunKASReportsPausedIsParked(t *testing.T) {
 // A read of the run kiro-cli did not answer leaves its pause unknown: the expiry refills the idle window rather than
 // stop, as stalled, a run its chat may resume.
 func TestCancelExpired_AnUnansweredReadRefillsTheWindow(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	h, br := agentRunOnChat(t, id)
 	closeReviewStep(t, h, id)
@@ -152,6 +153,7 @@ func TestCancelExpired_AnUnansweredReadRefillsTheWindow(t *testing.T) {
 
 // A run kiro-cli answers it does not know is settled: the expiry stops it as stalled.
 func TestCancelExpired_ARunKiroCLIDoesNotKnowIsAStall(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	h, br := agentRunOnChat(t, id)
 	closeReviewStep(t, h, id)

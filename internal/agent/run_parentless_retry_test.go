@@ -372,6 +372,7 @@ func TestRunHostedBy_AnUnreadableHostRecordIsAnError(t *testing.T) {
 // An unleased run marotte launched parentless loads its launching session over an incomplete scan, with the launch's
 // security, never refused 500 as a run whose launching chat is unknown: its host record proves no chat launched it.
 func TestEnsureResident_AnUnleasedParentlessLaunchLoadsWhileAChatFileIsUnreadable(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	h, _, br := newTestHub(WithConfigDir(dir))
 	host := launchFailedParentless(t, h, br)
@@ -397,6 +398,7 @@ func TestEnsureResident_AnUnleasedParentlessLaunchLoadsWhileAChatFileIsUnreadabl
 // A parentless run's retry after its terminal frame released its lease keeps the launch's host session and security
 // profile, so a profile changed since the launch never widens or narrows a retried run's permissions.
 func TestRetry_AParentlessRunKeepsItsLaunchProfileAfterItsLeaseIsReleased(t *testing.T) {
+	t.Parallel()
 	launched, _ := policyfile.ProfileFor(policyfile.ProfileUnrestricted)
 	now, _ := policyfile.ProfileFor(policyfile.ProfileGuarded)
 	if slices.Equal(launched.Presets, now.Presets) {
@@ -432,6 +434,7 @@ func TestRetry_AParentlessRunKeepsItsLaunchProfileAfterItsLeaseIsReleased(t *tes
 // A run marotte launched parentless whose launch security is missing from disk is refused 409 with that cause,
 // sending nothing: any profile would be a guess at its permissions, and its launching session itself can be opened.
 func TestHandleRetry_AParentlessRunWithNoRecordedLaunchProfileIsRefusedForIt(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub(WithConfigDir(t.TempDir()))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	host := launchFailedParentless(t, h, br)

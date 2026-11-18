@@ -138,6 +138,7 @@ func TestRunOwner_AnswersOneVerdictPerSource(t *testing.T) {
 // A read of the run kiro-cli did not answer leaves its owners unknown: an error, never the RunUnknown verdict a
 // keep-state round settles on.
 func TestRunOwner_AnUnansweredReadIsAnError(t *testing.T) {
+	t.Parallel()
 	h, rig := newEngineRig(t, map[string]json.RawMessage{}, nil, nil)
 	rig.setAnswer(func(method string, _ map[string]any) (json.RawMessage, bool, error) {
 		if method != methodKiroWorkflowInspect {

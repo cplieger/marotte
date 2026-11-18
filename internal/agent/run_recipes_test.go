@@ -45,6 +45,7 @@ func holdCatalog(t *testing.T, h *Runtime) {
 // until KAS reports the change; after recipes_changed the launch reads the renamed recipe live and meets its live
 // run under the one-live-run rule.
 func TestLaunch_ReadsTheRenamedRecipeLiveAfterACatalogChange(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_second")
 	holdCatalog(t, h)
@@ -87,6 +88,7 @@ func TestLaunch_SendsWorkflowNewFromTheHeldCatalogWhileAListingIsHeld(t *testing
 // A source the held catalog names but KAS no longer has in force is refused by KAS's workflow/new, and the launch
 // answers 400 with KAS's sentence. A launch rule save reads live, so it refuses the source itself.
 func TestRecipeRoutes_RefuseASourceGoneSinceTheHold(t *testing.T) {
+	t.Parallel()
 	const gone = "_kiro/workflow/new: the workflow recipe at 'bundled://publish' is not available in this session's configuration."
 	t.Run("a launch", func(t *testing.T) {
 		h, br, mux := runDefaultsHub(t)
@@ -136,6 +138,7 @@ func TestLaunchRuleSave_AnUnansweredListingAnswersWithinTheAnswerBudget(t *testi
 // The held catalog answers a launch only when its recipe declares every input the launch names; otherwise a live
 // listing decides, so a schedule's input the recipe gained since the hold reaches workflow/new.
 func TestLaunch_AHeldRecipeMissingANamedInputIsReadLive(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_sched")
 	holdCatalog(t, h)
