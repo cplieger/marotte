@@ -76,16 +76,6 @@ describe("buildTurnHeader", () => {
     }
   });
 
-  // The reader did not stop a turn the failsafe stopped, so the dot's sentence must not say they did.
-  it("says marotte stopped a turn it stopped to compact", () => {
-    const dot = (d: TurnHeaderData): string | null | undefined =>
-      buildTurnHeader(d).querySelector(".turn-dot")?.getAttribute("data-tooltip");
-    expect(dot(data({ outcome: "cancelled", stoppedToCompact: true }))).toBe(
-      "marotte stopped this turn to compact the context",
-    );
-    expect(dot(data({ outcome: "cancelled" }))).toBe("You stopped this turn");
-  });
-
   it("renders a typed trigger line instead of inventing a user message", () => {
     const h = buildTurnHeader(data({ request: undefined }));
     expect(h.dataset["trigger"]).toBe("system");
@@ -871,17 +861,6 @@ describe("a request an API caller sent", () => {
     } finally {
       style.remove();
     }
-  });
-
-  // marotte's resume after a failsafe compaction is not the reader's words: the header says marotte sent it.
-  it("names marotte over a prompt it sent on its own", () => {
-    const h = buildTurnHeader(data({ request: "Continue the task.", automatic: true }));
-    expect(h.dataset["trigger"]).toBe("caller");
-    expect(sentByLine(h)?.textContent).toBe("Sent by marotte");
-    expect(text(h).textContent).toBe("Continue the task.");
-    updateTurnHeader(h, data({ request: "Continue the task." }));
-    expect(h.dataset["trigger"]).toBe("user");
-    expect(sentByLine(h)).toBeNull();
   });
 
   it("puts the Sent-by line above a quoted reply passage", () => {

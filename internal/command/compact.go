@@ -6,28 +6,11 @@ package command
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
-
-// errCompactRefused names every cause because KAS answers a bare {success: false} when it refuses
-// to start (a turn, a prompt still being saved, a running compaction), when a started summary does
-// not commit (the session, a prompt or the history moved, its 300 s bound, a model error), and when
-// a PreCompact hook blocks it, with no field telling them apart.
-var errCompactRefused = errors.New(compactRefusedCauses + ". Try again once the chat is idle, or check the hook")
-
-// errCompactRefusedRetrying is the refusal of a chat over the Compact at point, whose next turn end tries again.
-var errCompactRefusedRetrying = errors.New(compactRefusedCauses + ". " + CompactRetryNote)
-
-const compactRefusedCauses = "the agent was still busy with a turn, a new message or another compaction, the summary failed or the chat changed before it finished, or a PreCompact hook blocked it (its card shows why)"
-
-// CompactRetryNote is the sentence every account of a compaction that did not run carries on a chat whose next turn
-// end tries again.
-const CompactRetryNote = "marotte tries again at the end of the next turn"
 
 // CompactBridge is what Compact needs of a bridge: one call on its own session.
 type CompactBridge interface {
@@ -54,65 +37,37 @@ func Compact(ctx context.Context, bridge CompactBridge) (accepted bool, seq uint
 	return result.Success, seq, nil
 }
 
-// CompactOutcome is how a reader's compaction request ended.
+// CompactOutcome is how a reader's compaction request was taken.
 type CompactOutcome uint8
 
 const (
-	// CompactAccepted is KAS accepting the call, which is not a compaction (Compact).
-	CompactAccepted CompactOutcome = iota
-	// CompactQueued is a compaction waiting on the chat's run order behind what runs.
-	CompactQueued
-	// CompactRefused is KAS's {success: false}.
-	CompactRefused
-	// CompactRefusedRetrying is a compaction that did not run on a chat whose next turn end tries again: a refusal,
-	// or the call's error when one is returned beside it.
-	CompactRefusedRetrying
+	// CompactStarted is a call sent to kiro-cli; its outcome reaches the chat later, as kiro-cli's compaction entry
+	// or one toast.
+	CompactStarted CompactOutcome = iota
+	// CompactRunning is a press while the chat's call runs: no second call is sent.
+	CompactRunning
 	// CompactNoSession is a chat with no live agent session to compact.
 	CompactNoSession
 )
 
-// cmdCompact asks the chat's compactor for a compaction: now on an idle chat, else at the running turn's close,
-// answered queued. A synthesized compaction boundary is not expressible here: the transcript's comes from KAS.
+// cmdCompact sends the chat's one compaction call and answers once it is under way, since KAS answers after the
+// summary commits, minutes later. A synthesized compaction boundary is not expressible here: the transcript's comes
+// from KAS.
 func cmdCompact(ctx context.Context, compacts compactRequester, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
 	out, err := compacts.RequestCompact(ctx, cmd.ChatID)
 	switch {
-	case err != nil && out == CompactRefusedRetrying:
-		slog.Warn("compact: call failed", "chat", cmd.ChatID, keyError, err)
-		return nil, StatusError(http.StatusBadGateway, fmt.Errorf("%w. "+CompactRetryNote, err))
 	case err != nil:
 		slog.Warn("compact: call failed", "chat", cmd.ChatID, keyError, err)
 		return nil, StatusError(http.StatusBadGateway, err)
-	case out == CompactQueued:
-		slog.Info("compact queued for the turn's end", "chat", cmd.ChatID)
-		return responseWith(map[string]any{"queued": true}), nil
 	case out == CompactNoSession:
 		return nil, StatusError(http.StatusConflict, errCompactNoBridge)
-	case out == CompactRefused:
-		slog.Info("compact refused", "chat", cmd.ChatID)
-		return nil, StatusError(http.StatusConflict, errCompactRefused)
-	case out == CompactRefusedRetrying:
-		slog.Info("compact refused; the next turn end tries again", "chat", cmd.ChatID)
-		return nil, StatusError(http.StatusConflict, errCompactRefusedRetrying)
+	case out == CompactRunning:
+		slog.Info("compact already running", "chat", cmd.ChatID)
+	default:
+		slog.Info("compact started", "chat", cmd.ChatID)
 	}
-	slog.Info("compact accepted", "chat", cmd.ChatID)
 	return responseWith(nil), nil
-}
-
-// cmdCancelCompact withdraws the compaction entry the payload names (the chat's one when it names none); a stale id
-// is success.
-func cmdCancelCompact(ctx context.Context, compacts compactRequester, cmd *marotte.ClientCommand) (any, error) {
-	if err := requireChatID(cmd); err != nil {
-		return nil, err
-	}
-	var p marotte.CancelCompactCommand
-	if len(cmd.Payload) > 0 && json.Unmarshal(cmd.Payload, &p) != nil {
-		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
-	}
-	if err := compacts.CancelCompact(ctx, cmd.ChatID, p.ID); err != nil {
-		return nil, StatusError(http.StatusInternalServerError, err)
-	}
-	return responseOK, nil
 }

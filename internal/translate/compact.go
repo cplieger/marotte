@@ -64,7 +64,6 @@ func (t *Translator) handleCompactionFailed(ctx context.Context, chatID marotte.
 	detail := cmp.Or(errMsg, "compaction failed")
 	detail = textsafe.SanitizeSingleLineBounded(detail, maxCompactionDetailBytes)
 	slog.Warn("kiro-cli reported the summary failed", "chat_id", chatID, "reason", detail)
-	detail = t.usage.ObserveCompactionFailed(ctx, chatID, detail)
 	// A refused append means the chat is gone: no banner for a chat nobody holds.
 	turnID := ""
 	if !t.appendLaneless(durable.Context(ctx), chatID, marotte.EntryKindCompactionFailed,
@@ -80,6 +79,7 @@ func (t *Translator) handleCompactionFailed(ctx context.Context, chatID marotte.
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
 		Code: marotte.ErrCodeCompactionFailed, Message: detail, TurnScoped: true,
 	}))
+	t.compaction.ObserveCompactionFailed(chatID)
 	// A compaction failure does not prove the turn ended; CompactionFailed decides whether the host bounds it.
 	// Recorded between turns, it names no turn to bound.
 	if turnID != "" {

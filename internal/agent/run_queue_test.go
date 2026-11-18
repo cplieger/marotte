@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -149,34 +148,26 @@ func tailHooks(h *Runtime, fn func(chatID marotte.ChatID, ended bool)) {
 	}
 }
 
-// compactingHub is a chat whose reader's compaction runs on its idle session until release is called.
-func compactingHub(t *testing.T) (h *Runtime, cs *testChatStore, release func()) {
+// busyHub is a chat whose kiro-cli runs with no turn here (a run entry heads its list) until release reports it idle,
+// so every send waits on the list behind it.
+func busyHub(t *testing.T) (h *Runtime, cs *testChatStore, release func()) {
 	t.Helper()
-	h, cs, _, release = compactingHubIn(t, "/tmp/work")
+	h, cs, _, release = busyHubIn(t, "/tmp/work")
 	return h, cs, release
 }
 
-func compactingHubIn(t *testing.T, workDir string) (h *Runtime, cs *testChatStore, br *fakeBridge, release func()) {
+func busyHubIn(t *testing.T, workDir string) (h *Runtime, cs *testChatStore, br *fakeBridge, release func()) {
 	t.Helper()
 	h, cs, br, _ = idleAfterFirstTurn(t, workDir)
-	release = holdCall(t, br, marotte.MethodSessionCompact)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_, _ = h.RequestCompact(context.WithoutCancel(t.Context()), "c1")
-	}()
-	waitForCall(t, br, marotte.MethodSessionCompact)
-	t.Cleanup(func() {
-		release()
-		<-done
-	})
-	return h, cs, br, release
+	h.coord.WireTurnActivity("c1", true)
+	waitFor(t, func() bool { return slices.Equal(runStates(t, cs, "c1"), []string{"run running"}) })
+	return h, cs, br, func() { h.coord.WireTurnActivity("c1", false) }
 }
 
 func queueDuring(t *testing.T, h *Runtime, ids ...string) {
 	t.Helper()
 	for _, id := range ids {
-		queueTextDuring(t, h, id, "after the compaction")
+		queueTextDuring(t, h, id, "queued behind the turn")
 	}
 }
 
@@ -190,35 +181,6 @@ func queueTextDuring(t *testing.T, h *Runtime, id, text string) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("queue_prompt %s = %d %s, want 200", id, rec.Code, rec.Body.String())
 	}
-}
-
-// compactionEntry is the chat's compaction on its stored run list, the zero entry for none.
-func compactionEntry(t *testing.T, cs *testChatStore, chatID marotte.ChatID) marotte.RunEntry {
-	t.Helper()
-	c, _ := cs.Get(t.Context(), chatID)
-	if c == nil {
-		return marotte.RunEntry{}
-	}
-	for _, e := range c.Run {
-		if e.Kind == marotte.RunKindCompaction {
-			return e
-		}
-	}
-	return marotte.RunEntry{}
-}
-
-// contextLimitCompaction is chat c1 whose turn m-old was queued behind ended refused for the context's size, its
-// turn-end compaction running until release is called.
-func contextLimitCompaction(t *testing.T) (h *Runtime, cs *testChatStore, tails *atomic.Int32, release func()) {
-	t.Helper()
-	h, cs, br, tails := idleAfterFirstTurn(t, "/tmp/work")
-	h.coord.autoCompact.policy = func(context.Context) (bool, int) { return true, 90 }
-	release = holdCall(t, br, marotte.MethodSessionCompact)
-	id, _ := h.stagePromptTurn(t, "c1")
-	queueTextDuring(t, h, "m-old", "queued while the turn ran")
-	h.AbandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonInterrupted, "too long", marotte.FailureKindContextLimit, 0)
-	waitForCall(t, br, marotte.MethodSessionCompact)
-	return h, cs, tails, release
 }
 
 func TestRun_AQueuedRowOpensItsTurnAfterACleanClose(t *testing.T) {
@@ -277,13 +239,13 @@ func TestRun_SendNowOnAnIdleChatSendsTheRowAtOnce(t *testing.T) {
 	}
 }
 
-// Messages queued while the reader's compaction runs on an idle chat open no turn under it, then go after it, one per
-// turn in the order they were queued.
-func TestRun_RowsQueuedDuringAnIdleCompactionGoAfterItOneATurn(t *testing.T) {
-	h, cs, release := compactingHub(t)
+// Messages queued while kiro-cli runs with no turn here open no turn under it, then go after it, one per turn in the
+// order they were queued.
+func TestRun_RowsQueuedDuringKiroCLIsRunGoAfterItOneATurn(t *testing.T) {
+	h, cs, release := busyHub(t)
 	queueDuring(t, h, "m-q1", "m-q2")
 	if ids := promptIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-first"}) {
-		t.Fatalf("turns opened while the compaction ran = %v, want none", ids)
+		t.Fatalf("turns opened while kiro-cli ran = %v, want none", ids)
 	}
 
 	release()
@@ -294,13 +256,13 @@ func TestRun_RowsQueuedDuringAnIdleCompactionGoAfterItOneATurn(t *testing.T) {
 	})
 }
 
-// A prompt that reaches the server while a compaction runs joins the list behind it and answers queued.
-func TestRun_APromptDuringACompactionIsQueuedBehindIt(t *testing.T) {
-	h, cs, release := compactingHub(t)
+// A prompt that reaches the server while kiro-cli runs with no turn here joins the list behind it and answers queued.
+func TestRun_APromptDuringKiroCLIsRunIsQueuedBehindIt(t *testing.T) {
+	h, cs, release := busyHub(t)
 
 	rec := postCmd(t, h, promptCmd("m-p1", "what changed?"))
 	if got := ackAs(t, rec); got != "queued" {
-		t.Errorf("prompt during the compaction answered %s, want queued", got)
+		t.Errorf("prompt during kiro-cli's run answered %s, want queued", got)
 	}
 	if rows := queuedRows(t, cs, "c1"); len(rows) != 1 || rows[0].ID != "m-p1" || rows[0].Row.Text != "what changed?" {
 		t.Errorf("queue = %+v, want the prompt as its one row", rows)
@@ -313,19 +275,19 @@ func TestRun_APromptDuringACompactionIsQueuedBehindIt(t *testing.T) {
 	})
 }
 
-// Send now on a row waiting for a compaction opens no turn under it, and the row goes first once it ends.
-func TestRun_SendNowDuringACompactionSendsTheRowFirstAfterIt(t *testing.T) {
-	h, cs, release := compactingHub(t)
+// Send now on a row waiting behind kiro-cli's run opens no turn under it, and the row goes first once the run ends.
+func TestRun_SendNowDuringKiroCLIsRunSendsTheRowFirstAfterIt(t *testing.T) {
+	h, cs, release := busyHub(t)
 	queueDuring(t, h, "m-q1", "m-q2")
 
 	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: marotte.CmdSendQueuedNow, ChatID: "c1", Payload: json.RawMessage(`{"message_id":"m-q2"}`),
 	})
 	if rec.Code != http.StatusOK {
-		t.Fatalf("send_queued_now during the compaction = %d %s", rec.Code, rec.Body.String())
+		t.Fatalf("send_queued_now during kiro-cli's run = %d %s", rec.Code, rec.Body.String())
 	}
 	if ids := promptIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-first"}) {
-		t.Errorf("turns opened while the compaction ran = %v, want none", ids)
+		t.Errorf("turns opened while kiro-cli ran = %v, want none", ids)
 	}
 
 	release()
@@ -335,9 +297,9 @@ func TestRun_SendNowDuringACompactionSendsTheRowFirstAfterIt(t *testing.T) {
 	})
 }
 
-// A message past the draft cap sent during a compaction is queued behind it and goes when the compaction ends.
-func TestRun_ARowPastTheDraftCapQueuesBehindACompaction(t *testing.T) {
-	h, cs, release := compactingHub(t)
+// A message past the draft cap sent during kiro-cli's run is queued behind it and goes when the run ends.
+func TestRun_ARowPastTheDraftCapQueuesBehindKiroCLIsRun(t *testing.T) {
+	h, cs, release := busyHub(t)
 	long := strings.Repeat("x", marotte.MaxDraftBytes+1)
 
 	queueTextDuring(t, h, "m-long", long)
@@ -351,13 +313,13 @@ func TestRun_ARowPastTheDraftCapQueuesBehindACompaction(t *testing.T) {
 	})
 }
 
-// A context reference in a row queued behind a compaction is resolved when its turn opens, as a prompt's is.
-func TestRun_ARowBehindACompactionResolvesAContextReference(t *testing.T) {
+// A context reference in a row queued behind kiro-cli's run is resolved when its turn opens, as a prompt's is.
+func TestRun_ARowBehindKiroCLIsRunResolvesAContextReference(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("remember the milk\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	h, cs, br, release := compactingHubIn(t, dir)
+	h, cs, br, release := busyHubIn(t, dir)
 	const token = "#[[file:notes.txt]]"
 
 	queueTextDuring(t, h, "m-ref", "read "+token)
@@ -373,71 +335,6 @@ func TestRun_ARowBehindACompactionResolvesAContextReference(t *testing.T) {
 	if !resolved {
 		t.Errorf("prompt blocks = %v, want a resource block for %s with the file's text", blocks, token)
 	}
-}
-
-// The compaction after a turn the model refused for the context's size sends no row that turn left waiting: the row
-// reads as waiting for a turn after it, and is still waiting once it ends.
-func TestRun_AfterARefusedTurnItsCompactionSendsNoRowThatTurnLeft(t *testing.T) {
-	h, cs, tails, release := contextLimitCompaction(t)
-	view := h.coord.RunView(t.Context(), "c1")
-	if len(view.Entries) < 2 || view.Entries[1].ID != "m-old" || view.Entries[1].Wait.After == marotte.WaitCompaction {
-		t.Errorf("run during the compaction = %+v, want m-old behind it, waiting for a turn", view.Entries)
-	}
-
-	release()
-
-	waitFor(t, func() bool { return tails.Load() == 2 && compactionEntry(t, cs, "c1").ID == "" })
-	if ids := promptIDs(t, cs, "c1"); slices.Contains(ids, "m-old") {
-		t.Errorf("turns opened = %v, want m-old still waiting", ids)
-	}
-	if ids, _ := queuedIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-old"}) {
-		t.Errorf("queue = %v, want m-old still waiting", ids)
-	}
-}
-
-// A message sent during that compaction goes first: the list holds it above the row the refused turn left, it reads
-// as going after the compaction, and the two turns open in that order.
-func TestRun_AfterARefusedTurnTheMessageSentDuringItsCompactionGoesFirst(t *testing.T) {
-	h, cs, _, release := contextLimitCompaction(t)
-
-	queueTextDuring(t, h, "m-new", "sent during the compaction")
-
-	if ids, _ := queuedIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-new", "m-old"}) {
-		t.Errorf("queue during the compaction = %v, want [m-new m-old], the order they are sent in", ids)
-	}
-	if got := runWait(t, cs, "c1", "m-new"); got != "compaction" {
-		t.Errorf("m-new waits for %s, want the compaction", got)
-	}
-
-	release()
-
-	waitFor(t, func() bool {
-		return slices.Contains(promptIDs(t, cs, "c1"), "m-old") && len(queuedRows(t, cs, "c1")) == 0 && !h.coord.turns.live("c1")
-	})
-	ids := promptIDs(t, cs, "c1")
-	if n, o := slices.Index(ids, "m-new"), slices.Index(ids, "m-old"); n < 0 || n > o {
-		t.Errorf("turns opened = %v, want m-new before m-old", ids)
-	}
-}
-
-// compactionSends reads the chat's header: whether its compaction runs, and whether the first row behind it reads as
-// going when it ends.
-func compactionSends(t *testing.T, cs *testChatStore, chatID marotte.ChatID) (running, sends bool) {
-	t.Helper()
-	c, ok := cs.Get(t.Context(), chatID)
-	if !ok {
-		return false, false
-	}
-	seen := false
-	for _, e := range c.Header().Run.Entries {
-		switch {
-		case e.Kind == marotte.RunKindCompaction:
-			running, seen = e.State == marotte.RunRunning, true
-		case seen && e.Row != nil && !e.State.Live():
-			return running, e.Wait.After == marotte.WaitCompaction
-		}
-	}
-	return running, false
 }
 
 // A steer-facts read the list has already passed (an older sequence, read before lc.mu) changes nothing: its count

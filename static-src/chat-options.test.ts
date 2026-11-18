@@ -49,6 +49,7 @@ let supervised: boolean | undefined;
 let thinking = false;
 let messageCount = 3;
 let tangent = false;
+let compacting = false;
 
 /** The active chat as the menu sees it; `message_count` unlocks the tangent row. */
 function session():
@@ -58,6 +59,7 @@ function session():
       supervised_mode: boolean | undefined;
       message_count: number;
       tangent: boolean;
+      run: { compacting: boolean };
     }
   | undefined {
   return activeID === ""
@@ -68,6 +70,7 @@ function session():
         supervised_mode: supervised,
         message_count: messageCount,
         tangent,
+        run: { compacting },
       };
 }
 
@@ -203,6 +206,7 @@ beforeEach(() => {
   activeID = "c-active";
   supervised = false;
   thinking = false;
+  compacting = false;
   messageCount = 3;
   tangent = false;
   // Left armed: a regression reaching the recipe list proceeds to the explicit negative.
@@ -660,25 +664,26 @@ describe("compact the context", () => {
     expect(rowButton(card, "Compact the context").disabled).toBe(false);
   });
 
-  // The server queues a compaction asked for mid-turn, so a running turn is no refusal.
-  it("keeps the row enabled during a turn and dispatches the compaction", async () => {
-    thinking = true;
+  // kiro-cli refuses a compaction while a turn runs, and a press while the chat's call runs sends nothing.
+  it.each([
+    ["a running turn", true, false],
+    ["the chat's running compaction", false, true],
+  ])("disables the row during %s", async (_desc, busy, running) => {
+    thinking = busy;
+    compacting = running;
     const { card } = await mountMenu();
-    const btn = rowButton(card, "Compact the context");
-    expect(btn.disabled).toBe(false);
-    clickRow(card, "Compact the context");
-    expect(compactDispatch).toHaveBeenCalledExactlyOnceWith({ chatID: "c-active" });
-    expect(chatNotice).not.toHaveBeenCalled();
+    expect(rowButton(card, "Compact the context").disabled).toBe(true);
   });
 
-  // The empty chat's refusal, and the running turn's wait: the row says when the compaction runs.
+  // Each disabled variant says why, so the reader knows when the row comes back.
   it.each([
-    ["Send a message first", "", 0, false],
-    ["once this turn ends", "c-active", 3, true],
-  ])("swaps the hint to name %s", async (fragment, id, count, busy) => {
-    activeID = id === "" ? "c-active" : id;
+    ["Send a message first", 0, false, false],
+    ["once this turn ends", 3, true, false],
+    ["Compacting the context now", 3, false, true],
+  ])("swaps the hint to name %s", async (fragment, count, busy, running) => {
     messageCount = count;
     thinking = busy;
+    compacting = running;
     const { card } = await mountMenu();
     const hint = rowButton(card, "Compact the context").querySelector(".chat-opt-hint");
     expect(hint?.textContent).toContain(fragment);
@@ -694,12 +699,17 @@ describe("compact the context", () => {
     expect(chatNotice).not.toHaveBeenCalled();
   });
 
-  it.each([["with no conversation", 0, false]])(
+  it.each([
+    ["with no conversation", 0, false, false],
+    ["during a turn", 3, true, false],
+    ["while the chat's compaction runs", 3, false, true],
+  ])(
     "refuses in the handler as well when a stale row is enabled %s",
-    async (_d, count, busy) => {
+    async (_d, count, busy, running) => {
       const { card } = await mountMenu();
       messageCount = count;
       thinking = busy;
+      compacting = running;
       const btn = rowButton(card, "Compact the context");
       btn.disabled = false;
       btn.click();

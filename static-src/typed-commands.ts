@@ -229,10 +229,17 @@ async function openMemories(chatID: string): Promise<void> {
   await applyRoute({ kind: "docs", tab: "memories" });
 }
 
-/** The compact refusal the client sees before sending: a chat with nothing to compact. A running turn is none, since
- *  the server queues the compaction for its end; KAS's own refusals arrive as the server's error. */
+/** The compact refusal the client sees before sending: a chat with nothing to compact, a running turn (kiro-cli
+ *  answers a compaction beside one with an at-once refusal), or the chat's own call still running. KAS's other
+ *  refusals arrive as the server's toast. */
 export function compactRefusal(s: Session | undefined): string | null {
-  return isEmptyChat(s) ? "Send a message first, then compact the conversation" : null;
+  if (s === undefined || isEmptyChat(s)) {
+    return "Send a message first, then compact the conversation";
+  }
+  if (s.run?.compacting === true) {
+    return "The context is already being compacted.";
+  }
+  return isBusy(s.id) ? "Compaction is unavailable while the agent is working." : null;
 }
 
 /** `/rewind` and the composer's Ctrl/Cmd+Up: the newest prompt turn, through the footer's own confirm. */

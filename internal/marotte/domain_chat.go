@@ -576,6 +576,9 @@ type Chat struct {
 	// SpendInherited marks a tangent whose forked session's totals include the parent's spend up to
 	// the fork, until its first session_usage settles the baseline (SetSessionCredits).
 	SpendInherited bool `json:"spend_inherited,omitempty"`
+	// Compacting is set while the reader's Compact call to kiro-cli runs. It goes with the process that ran the
+	// call: the log's first open in a process clears one an earlier process left.
+	Compacting bool `json:"compacting,omitempty"`
 }
 
 // SetSessionCredits records KAS's running credit total for session id and reports whether the record
@@ -748,10 +751,16 @@ func (c *Chat) Header() ChatHeader {
 		PendingEffort:       c.PendingEffort,
 		SupervisedMode:      c.SupervisedMode,
 		CompactionWatermark: c.CompactionWatermark,
-		Run:                 RunViewOf(c.Run, c.RunVersion),
+		Run:                 c.runView(),
 		Tangent:             c.Tangent,
 		Bot:                 c.Bot.summary(c.LastTurnEndedAt),
 	}
+}
+
+func (c *Chat) runView() RunView {
+	v := RunViewOf(c.Run, c.RunVersion)
+	v.Compacting = c.Compacting
+	return v
 }
 
 // MoveToModel points the chat at model. A move drops what the old model's session reported

@@ -24,17 +24,6 @@ func (r *turnRegistry) tryLifecycleAt(chatID marotte.ChatID, stamp uint64) (*cha
 	return lc, lc != nil
 }
 
-// compactTurn is compactTurnLocked's turn with live's answer.
-func (r *turnRegistry) compactTurn(chatID marotte.ChatID) (string, bool) {
-	lc, ok := r.lookup(chatID)
-	if !ok {
-		return "", false
-	}
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	return lc.compactTurnLocked(), lc.liveLockedState()
-}
-
 // kasStep applies a closer's input for the turn at seq.
 func (lc *chatLifecycle) kasStep(in kasInput, seq uint64) {
 	lc.mu.Lock()

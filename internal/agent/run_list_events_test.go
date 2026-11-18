@@ -829,37 +829,6 @@ func TestRunList_AnEntryWhoseLaunchFailsIsPausedNotTakenAgain(t *testing.T) {
 			t.Errorf("released row is %q after the resend, want paused until the next clean close", got)
 		}
 	})
-	// A resend while the compaction failsafe holds the queue joins it as a fresh wake does: paused until the resume's
-	// clean close, and still paused when the resume closes broken.
-	for _, retake := range []bool{false, true} {
-		name, waking := "a fresh wake during the compaction failsafe", "d2"
-		if retake {
-			name, waking = "a resend onto a failed launch during the compaction failsafe", "d"
-		}
-		t.Run(name, func(t *testing.T) {
-			w := newTableWorld()
-			if retake {
-				w.door("d", "1 new")
-				w.l.takeEffects()
-				w.failLaunch(t, "d")
-			}
-			w.send("m-a", marotte.SendPlain, "")
-			w.running("m-a")
-			w.fire("m-a", 1)
-			w.door("d2", "2 new")
-			if got := w.entry(t, waking).state; got != marotte.RunPaused {
-				t.Fatalf("%s after the send in the failsafe's window = %q, want paused; list %s", waking, got, w.order())
-			}
-			w.closed("m-a", listClose{})
-			w.l.compactionStart("compact-1", w.facts())
-			w.l.compactionEnded("compact-1", true, nil)
-			w.advance()
-			w.wantOrder(t, "the resume taken", "m-resume:starting "+waking+":paused")
-			w.running("m-resume")
-			w.closed("m-resume", listClose{})
-			w.wantOrder(t, "the resume's broken close", waking+":paused")
-		})
-	}
 	t.Run("a door steer a reader's send released stays paused on a resend", func(t *testing.T) {
 		w := newTableWorld()
 		w.head()

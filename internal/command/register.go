@@ -54,8 +54,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.records = chats
 	d.register(marotte.CmdCreateChat, bind1(mem, cmdCreateChat))
 	d.register(marotte.CmdResumeSession, bind2(mem, r.Conversations, cmdResumeSession))
-	d.registerChange(marotte.CmdCompact, bind1[compactRequester](r.Compactor, cmdCompact))
-	d.register(marotte.CmdCancelCompact, bind1[compactRequester](r.Compactor, cmdCancelCompact))
+	d.register(marotte.CmdCompact, bind1[compactRequester](r.Compactor, cmdCompact))
 
 	d.register(marotte.CmdOpenTab, bind1(mem, cmdOpenTab))
 	d.register(marotte.CmdCloseTab, bind1(mem, cmdCloseTab))

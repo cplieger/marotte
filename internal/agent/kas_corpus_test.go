@@ -246,6 +246,8 @@ func (d *kasDrive) run() {
 			if rec := postCmd(t, d.h, marotte.ClientCommand{Type: marotte.CmdCompact, ChatID: kasChat}); rec.Code != http.StatusOK {
 				t.Fatalf("compact = %d %s", rec.Code, rec.Body.String())
 			}
+			// The press answers while its call runs; the capture's next frame came after KAS answered it.
+			waitForWithin(t, 30*time.Second, func() bool { return !chatRecord(t, d.cs, kasChat).Compacting })
 		case marotte.MethodSessionClose:
 			d.settle()
 			return

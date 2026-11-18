@@ -79,6 +79,7 @@ var sessionMatrix = []struct {
 	{"memory read write", SessionSpawn{MemoryMode: "read_write"}},
 	{"memory learn", SessionSpawn{MemoryMode: "read_write", MemoryReflection: true}},
 	{"auto compaction off", SessionSpawn{DisableAutoCompaction: true}},
+	{"auto compaction at 65", SessionSpawn{AutoCompactionThreshold: 65}},
 	{"spec planning quick", SessionSpawn{SpecPlan: "quick"}},
 	{"spec planning full, ask first", SessionSpawn{SpecPlan: "full", SpecAskClarification: true}},
 	{"work validation on", SessionSpawn{WorkValidation: "on"}},
@@ -94,7 +95,7 @@ var sessionMatrix = []struct {
 		OverrideSessionID: "sess_00000000-0000-4000-8000-000000000000",
 		Presets:           []string{"read-workspace"},
 		MemoryMode:        "read_write", MemoryReflection: true,
-		DisableAutoCompaction: true, SpecPlan: "full", SpecAskClarification: true,
+		DisableAutoCompaction: true, AutoCompactionThreshold: 80, SpecPlan: "full", SpecAskClarification: true,
 		WorkValidation: "on", Workflows: true, WorkflowCreatorEffort: "max", Messaging: true, Awareness: true,
 		AwarenessMode: "consult", ProfileAgentTurns: true, CustomAgents: []marotte.ClientCustomAgent{probeAgent},
 	}},
@@ -671,14 +672,18 @@ func TestDisableAutoCompaction_ValueGatedOnSessionDoorOnly(t *testing.T) {
 	}
 }
 
-// TestCompactionThreshold_NeverSent pins the threshold row withheld on both doors: every chat session turns KAS's
-// own compaction off, and a threshold beside it would only be KAS's to misread.
-func TestCompactionThreshold_NeverSent(t *testing.T) {
-	for _, tc := range sessionMatrix {
-		settings, _ := SessionMeta(&tc.spawn)[settingsKey].(map[string]any)
-		if got, present := settings["compaction"]; present {
-			t.Errorf("%s: SessionMeta carries compaction %#v; want it withheld", tc.name, got)
-		}
+// TestCompactionThreshold_SentWithEnabledOnTheSessionDoor pins the threshold's shape: KAS ignores
+// autoCompactionThreshold unless the same object says enabled true (resolveSessionAutoCompactionThreshold), so the
+// pair rides together; zero withholds the key, and initialize never carries it (kiro-cli acp applies no global one).
+func TestCompactionThreshold_SentWithEnabledOnTheSessionDoor(t *testing.T) {
+	settings, _ := SessionMeta(&SessionSpawn{AutoCompactionThreshold: 65})[settingsKey].(map[string]any)
+	want := map[string]any{"enabled": true, "autoCompactionThreshold": 65}
+	if got := settings["compaction"]; !reflect.DeepEqual(got, want) {
+		t.Errorf("SessionMeta(AutoCompactionThreshold=65) compaction = %#v, want %#v", got, want)
+	}
+	settings, _ = SessionMeta(&SessionSpawn{})[settingsKey].(map[string]any)
+	if got, present := settings["compaction"]; present {
+		t.Errorf("SessionMeta with no threshold carries compaction %#v; want it withheld", got)
 	}
 	for _, tc := range engineMatrix {
 		connection, _ := Capabilities(&tc.spawn)[settingsKey].(map[string]any)

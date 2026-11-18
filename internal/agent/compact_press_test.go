@@ -1,0 +1,279 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/marotte"
+)
+
+// compactCallCount is how many _kiro/session/compact calls the bridge received.
+func compactCallCount(br *fakeBridge) int {
+	n := 0
+	for _, m := range br.callLog() {
+		if m == marotte.MethodSessionCompact {
+			n++
+		}
+	}
+	return n
+}
+
+// pressCompact posts the reader's Compact on its own goroutine; the channel carries the answer once it came.
+func pressCompact(t *testing.T, h *Runtime) <-chan *httptest.ResponseRecorder {
+	t.Helper()
+	out := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		out <- postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdCompact, ChatID: "c1"})
+	}()
+	return out
+}
+
+// answeredWithin2s is the press's answer, failing the test when none came within 2 s, far under a summary's minutes.
+func answeredWithin2s(t *testing.T, answer <-chan *httptest.ResponseRecorder) *httptest.ResponseRecorder {
+	t.Helper()
+	select {
+	case rec := <-answer:
+		return rec
+	case <-time.After(2 * time.Second):
+		t.Fatal("the press was not answered while its compaction call ran")
+		return nil
+	}
+}
+
+// storeReading sets the chat's stored context reading, as KAS's last report left it.
+func storeReading(t *testing.T, cs *testChatStore, pct float64) {
+	t.Helper()
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, ok bool) bool {
+		c.Usage.ContextPct, c.Usage.HasRealData = pct, true
+		return ok
+	}); err != nil {
+		t.Fatalf("Setup: store the reading: %v", err)
+	}
+}
+
+// failedRows is the reasons of the chat's compaction_failed rows, in log order.
+func failedRows(t *testing.T, cs *testChatStore, chatID marotte.ChatID) []string {
+	t.Helper()
+	log, err := cs.All(t.Context(), chatID)
+	if err != nil {
+		t.Fatalf("All(%q): %v", chatID, err)
+	}
+	var out []string
+	for _, e := range entriesOfKind(t, log, marotte.EntryKindCompactionFailed) {
+		var p marotte.EntryCompactionFailed
+		decodePayload(t, e, &p)
+		out = append(out, p.Reason)
+	}
+	return out
+}
+
+// compactionToasts is the compaction_failed error events broadcast so far.
+func compactionToasts(t *testing.T, h *Runtime) []string {
+	t.Helper()
+	var out []string
+	for _, p := range errorPayloadsSince(t, h, 0) {
+		if p.Code == marotte.ErrCodeCompactionFailed {
+			out = append(out, p.Message)
+		}
+	}
+	return out
+}
+
+var pressToolCalls atomic.Int64
+
+// agentToolCallMsg is a tool call the chat's own agent opens, which KAS sends before its response's reading.
+func agentToolCallMsg() *marotte.RPCResponse {
+	update, _ := json.Marshal(map[string]any{
+		"sessionUpdate": "tool_call", "toolCallId": fmt.Sprintf("press-tc-%d", pressToolCalls.Add(1)),
+		"title": "readFile", "kind": "read", "status": "pending",
+	})
+	params, _ := json.Marshal(map[string]any{"update": json.RawMessage(update)})
+	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
+}
+
+// modelReadingMsg is a model response's own context reading, KAS's in-turn context_usage (no summarizationThreshold).
+func modelReadingMsg(pct float64) *marotte.RPCResponse {
+	return newSessionInfoMsg(map[string]any{
+		"kind": "context_usage", "usagePercentage": pct, "contextUsage": map[string]any{"usagePercentage": pct},
+	})
+}
+
+// The press is answered while its summary runs: KAS takes minutes to answer _kiro/session/compact, and a press held
+// that long reaches the command budget and answers the page an error for a compaction still running.
+func TestCompactPress_AnswersWhileTheCallRuns(t *testing.T) {
+	h, _, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+	release := holdCall(t, br, marotte.MethodSessionCompact)
+
+	answer := pressCompact(t, h)
+	waitForCall(t, br, marotte.MethodSessionCompact)
+
+	if rec := answeredWithin2s(t, answer); rec.Code != http.StatusOK {
+		t.Errorf("press = %d %s, want 200 while the call runs", rec.Code, rec.Body.String())
+	}
+	release()
+}
+
+// One press is one call and one outcome: a refusal is one toast, no compaction_failed row, and no later turn end
+// calls again, however full the context reads.
+func TestCompactPress_ARefusalIsOneCallAndOneToast(t *testing.T) {
+	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+	br.setCallResult(marotte.MethodSessionCompact, json.RawMessage(`{"success":false}`))
+	storeReading(t, cs, 95)
+
+	if rec := answeredWithin2s(t, pressCompact(t, h)); rec.Code != http.StatusOK {
+		t.Fatalf("press = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	waitFor(t, func() bool { return len(compactionToasts(t, h)) == 1 })
+	runPrompt(t, h, cs, "c1", "m-2")
+	runPrompt(t, h, cs, "c1", "m-3")
+
+	if got := compactCallCount(br); got != 1 {
+		t.Errorf("compact calls = %d, want the press's one", got)
+	}
+	if got := failedRows(t, cs, "c1"); len(got) != 0 {
+		t.Errorf("compaction_failed rows = %q, want none: the refusal is the press's toast", got)
+	}
+	if got := compactionToasts(t, h); len(got) != 1 {
+		t.Errorf("toasts = %q, want one", got)
+	}
+}
+
+// A second press while the first one's call runs sends no second call and is answered at once.
+func TestCompactPress_ASecondPressWhileOneRunsSendsNoSecondCall(t *testing.T) {
+	h, _, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+	release := holdCall(t, br, marotte.MethodSessionCompact)
+	first := pressCompact(t, h)
+	waitForCall(t, br, marotte.MethodSessionCompact)
+
+	if rec := answeredWithin2s(t, pressCompact(t, h)); rec.Code != http.StatusOK {
+		t.Errorf("second press = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	release()
+	answeredWithin2s(t, first)
+
+	staysFalse(t, 200*time.Millisecond, func() bool { return compactCallCount(br) != 1 },
+		"two presses sent more than one compact call")
+}
+
+// A prompt sent while the press's call runs goes to kiro-cli at once: nothing holds a send behind a compaction.
+func TestCompactPress_APromptSentWhileTheCallRunsIsSentAtOnce(t *testing.T) {
+	h, _, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+	release := holdCall(t, br, marotte.MethodSessionCompact)
+	pressCompact(t, h)
+	waitForCall(t, br, marotte.MethodSessionCompact)
+	br.forgetCalls()
+
+	if code := postPrompt(t, h, "a"); code != http.StatusOK {
+		t.Fatalf("prompt = %d, want 200", code)
+	}
+
+	waitFor(t, func() bool { return slices.Contains(br.callLog(), marotte.MethodPrompt) })
+	release()
+}
+
+// The chat's header says a compaction runs for exactly as long as the press's call does, whatever it answers, so a
+// reload keeps the dock's row and no row outlives the call.
+func TestCompactPress_TheHeaderShowsTheCallWhileItRuns(t *testing.T) {
+	for _, answer := range []string{`{"success":true}`, `{"success":false}`} {
+		t.Run(answer, func(t *testing.T) {
+			h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+			br.setCallResult(marotte.MethodSessionCompact, json.RawMessage(answer))
+			release := holdCall(t, br, marotte.MethodSessionCompact)
+			if runView(t, cs, "c1").Compacting {
+				t.Fatal("Setup: the header shows a compaction before any press")
+			}
+
+			answeredWithin2s(t, pressCompact(t, h))
+			waitForCall(t, br, marotte.MethodSessionCompact)
+			if !runView(t, cs, "c1").Compacting {
+				t.Error("the header does not show the running compaction")
+			}
+			release()
+
+			waitFor(t, func() bool { return !runView(t, cs, "c1").Compacting })
+		})
+	}
+}
+
+// kiro-cli's own report that its summary failed is the outcome the reader sees: the press's refusal after it adds
+// no second toast.
+func TestCompactPress_KiroCLIsFailureReportIsTheOneOutcome(t *testing.T) {
+	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+	br.setCallResult(marotte.MethodSessionCompact, json.RawMessage(`{"success":false}`))
+	br.mu.Lock()
+	br.notifsOnCall = map[string][]*marotte.RPCResponse{marotte.MethodSessionCompact: {
+		newSessionInfoMsg(map[string]any{"summarization": map[string]any{"status": "model error"}}),
+	}}
+	br.mu.Unlock()
+
+	answeredWithin2s(t, pressCompact(t, h))
+
+	waitFor(t, func() bool { return len(compactionToasts(t, h)) >= 1 })
+	staysFalse(t, 200*time.Millisecond, func() bool { return len(compactionToasts(t, h)) != 1 },
+		"kiro-cli's failure report and the press's refusal both toasted")
+	if got := failedRows(t, cs, "c1"); len(got) != 1 || got[0] != "model error" {
+		t.Errorf("compaction_failed rows = %q, want kiro-cli's one, \"model error\"", got)
+	}
+}
+
+// marotte starts no compaction of its own: neither a turn end over the stored reading nor an in-turn reading at
+// 96%, from a response that called a tool, calls _kiro/session/compact or stops the turn. kiro-cli compacts inside
+// the turn at its own threshold.
+func TestCompaction_MarotteStartsNone(t *testing.T) {
+	t.Run("turn ends over a full stored reading", func(t *testing.T) {
+		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+		storeReading(t, cs, 99)
+
+		runPrompt(t, h, cs, "c1", "m-2")
+		runPrompt(t, h, cs, "c1", "m-3")
+
+		staysFalse(t, 200*time.Millisecond, func() bool { return compactCallCount(br) != 0 },
+			"a turn end started a compaction")
+	})
+	t.Run("in-turn readings past the point", func(t *testing.T) {
+		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+		open := promptGates(t, br)
+		if code := postPrompt(t, h, "a"); code != http.StatusOK {
+			t.Fatalf("prompt = %d, want 200", code)
+		}
+		waitFor(t, func() bool { return slices.Contains(br.callLog(), marotte.MethodPrompt) })
+
+		br.deliver(agentToolCallMsg())
+		br.deliver(modelReadingMsg(91))
+		br.deliver(agentToolCallMsg())
+		br.deliver(modelReadingMsg(96))
+		waitFor(t, func() bool {
+			c, _ := cs.Get(context.Background(), "c1")
+			return c != nil && c.Usage.ContextPct == 96
+		})
+		open(0)
+		waitFor(t, func() bool { return !h.coord.turns.live("c1") && !listLive(h, "c1") })
+
+		if got := compactCallCount(br); got != 0 {
+			t.Errorf("compact calls = %d, want none", got)
+		}
+		if slices.Contains(br.callLog(), marotte.MethodCancel) {
+			t.Error("marotte cancelled the turn to compact it")
+		}
+		closes := closesOf(t, logOf(t, cs, "c1"))
+		if last := closes[len(closes)-1]; last.Outcome != marotte.TurnOutcomeCompleted {
+			t.Errorf("the turn closed %q, want completed", last.Outcome)
+		}
+	})
+}
+
+// A press on a chat with no live session compacts nothing.
+func TestCompactRequest_NoSessionCompactsNothing(t *testing.T) {
+	h, _, _ := newTestHub()
+	if out, err := h.RequestCompact(t.Context(), "c-none"); err != nil || out != command.CompactNoSession {
+		t.Errorf("press with no session = (%v, %v), want no session", out, err)
+	}
+}

@@ -12,17 +12,13 @@ const (
 	RunKindRow RunEntryKind = "row"
 	// RunKindRetry is the one re-send of a prompt whose turn produced nothing.
 	RunKindRetry RunEntryKind = "retry"
-	// RunKindCompaction is one compaction.
-	RunKindCompaction RunEntryKind = "compaction"
 	// RunKindRevert is a rewind's checkpoint revert.
 	RunKindRevert RunEntryKind = "revert"
-	// RunKindResume is marotte's prompt that continues a turn the failsafe stopped, once its compaction ran.
-	RunKindResume RunEntryKind = "resume"
 )
 
 // TurnKind reports a kind whose take opens a turn.
 func (k RunEntryKind) TurnKind() bool {
-	return k == RunKindTurn || k == RunKindRow || k == RunKindRetry || k == RunKindResume
+	return k == RunKindTurn || k == RunKindRow || k == RunKindRetry
 }
 
 // RunEntryState is where an entry stands in the run order.
@@ -58,24 +54,19 @@ func (s RunEntryState) Live() bool {
 // RunEntryOrigin is the path that put an entry on the list.
 type RunEntryOrigin string
 
-// The paths that put an entry on the list: a message's (prompt to carried), kiro-cli's (wire, run), a compaction's
-// (request to context_limit), a rewind's, the failsafe's (its compaction and its resume), and the notify door's.
+// The paths that put an entry on the list: a message's (prompt to carried), kiro-cli's (wire, run), a rewind's, and
+// the notify door's.
 const (
-	RunFromPrompt       RunEntryOrigin = "prompt"
-	RunFromQueue        RunEntryOrigin = "queue"
-	RunFromTangent      RunEntryOrigin = "tangent"
-	RunFromSummary      RunEntryOrigin = "summary"
-	RunFromRetry        RunEntryOrigin = "retry"
-	RunFromWire         RunEntryOrigin = "wire"
-	RunFromRun          RunEntryOrigin = "run"
-	RunFromCarried      RunEntryOrigin = "carried"
-	RunFromRequest      RunEntryOrigin = "request"
-	RunFromThreshold    RunEntryOrigin = "threshold"
-	RunFromTurnEnd      RunEntryOrigin = "turn_end"
-	RunFromContextLimit RunEntryOrigin = "context_limit"
-	RunFromRewind       RunEntryOrigin = "rewind"
-	RunFromFailsafe     RunEntryOrigin = "failsafe"
-	RunFromNotify       RunEntryOrigin = "notify"
+	RunFromPrompt  RunEntryOrigin = "prompt"
+	RunFromQueue   RunEntryOrigin = "queue"
+	RunFromTangent RunEntryOrigin = "tangent"
+	RunFromSummary RunEntryOrigin = "summary"
+	RunFromRetry   RunEntryOrigin = "retry"
+	RunFromWire    RunEntryOrigin = "wire"
+	RunFromRun     RunEntryOrigin = "run"
+	RunFromCarried RunEntryOrigin = "carried"
+	RunFromRewind  RunEntryOrigin = "rewind"
+	RunFromNotify  RunEntryOrigin = "notify"
 )
 
 // RunWant is how a waiting row may be delivered, fixed when it is placed.
@@ -104,7 +95,7 @@ type RunEntry struct {
 	// Unread marks a row a turn end left unread in kiro-cli's steer buffer: one sender's run of them is one prompt.
 	Unread    bool `json:"unread,omitempty"`
 	Steerable bool `json:"steerable,omitempty"`
-	// Yields marks a fold-opened wire turn, which owes no close: a turn-kind take or a compaction goes beside it.
+	// Yields marks a fold-opened wire turn, which owes no close: a turn-kind take goes beside it.
 	Yields bool `json:"yields,omitempty"`
 	// Admits, with Yields, is whether kiro-cli's state admits a take beside it now.
 	Admits bool `json:"admits,omitempty"`
@@ -187,16 +178,15 @@ func WantFor(entries []RunEntry, mode InterruptMode, kind SendKind) RunWant {
 // RunWaitAfter names what an entry waits for.
 type RunWaitAfter string
 
-// What an entry waits for: it runs or starts, it goes next, after the compaction ahead, after Turns turn ends, never
-// by itself (held), or for the reader's send or Resume (paused by the reader's stop).
+// What an entry waits for: it runs or starts, it goes next, after Turns turn ends, never by itself (held), or for the
+// reader's send or Resume (paused by the reader's stop).
 const (
-	waitRunning    RunWaitAfter = "running"
-	waitStarting   RunWaitAfter = "starting"
-	waitNext       RunWaitAfter = "next"
-	WaitCompaction RunWaitAfter = "compaction"
-	waitTurns      RunWaitAfter = "turns"
-	waitHeld       RunWaitAfter = "held"
-	waitPaused     RunWaitAfter = "paused"
+	waitRunning  RunWaitAfter = "running"
+	waitStarting RunWaitAfter = "starting"
+	waitNext     RunWaitAfter = "next"
+	waitTurns    RunWaitAfter = "turns"
+	waitHeld     RunWaitAfter = "held"
+	waitPaused   RunWaitAfter = "paused"
 )
 
 // RunWait is when an entry runs, counted from the entries ahead of it.
@@ -214,10 +204,6 @@ type SendNowKind string
 const (
 	// sendNowStop stops the running turn and sends the row next.
 	sendNowStop SendNowKind = "stop"
-	// SendNowStopThenCompaction stops the running turn; the row goes after the compaction pending behind it.
-	SendNowStopThenCompaction SendNowKind = "stop_then_compaction"
-	// SendNowAfterCompaction stops nothing: the row goes first once the compaction ends.
-	SendNowAfterCompaction SendNowKind = "after_compaction"
 	// sendNowNow stops nothing: the row goes next once what is live ends.
 	sendNowNow SendNowKind = "now"
 )
@@ -254,10 +240,12 @@ type RunView struct {
 	// UnreadWait is where the chat's unsent steers go.
 	UnreadWait RunWait `json:"unread_wait"`
 	Version    uint64  `json:"version"`
+	// Compacting is true while the reader's Compact call to kiro-cli runs (Chat.Compacting). Nothing waits on it.
+	Compacting bool `json:"compacting,omitempty"`
 }
 
 // CancelTarget is the first live turn-kind entry starting or running: what a Cancel naming no target stops. It
-// never names a compaction or a revert.
+// never names a revert.
 func CancelTarget(entries []RunEntry) string {
 	for _, e := range LivePrefix(entries) {
 		if e.Kind.TurnKind() && (e.State == RunStarting || e.State == RunRunning) {
@@ -265,20 +253,6 @@ func CancelTarget(entries []RunEntry) string {
 		}
 	}
 	return ""
-}
-
-// waitOrder is the list in the order its entries run: kiro-cli's turn under a running compaction runs before it,
-// since kiro-cli refuses or aborts that compaction and it is requeued behind the turn.
-func waitOrder(entries []RunEntry) []int {
-	order := make([]int, len(entries))
-	for i := range order {
-		order[i] = i
-	}
-	live := LivePrefix(entries)
-	if len(live) == 2 && live[0].Kind == RunKindCompaction && live[1].kiroCLI() {
-		order[0], order[1] = 1, 0
-	}
-	return order
 }
 
 // ridesOf marks the entries that ride the running turn as steers: offered, in kiro-cli, or bound to it (steerBound).
@@ -291,16 +265,13 @@ func ridesOf(entries []RunEntry) []bool {
 	return rides
 }
 
-func waitAt(entries []RunEntry, order []int, pos int, rides []bool) RunWait {
-	e := &entries[order[pos]]
-	if w, ok := ownWait(e, rides[order[pos]]); ok {
+func waitAt(entries []RunEntry, at int, rides []bool) RunWait {
+	e := &entries[at]
+	if w, ok := ownWait(e, rides[at]); ok {
 		return w
 	}
-	if e.State == RunPending && pos > 0 && entries[order[pos-1]].Kind == RunKindCompaction {
-		return RunWait{After: WaitCompaction}
-	}
 	paused := e.State == RunPaused
-	n, liveCounted := turnsAhead(entries, order[:pos], rides, paused || !e.ByUser())
+	n, liveCounted := turnsAhead(entries[:at], rides, paused || !e.ByUser())
 	if paused && n == 0 {
 		n = 1
 	}
@@ -335,13 +306,10 @@ func ownWait(e *RunEntry, rides bool) (RunWait, bool) {
 // turnsAhead counts the turn ends ahead: a starting or running turn one each (liveCounted reports one), a pending
 // one each, a paused one only when behindPaused (a paused entry, or a wake, which waits for the user's paused rows), a
 // stopping or closing one none, since it runs nothing more, and a steer riding the running turn none.
-func turnsAhead(entries []RunEntry, ahead []int, rides []bool, behindPaused bool) (n int, liveCounted bool) {
-	// A fold turn ahead of a compaction is closed by it, so it runs no turn ahead of anything.
-	live := LivePrefix(entries)
-	foldAhead := len(live) == 2 && live[1].Kind == RunKindCompaction
-	for _, j := range ahead {
-		a := &entries[j]
-		if !a.Kind.TurnKind() || (foldAhead && j == 0) || rides[j] {
+func turnsAhead(ahead []RunEntry, rides []bool, behindPaused bool) (n int, liveCounted bool) {
+	for j := range ahead {
+		a := &ahead[j]
+		if !a.Kind.TurnKind() || rides[j] {
 			continue
 		}
 		switch a.State {
@@ -360,38 +328,13 @@ func turnsAhead(entries []RunEntry, ahead []int, rides []bool, behindPaused bool
 	return n, liveCounted
 }
 
-func pendingCompactionFront(entries []RunEntry) bool {
-	live := LivePrefix(entries)
-	return len(live) < len(entries) && entries[len(live)].Kind == RunKindCompaction &&
-		entries[len(live)].State == RunPending
-}
-
 func sendNowKind(entries []RunEntry) SendNowKind {
 	live := LivePrefix(entries)
-	compactionNext := pendingCompactionFront(entries)
 	if len(live) == 1 {
 		h := &live[0]
-		switch {
-		case h.Kind.TurnKind() && h.Origin != RunFromRun && (h.State == RunStarting || h.State == RunRunning):
-			if compactionNext {
-				return SendNowStopThenCompaction
-			}
+		if h.Kind.TurnKind() && h.Origin != RunFromRun && (h.State == RunStarting || h.State == RunRunning) {
 			return sendNowStop
-		case h.Kind == RunKindCompaction:
-			return SendNowAfterCompaction
-		case (h.State == RunStopping || h.State == RunClosing) && compactionNext:
-			return SendNowAfterCompaction
 		}
-		return sendNowNow
-	}
-	for _, e := range live {
-		if e.Kind == RunKindCompaction {
-			// A compaction running, or taken behind a fold turn.
-			return SendNowAfterCompaction
-		}
-	}
-	if len(live) == 0 && compactionNext {
-		return SendNowAfterCompaction
 	}
 	return sendNowNow
 }
@@ -408,14 +351,7 @@ func insertAt(entries []RunEntry) int {
 
 func waitIfInserted(entries []RunEntry, at int, e *RunEntry) RunWait {
 	with := slices.Insert(slices.Clone(entries), at, *e)
-	order := waitOrder(with)
-	rides := ridesOf(with)
-	for pos, i := range order {
-		if i == at {
-			return waitAt(with, order, pos, rides)
-		}
-	}
-	return RunWait{After: waitNext}
+	return waitAt(with, at, ridesOf(with))
 }
 
 // RunViewOf is the header's run order for a chat's list and its version. Its Send is what a plain send naming steer
@@ -427,16 +363,13 @@ func RunViewOf(entries []RunEntry, version uint64) RunView {
 		Send:    VerbFor(entries, InterruptSteer, SendPlain),
 		Cancel:  CancelTarget(entries),
 	}
-	order := waitOrder(entries)
 	rides := ridesOf(entries)
 	arrow := sendNowKind(entries)
 	carried := false
-	for pos, i := range order {
-		e := entries[i]
-		ev := RunEntryView{RunEntry: e, Wait: waitAt(entries, order, pos, rides)}
+	for i, e := range entries {
+		ev := RunEntryView{RunEntry: e, Wait: waitAt(entries, i, rides)}
 		ev.SteerInFlight = rides[i] && e.State == RunPending
-		if ev.WaitingToSend() && e.State != RunHeld && e.ByUser() &&
-			ev.Wait.After != waitNext && ev.Wait.After != WaitCompaction {
+		if ev.WaitingToSend() && e.State != RunHeld && e.ByUser() && ev.Wait.After != waitNext {
 			ev.SendNow = arrow
 		}
 		if !carried && e.Kind.TurnKind() && !e.kiroCLI() && (e.State == RunStarting || e.State == RunPending) {
@@ -445,18 +378,9 @@ func RunViewOf(entries []RunEntry, version uint64) RunView {
 		v.Entries[i] = ev
 	}
 	v.NextWait = waitIfInserted(entries, insertAt(entries), &RunEntry{Kind: RunKindRow, State: RunPending})
-	v.UnreadWait = unreadWait(entries)
+	// A steer kiro-cli still holds unsent goes as a turn of its own at the front of the pending entries.
+	v.UnreadWait = waitIfInserted(entries, len(LivePrefix(entries)), &RunEntry{Kind: RunKindRow, State: RunPending})
 	return v
-}
-
-// unreadWait is what a steer kiro-cli still holds unsent waits for: a turn of its own at the front of the pending
-// entries, behind a compaction pending there.
-func unreadWait(entries []RunEntry) RunWait {
-	at := len(LivePrefix(entries))
-	if at < len(entries) && entries[at].State == RunPending && entries[at].Kind == RunKindCompaction {
-		at++
-	}
-	return waitIfInserted(entries, at, &RunEntry{Kind: RunKindRow, State: RunPending})
 }
 
 // SanitizeRun is the list a new life starts from: only rows whose turn never opened, and no steer handed to kiro-cli

@@ -122,9 +122,9 @@ func deliverRows() []deliverRow {
 			want:    userNext(prompt("u1")),
 		},
 		{
-			name: "a send-now row behind a pending compaction leaves the row ahead of the compaction first",
+			name: "a send-now row behind a pending retry leaves the row ahead of the retry first",
 			entries: list(
-				u("u1", RunPending, RunWantPrompt), compaction(RunPending), next(u("u2", RunPending, RunWantPrompt)),
+				u("u1", RunPending, RunWantPrompt), retryOf(RunPending), next(u("u2", RunPending, RunWantPrompt)),
 			),
 			want: prompt("u1"),
 		},
@@ -196,11 +196,11 @@ func deliverRows() []deliverRow {
 			entries: list(unread(d("d", RunPending))), want: prompt("d"),
 		},
 		{
-			name:    "R26 nothing is delivered behind a running compaction",
-			entries: list(compaction(RunRunning), u("u", RunPending, RunWantEither)), want: nothing(),
+			name:    "R26 nothing is delivered behind a running revert",
+			entries: list(revertOf(RunRunning), u("u", RunPending, RunWantEither)), want: nothing(),
 		},
 		{
-			name:    "R26 the user's row goes after the compaction",
+			name:    "R26 the user's row goes after the revert",
 			entries: list(u("u", RunPending, RunWantEither)), want: prompt("u"),
 		},
 		{
@@ -239,7 +239,7 @@ func deliverRows() []deliverRow {
 			entries: list(u("u", RunPending, RunWantPrompt)), want: prompt("u"),
 		},
 		{
-			name: "R32 two sends behind a compaction are two prompts in order",
+			name: "R32 two sends behind a revert are two prompts in order",
 			entries: list(
 				u("u1", RunPending, RunWantPrompt), u("u2", RunPending, RunWantPrompt),
 			),
@@ -333,9 +333,9 @@ func deliverRows() []deliverRow {
 			facts: prompted(), want: nothing(),
 		},
 		{
-			name: "the user's steer still goes into the running turn ahead of a pending compaction",
+			name: "the user's steer still goes into the running turn ahead of a pending retry",
 			entries: list(
-				turn("A", RunRunning), compaction(RunPending), u("u", RunPending, RunWantEither),
+				turn("A", RunRunning), retryOf(RunPending), u("u", RunPending, RunWantEither),
 			),
 			facts: prompted(), want: steer("u"),
 		},
@@ -344,8 +344,8 @@ func deliverRows() []deliverRow {
 			entries: list(d("d", RunPending)), facts: HeadFacts{EndsOwed: true}, want: nothing(),
 		},
 		{
-			name:    "a pending compaction ahead is taken by its own rule first",
-			entries: list(compaction(RunPending), d("d", RunPending)), want: nothing(),
+			name:    "a pending retry ahead is taken by its own rule first",
+			entries: list(retryOf(RunPending), d("d", RunPending)), want: nothing(),
 		},
 		{
 			name:    "a wake goes beside a fold turn kiro-cli admits a take beside",
@@ -462,4 +462,12 @@ func deliveryInvariant(entries []RunEntry, dl Delivery) string {
 		}
 	}
 	return ""
+}
+
+func retryOf(s RunEntryState) RunEntry {
+	return RunEntry{ID: "retry-1", Kind: RunKindRetry, State: s, Origin: RunFromRetry, Row: &QueuedPrompt{ID: "retry-1"}}
+}
+
+func revertOf(s RunEntryState) RunEntry {
+	return RunEntry{ID: "revert-1", Kind: RunKindRevert, State: s, Origin: RunFromRewind}
 }

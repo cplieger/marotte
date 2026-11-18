@@ -217,9 +217,7 @@ func launchEntry(ctx context.Context, roles *promptRoles, chatID marotte.ChatID,
 		return launchRetry(ctx, roles, chatID, l)
 	case marotte.RunKindRow:
 		return launchQueuedRow(ctx, roles, l)
-	case marotte.RunKindResume:
-		return launchResume(ctx, roles, l)
-	case marotte.RunKindTurn, marotte.RunKindCompaction, marotte.RunKindRevert:
+	case marotte.RunKindTurn, marotte.RunKindRevert:
 	}
 	roles.admission.ReleaseTurnReservation(l.Res)
 	return "", errLaunchUnreserved
@@ -241,20 +239,6 @@ func launchQueuedRow(ctx context.Context, roles *promptRoles, l *EntryLaunch) (s
 		return "", err
 	}
 	slog.Info("queued prompt dispatched", "chat_id", l.Res.Chat, "message_id", row.ID)
-	return turnID, nil
-}
-
-// launchResume opens marotte's own prompt that continues a turn the compaction failsafe stopped, on the session's
-// model. kiro-cli stores every prompt as the user's (kirodotdev/Kiro#12346), so Automatic names marotte as its sender
-// on the turn_open and on kiro-cli's row (senderLabel).
-func launchResume(ctx context.Context, roles *promptRoles, l *EntryLaunch) (string, error) {
-	p := &marotte.PromptCommand{Text: l.Row.Text, MessageID: l.Row.ID, Automatic: true}
-	turnID, err := startPrompt(ctx, roles, l.Res.Chat, p, &launch{res: l.Res, fence: l.Fence})
-	if err != nil {
-		logLaunchRefused(l.Res.Chat, l.Row.ID, err)
-		return "", err
-	}
-	slog.Info("resumed the turn the compaction failsafe stopped", "chat_id", l.Res.Chat, "message_id", l.Row.ID)
 	return turnID, nil
 }
 

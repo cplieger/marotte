@@ -165,8 +165,8 @@ type chatLifecycle struct {
 	closedIDs [recentCloses]string
 	// admissionMessage is the prompt message id of the held reservation, "" for none.
 	admissionMessage string
-	// toolCallTurn is the turn the chat's own agent opened a tool call in since the last live reading, "" for none.
-	toolCallTurn string
+	// compactPress is the reader's Compact call running on the chat, nil for none (compactPresses).
+	compactPress *compactCall
 	chatID       marotte.ChatID
 	// runFinal is the list the life's end left, owed to the record once the ending caller released its locks
 	// (writeFinalRun); runWritten is the record version this life last wrote.
@@ -927,27 +927,9 @@ func (r *turnRegistry) kasAllowsSessionCall(chatID marotte.ChatID) bool {
 // kasStepLocked applies one input to the chat's KAS state, waking every waiter when it changed. Caller holds mu.
 func (lc *chatLifecycle) kasStepLocked(in kasInput, seq uint64) {
 	changed, _ := lc.kas.step(in, seq)
-	if in == kasReportActive {
-		lc.run.kasReportedActive()
-	}
 	if changed {
 		lc.wakeLocked()
 	}
-}
-
-// compactTurnLocked names the turn a queued compaction belongs to: the open turn (own, else pending), else the newest
-// finished one, whose close may still be running its end. A held reservation has no turn of its own until it opens, so
-// it gets the finished one's. "" when no turn opened in this life. Caller holds mu.
-func (lc *chatLifecycle) compactTurnLocked() string {
-	switch {
-	case lc.own != nil:
-		return lc.own.ID
-	case lc.pending != nil:
-		return lc.pending.ID
-	case lc.closedAt == 0:
-		return ""
-	}
-	return lc.closedIDs[(lc.closedAt-1)%recentCloses]
 }
 
 // liveLockedState is live's predicate, spelled once. Caller holds mu.

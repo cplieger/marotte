@@ -7,7 +7,7 @@ import { setSendState } from "./prompt-input.js";
 import { setSSEStatus, setAgentDown, clearAgentDown, reportSendRefused } from "./send-state.js";
 import { setSessions, setActive, applyRun, recordSteerQueued } from "./store.js";
 import type { Session } from "./types.js";
-import { compactionEntry, runAt, turnEntry } from "./__test-helpers__/run-order.js";
+import { runAt, turnEntry } from "./__test-helpers__/run-order.js";
 
 // Capture every SendState pushed to prompt-input without loading its DOM deps.
 vi.mock("./prompt-input.js", () => ({ setSendState: vi.fn() }));
@@ -140,7 +140,7 @@ describe("send-state precedence", () => {
   });
 });
 
-// Cancel names what the server would stop (`RunView.cancel`): a compaction alone is never stopped by it.
+// Cancel names what the server would stop (`RunView.cancel`): the reader's compaction call alone is never stopped by it.
 describe("send-state from the run order", () => {
   it("shows Cancel exactly while the server names something to stop", () => {
     const id = "c1";
@@ -150,10 +150,7 @@ describe("send-state from the run order", () => {
     expect(lastPushed()).toEqual({ kind: "idle" });
 
     version += 1;
-    applyRun(
-      id,
-      runAt(version, [compactionEntry("compact-1", { after: "running" })], { send: "queue" }),
-    );
+    applyRun(id, runAt(version, [], { send: "prompt", compacting: true }));
     expect(lastPushed()).toEqual({ kind: "idle" });
 
     turnRuns(id, true);

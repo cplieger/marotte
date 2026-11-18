@@ -60,7 +60,7 @@ function giveBackUnsentPrompt(
     return;
   }
   const prompt = turnOpenOf(state)?.prompt;
-  if (prompt === undefined || prompt.automatic === true || prompt.caller !== undefined) {
+  if (prompt === undefined || prompt.caller !== undefined) {
     return;
   }
   restoreFailedSend(chatID, prompt.text);

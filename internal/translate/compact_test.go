@@ -289,6 +289,9 @@ func TestHandleV3Summarization_FailureLandsInTheTurnWithoutAWatermark(t *testing
 	if want := (compactionFailure{chatID: "c1", turnID: turn.ID(), detail: "error"}); len(deps.compactionFailures) != 1 || deps.compactionFailures[0] != want {
 		t.Errorf("CompactionFailed calls = %+v, want one naming the turn it landed in, %+v", deps.compactionFailures, want)
 	}
+	if deps.failuresObserved != 1 {
+		t.Errorf("ObserveCompactionFailed calls = %d, want 1, so a Compact press leaves the account to this row", deps.failuresObserved)
+	}
 }
 
 // TestHandleV3Summarization_GenuineErrorFails pins that a genuine "error" files the entry and

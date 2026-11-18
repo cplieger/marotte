@@ -180,14 +180,9 @@ func (rt *Runtime) AdmissionHolderSource(chatID marotte.ChatID) (marotte.TurnOpe
 	return rt.coord.AdmissionHolderSource(chatID)
 }
 
-// RequestCompact is the reader's compaction, owned by the chat's compactor.
+// RequestCompact is the reader's Compact press (compactPresses.request).
 func (rt *Runtime) RequestCompact(ctx context.Context, chatID marotte.ChatID) (command.CompactOutcome, error) {
-	return rt.coord.autoCompact.request(ctx, chatID)
-}
-
-// CancelCompact withdraws the chat's compaction entry id ("" for the chat's one).
-func (rt *Runtime) CancelCompact(ctx context.Context, chatID marotte.ChatID, id string) error {
-	return rt.coord.autoCompact.cancel(ctx, chatID, id)
+	return rt.coord.compact.request(ctx, chatID)
 }
 
 // AbandonInFlightTurn finalizes a turn that failed before it could end.

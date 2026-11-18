@@ -170,8 +170,8 @@ describe("the compaction point handed to the ring", () => {
       refreshContextUI(s);
     });
     expect(handed()).toEqual({ at: 80, t: 80 });
-    compactionPolicy.value = { enabled: true, pct: 90 };
-    expect(handed()).toEqual({ at: 90, t: 90 });
+    compactionPolicy.value = { enabled: true, pct: 70 };
+    expect(handed()).toEqual({ at: 70, t: 70 });
     stop();
   });
 });
