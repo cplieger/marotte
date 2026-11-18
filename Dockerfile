@@ -10,14 +10,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # marotte's search starts rg in the folder a pattern names, which matches a
 # whole-root walk only from ripgrep 15.0.0: 14.x drops an ancestor .gitignore's
-# anchored rules when the walk starts in a subfolder. Debian trixie ships 14.1.1.
+# anchored rules when the walk starts in a subfolder (BurntSushi/ripgrep#829,
+# fixed in 15.0.0). Debian trixie ships 14.1.1.
 # renovate: datasource=github-releases depName=BurntSushi/ripgrep
 ARG RIPGREP_VERSION=15.2.0
 # repin: dep=BurntSushi/ripgrep url=https://github.com/BurntSushi/ripgrep/releases/download/{version}/ripgrep-{version}-x86_64-unknown-linux-musl.tar.gz
 ARG RIPGREP_AMD64_SHA256=33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c
 # repin: dep=BurntSushi/ripgrep url=https://github.com/BurntSushi/ripgrep/releases/download/{version}/ripgrep-{version}-aarch64-unknown-linux-gnu.tar.gz
 ARG RIPGREP_ARM64_SHA256=a740b91c82eaf9914cfedd353572f2791cbe0162c84101ee0951058f4dcbc90d
+# The release tarballs ship ripgrep's own licence only; the texts of everything the binaries
+# link are committed, for the version the MANIFEST's first line names.
+COPY licenses/crates/ /licenses/crates/
 RUN set -e; \
+    if [ "$(head -n 1 /licenses/crates/MANIFEST)" != "ripgrep ${RIPGREP_VERSION}" ]; then \
+      echo "ERROR ripgrep-licenses: licenses/crates/MANIFEST is for $(head -n 1 /licenses/crates/MANIFEST), not ripgrep ${RIPGREP_VERSION}; run sh scripts/vendor-crate-licenses.sh and commit the result" >&2; \
+      exit 1; \
+    fi; \
     case "$(dpkg --print-architecture)" in \
       amd64) rg_target=x86_64-unknown-linux-musl; rg_sha="$RIPGREP_AMD64_SHA256" ;; \
       arm64) rg_target=aarch64-unknown-linux-gnu; rg_sha="$RIPGREP_ARM64_SHA256" ;; \
@@ -33,6 +41,7 @@ RUN set -e; \
     install -m 755 "/tmp/${name}/rg" /out/usr/bin/rg; \
     /out/usr/bin/rg --version; \
     cp "/tmp/${name}/LICENSE-MIT" "/tmp/${name}/UNLICENSE" "/tmp/${name}/COPYING" /out/usr/share/licenses/ripgrep/; \
+    for dir in /licenses/crates/*/; do cp -R "$dir" /out/usr/share/licenses/; done; \
     printf '{"bomFormat":"CycloneDX","specVersion":"1.5","version":1,"components":[{"bom-ref":"ripgrep@%s","type":"application","name":"ripgrep","version":"%s","purl":"pkg:cargo/ripgrep@%s?download_url=%s&checksum=sha256:%s"}]}\n' \
       "$RIPGREP_VERSION" "$RIPGREP_VERSION" "$RIPGREP_VERSION" "$url" "$rg_sha" > /out/usr/share/sbom/ripgrep.cdx.json
 
