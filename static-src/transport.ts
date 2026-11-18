@@ -289,6 +289,7 @@ export async function send(cmd: TypedCommand | Command, opts?: SendOptions): Pro
       ...(body !== undefined ? { body } : {}),
     };
   } catch (e: unknown) {
+    flushFrames();
     const err = e instanceof Error ? e : null;
     let msg: string;
     let code: string;

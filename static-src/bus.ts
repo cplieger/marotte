@@ -221,7 +221,7 @@ export function onSSE<K extends keyof SSEPayloads>(type: K, fn: SSEHandler<K>): 
 }
 
 /** Route an incoming SSE event to every onSSE handler registered for its type. Every handler
- *  runs; the answer is whether one threw, which leaves the event's state not applied. */
+ *  runs, past one that throws; the answer is whether one threw. */
 export function dispatch(evt: ServerEvent): boolean {
   const slot = sseHandlers.get(evt.type);
   if (slot === undefined) {

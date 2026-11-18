@@ -42,7 +42,7 @@ import { observeStamp, setObserveSink, versionMap } from "./subject-versions.js"
 import { listTabs } from "./tabs-sync.js";
 import type { ConnectionStatus, ServerEvent, SubjectStamp } from "./types.js";
 
-/** Applies one event; answers true when a handler threw, so its state is not applied. */
+/** Applies one event; answers true when a handler threw, so its stamp stays unobserved. */
 type MsgHandler = (evt: ServerEvent) => boolean | undefined;
 type StatusHandler = (s: ConnectionStatus) => void;
 

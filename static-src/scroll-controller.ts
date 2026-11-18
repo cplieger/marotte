@@ -1114,6 +1114,11 @@ export class ScrollController {
     this.mutating = true;
     try {
       fn();
+    } catch (err) {
+      // A change that threw is not complete; its owed landing and fill would fire on the next unrelated hold.
+      this.resumeOwed = false;
+      this.fillOwed = false;
+      throw err;
     } finally {
       this.mutating = false;
     }

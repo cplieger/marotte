@@ -169,6 +169,28 @@ interface SlotCount {
    *  and the frame batch's hold. Observer and scroll-event callbacks run after the browser's own
    *  layout, which the spy cannot see, so it would count their reads as forced. */
   readonly scrollerLayouts: number;
+  /** The slot's frame stamps, each with the version the map held before its animation frame ran
+   *  and after. */
+  readonly stamps: readonly StampSeen[];
+}
+
+interface StampSeen {
+  readonly version: string;
+  readonly before: string | undefined;
+  readonly after: string | undefined;
+}
+
+interface Stamp {
+  readonly kind: string;
+  readonly ref: string;
+  readonly version: string;
+}
+
+function heldVersion(stamp: Stamp): string | undefined {
+  return versions
+    .versionMap()
+    .snapshot()
+    .held.find((h) => h.kind === stamp.kind && h.ref === stamp.ref)?.version;
 }
 
 /** Deliver one slot's frames, each in its own task, then run the page's animation frame. */
@@ -183,7 +205,7 @@ async function deliverSlot(slot: readonly Recorded[], from: number): Promise<Slo
   }
   app.hub.tick(Date.now());
   await rendered();
-  const before = passes;
+  const passesBefore = passes;
   const ranges: [number, number][] = [];
   holds.length = 0;
   spy.begin();
@@ -193,9 +215,19 @@ async function deliverSlot(slot: readonly Recorded[], from: number): Promise<Slo
     ranges.push([from, spy.logged()]);
     await task();
   }
+  const stamped = slot.flatMap((f) => {
+    const subject = (f.envelope as Envelope)["subject"] as Stamp | undefined;
+    return subject === undefined ? [] : [subject];
+  });
+  const before = stamped.map(heldVersion);
   gate.run(Date.now());
   ranges.push(...holds);
   await task();
+  const stamps = stamped.map((s, i) => ({
+    version: s.version,
+    before: before[i],
+    after: heldVersion(s),
+  }));
   const { log } = spy.end();
   const scroller = scroll.getScrollEl();
   app.release();
@@ -203,8 +235,9 @@ async function deliverSlot(slot: readonly Recorded[], from: number): Promise<Slo
   return {
     at: first.at,
     types: slot.map((f) => (f.envelope as Envelope).type),
-    passes: passes - before,
+    passes: passes - passesBefore,
     scrollerLayouts: counted.filter((a) => a.forced && a.target === scroller).length,
+    stamps,
   };
 }
 
@@ -251,6 +284,14 @@ describe("frame-batch", () => {
     expect(turn?.entries.at(-1)?.kind, "every recorded frame applied").toBe("turn_close");
     const over = counts.filter((c) => c.passes > 1 || c.scrollerLayouts > 2);
     expect(over, "display frames over one pass or two scroller layouts").toEqual([]);
+    const stamps = counts.flatMap((c) => c.stamps);
+    const recordedStamps = frames.filter((f) => (f.envelope as Envelope)["subject"] !== undefined);
+    expect(recordedStamps.length, "the recorded turn carries a stamped frame").toBeGreaterThan(0);
+    expect(stamps, "every stamped frame checked").toHaveLength(recordedStamps.length);
+    expect(
+      stamps.filter((s) => s.before === s.version || s.after !== s.version),
+      "stamps observed before their frame's animation frame, or not after it",
+    ).toEqual([]);
   });
 
   it("a handler that throws leaves the frame's stamp unobserved and re-reads its subject", async () => {
@@ -282,6 +323,38 @@ describe("frame-batch", () => {
     }
   });
 
+  it("a pending set whose item handler throws leaves the set's stamp unobserved", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const off = bus.onSSE("chat_updated", () => {
+      throw new Error("item handler fault");
+    });
+    try {
+      const item = recordedOf("chat_updated").envelope as Envelope;
+      const version = "9000000";
+      app.hub.send(
+        {
+          type: "pending_snapshot",
+          chat_id: "",
+          payload: { items: [item] },
+          subject: { kind: "pending", ref: "", version },
+        },
+        undefined,
+      );
+      await task();
+      gate.run(Date.now());
+      await task();
+      app.release();
+      const held = versions
+        .versionMap()
+        .snapshot()
+        .held.find((h) => h.kind === "pending");
+      expect(held?.version, "the partly applied set's stamp").not.toBe(version);
+    } finally {
+      off();
+      errors.mockRestore();
+    }
+  });
+
   it("transport.send posts after a turn_closed that arrived before it", async () => {
     await queueClosedTurn("t-frame-batch-send");
     let busyAtPost: boolean | undefined;
@@ -291,6 +364,24 @@ describe("frame-batch", () => {
     });
     await transport.send({ type: "cancel" as const, chat_id: chatID });
     expect(busyAtPost).toBe(false);
+  });
+
+  it("a command whose fetch rejects reports its failure after a turn_closed that arrived during it", async () => {
+    app.net.respond("/api/command", async () => {
+      await queueClosedTurn("t-frame-batch-send-rejected");
+      throw new TypeError("Failed to fetch");
+    });
+    let busyAtNotice: boolean | undefined;
+    const off = bus.onBus(bus.BUS_COMMAND_FAILED, () => {
+      busyAtNotice = store.isBusy(chatID);
+    });
+    try {
+      const result = await transport.send({ type: "cancel" as const, chat_id: chatID });
+      expect(result.ok, "the rejected fetch is a failure").toBe(false);
+      expect(busyAtNotice, "busy when the failure notice ran").toBe(false);
+    } finally {
+      off();
+    }
   });
 
   const wrappers = [
