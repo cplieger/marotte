@@ -32,12 +32,14 @@ marotte sends no telemetry. Its outbound requests are these:
 
 - the AI provider of the Kiro account you signed in with
 - AWS's sign-in service in your account's region, to sign in and to renew the sign-in, and Kiro's account service, to read the account's Kiro profile and email at sign-in
-- any MCP server you add
+- any MCP server you add, and the identity provider you set up on the **Organization sign-in** card, at its issuer and its sign-in and token addresses
 - the API of each forge you connect in the git panel, never on a private address unless that connection allows it
 - the public MCP registry when you search it
 - the kiro-cli download on first start, the tools you install, and the tool catalog refresh, once a day by default. When a github.com account is connected, its token goes with the tools' requests to GitHub's API and to no other host.
 
 AWS may use what marotte sends the model, which is your chats and workflow runs, to improve its service. The **Share content with AWS for service improvement** switch under **Data sharing** in **Settings** decides it. It is on by default, as in kiro-cli, and a switch you turned off stays off. On an enterprise account, the organization's setting decides it instead. kiro-cli run in the Shell panel follows its own setting, which [Content sharing with AWS](configuration.md#content-sharing-with-aws) covers.
+
+**Memory** under **General** in **Settings** is Off by default. Under any other choice, the agent reads memories in every chat started after the change and in the workflow runs marotte starts from **Run**, a schedule or an event rule. Under the last two choices it also adds memories there. The choice belongs to the Kiro account signed in on this machine and is shared with kiro-cli signed in to the same account.
 
 kiro-cli's own telemetry is on by default, as in kiro-cli. The **kiro-cli telemetry** switch under **Data sharing** in **Settings** covers both kinds: its usage telemetry, which sends usage data linked to your signed-in account, and its legacy toolkit telemetry. Turned off, it stops both. On an enterprise account, the organization's usage-analytics setting decides it instead. Push notifications go only to the browser vendors' push services, over HTTPS on port 443. Each push connection is checked again after the name is resolved.
 
