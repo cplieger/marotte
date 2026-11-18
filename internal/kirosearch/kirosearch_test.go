@@ -200,9 +200,7 @@ func TestText_DeadlineReturnsThePartialResultAndKillsTheSession(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "pid")
 	bin := slowRG(t, matchLine("./a.go", "hit", 1), pidFile)
 	const deadline = 300 * time.Millisecond
-	prev := searchDeadline
-	searchDeadline = deadline
-	t.Cleanup(func() { searchDeadline = prev })
+	shortDeadline(t, deadline)
 
 	start := time.Now()
 	got := Searcher{Bin: bin}.Text(t.Context(), []string{root}, TextQuery{Pattern: "hit"})
@@ -211,11 +209,106 @@ func TestText_DeadlineReturnsThePartialResultAndKillsTheSession(t *testing.T) {
 	if took > deadline+killWait {
 		t.Errorf("Text took %v, want at most the deadline %v plus %v", took, deadline, killWait)
 	}
+	if len(got) == 0 || !isPartialNotice(got[0].FilePath) {
+		t.Fatalf("Text = %+v, want it to open on a notice that the results are partial", got)
+	}
 	want := []Match{{FilePath: "a.go", LineNumber: 1, LineText: "hit"}}
-	if !slices.Equal(got, want) {
-		t.Errorf("Text = %+v, want the partial result %+v", got, want)
+	if !slices.Equal(got[1:], want) {
+		t.Errorf("Text after the notice = %+v, want the partial result %+v", got[1:], want)
 	}
 	awaitGone(t, pidFile)
+}
+
+// isPartialNotice reports whether an answer entry is the notice of a search the deadline cut short.
+func isPartialNotice(s string) bool {
+	return strings.Contains(s, "partial") && strings.Contains(s, searchDeadline.String())
+}
+
+func shortDeadline(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := searchDeadline
+	searchDeadline = d
+	t.Cleanup(func() { searchDeadline = prev })
+}
+
+func TestFiles_DeadlineAnswerSaysItIsPartial(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	bin := slowRG(t, "./a.go", pidFile)
+	shortDeadline(t, 300*time.Millisecond)
+
+	got := Searcher{Bin: bin}.Files(t.Context(), []string{t.TempDir()}, FilesQuery{Pattern: "**/*a.go*", MaxResults: 11})
+
+	if len(got) != 2 || !isPartialNotice(got[0]) || got[1] != "a.go" {
+		t.Errorf("Files = %q, want the partial notice and then a.go", got)
+	}
+	awaitGone(t, pidFile)
+}
+
+// A search that ends before its deadline is whole, and its answer carries no notice.
+func TestText_WholeAnswerCarriesNoPartialNotice(t *testing.T) {
+	bin := fakeRG(t, `printf '%s\n' '`+matchLine("./a.go", "hit", 1)+`'`)
+
+	got := Searcher{Bin: bin}.Text(t.Context(), []string{t.TempDir()}, TextQuery{Pattern: "hit"})
+
+	if want := []Match{{FilePath: "a.go", LineNumber: 1, LineText: "hit"}}; !slices.Equal(got, want) {
+		t.Errorf("Text = %+v, want %+v", got, want)
+	}
+}
+
+// The answer is capped at maxTextEntries with the notice counted, so the notice is never the entry
+// a cap drops.
+func TestText_PartialNoticeCountsTowardTheEntryCap(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	var lines strings.Builder
+	for i := range maxTextEntries + 5 {
+		lines.WriteString(matchLine("./f"+strconv.Itoa(i)+".go", "hit", 1) + "\n")
+	}
+	bin := fakeRG(t, `printf '%s' '`+lines.String()+`'
+/bin/sleep 60 &
+echo $! > `+pidFile+`
+wait`)
+	shortDeadline(t, 300*time.Millisecond)
+
+	got := Searcher{Bin: bin}.Text(t.Context(), []string{t.TempDir()}, TextQuery{Pattern: "hit"})
+
+	if len(got) != maxTextEntries || !isPartialNotice(got[0].FilePath) {
+		t.Errorf("Text gave %d entries opening on %q, want %d opening on the partial notice", len(got), got[0].FilePath, maxTextEntries)
+	}
+	awaitGone(t, pidFile)
+}
+
+// escapedRG prints one result, then leaves a child that called setsid holding rg's output, which the
+// session kill does not reach. The child is killed by pid when the test ends.
+func escapedRG(t *testing.T, firstLine string) string {
+	t.Helper()
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	t.Cleanup(func() {
+		if raw, err := os.ReadFile(pidFile); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	})
+	return fakeRG(t, `printf '%s\n' '`+firstLine+`'
+/usr/bin/setsid /bin/sleep 30 &
+echo $! > `+pidFile+`
+wait`)
+}
+
+func TestText_DeadlineEndsTheReadWhenAChildOutsideTheSessionHoldsTheOutput(t *testing.T) {
+	bin := escapedRG(t, matchLine("./a.go", "hit", 1))
+	const deadline = 300 * time.Millisecond
+	shortDeadline(t, deadline)
+
+	start := time.Now()
+	got := Searcher{Bin: bin}.Text(t.Context(), []string{t.TempDir()}, TextQuery{Pattern: "hit"})
+
+	if took := time.Since(start); took > deadline+killWait+time.Second {
+		t.Errorf("Text took %v, want the deadline %v plus at most %v", took, deadline, killWait+time.Second)
+	}
+	if len(got) != 2 || !isPartialNotice(got[0].FilePath) || got[1].FilePath != "a.go" {
+		t.Errorf("Text = %+v, want the partial notice and then a.go", got)
+	}
 }
 
 func TestFiles_CancelReturnsThePartialResultAndKillsTheSession(t *testing.T) {

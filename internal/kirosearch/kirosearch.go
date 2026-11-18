@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -94,7 +95,8 @@ func (s Searcher) shown(searched []string) []string {
 
 // Text searches roots for q.Pattern and returns the entries of the 100 files with the most matching
 // lines, at most 100 entries, with paths in KAS's form (displayPath). Whatever was found when ctx
-// ends or the deadline passes is returned. The result is never nil.
+// ends or the deadline passes is returned, and a deadline answer opens on a notice entry saying it
+// is partial. The result is never nil.
 func (s Searcher) Text(ctx context.Context, roots []string, q TextQuery) []Match {
 	if s.Bin == "" || q.Pattern == "" || len(roots) == 0 {
 		return []Match{}
@@ -114,6 +116,7 @@ func (s Searcher) Text(ctx context.Context, roots []string, q TextQuery) []Match
 	args = append(args, "--", trimLoneQuote(q.Pattern))
 
 	perRoot := make([][]*fileHits, len(roots))
+	cut := make([]bool, len(roots))
 	var wg sync.WaitGroup
 	for i, root := range roots {
 		dir, ok := scope(root, q.IncludePattern)
@@ -121,7 +124,7 @@ func (s Searcher) Text(ctx context.Context, roots []string, q TextQuery) []Match
 			continue
 		}
 		wg.Go(func() {
-			perRoot[i] = s.textRoot(ctx, root, append(slices.Clone(args), dir))
+			perRoot[i], cut[i] = s.textRoot(ctx, root, append(slices.Clone(args), dir))
 		})
 	}
 	wg.Wait()
@@ -135,6 +138,13 @@ func (s Searcher) Text(ctx context.Context, roots []string, q TextQuery) []Match
 	})
 	files = files[:min(len(files), maxTextFiles)]
 	out := make([]Match, 0, maxTextEntries)
+	if deadlineCut(ctx, cut) {
+		out = append(out, Match{
+			FilePath:  partialNotice(),
+			LineText:  "Only part of the workspace was searched. Start includePattern with the folder to search, such as src/**/*.go, to search it whole.",
+			IsContext: true,
+		})
+	}
 	for _, f := range files {
 		slices.SortStableFunc(f.entries, func(a, b Match) int { return cmp.Compare(a.LineNumber, b.LineNumber) })
 		shown := displayPath(f.abs, s.shown(roots))
@@ -155,6 +165,19 @@ type fileHits struct {
 	matchCount int
 }
 
+// deadlineCut reports whether searchDeadline, not the caller, ended a search that cut[i] says was
+// stopped before rg finished root i.
+func deadlineCut(ctx context.Context, cut []bool) bool {
+	return errors.Is(ctx.Err(), context.DeadlineExceeded) && slices.Contains(cut, true)
+}
+
+// partialNotice opens the answer of a search the deadline cut short: KAS renders every answer as
+// whole (file_search's "complete results", grep_search's "No matches found."), and an answer entry
+// is the only text of a client's that reaches the model.
+func partialNotice() string {
+	return fmt.Sprintf("[partial results: the search stopped at its %v deadline]", searchDeadline)
+}
+
 // rgEvent is the part of one `rg --json` line Text reads: KAS's qZu keeps a match or context line
 // with a path, a non-empty text and a line number, and drops lines rg sent as bytes (non-UTF-8).
 type rgEvent struct {
@@ -170,7 +193,7 @@ type rgEvent struct {
 	} `json:"data"`
 }
 
-func (s Searcher) textRoot(ctx context.Context, root string, args []string) []*fileHits {
+func (s Searcher) textRoot(ctx context.Context, root string, args []string) (found []*fileHits, cut bool) {
 	byPath := map[string]*fileHits{}
 	var order []*fileHits
 	onLine := func(line []byte) bool {
@@ -198,13 +221,13 @@ func (s Searcher) textRoot(ctx context.Context, root string, args []string) []*f
 		}
 		return true
 	}
-	refusal := s.run(ctx, root, args, onLine)
+	refusal, cut := s.run(ctx, root, args, onLine)
 	if refusal != "" && regexRefused(refusal) {
 		// KAS 3.0.0's own search escapes a pattern its regex engine rejects and finds the literal.
-		refusal = s.run(ctx, root, append([]string{"--fixed-strings"}, args...), onLine)
+		refusal, cut = s.run(ctx, root, append([]string{"--fixed-strings"}, args...), onLine)
 	}
 	logRefusal(root, refusal)
-	return order
+	return order, cut
 }
 
 // regexRefused reports whether rg's stderr names a pattern no regex engine could compile.
@@ -222,7 +245,8 @@ func logRefusal(root, stderr string) {
 
 // Files lists the files under roots matching q.Pattern, at most q.MaxResults, the first root's
 // first, with paths in KAS's form. .gitignore is honoured and symlinks are not followed. Whatever
-// was found when ctx ends or the deadline passes is returned. The result is never nil.
+// was found when ctx ends or the deadline passes is returned, and a deadline answer opens on a
+// notice entry saying it is partial. The result is never nil.
 func (s Searcher) Files(ctx context.Context, roots []string, q FilesQuery) []string {
 	limit := q.MaxResults
 	if limit <= 0 {
@@ -243,6 +267,7 @@ func (s Searcher) Files(ctx context.Context, roots []string, q FilesQuery) []str
 	}
 
 	perRoot := make([][]string, len(roots))
+	cut := make([]bool, len(roots))
 	var wg sync.WaitGroup
 	for i, root := range roots {
 		dir, ok := scope(root, q.Pattern)
@@ -250,12 +275,15 @@ func (s Searcher) Files(ctx context.Context, roots []string, q FilesQuery) []str
 			continue
 		}
 		wg.Go(func() {
-			perRoot[i] = s.filesRoot(ctx, root, append(slices.Clone(args), "--", dir), limit)
+			perRoot[i], cut[i] = s.filesRoot(ctx, root, append(slices.Clone(args), "--", dir), limit)
 		})
 	}
 	wg.Wait()
 
 	out := make([]string, 0, limit)
+	if deadlineCut(ctx, cut) {
+		out = append(out, partialNotice()+": anchor the query to the folder to search, such as ^src/, to search it whole")
+	}
 	for _, found := range perRoot {
 		for _, abs := range found {
 			if len(out) == limit {
@@ -267,9 +295,8 @@ func (s Searcher) Files(ctx context.Context, roots []string, q FilesQuery) []str
 	return out
 }
 
-func (s Searcher) filesRoot(ctx context.Context, root string, args []string, limit int) []string {
-	var found []string
-	refusal := s.run(ctx, root, args, func(line []byte) bool {
+func (s Searcher) filesRoot(ctx context.Context, root string, args []string, limit int) (found []string, cut bool) {
+	refusal, cut := s.run(ctx, root, args, func(line []byte) bool {
 		if len(line) > 0 {
 			found = append(found, filepath.Join(root, string(line)))
 		}
@@ -284,14 +311,17 @@ func (s Searcher) filesRoot(ctx context.Context, root string, args []string, lim
 		slog.Debug("search: ripgrep found no file and skipped unreadable paths", "root", root,
 			"errors", strings.Count(refusal, "\n"))
 	}
-	return found
+	return found, cut
 }
 
 // run streams rg's stdout lines, under root, to line until it returns false, ctx ends, or the
 // output passes maxOutputBytes, then kills rg's session. It returns rg's stderr when rg
-// exited 2 having written no line; every other failure is logged here. The lines already read
-// stay with the caller.
-func (s Searcher) run(ctx context.Context, root string, args []string, line func([]byte) bool) (refusal string) {
+// exited 2 having written no line, and cut when ctx ended before rg finished; every other
+// failure is logged here. The lines already read stay with the caller.
+//
+// ctx bounds the whole run: its end SIGKILLs rg's session, and cmd.WaitDelay (killWait) then closes
+// the output pipe a process outside the session still holds, which is what ends readLines.
+func (s Searcher) run(ctx context.Context, root string, args []string, line func([]byte) bool) (refusal string, cut bool) {
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
 	cmd := exec.CommandContext(runCtx, s.Bin, args...) //nolint:gosec // G204: Bin is the image's rg (systembin); request fields are arguments after rg's own flags, never a shell
@@ -309,10 +339,10 @@ func (s Searcher) run(ctx context.Context, root string, args []string, line func
 	if err != nil {
 		if ctx.Err() != nil {
 			slog.Debug("search: deadline or cancel reached before ripgrep started", "root", root, "reason", context.Cause(ctx))
-		} else {
-			slog.Warn("search: ripgrep could not be started", "error", err)
+			return "", true
 		}
-		return ""
+		slog.Warn("search: ripgrep could not be started", "error", err)
+		return "", false
 	}
 	out := &io.LimitedReader{R: stdout, N: maxOutputBytes}
 	read := readLines(out, line)
@@ -326,7 +356,8 @@ func (s Searcher) run(ctx context.Context, root string, args []string, line func
 	if read.skipped > 0 {
 		slog.Debug("search: skipped ripgrep output lines over the line cap", "root", root, "lines", read.skipped)
 	}
-	return exitRefusal(ctx, root, err, read, stderr.String())
+	cut = err != nil && ctx.Err() != nil && !read.stopped && !read.capped
+	return exitRefusal(ctx, root, err, read, stderr.String()), cut
 }
 
 // exitRefusal logs how rg's run ended, and returns its stderr when rg exited 2 having written no
