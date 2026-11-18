@@ -1747,7 +1747,7 @@ func (bc *bridgeCoordinator) persistModelSwitch(ctx context.Context, chatID maro
 			return false
 		}
 		mv.landOn(c)
-		c.Usage = marotte.Usage{ContextSize: contextSize, ContextCompacted: c.Usage.ContextCompacted}
+		c.Usage = marotte.Usage{ContextSize: contextSize}
 		c.ResetSpend()
 		return true
 	}); err != nil {

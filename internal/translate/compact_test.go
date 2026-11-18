@@ -165,9 +165,8 @@ func TestHandleV3Summarization_SuccessCompletes(t *testing.T) {
 	}
 }
 
-// KAS sends no fresh reading after a summary lands, so the stored one describes the context before it: the landed
-// compaction clears it, keeping the window size and the credits.
-func TestHandleV3Summarization_ALandedCompactionClearsTheStaleReading(t *testing.T) {
+// A landed summary sets the watermark and leaves the usage alone: KAS's next published figure replaces it.
+func TestHandleV3Summarization_ALandedCompactionLeavesTheFigureToKAS(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	if _, err := store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Usage = marotte.Usage{ContextPct: 93, HasRealData: true, ContextSize: 200000, Credits: 1.5}
@@ -180,11 +179,11 @@ func TestHandleV3Summarization_ALandedCompactionClearsTheStaleReading(t *testing
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), FrameAttribution{})
 
 	c, _ := store.Get(t.Context(), "c1")
-	if c.Usage.HasRealData || c.Usage.ContextPct != 0 {
-		t.Errorf("usage after the summary = (pct %v, real %v), want no reading (0, false)", c.Usage.ContextPct, c.Usage.HasRealData)
+	if u := c.Usage; u.ContextPct != 93 || !u.HasRealData || u.ContextSize != 200000 || u.Credits != 1.5 {
+		t.Errorf("usage after the summary = %+v, want {pct 93, real, size 200000, credits 1.5} kept", u)
 	}
-	if c.Usage.ContextSize != 200000 || c.Usage.Credits != 1.5 {
-		t.Errorf("usage after the summary = (size %d, credits %v), want (200000, 1.5) kept", c.Usage.ContextSize, c.Usage.Credits)
+	if c.CompactionWatermark == "" {
+		t.Error("CompactionWatermark is empty after a landed summary, want it set")
 	}
 }
 

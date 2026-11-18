@@ -32,6 +32,12 @@ kiro-cli summarizes a chat in one to four minutes. If a workflow step's message,
 
 Reported as [kirodotdev/Kiro#12483](https://github.com/kirodotdev/Kiro/issues/12483), open. This affects the compaction you start with `/compact` or **Compact the context**. marotte cannot keep the discarded summary, so a notice says the compaction did not run, and nothing tries it again. kiro-cli's automatic compaction runs inside the reply and does not check for new messages, so it is not affected.
 
+### Context use reads the figure from before a compaction
+
+After kiro-cli's own automatic compaction, the chat's context use keeps the figure from before it until the model's next reply measures it again. Before kiro-cli 3.4.0 a compaction you start with `/compact` or **Compact the context** did the same, so a chat at 96% could still read 96% at about 30% real use. From kiro-cli 3.4.0 that compaction reports an estimate of the compacted context when it completes, unless a new message has already reached the chat by then.
+
+Reported as [kirodotdev/Kiro#12392](https://github.com/kirodotdev/Kiro/issues/12392), closed as fixed in kiro-cli 3.4.0. marotte shows the figure kiro-cli reports, the estimate included, and has no workaround.
+
 ### Replies slow down when many chats and workflow steps run at once
 
 kiro-cli's agent engine runs every chat, workflow step and subagent on one JavaScript thread. On Node.js 22, which kiro-cli ships, garbage collection and the tracking of asynchronous code fill that thread when many of them run at once. Replies and workflow steps then slow down, starting a chat or a step can time out, and the engine can fall far behind. The engine's own log, `kiro.log`, falls behind under the same load.
@@ -191,12 +197,6 @@ When you stop a reply while the agent runs a command, kiro-cli ends the reply. T
 Reported as [kirodotdev/Kiro#11819](https://github.com/kirodotdev/Kiro/issues/11819), open. When you stop a reply, marotte also stops the commands that reply started.
 
 ## Fixed upstream, workaround still in marotte
-
-### Context use reads the figure from before a compaction
-
-Before kiro-cli 3.4.0, after a compaction kiro-cli kept reporting the context use from before it until the model's next reply measured it again. A chat at 96% before `/compact` could still read 96% at about 30% real use. From kiro-cli 3.4.0 a compaction you start with `/compact` reports an estimate of the compacted context when it completes. A compaction that completes after a new message has already reached the chat still leaves the figure from before it.
-
-Reported as [kirodotdev/Kiro#12392](https://github.com/kirodotdev/Kiro/issues/12392), closed as fixed in kiro-cli 3.4.0. After a compaction, marotte still clears the chat's context use and ignores the figures kiro-cli sends, its estimate included, until the model's next reply measures it.
 
 ### A message sent just after a stop can run out of view
 
