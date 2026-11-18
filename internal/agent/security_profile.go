@@ -40,13 +40,18 @@ func securityPresets(id string) []string {
 	return p.Presets
 }
 
-// runPresets is the presets a parentless run's host opens with: the stored profile when it names one, else
+// runProfile is the profile a parentless run's host opens on: the stored id when it names a profile, else
 // policyfile.DefaultRunProfile, so an unknown value counts as no choice.
-func runPresets(id string) []string {
-	p, ok := policyfile.ProfileFor(id)
-	if !ok {
-		p, _ = policyfile.ProfileFor(policyfile.DefaultRunProfile)
+func runProfile(id string) string {
+	if _, ok := policyfile.ProfileFor(id); ok {
+		return id
 	}
+	return policyfile.DefaultRunProfile
+}
+
+// runPresets is runProfile's presets.
+func runPresets(id string) []string {
+	p, _ := policyfile.ProfileFor(runProfile(id))
 	return p.Presets
 }
 
@@ -57,14 +62,15 @@ func (rt *Runtime) settingsProfile(ctx context.Context) string {
 }
 
 // SecurityProfileChoice is, from one snapshot of config.json, the Settings profile a chat with none of its own is
-// pinned to (settingsProfile), the one a parentless run's host opens on (runPresets), and whether a readable
-// generation names a known profile; while none does they are policyfile.DefaultProfile and DefaultRunProfile.
+// pinned to (settingsProfile), the one a parentless run's host opens on (runProfile), and whether a readable
+// generation names a known profile; while none does the chat profile is policyfile.DefaultProfile.
 func (rt *Runtime) SecurityProfileChoice(ctx context.Context) (chat, run string, saved bool) {
 	doc, _ := rt.configDocument(ctx)
+	run = runProfile(doc.session.profile)
 	if _, ok := policyfile.ProfileFor(doc.session.profile); ok {
-		return doc.session.profile, doc.session.profile, true
+		return doc.session.profile, run, true
 	}
-	return policyfile.DefaultProfile, policyfile.DefaultRunProfile, false
+	return policyfile.DefaultProfile, run, false
 }
 
 // pinSecurityProfile gives a chat with no profile of its own the Settings profile at its door, so a later Settings

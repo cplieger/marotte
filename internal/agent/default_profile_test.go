@@ -97,7 +97,7 @@ func parentlessFixture(t *testing.T, saved string) (*Runtime, *fakeBridge) {
 	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return br }, br), cs, WithConfigDir(configDir))
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	settleBoot(t, h)
+	awaitBoot(h)
 	return h, br
 }
 
@@ -118,6 +118,25 @@ func TestSecurityProfileChoice_IsSavedOnlyWhileConfigNamesAProfile(t *testing.T)
 			h, _ := parentlessFixture(t, tc.stored)
 			if chat, run, saved := h.SecurityProfileChoice(t.Context()); chat != tc.chat || run != tc.run || saved != tc.saved {
 				t.Errorf("SecurityProfileChoice = (%q, %q, %v), want (%q, %q, %v)", chat, run, saved, tc.chat, tc.run, tc.saved)
+			}
+		})
+	}
+}
+
+// The run profile Settings names is the one a parentless run's host opens on, whatever is stored.
+func TestSecurityProfileChoice_NamesTheProfileARunHostOpensOn(t *testing.T) {
+	for _, tc := range []struct{ name, stored string }{
+		{"a_fresh_config", ""},
+		{"an_unknown_value", "no-such-profile"},
+		{"a_saved_approve_for_me", policyfile.ProfileDelegated},
+		{"a_saved_trusted", policyfile.ProfileTrusted},
+		{"a_saved_guarded", policyfile.ProfileGuarded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _ := parentlessFixture(t, tc.stored)
+			_, run, _ := h.SecurityProfileChoice(t.Context())
+			if got, want := h.readSessionSettings(t.Context()).RunPresets, profilePresets(t, run); !slices.Equal(got, want) {
+				t.Errorf("run hosts open with %v, but Settings names %q (%v)", got, run, want)
 			}
 		})
 	}
