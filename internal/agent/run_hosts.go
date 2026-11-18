@@ -76,7 +76,7 @@ func (rs *Runs) ensureResident(ctx context.Context, workflowID string) (host *dr
 	if err != nil {
 		slog.Warn("a run's launching session was not loaded, because its lease recorded no security profile",
 			"workflow_id", workflowID)
-		return nil, func() {}, fmt.Errorf("%w: %w", errLaunchSessionUnavailable, err)
+		return nil, func() {}, err
 	}
 	sb, err := rs.loadHost(ctx, workflowID, o.parent.session, presets)
 	if err != nil {

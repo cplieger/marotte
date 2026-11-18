@@ -733,9 +733,8 @@ func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		httpreply.ServerError(w, errStepUnconfirmed.Error(), nil)
 	case errors.Is(err, errRunNotListed):
 		httpreply.NotFound(w, errRunNotListed.Error())
-	case errors.Is(err, errLaunchSessionUnavailable):
-		httpreply.Conflict(w, launchSessionUnavailableText)
-	case errors.Is(err, errRunHostSlow), engineHoldsSession(err):
+	case errors.Is(err, errRunHostSlow), errors.Is(err, errRunUnread), engineHoldsSession(err),
+		errors.Is(err, runlease.ErrNoHostSecurity), errors.Is(err, errLaunchSessionUnavailable):
 		rr.writeControlErr(w, "answer", id, err)
 	case errors.Is(err, errRunHostStart):
 		// A failed host session is this server's fault.
@@ -956,6 +955,15 @@ func gaveUpText(err error) string {
 	return errRunHostSlow.Error()
 }
 
+// launchRefusalText is the sentence a verb whose run's launching session cannot be loaded here answers: the missing
+// security profile when that is the cause, since the session itself can be opened.
+func launchRefusalText(err error) string {
+	if errors.Is(err, runlease.ErrNoHostSecurity) {
+		return runlease.ErrNoHostSecurity.Error()
+	}
+	return launchSessionUnavailableText
+}
+
 // writeControlErr answers a verb that reached KAS and failed: a refusal forwards KAS's actionable sentence;
 // InternalError is for faults that are not the reader's.
 func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err error) {
@@ -978,11 +986,11 @@ func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err er
 		httpreply.NotFound(w, errRunNotListed.Error())
 	case workflowNotFound(err):
 		httpreply.NotFound(w, "run not found")
-	case errors.Is(err, errLaunchSessionUnavailable):
+	case errors.Is(err, errLaunchSessionUnavailable), errors.Is(err, runlease.ErrNoHostSecurity):
 		// A state of the run.
-		slog.Info("run control unavailable: the run's launching session cannot be opened here",
+		slog.Info("run control unavailable: the run's launching session cannot be loaded here",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
-		httpreply.Conflict(w, launchSessionUnavailableText)
+		httpreply.Conflict(w, launchRefusalText(err))
 	case errors.Is(err, errRunDeleting):
 		httpreply.Conflict(w, "This run is already being deleted.")
 	case errors.Is(err, errDeleteUnconfirmed):

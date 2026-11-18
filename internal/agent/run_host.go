@@ -656,7 +656,7 @@ type kasRetryOutcome struct {
 }
 
 // retry resets a failed or aborted run's failed work and reports what it reset, hosted from the origin the gate's read
-// of the run (aff) names. Every read before the verb runs inside retryTimeout.
+// of the run (aff) names. The caller bounds ctx by retryTimeout, the gate's read included (handleRetry).
 func (rs *Runs) retry(
 	ctx context.Context, workflowID string, aff *runAffordance,
 ) (out marotte.RunRetriedResponse, err error) {
@@ -669,37 +669,35 @@ func (rs *Runs) retry(
 		return out, command.StatusError(http.StatusConflict, errRetryRunDeleting)
 	}
 	defer lease.end()
-	cctx, cancel := context.WithTimeout(ctx, retryTimeout)
-	defer cancel()
-	origin, holders, err := rs.retryOrigin(cctx, workflowID, aff)
+	origin, holders, err := rs.retryOrigin(ctx, workflowID, aff)
 	if err != nil {
 		return out, err
 	}
 	recipe := origin.recipe
-	own, event, err := rs.ownForRetry(cctx, workflowID)
+	own, event, err := rs.ownForRetry(ctx, workflowID)
 	if err != nil {
 		return out, err
 	}
 	defer own()
 	// The lease before the verb, since retry's `run_start` can beat the reply, and before the host session's load,
 	// which reads its presets from it.
-	minted := rs.leaseForRetry(cctx, workflowID, &origin, holders, aff, event)
-	rs.markRunAlive(cctx, workflowID, holders)
-	host, release, err := rs.ensureResident(cctx, workflowID)
+	minted := rs.leaseForRetry(ctx, workflowID, &origin, holders, aff, event)
+	rs.markRunAlive(ctx, workflowID, holders)
+	host, release, err := rs.ensureResident(ctx, workflowID)
 	defer release()
 	if err != nil {
 		if minted {
-			rs.releaseLease(cctx, workflowID)
+			rs.releaseLease(ctx, workflowID)
 		}
-		return out, rs.retryResidencyErr(cctx, err)
+		return out, rs.retryResidencyErr(ctx, err)
 	}
-	err = rs.controlSerialized(cctx, workflowID, func(sctx context.Context) error {
+	err = rs.controlSerialized(ctx, workflowID, func(sctx context.Context) error {
 		var cErr error
 		out, cErr = rs.retryCall(sctx, host, workflowID)
 		return cErr
 	})
 	if errors.Is(err, errRetryOutcomeUnreadable) || errors.Is(err, errRetryOutcomeUnknown) {
-		// The retry may be running; tearing down would kill the work mid-node. cctx may be spent and the client may
+		// The retry may be running; tearing down would kill the work mid-node. ctx may be spent and the client may
 		// have left, so the re-arm's writes run detached.
 		rs.rearmRetried(durable.Context(ctx), workflowID, &origin, holders)
 		return out, err
@@ -707,12 +705,12 @@ func (rs *Runs) retry(
 	if err != nil {
 		// Return the minted lease, except on a context error, where KAS may have taken the retry and would run deadline-less.
 		if minted && !isCtxErr(err) {
-			rs.releaseLease(cctx, workflowID)
+			rs.releaseLease(ctx, workflowID)
 		}
 		return out, err
 	}
 	// Only on success: a refused retry re-drove nothing.
-	rs.rearmRetried(cctx, workflowID, &origin, holders)
+	rs.rearmRetried(ctx, workflowID, &origin, holders)
 	slog.Info("workflow run retried",
 		"workflow_id", workflowID, "recipe", recipe,
 		"retried_nodes", len(out.RetriedNodeIDs), "status", out.Status)

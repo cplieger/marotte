@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -537,6 +538,47 @@ func answerReq(t *testing.T, id, askID, text string) *http.Request {
 		"/api/runs/"+id+"/answer", bytes.NewReader(body))
 	req.SetPathValue("id", id)
 	return req
+}
+
+// An answer whose run lost its lease once its ask was claimed reads the run's origin by key; an engine that ended
+// before answering that read is a 503 naming the cause, never a 400 blaming the answer.
+func TestHandleAnswer_AnEngineExitDuringAnUnleasedRunsReadIsTryAgain(t *testing.T) {
+	h, _, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1"})
+	if h.runs.cellFor("wf_1") == nil {
+		t.Fatal("Setup: the leased run has no ask cell")
+	}
+	if err := h.runs.leaseStore().Release(t.Context(), "wf_1"); err != nil {
+		t.Fatalf("Setup: releasing the lease: %s", err)
+	}
+	br.setCallErr(methodKiroWorkflowInspect, fmt.Errorf("workflow inspect call: %w", marotte.ErrBridgeExited))
+
+	rec := httptest.NewRecorder()
+	h.runRoutes.handleAnswer(rec, answerReq(t, "wf_1", "a1", "the main branch"))
+
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), errRunUnread.Error()) {
+		t.Errorf("POST answer = %d %s, want 503 %q", rec.Code, rec.Body.String(), errRunUnread)
+	}
+}
+
+// An answer to a parentless run whose lease recorded no security profile is refused 409 for that cause: its launching
+// session exists, and any profile would be a guess at its permissions.
+func TestHandleAnswer_AParentlessRunWithNoRecordedProfileIsRefusedForIt(t *testing.T) {
+	h, _, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1", ParentSessionID: testLaunchSession})
+	starts := br.startCount()
+
+	rec := httptest.NewRecorder()
+	h.runRoutes.handleAnswer(rec, answerReq(t, "wf_1", "a1", "the main branch"))
+
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), runlease.ErrNoHostSecurity.Error()) {
+		t.Errorf("POST answer = %d %s, want 409 %q", rec.Code, rec.Body.String(), runlease.ErrNoHostSecurity)
+	}
+	if got := br.startCount() - starts; got != 0 {
+		t.Errorf("%d sessions opened, want 0", got)
+	}
 }
 
 // TestHandleAnswer pins the guards and the coded refusals.

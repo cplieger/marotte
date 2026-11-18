@@ -471,6 +471,8 @@ func TestEnsureResident_ALaunchingSessionNoLoadCanHoldRefusesTheVerb(t *testing.
 	cases := map[string]struct {
 		lease runlease.Lease
 		chain []string
+		// want is the refusal; nil is errLaunchSessionUnavailable.
+		want error
 		// failLoads makes every session the factory builds refuse a named load.
 		failLoads bool
 	}{
@@ -479,6 +481,7 @@ func TestEnsureResident_ALaunchingSessionNoLoadCanHoldRefusesTheVerb(t *testing.
 		},
 		"the lease records no security profile": {
 			lease: runlease.Lease{WorkflowID: "wf_1", ParentSessionID: testLaunchSession},
+			want:  runlease.ErrNoHostSecurity,
 		},
 		"the chat's load fell back to a fresh session": {
 			lease:     runlease.Lease{WorkflowID: "wf_1", ChatID: "c1", ParentSessionID: "sess_owned"},
@@ -519,9 +522,13 @@ func TestEnsureResident_ALaunchingSessionNoLoadCanHoldRefusesTheVerb(t *testing.
 			}
 			leaseRun(t, h, tc.lease)
 
+			want := tc.want
+			if want == nil {
+				want = errLaunchSessionUnavailable
+			}
 			err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch", nil)
-			if !errors.Is(err, errLaunchSessionUnavailable) {
-				t.Fatalf("AnswerInput = %v, want errLaunchSessionUnavailable", err)
+			if !errors.Is(err, want) {
+				t.Fatalf("AnswerInput = %v, want %v", err, want)
 			}
 			if errors.Is(err, errRunHostStart) {
 				t.Error("a state of the run was reported as a load fault on this server")

@@ -31,8 +31,8 @@ const hostSecurityFileName = "host-security"
 const maxHostSecurityBytes = 64 << 10
 
 // recordHost writes session as workflowID's host session, and the security it opened with. A tombstoned run writes
-// nothing, so a write racing the run's delete cannot recreate its directory. The security is written first: a host
-// record is only ever read beside the security it opened with.
+// nothing, so a write racing the run's delete cannot recreate its directory. The security is written first, so a host
+// record never exists without the security it opened with (retryHostSecurity).
 func (r *runLog) recordHost(ctx context.Context, workflowID, session string, host *runlease.HostSecurity) error {
 	dir, err := r.dir(workflowID)
 	if err != nil {
@@ -197,14 +197,10 @@ func (rs *Runs) parentlessHost(ctx context.Context, workflowID, session string) 
 	return host == session
 }
 
-// errHostSecurityUnrecorded refuses a retry of a run marotte launched parentless whose launch security is not on disk:
-// any other profile would be a guess at the run's permissions.
-var errHostSecurityUnrecorded = errors.New("this run's security profile was not recorded at launch, so marotte " +
-	"cannot load its session; launch it again")
-
 // retryHostSecurity sets the security a parentless retry's host session reloads with: the launch's own for a run
 // marotte launched parentless (parentlessHost), so a retry after the terminal frame released the lease keeps the
-// launch's permissions. A chat-parented run, and a parentless one marotte did not launch, keep o.host nil.
+// launch's permissions. A chat-parented run, and a parentless one marotte did not launch, keep o.host nil. A run
+// marotte launched parentless whose launch security is not on disk is refused with runlease.ErrNoHostSecurity.
 func (rs *Runs) retryHostSecurity(ctx context.Context, workflowID string, o *runOrigin) error {
 	if o.parent.chat != "" || !rs.parentlessHost(ctx, workflowID, o.parent.session) {
 		return nil
@@ -216,7 +212,7 @@ func (rs *Runs) retryHostSecurity(ctx context.Context, workflowID string, o *run
 		return fmt.Errorf("%w: %w", errRunHostStart, err)
 	}
 	if !found {
-		return fmt.Errorf("%w: %w", errLaunchSessionUnavailable, errHostSecurityUnrecorded)
+		return runlease.ErrNoHostSecurity
 	}
 	o.host = &host
 	return nil

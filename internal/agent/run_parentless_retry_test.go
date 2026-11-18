@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,6 +16,7 @@ import (
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/policyfile"
+	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/settings"
 )
 
@@ -411,20 +413,23 @@ func TestRetry_AParentlessRunKeepsItsLaunchProfileAfterItsLeaseIsReleased(t *tes
 	}
 }
 
-// A run marotte launched parentless whose launch security is missing from disk is refused, sending nothing: any
-// profile would be a guess at its permissions.
-func TestRetry_AParentlessRunWithNoRecordedLaunchProfileIsRefused(t *testing.T) {
+// A run marotte launched parentless whose launch security is missing from disk is refused 409 with that cause,
+// sending nothing: any profile would be a guess at its permissions, and its launching session itself can be opened.
+func TestHandleRetry_AParentlessRunWithNoRecordedLaunchProfileIsRefusedForIt(t *testing.T) {
 	h, _, br := newTestHub(WithConfigDir(t.TempDir()))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	host := launchFailedParentless(t, h, br)
 	if err := os.Remove(filepath.Join(h.runs.log.root, "wf_1", hostSecurityFileName)); err != nil {
 		t.Fatalf("Setup: %s", err)
 	}
+	br.setCallResult(methodKiroWorkflowInspect, inspectLaunched(t, "wf_1", marotte.RunStatusFailed, host, "publish"))
 	br.setCallResult(methodKiroWorkflowRetry, retryReply(t, "wf_1", "running", "n1"))
 
-	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", launchedHead("failed", host, "publish")))
-	if !errors.Is(err, errLaunchSessionUnavailable) || !errors.Is(err, errHostSecurityUnrecorded) {
-		t.Fatalf("Retry = %v, want errLaunchSessionUnavailable naming errHostSecurityUnrecorded", err)
+	rec := httptest.NewRecorder()
+	h.runRoutes.handleRetry(rec, retryReq("wf_1"))
+
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), runlease.ErrNoHostSecurity.Error()) {
+		t.Fatalf("POST retry = %d %s, want 409 %q", rec.Code, rec.Body.String(), runlease.ErrNoHostSecurity)
 	}
 	if br.called(methodKiroWorkflowRetry) {
 		t.Error("the retry verb was sent for a run whose launch profile is unknown")

@@ -24,8 +24,9 @@ type engineMutation struct {
 	call func(ctx context.Context) engineReply
 	// changed broadcasts the refetch signal that settles the UI; nil sends none.
 	changed func()
-	// sent closes once call has written the change. Until it does, nothing can apply, so the budget never answers
-	// still_applying and the call's own answer is awaited; nil means call writes at once.
+	// sent closes once call is committed to writing the change, with nothing left before the write that can block.
+	// Until it does, nothing can apply, so the budget never answers still_applying and the call's own answer is
+	// awaited; nil means call writes at once.
 	sent <-chan struct{}
 	verb string
 }

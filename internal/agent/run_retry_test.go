@@ -652,6 +652,26 @@ func TestRetry_ReadsNoRunInventory(t *testing.T) {
 	}
 }
 
+// A chat-parented run's retry scans the chat store once: the gate's origin and the retry's holders share one scan.
+func TestHandleRetry_AChatParentedRunsRetryScansTheChatsOnce(t *testing.T) {
+	h, _ := seedChatParentedRun(t, true, "final-verify")
+	cs, ok := h.chatStore.(*testChatStore)
+	if !ok {
+		t.Fatalf("Setup: the hub's chat store is %T, want *testChatStore", h.chatStore)
+	}
+	before := cs.OwnerScans.Load()
+
+	rec := httptest.NewRecorder()
+	h.runRoutes.handleRetry(rec, retryReq("wf_1"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST retry = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	if got := cs.OwnerScans.Load() - before; got != 1 {
+		t.Errorf("the retry scanned the chat store %d times, want 1", got)
+	}
+}
+
 // Every read before the verb sits inside retryTimeout, so the retry answers before the client's request budget.
 func TestHandleRetry_TheRunReadIsBoundedByRetryTimeout(t *testing.T) {
 	prev := retryTimeout
