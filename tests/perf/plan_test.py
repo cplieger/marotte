@@ -134,6 +134,29 @@ class Plan(unittest.TestCase):
                     self.assertNotIn(key, seen)
                     seen.add(key)
 
+    def test_a_cell_s_runs_is_a_whole_number_from_one_to_three(self):
+        for set_name, spec in self.plan['sets'].items():
+            for cell in spec['cells']:
+                with self.subTest(set=set_name, cell=cell):
+                    runs = cell.get('runs', 1)
+                    self.assertIsInstance(runs, int)
+                    self.assertNotIsInstance(runs, bool)
+                    self.assertIn(runs, (1, 2, 3))
+
+    def test_the_trend_measures_twice_the_units_noisy_at_one_run(self):
+        # Each holds a cell over its threshold in more than 1 % of one-run points.
+        want = {
+            ('shell', 'x1', 'chromium', 'desktop'),
+            ('shell', 'x1', 'webkit', 'phone'),
+            ('git-prs', 'x10', 'chromium', 'phone'),
+            ('files', 'x10', 'webkit', 'desktop'),
+        }
+        cells = self.plan['sets']['full']['cells']
+        twice = {tuple(c[f] for f in UNIT_FIELDS) for c in cells if c.get('runs', 1) == 2}
+        self.assertEqual(twice, want)
+        self.assertFalse([c for c in cells if c.get('runs', 1) > 2])
+        self.assertFalse([c for c in self.plan['sets']['pr']['cells'] if 'runs' in c])
+
     def test_every_scenario_is_in_both_sets(self):
         for set_name in ('pr', 'full'):
             listed = {c['scenario'] for c in self.plan['sets'][set_name]['cells']}

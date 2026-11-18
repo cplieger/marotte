@@ -809,7 +809,8 @@
           "scale": "x10",
           "engine": "webkit",
           "width": "desktop",
-          "seconds": 183
+          "seconds": 183,
+          "runs": 2
         },
         {
           "scenario": "files",
@@ -916,7 +917,8 @@
           "scale": "x10",
           "engine": "chromium",
           "width": "phone",
-          "seconds": 894
+          "seconds": 894,
+          "runs": 2
         },
         {
           "scenario": "git-prs",
@@ -1165,7 +1167,8 @@
           "scale": "x1",
           "engine": "chromium",
           "width": "desktop",
-          "seconds": 130
+          "seconds": 130,
+          "runs": 2
         },
         {
           "scenario": "shell",
@@ -1186,7 +1189,8 @@
           "scale": "x1",
           "engine": "webkit",
           "width": "phone",
-          "seconds": 126
+          "seconds": 126,
+          "runs": 2
         },
         {
           "scenario": "shell",
