@@ -3574,7 +3574,7 @@ const arbModel = fc.letrec<{
   ),
   ToolJobChangedPayload: fc.record(
     {
-      job: fc.option(tie("Job"), { nil: null }),
+      job: tie("Job"),
     },
     { requiredKeys: ["job"] },
   ),

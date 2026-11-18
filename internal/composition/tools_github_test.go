@@ -131,7 +131,7 @@ func TestWarnIfGitHubRateLimited_SilentForAnyOtherJob(t *testing.T) {
 	other.ErrorCode, other.RateLimit = "", nil
 	done := rateLimitedJob(nil)
 	done.State, done.ErrorCode = toolbelt.JobDone, ""
-	cases := map[string]*toolbelt.Job{"nil": nil, "another failure": other, "a finished job": done}
+	cases := map[string]*toolbelt.Job{"another failure": other, "a finished job": done}
 	for name, j := range cases {
 		t.Run(name, func(t *testing.T) {
 			logs := captureDefaultLogger(t)

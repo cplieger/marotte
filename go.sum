@@ -24,8 +24,8 @@ github.com/cplieger/go/keyenc v1.3.0 h1:v0zvHSY4ZOZapGNYGAkghEXPz1SeifT/Trg0b9A8
 github.com/cplieger/go/keyenc v1.3.0/go.mod h1:EI1v4Q6FU1Y9hUWTE6kp1n3Mozrm0ws5GOT+Vt/x1+w=
 github.com/cplieger/go/keylock v1.1.0 h1:yjY1RVKMdpiLDUTG4C1ESNANVHC3NNgZQo7aQOI8OuY=
 github.com/cplieger/go/keylock v1.1.0/go.mod h1:6SVZHsMB3trTMYj0x6lVkHqPDI2Np2rrw/biMUzPBxM=
-github.com/cplieger/go/measure/v2 v2.0.0 h1:QsVroWatxnaS3JWJdm84Rt5RDw26uLpEYFANy6/z72s=
-github.com/cplieger/go/measure/v2 v2.0.0/go.mod h1:gG4hr0jum0sVWiAppZwHPdvHNIVPBbryOCxzCoPSo84=
+github.com/cplieger/go/measure/v2 v2.1.0-dev.1 h1:YV0IKDITW9IZr0uOaLzdx5OlNBw/C/zVQ9DQAQ4t4Vo=
+github.com/cplieger/go/measure/v2 v2.1.0-dev.1/go.mod h1:gG4hr0jum0sVWiAppZwHPdvHNIVPBbryOCxzCoPSo84=
 github.com/cplieger/go/pathinside v1.1.0 h1:INqhQezkPwf/gA4fGxVuTBvV4bh4CedFGKm36c+GeIQ=
 github.com/cplieger/go/pathinside v1.1.0/go.mod h1:fIyGk/T2XYqVLJ5/cXOFkjk202Mwbdu0aXhH7Ky1/kI=
 github.com/cplieger/go/scheduler v1.1.0 h1:AzmRDvZ/wEEwK7Ab5Uz0Pa5Xx67oWndalpVknoWsGDQ=
@@ -34,6 +34,8 @@ github.com/cplieger/go/slogx v1.1.0 h1:whWmZcNmLuWGFM33SYFR+alUTfEodzBjKju44DHNg
 github.com/cplieger/go/slogx v1.1.0/go.mod h1:N88y5LJZ1aVp++cLFqzEV4WsalaX5YKXoRtXT29Ngkw=
 github.com/cplieger/go/sse/v2 v2.3.0-dev.8 h1:ViLW0JuzWph3gSSAcgskNg6QJvm4/wKf2VgI96czr2M=
 github.com/cplieger/go/sse/v2 v2.3.0-dev.8/go.mod h1:KG7sOeOHdetQM7V1ckznQvT5sHkAAg6wCiJZRjcVhMw=
+github.com/cplieger/go/sse/v2 v2.3.0-dev.9 h1:fwgHc+2DUxRwIEm4o1lUYl9USa7peTpswSOEyK7FWMs=
+github.com/cplieger/go/sse/v2 v2.3.0-dev.9/go.mod h1:KG7sOeOHdetQM7V1ckznQvT5sHkAAg6wCiJZRjcVhMw=
 github.com/cplieger/go/ssrf v1.1.0 h1:gyP7pYm1415RkHmIdod1YCvuX+I1xD1dXiRa8tvz8Bg=
 github.com/cplieger/go/ssrf v1.1.0/go.mod h1:95hUJ04+tP4FHFyd9Vp+egJpNDuf8d+jtgvcxzf7Mkw=
 github.com/cplieger/go/textsafe v1.1.0 h1:D+p7ZDBQmABv/empI2TNMZfvhMXNlfii8E2e5V+dUWE=

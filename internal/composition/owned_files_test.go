@@ -133,7 +133,7 @@ func newOwnedFilesFixtureWith(t *testing.T, ts toolsSetup) *ownedFilesFixture {
 			ConfigDir: dir,
 			ToolsDir:  toolsDir,
 			OnJobChanged: func(j *toolbelt.Job) {
-				if j != nil && j.State == toolbelt.JobQueued {
+				if j.State == toolbelt.JobQueued {
 					fx.mu.Lock()
 					fx.kinds = append(fx.kinds, j.Kind)
 					fx.mu.Unlock()
