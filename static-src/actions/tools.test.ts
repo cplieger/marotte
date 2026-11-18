@@ -53,7 +53,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const jobBody = JSON.stringify({ job: { id: "tj-1", kind: "install", state: "queued" } });
+const jobBody = JSON.stringify({
+  job: { id: "tj-1", kind: "install", state: "queued", created_at: 1_700_000_000 },
+});
 
 describe("tools.load", () => {
   it("GETs /api/tools and dedupes", async () => {
@@ -173,6 +175,17 @@ describe("tools.update", () => {
   });
 });
 
+describe("a job-starting action's 2xx body", () => {
+  it.each([
+    ["tools.create", () => createTool.dispatch({ name: "gh" }, { onError: () => undefined })],
+    ["tools.install", () => installTool.dispatch({ name: "gh" }, { onError: () => undefined })],
+    ["tools.update", () => updateTools.dispatch(undefined, { onError: () => undefined })],
+  ])("%s fails when the body is not a job response", async (_name, dispatch) => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ job: { id: 7 } }), { status: 202 }));
+    expect(await dispatch()).toBeNull();
+  });
+});
+
 describe("tools.patch", () => {
   it("PATCHes pin without the name in the body", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
@@ -231,6 +244,12 @@ describe("tools.ensure", () => {
     const d = await ensureTool.dispatch({ name: "gh" });
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(d?.job?.id).toBe("tj-1");
+  });
+
+  it("fails on a 2xx body that is not a job response", async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ job: { id: 7 } }), { status: 202 }));
+    const d = await ensureTool.dispatch({ name: "gh" });
+    expect(d).toBeNull();
   });
 });
 

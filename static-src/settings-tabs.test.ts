@@ -273,4 +273,30 @@ describe("settings-tabs paints the Settings row's sub-tab", () => {
 
     expect(swapViewsSpy).toHaveBeenCalledTimes(1);
   });
+
+  // Every section scrolls in `#settings-view`: each one is its own page, so it opens at its own place.
+  it("opens each section at its own scroll position, the top for one not read before", async () => {
+    const view = document.createElement("div");
+    view.id = "settings-view";
+    view.style.cssText = "overflow-y: auto; block-size: 200px";
+    for (const panel of document.querySelectorAll<HTMLElement>("[data-settings-panel]")) {
+      panel.style.blockSize = "3000px";
+      view.append(panel);
+    }
+    document.body.append(view);
+    const { initSettingsTabs } = await boot();
+    initSettingsTabs();
+    const scrolled = (): Promise<void> =>
+      new Promise((r) => {
+        view.addEventListener("scroll", () => r(), { once: true });
+      });
+
+    const read = scrolled();
+    view.scrollTop = 1200;
+    await read;
+    settingsRoute.cell.value = "permissions";
+    expect(view.scrollTop, "Permissions was never read").toBe(0);
+    settingsRoute.cell.value = "general";
+    expect(view.scrollTop, "General comes back where it was read").toBe(1200);
+  });
 });

@@ -870,6 +870,14 @@ describe("job following over SSE", () => {
     expect(mocks.rollingAppend).toHaveBeenCalledWith("✓ install gh finished");
   });
 
+  it("ignores a change that carries no job", () => {
+    initWith(listWith([tool({ name: "gh" })]));
+    const loadsBefore = mocks.loadDispatch.mock.calls.length;
+    mocks.sseHandlers.get("tool_job_changed")?.("", { job: null });
+    expect(mocks.rollingAppend).not.toHaveBeenCalled();
+    expect(mocks.loadDispatch.mock.calls.length).toBe(loadsBefore);
+  });
+
   it("resumes a running job's output tail on load", async () => {
     const job: Job = { id: "tj-boot", kind: "sync", state: "running", created_at: 1 };
     mocks.jobsDispatch.mockResolvedValue({

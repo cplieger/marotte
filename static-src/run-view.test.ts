@@ -96,6 +96,9 @@ const m = vi.hoisted(() => ({
    *  `turn_close` is a client that missed the close, and re-reading is the repair. */
   reread: [] as string[],
   cleared: { count: 0 },
+  /** The run tabs `openRunRefs` answers with; `close` drops one and bumps the tracked read, as a
+   *  closed tab's `removed_ids` does. */
+  runTabs: { refs: [] as string[], close: (_ref: string): void => undefined },
 }));
 
 // `mockReset: true` wipes every implementation between tests, so these are ARMED in beforeEach
@@ -115,48 +118,63 @@ vi.mock("./api-client.js", () => ({
 // runtime and stops here.
 vi.mock("./chat.js", () => ({ refreshChatView: vi.fn() }));
 
-vi.mock("./tabs.js", async () => ({
-  // Complete and inert first: the run composer's steer stack reaches the chat notice path too.
-  ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
-  // The spec is the FACTORY's now, so there is no onShow and no onClose to capture: what a door
-  // decides is `owns` (does the × stop the run) and `parent` (which chat it nests under), both
-  // subject fields.
-  openRunTab: vi.fn(
-    (id: string, _name: string, opts?: { parent?: string; owns?: boolean; activate?: boolean }) => {
-      m.opened.push({ id, opts });
-      return Promise.resolve();
+vi.mock("./tabs.js", async () => {
+  const { signal } = await import("@cplieger/reactive");
+  const runTabsVersion = signal(0);
+  m.runTabs.close = (ref) => {
+    m.runTabs.refs = m.runTabs.refs.filter((r) => r !== ref);
+    runTabsVersion.value = runTabsVersion.peek() + 1;
+  };
+  return {
+    // Complete and inert first: the run composer's steer stack reaches the chat notice path too.
+    ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
+    // The spec is the FACTORY's now, so there is no onShow and no onClose to capture: what a door
+    // decides is `owns` (does the × stop the run) and `parent` (which chat it nests under), both
+    // subject fields.
+    openRunTab: vi.fn(
+      (
+        id: string,
+        _name: string,
+        opts?: { parent?: string; owns?: boolean; activate?: boolean },
+      ) => {
+        m.opened.push({ id, opts });
+        return Promise.resolve();
+      },
+    ),
+    // Both reached through run-dots.js, which run-view imports to seed a parentless run's tab dot
+    // from the fetch. "" keeps the seed inert here: this suite opens no real tabs, so there is no dot
+    // to paint.
+    tabIdFor: vi.fn(() => ""),
+    tabSetVersion: vi.fn(() => 0),
+    // Tracked like the real read, so closing a tab re-runs the effects that read it.
+    openRunRefs: () => {
+      void runTabsVersion.value;
+      return [...m.runTabs.refs];
     },
-  ),
-  // Both reached through run-dots.js, which run-view imports to seed a parentless run's tab dot
-  // from the fetch. "" keeps the seed inert here: this suite opens no real tabs, so there is no dot
-  // to paint.
-  tabIdFor: vi.fn(() => ""),
-  tabSetVersion: vi.fn(() => 0),
-  // Empty keeps the seed inert.
-  openRunRefs: vi.fn(() => []),
-  // A run's tab row is renamed once its state arrives (run-dots.ts). Inert here; a Browser-Mode
-  // mock is linked as real ESM, so a name any module in the graph reaches has to exist on it.
-  renameTab: vi.fn(),
-  setTabStatus: vi.fn(),
-  // The names this graph pulls in through the run CARD, whose markdown bubble reaches the linkifier
-  // and through it the editor openers. All inert: no case here closes a tab, reads which tab is on
-  // screen, or opens a file.
-  closeTab: vi.fn(),
-  getActiveTabId: vi.fn(() => ""),
-  openEditorView: vi.fn(),
-  setTabDirty: vi.fn(),
-  openGitView: vi.fn(),
-  // The cases below drive it directly, because the alternative is a whole tab projection for one
-  // string.
-  parentChatRef: vi.fn(() => m.parentChat.current),
-  // `hasTab` answers off a set the cases drive; `openTab` records so the link's dispatch is
-  // observable.
-  hasTab: vi.fn((kind: string, ref: string) => m.tabsOpen.has(`${kind}:${ref}`)),
-  openTab: vi.fn((args: { kind: string; ref?: string }) => {
-    m.tabbed.push({ kind: args.kind, ...(args.ref === undefined ? {} : { ref: args.ref }) });
-    return Promise.resolve("opened");
-  }),
-}));
+    // A run's tab row is renamed once its state arrives (run-dots.ts). Inert here; a Browser-Mode
+    // mock is linked as real ESM, so a name any module in the graph reaches has to exist on it.
+    renameTab: vi.fn(),
+    setTabStatus: vi.fn(),
+    // The names this graph pulls in through the run CARD, whose markdown bubble reaches the linkifier
+    // and through it the editor openers. All inert: no case here closes a tab, reads which tab is on
+    // screen, or opens a file.
+    closeTab: vi.fn(),
+    getActiveTabId: vi.fn(() => ""),
+    openEditorView: vi.fn(),
+    setTabDirty: vi.fn(),
+    openGitView: vi.fn(),
+    // The cases below drive it directly, because the alternative is a whole tab projection for one
+    // string.
+    parentChatRef: vi.fn(() => m.parentChat.current),
+    // `hasTab` answers off a set the cases drive; `openTab` records so the link's dispatch is
+    // observable.
+    hasTab: vi.fn((kind: string, ref: string) => m.tabsOpen.has(`${kind}:${ref}`)),
+    openTab: vi.fn((args: { kind: string; ref?: string }) => {
+      m.tabbed.push({ kind: args.kind, ...(args.ref === undefined ? {} : { ref: args.ref }) });
+      return Promise.resolve("opened");
+    }),
+  };
+});
 
 // `run-store.js` is REAL except for its LAUNCHING-CHAT MEMORY, and that carve-out is not
 // convenience.
@@ -249,7 +267,18 @@ vi.mock("./run-chat-steps.js", () => ({
         marker.textContent = `${path}:${String(list.length)}:${String(
           list.reduce((n, p) => n + p.turn.body.length, 0),
         )}`;
-        host.replaceChildren(marker);
+        // Each text entry as a line block, so a long transcript makes a long page.
+        const texts = list.flatMap((p) =>
+          p.turn.body
+            .filter((e) => e.kind === "text")
+            .map((e) => {
+              const line = document.createElement("pre");
+              line.className = "step-text";
+              line.textContent = (e.payload as { text: string }).text;
+              return line;
+            }),
+        );
+        host.replaceChildren(marker, ...texts);
       }
     },
     dispose: vi.fn(),
@@ -301,7 +330,7 @@ import {
 // The REAL router: a zero-import leaf, so no mock, and taking the node from the PARSER rather than
 // a literal is what makes the fragment case below cover the
 import { parseRoute } from "./route-path.js";
-import { openDockPanel, openRunDockPanel } from "./__test-helpers__/exec-dock.js";
+import { openDockPanel, openRunDockPanel, settledOpen } from "./__test-helpers__/exec-dock.js";
 import type { Entry } from "./types.js";
 
 /** Kept as a helper rather than inlined per case so a case reads as "this run offers these
@@ -470,6 +499,7 @@ beforeEach(() => {
   m.requested.length = 0;
   m.reread.length = 0;
   m.cleared.count = 0;
+  m.runTabs.refs = [];
   // The chat STORE is not part of this suite's state: a step's entries are the RUN's, in
   // `runs/<workflowId>/entries.jsonl`, so nothing here writes a chat window and there is none to
   // clear.
@@ -2893,6 +2923,22 @@ describe("the page's scroll position", () => {
     };
   }
 
+  /** Two agent steps with no results, so each step's page is its transcript alone. */
+  function transcriptSteps(id: string): unknown {
+    return {
+      nodeId: id,
+      type: "sequence",
+      status: "completed",
+      children: [0, 1].map((i) => ({
+        nodeId: `${id}-step-${String(i)}`,
+        type: "step",
+        status: "completed",
+        agentName: "wf-coder",
+        children: [],
+      })),
+    };
+  }
+
   function scroller(): HTMLElement {
     const el = document.querySelector<HTMLElement>("[id='run-view'] > .page-content");
     if (el === null) {
@@ -2923,10 +2969,24 @@ describe("the page's scroll position", () => {
   }
 
   beforeEach(() => {
+    const ids = [
+      "wf_scroll_a",
+      "wf_scroll_b",
+      "wf_shrink_a",
+      "wf_shrink_b",
+      "wf_steps",
+      "wf_shrink_c",
+      "wf_prune_a",
+      "wf_prune_b",
+    ];
+    m.runTabs.refs = [...ids, "wf_tx"];
     const replies = new Map(
-      ["wf_scroll_a", "wf_scroll_b", "wf_shrink_a", "wf_shrink_b"].map((id) => [
+      [
+        ...ids.map((id) => ({ id, root: steps(id) })),
+        { id: "wf_tx", root: transcriptSteps("wf_tx") },
+      ].map(({ id, root }) => [
         `/api/runs/${id}`,
-        { workflowId: id, state: { workflowId: id, status: "completed", root: steps(id) } },
+        { workflowId: id, state: { workflowId: id, status: "completed", root } },
       ]),
     );
     vi.mocked(apiGetOrError).mockImplementation((path: string) => {
@@ -3054,4 +3114,135 @@ describe("the page's scroll position", () => {
       kept: true,
     });
   });
+
+  // A step pick swaps the page's subject in place: the step left keeps its own position, and the
+  // step shown gets its own page height, so a short step after a long one never opens on blank space.
+  it("gives each step its own page height and position across a step pick", async () => {
+    await activate("wf_steps");
+    await frames();
+    await openRunDockPanel(document.body);
+    await settledOpen(document.body);
+    const longEnd = bottom();
+    expect(longEnd, "the premise: the first step's page overflows").toBeGreaterThan(400);
+    const readAt = longEnd - 100;
+    readerScrollTo(readAt);
+    await frames();
+
+    pickStep("wf_steps:wf_steps-step-1");
+    await frames();
+    await frames();
+    const port = scroller().getBoundingClientRect();
+    const detail = document.querySelector(".ev-pane-detail")?.getBoundingClientRect();
+    if (detail === undefined) {
+      throw new Error("no detail pane");
+    }
+    // Where the short step's content ends in the scroller's own coordinates; past it is blank.
+    const contentEnd = detail.bottom - port.top + scroller().scrollTop;
+    // A step never shown before opens Following, at its own end, as a run tab opens.
+    expect({
+      atOwnEnd: scroller().scrollTop === bottom(),
+      blankRange: scroller().scrollHeight > Math.max(scroller().clientHeight, contentEnd + 40),
+    }).toEqual({ atOwnEnd: true, blankRange: false });
+
+    pickStep("wf_steps:wf_steps-step-0");
+    await frames();
+    await frames();
+    expect(scroller().scrollTop).toBe(readAt);
+  });
+
+  // A step whose page is its transcript is rebuilt from the log when shown again, and the rebuild
+  // lands before the parked position is restored, or the restore clamps to the short page left.
+  it("restores a revisited step whose page is its rebuilt transcript", async () => {
+    logStep(
+      "wf_tx",
+      "wf_tx:wf_tx-step-0",
+      Array.from({ length: 120 }, (_, i) => `line ${String(i)}`).join("\n"),
+    );
+    logStep("wf_tx", "wf_tx:wf_tx-step-1", "done");
+    await activate("wf_tx");
+    await vi.waitFor(() => {
+      expect(
+        document.querySelector('.ev-d-body[data-path="wf_tx:wf_tx-step-0"] .step-text'),
+      ).not.toBeNull();
+    });
+    await frames();
+    await openRunDockPanel(document.body);
+    await settledOpen(document.body);
+    const longEnd = bottom();
+    expect(longEnd, "the premise: the long transcript overflows").toBeGreaterThan(400);
+    const readAt = longEnd - 100;
+    readerScrollTo(readAt);
+    await frames();
+
+    pickStep("wf_tx:wf_tx-step-1");
+    await vi.waitFor(() => {
+      expect(
+        document.querySelector('.ev-d-body[data-path="wf_tx:wf_tx-step-1"] .step-text'),
+      ).not.toBeNull();
+    });
+    await frames();
+    await frames();
+    const port = scroller().getBoundingClientRect();
+    const detail = document.querySelector(".ev-pane-detail")?.getBoundingClientRect();
+    if (detail === undefined) {
+      throw new Error("no detail pane");
+    }
+    const contentEnd = detail.bottom - port.top + scroller().scrollTop;
+    expect(
+      scroller().scrollHeight > Math.max(scroller().clientHeight, contentEnd + 40),
+      "the short step shows a blank range",
+    ).toBe(false);
+
+    pickStep("wf_tx:wf_tx-step-0");
+    await frames();
+    await frames();
+    expect(scroller().scrollTop).toBe(readAt);
+  });
+
+  // A closed run tab takes its parked positions with it, so the run opened again starts fresh.
+  it("forgets a run's positions when its tab closes", async () => {
+    await activate("wf_prune_a");
+    await frames();
+    readerScrollTo(300);
+    await frames();
+    await activate("wf_prune_b");
+    await frames();
+    m.runTabs.close("wf_prune_a");
+    m.runTabs.refs.push("wf_prune_a");
+    await activate("wf_prune_a");
+    await frames();
+    expect(scroller().scrollTop).toBe(bottom());
+  });
+
+  // The clamp floor holds the page's height through a shrink only until the follower answers it, so a
+  // step whose own content shrinks ends at that content.
+  it("lowers the page to a step's content when the step's content shrinks", async () => {
+    await activate("wf_shrink_c");
+    await frames();
+    expect(bottom(), "the premise: the step's page overflows").toBeGreaterThan(400);
+    const items = [...document.querySelectorAll(".ev-r-item")];
+    for (const item of items.slice(2)) {
+      item.remove();
+    }
+    await frames();
+    await frames();
+    const port = scroller().getBoundingClientRect();
+    const results = document.querySelector(".ev-results")?.getBoundingClientRect();
+    if (results === undefined) {
+      throw new Error("no results region");
+    }
+    const contentEnd = results.bottom - port.top + scroller().scrollTop;
+    expect(scroller().scrollHeight).toBeLessThanOrEqual(
+      Math.max(scroller().clientHeight, contentEnd + 40),
+    );
+  });
 });
+
+/** A click on a step's row in the open dock panel, the way a reader picks the step the page shows. */
+function pickStep(path: string): void {
+  const row = document.querySelector<HTMLElement>(`.ev-row[data-path="${path}"] > .ev-row-main`);
+  if (row === null) {
+    throw new Error(`no step row ${path}`);
+  }
+  row.click();
+}

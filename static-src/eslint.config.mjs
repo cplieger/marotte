@@ -20,7 +20,7 @@ export default [
   { ignores: ["**/__test-helpers__/**"] },
   {
     // Typed by `npm run typecheck:tests` (tsconfig.test.json), not here.
-    files: ["scripts/*.ts", "fc-strict-setup.ts"],
+    files: ["scripts/*.ts", "fc-strict-setup.ts", "perf/views.ts", "perf/route-of.ts"],
     ...tseslint.configs.disableTypeChecked,
   },
   {

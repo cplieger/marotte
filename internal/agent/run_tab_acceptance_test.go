@@ -154,7 +154,9 @@ func TestAcceptance_AnEndedRunOpensAsAChildOfItsChat(t *testing.T) {
 			}); err != nil {
 				t.Fatalf("record the chat's session: %v", err)
 			}
-			r.br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t, tc.row)}
+			r.br.callResults = map[string]json.RawMessage{
+				methodKiroWorkflowList: kasRuns(t, tc.row), methodKiroWorkflowInspect: inspectOfRow(t, tc.row),
+			}
 			if _, held := r.h.runs.lease("wf_ended"); held {
 				t.Fatal("the ended run holds a lease, so this does not exercise the inventory read")
 			}
@@ -203,9 +205,12 @@ func TestAcceptance_AnEndedRunReopensItsClosedChatTab(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed the tabless chat: %v", err)
 	}
-	r.br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t, map[string]any{
+	ended := map[string]any{
 		"workflowId": "wf_ended", "name": "publish-pr", "status": "completed", "parentSessionId": "sess_launcher",
-	})}
+	}
+	r.br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowList: kasRuns(t, ended), methodKiroWorkflowInspect: inspectOfRow(t, ended),
+	}
 
 	rec := postCmd(t, r.h, marotte.ClientCommand{
 		Type:    marotte.CmdOpenTab,

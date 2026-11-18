@@ -1,6 +1,7 @@
 // The spec tab's page: one Kiro spec's documents, tasks.md as a live checklist.
 
 import { effect, el, signal, touch } from "@cplieger/reactive";
+import { join as joinKey, split as splitKey } from "@cplieger/keyenc";
 import { createDisclosure } from "./legacy-ui/disclosure.js";
 import { apiGetConditional } from "./api-client.js";
 import { BUS_USER_INPUT_ANSWERED, onBus, onSSE } from "./bus.js";
@@ -123,11 +124,16 @@ const states = new Map<string, SpecPageState>();
 
 let shown = "";
 
-/** `.page-content` is shared by every spec tab, so each spec keeps its own offset. */
+/** `.page-content` is shared by every spec tab and every document of one, so each spec document
+ *  keeps its own offset, by `join(spec dir, document file)`. */
 const pageScroll = new SharedScroll(
   () => queryEl<HTMLElement>("[id='spec-view'] > .page-content"),
-  () => shown,
+  () => (shown === "" ? "" : docScrollKey(shown)),
 );
+
+function docScrollKey(ref: string): string {
+  return joinKey(ref, states.get(ref)?.doc ?? "");
+}
 
 /** Bumped whenever `shown` moves, and TOUCHED at the top of the one effect below before its
  *  early returns, so pointing the page at a ref re-runs that effect. */
@@ -185,7 +191,7 @@ function release(ref: string): void {
     st.page.root.remove();
   }
   states.delete(ref);
-  pageScroll.forget(ref);
+  pageScroll.forgetWhere((key) => splitKey(key)[0] === ref);
   if (shown === ref) {
     shown = "";
   }
@@ -212,7 +218,7 @@ export function showSpec(dir: string): void {
   shown = dir;
   shownVersion.value++;
   paint(dir);
-  pageScroll.restore(dir);
+  pageScroll.restore(docScrollKey(dir));
   void refetch(dir);
 }
 
@@ -998,6 +1004,9 @@ function paint(ref: string): void {
       replacePane(page.pane, content);
       return page.pane;
     });
+    if (ref === shown) {
+      pageScroll.restore(docScrollKey(ref));
+    }
   } else {
     replacePane(page.pane, content);
   }

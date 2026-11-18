@@ -126,7 +126,7 @@ func TestRetry_AScheduledRunWhoseEndWasMissedIsRetriedAsThePersons(t *testing.T)
 		"workflowId": id, "name": "nightly", "status": "failed", "parentSessionId": testLaunchSession,
 	})
 
-	if _, err := h.runs.retry(t.Context(), id, h.runs.affordance(id, &runHead{Status: "failed"})); err != nil {
+	if _, err := h.runs.retry(t.Context(), id, h.runs.affordance(id, launchedHead("failed", testLaunchSession, "nightly"))); err != nil {
 		t.Fatalf("Retry: %v", err)
 	}
 

@@ -18,6 +18,9 @@ export class FileBrowserState {
   sortedNames: string[] = [];
   /** Every files tab paints into one shared scroller, so the offset lives here; a directory change resets it. */
   scrollTop = 0;
+  /** A move reset `scrollTop` and the shared scroller still stands where the folder left behind did: the folder's
+   *  first answer puts it there, and the old listing's scrolls are not this folder's to record. */
+  scrollOwed = false;
 
   /**
    * True until the origin folder loads, so an unreachable origin falls back to the mounts listing once. Per browser:
@@ -145,6 +148,7 @@ export class FileBrowserState {
     this.pendingSelect = "";
     this.afterListing = null;
     this.scrollTop = 0;
+    this.scrollOwed = true;
     this.selected.clear();
     this.lastClickedName = "";
   }

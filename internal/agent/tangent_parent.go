@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/cplieger/marotte/internal/command"
@@ -13,8 +14,9 @@ var _ command.TangentAccess = (*Runtime)(nil)
 
 // TangentParent answers the chat chatID was forked from through KAS's own link: the first
 // session of chatID's chain whose session/list row names a parentSessionId outside that chain,
-// mapped to the chat whose chain holds it. A successor session (a compaction, a model switch)
-// carries no link, so the whole chain is walked.
+// mapped to the first chat whose chain holds it; gone only after an owner scan that read every
+// chat. A successor session (a compaction, a model switch) carries no link, so the whole chain
+// is walked.
 func (rt *Runtime) TangentParent(ctx context.Context, chatID marotte.ChatID) (marotte.ChatID, error) {
 	c, ok := rt.chatStore.Get(ctx, chatID)
 	if !ok {
@@ -41,13 +43,20 @@ func (rt *Runtime) TangentParent(ctx context.Context, chatID marotte.ChatID) (ma
 		if p == "" || own[p] {
 			continue
 		}
-		if parent, claimed := rt.claimedSessions(ctx)[p]; claimed {
-			return parent, nil
+		scan := rt.chatStore.SessionOwners(ctx)
+		if owners := scan.Owners.Of(p); len(owners) > 0 {
+			return owners[0], nil
+		}
+		if !scan.Complete {
+			return "", errTangentOwnersUnread
 		}
 		return "", command.ErrTangentParentGone
 	}
 	return "", command.ErrNotATangent
 }
+
+// errTangentOwnersUnread is a forked-from session no chat read holds while a chat could not be read, which may hold it.
+var errTangentOwnersUnread = errors.New("a chat could not be read, so whether the forked-from chat exists is unknown")
 
 // TurnReply answers the main-lane text of one turn: consecutive text entries join as they
 // streamed, and a tool call or any other entry between two says starts a new paragraph.

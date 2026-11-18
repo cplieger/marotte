@@ -75,12 +75,13 @@ describe("the run page claims its height", () => {
 
   // The page must SIZE TO CONTENT, or the scroller above has nothing taller than itself to scroll:
   // `flex: 1 1 0` plus `min-height: 0` made this column exactly the free space of its parent, so
-  // `scrollHeight === clientHeight` and no scrollbar could ever appear.
+  // `scrollHeight === clientHeight` and no scrollbar could ever appear. A growing page would fill
+  // the body's clamp floor, so a shrink of its content could never lower it.
   it("makes the exec page a content-sized column", () => {
     const page = ruleBody(loadCSS("31-exec-view.css"), ".ev-page");
     expect(/display:\s*flex/.test(page)).toBe(true);
     expect(/flex-direction:\s*column/.test(page)).toBe(true);
-    expect(/flex:\s*1 0 auto/.test(page)).toBe(true);
+    expect(/flex:\s*none/.test(page)).toBe(true);
   });
 
   // The results are the selected step's PRODUCT, so they render whole and the page scrolls. A

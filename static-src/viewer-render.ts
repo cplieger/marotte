@@ -177,7 +177,10 @@ export class TextViewer {
     if (this.base !== before) {
       this.repositionAll();
     }
-    this.scroller.scrollTop = Math.max(0, this.padTop + y - this.base - offset);
+    // Nothing but the top pad stands above the first row, so its top is the scroller's own top: where the file
+    // opens, and where a reader left at it comes back.
+    this.scroller.scrollTop =
+      target === 0 && align === "top" ? 0 : Math.max(0, this.padTop + y - this.base - offset);
     this.render();
   }
 
@@ -639,7 +642,9 @@ export class EditSurface {
     this.layout();
     const { lh, pad } = this.metrics();
     const offset = align === "top" ? 0 : this.area.clientHeight / 3;
-    this.area.scrollTop = Math.max(0, pad + (shown - 1) * lh - offset);
+    // The first line's top is the textarea's own top, the pad included, as `TextViewer.scrollToRow` lands row 0.
+    this.area.scrollTop =
+      shown === 1 && align === "top" ? 0 : Math.max(0, pad + (shown - 1) * lh - offset);
     return { row: shown - 1, line: shown, clamped: shown !== line };
   }
 

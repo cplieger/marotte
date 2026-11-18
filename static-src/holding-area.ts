@@ -28,7 +28,17 @@ export function mountHoldingArea(area: HTMLElement): void {
     area.style.setProperty(GUTTER_PROP, `${String(area.offsetWidth - area.clientWidth)}px`);
   };
   // The area too: it has no box while empty, so its gutter is first measurable when it shows.
-  const ro = new ResizeObserver(paint);
+  // Painted a frame later: the cap and gutter resize the observed area, which inside the delivery
+  // is a ResizeObserver loop.
+  let roFrame = 0;
+  const ro = new ResizeObserver(() => {
+    if (roFrame === 0) {
+      roFrame = requestAnimationFrame(() => {
+        roFrame = 0;
+        paint();
+      });
+    }
+  });
   ro.observe(area);
   if (pane !== null) {
     // Measured rather than a container query: `container-type: size` on the pane would make it the containing

@@ -12,6 +12,7 @@ import (
 	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/kirosession"
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
@@ -85,6 +86,8 @@ type Runs struct {
 	logSweep logSweepState
 	// recorded is the keep-state reconcile's runs/ attribution, which RunsParentedBy reads (run_owner.go).
 	recorded recordedRuns
+	// runsOnDisk reads the run state KAS keeps on disk (kirosession.Reaper.RunsOnDisk); nil with no reaper.
+	runsOnDisk func() ([]kirosession.RunState, error) `wiring:"optional"`
 	// marks throttles the run keep marks' progress refresh and keeps ended unattributed runs (run_keepstate.go).
 	marks runMarks
 	// retries marks each run whose retry KAS has not shown taking effect, the purge's retry in flight (run_purge.go).

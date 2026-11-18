@@ -214,7 +214,7 @@ func TestRetry_ACancelledRetryKeepsTheLeaseItMinted(t *testing.T) {
 				t.Fatal("the fixture holds a lease, so Retry mints none and this proves nothing")
 			}
 
-			aff := h.runs.affordance("wf_1", &runHead{Status: "aborted"})
+			aff := h.runs.affordance("wf_1", launchedHead("aborted", testLaunchSession, "publish"))
 			if _, err := h.runs.retry(t.Context(), "wf_1", aff); err == nil {
 				t.Fatal("a failed retry reported success")
 			}
@@ -441,10 +441,7 @@ func TestEnsureResident_AChatParentedRunIsMadeResidentThroughItsChat(t *testing.
 	h, cs, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowList: kasRuns(t, map[string]any{
-			"workflowId": "wf_1", "status": "paused", "parentSessionId": "sess_owned",
-		}),
-		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", ""),
+		methodKiroWorkflowInspect: inspectLaunched(t, "wf_1", marotte.RunStatusPaused, "sess_owned", "publish"),
 	}
 	br.setCallRPCErr(methodKiroWorkflowResume, &marotte.RPCError{Code: -32603, Message: "Workflow wf_1 is not registered."})
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -474,6 +471,8 @@ func TestEnsureResident_ALaunchingSessionNoLoadCanHoldRefusesTheVerb(t *testing.
 	cases := map[string]struct {
 		lease runlease.Lease
 		chain []string
+		// want is the refusal; nil is errLaunchSessionUnavailable.
+		want error
 		// failLoads makes every session the factory builds refuse a named load.
 		failLoads bool
 	}{
@@ -482,6 +481,7 @@ func TestEnsureResident_ALaunchingSessionNoLoadCanHoldRefusesTheVerb(t *testing.
 		},
 		"the lease records no security profile": {
 			lease: runlease.Lease{WorkflowID: "wf_1", ParentSessionID: testLaunchSession},
+			want:  runlease.ErrNoHostSecurity,
 		},
 		"the chat's load fell back to a fresh session": {
 			lease:     runlease.Lease{WorkflowID: "wf_1", ChatID: "c1", ParentSessionID: "sess_owned"},
@@ -522,9 +522,13 @@ func TestEnsureResident_ALaunchingSessionNoLoadCanHoldRefusesTheVerb(t *testing.
 			}
 			leaseRun(t, h, tc.lease)
 
+			want := tc.want
+			if want == nil {
+				want = errLaunchSessionUnavailable
+			}
 			err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch", nil)
-			if !errors.Is(err, errLaunchSessionUnavailable) {
-				t.Fatalf("AnswerInput = %v, want errLaunchSessionUnavailable", err)
+			if !errors.Is(err, want) {
+				t.Fatalf("AnswerInput = %v, want %v", err, want)
 			}
 			if errors.Is(err, errRunHostStart) {
 				t.Error("a state of the run was reported as a load fault on this server")
@@ -568,7 +572,7 @@ func TestRetry_RefusesARunWhoseLaunchingSegmentTheChatRetired(t *testing.T) {
 		t.Fatalf("Setup: seeding the chat: %s", err)
 	}
 
-	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "aborted"}))
+	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", launchedHead("aborted", "sess_launched_from", "publish")))
 	if !errors.Is(err, errLaunchSessionUnavailable) {
 		t.Fatalf("Retry = %v, want errLaunchSessionUnavailable", err)
 	}
@@ -577,29 +581,23 @@ func TestRetry_RefusesARunWhoseLaunchingSegmentTheChatRetired(t *testing.T) {
 	}
 }
 
-// A refused load and an unreadable inventory are server faults, not run states; nothing is left registered.
+// A refused load is a server fault, not a run state; nothing is left registered.
 func TestEnsureResident_AFailedLoadIsAFaultOnThisServer(t *testing.T) {
 	cases := map[string]struct {
 		loadErr error
-		listErr error
 		leased  bool
 	}{
 		"KAS refuses the load": {leased: true, loadErr: fmt.Errorf("session/load: %w",
 			&marotte.RPCError{Code: -32603, Message: "Internal error"})},
-		"the inventory cannot be read": {listErr: errors.New("engine ended")},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			h, _, br := newTestHub()
 			t.Cleanup(func() { shutdownHub(t, h) })
 			br.callResults = map[string]json.RawMessage{
-				methodKiroWorkflowList:    parentlessRunList("wf_1"),
-				methodKiroWorkflowInspect: inspectPaused(t, "wf_1", ""),
+				methodKiroWorkflowInspect: inspectLaunched(t, "wf_1", marotte.RunStatusPaused, testLaunchSession, "publish"),
 			}
 			br.loadErr = tc.loadErr
-			if tc.listErr != nil {
-				br.setCallErr(methodKiroWorkflowList, tc.listErr)
-			}
 			if tc.leased {
 				leaseParentless(t, h, "wf_1")
 			}
@@ -625,21 +623,23 @@ func TestEnsureResident_AFailedLoadIsAFaultOnThisServer(t *testing.T) {
 	}
 }
 
-// A launch session no load can hold is a 409; a refused load is a 500.
+// A launch session no load can hold is a 409; a run kiro-cli does not know is a 404; a refused load is a 500.
 func TestControlHandler_SplitsAnUnavailableLaunchSessionFromAFailedLoad(t *testing.T) {
 	cases := map[string]struct {
-		list    json.RawMessage
+		inspect func(t *testing.T) json.RawMessage
 		loadErr error
 		leased  bool
 		want    int
 	}{
 		"no launching session is a 409": {
-			list: json.RawMessage(`{"runs":[{"workflowId":"wf_1","status":"paused"}]}`),
-			want: http.StatusConflict,
+			inspect: func(t *testing.T) json.RawMessage { return inspectReply(t, "wf_1", "paused", "") },
+			want:    http.StatusConflict,
 		},
-		"a run the inventory does not list is a 404": {list: json.RawMessage(`{"runs":[]}`), want: http.StatusNotFound},
+		"a run kiro-cli does not know is a 404": {want: http.StatusNotFound},
 		"a refused load is a 500": {
-			list:    parentlessRunList("wf_1"),
+			inspect: func(t *testing.T) json.RawMessage {
+				return inspectLaunched(t, "wf_1", marotte.RunStatusPaused, testLaunchSession, "publish")
+			},
 			leased:  true,
 			loadErr: fmt.Errorf("session/load: %w", &marotte.RPCError{Code: -32603, Message: "Internal error"}),
 			want:    http.StatusInternalServerError,
@@ -649,9 +649,10 @@ func TestControlHandler_SplitsAnUnavailableLaunchSessionFromAFailedLoad(t *testi
 		t.Run(name, func(t *testing.T) {
 			h, _, br := newTestHub()
 			t.Cleanup(func() { shutdownHub(t, h) })
-			br.callResults = map[string]json.RawMessage{
-				methodKiroWorkflowList:    tc.list,
-				methodKiroWorkflowInspect: inspectReply(t, "wf_1", "paused", ""),
+			if tc.inspect != nil {
+				br.setCallResult(methodKiroWorkflowInspect, tc.inspect(t))
+			} else {
+				br.setCallRPCErr(methodKiroWorkflowInspect, workflowNotFoundErr())
 			}
 			br.loadErr = tc.loadErr
 			if tc.leased {
@@ -695,7 +696,7 @@ func TestRetry_RefusesARetiredSegmentRunWhileItsChatIsOpen(t *testing.T) {
 		t.Fatalf("Setup: opening the chat = (%v, %v), want it live on sess_now", open, err)
 	}
 
-	_, err = h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "aborted"}))
+	_, err = h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", launchedHead("aborted", "sess_launched_from", "publish")))
 	if !errors.Is(err, errLaunchSessionUnavailable) {
 		t.Fatalf("Retry = %v, want errLaunchSessionUnavailable", err)
 	}
@@ -704,13 +705,46 @@ func TestRetry_RefusesARetiredSegmentRunWhileItsChatIsOpen(t *testing.T) {
 	}
 }
 
-// An incomplete chat scan proves nothing: the unreadable chat may own the session.
+// An unleased run's origin is read by key: a read kiro-cli did not answer is errRunUnread (503), a run it does not
+// know is errRunNotListed (404), and any other read failure is a fault on this server (500).
+func TestEnsureResident_AnUnleasedRunsFailedReadSaysWhy(t *testing.T) {
+	cases := map[string]struct {
+		rpcErr *marotte.RPCError
+		err    error
+		want   error
+	}{
+		"unanswered": {err: fmt.Errorf("workflow inspect call: %w", context.DeadlineExceeded), want: errRunUnread},
+		"not found":  {rpcErr: workflowNotFoundErr(), want: errRunNotListed},
+		"refused":    {err: errors.New("engine fault"), want: errRunHostStart},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h, _, br := newTestHub()
+			t.Cleanup(func() { shutdownHub(t, h) })
+			if tc.rpcErr != nil {
+				br.setCallRPCErr(methodKiroWorkflowInspect, tc.rpcErr)
+			} else {
+				br.setCallErr(methodKiroWorkflowInspect, tc.err)
+			}
+
+			_, release, err := h.runs.ensureResident(t.Context(), "wf_1")
+			release()
+			if !errors.Is(err, tc.want) {
+				t.Errorf("ensureResident = %v, want %v", err, tc.want)
+			}
+			if br.called(methodKiroWorkflowList) {
+				t.Error("an unleased run's origin was read from the whole run inventory")
+			}
+		})
+	}
+}
+
+// An incomplete chat scan proves nothing: the unreadable chat may own the session, so the verb is a retryable 503.
 func TestEnsureResident_AnIncompleteChatScanRefusesToLoadAsAHost(t *testing.T) {
 	h, cs, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowList:    parentlessRunList("wf_1"),
-		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", ""),
+		methodKiroWorkflowInspect: inspectLaunched(t, "wf_1", marotte.RunStatusPaused, testLaunchSession, "publish"),
 	}
 	unreadable := filepath.Join(cs.Dir(), "c9")
 	if err := os.MkdirAll(unreadable, 0o700); err != nil {
@@ -721,8 +755,9 @@ func TestEnsureResident_AnIncompleteChatScanRefusesToLoadAsAHost(t *testing.T) {
 	}
 	starts := br.startCount()
 
-	if err := h.runs.resume(t.Context(), "wf_1", callerPage); !errors.Is(err, errRunHostStart) {
-		t.Fatalf("Resume = %v, want errRunHostStart", err)
+	err := h.runs.resume(t.Context(), "wf_1", callerPage)
+	if code, _, _ := command.StatusOf(err); code != http.StatusServiceUnavailable || !errors.Is(err, errLauncherUnread) {
+		t.Fatalf("Resume = %v (status %d), want 503 errLauncherUnread: a later try may read every chat", err, code)
 	}
 	if got := br.startCount() - starts; got != 0 {
 		t.Errorf("%d sessions opened, want 0: the session may belong to the unreadable chat", got)

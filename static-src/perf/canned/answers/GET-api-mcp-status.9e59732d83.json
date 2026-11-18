@@ -1,0 +1,1 @@
+{"route":"GET /api/mcp/status","url":"/api/mcp/status","decoder":"MCPStatusResponse","body":{"subject":{"kind":"mcp_status","ref":"","version":"0","epoch":"ca0000000000ca00"},"servers":[]}}

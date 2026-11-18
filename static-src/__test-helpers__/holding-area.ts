@@ -60,7 +60,7 @@ function runOf(i: number): ExecRun {
 }
 
 /** `count` runs as the run bar draws them: the fold row, then a row per run, open or folded. */
-function paintRuns(root: HTMLElement, count: number, open: boolean): void {
+export function paintRuns(root: HTMLElement, count: number, open: boolean): void {
   if (count === 0) {
     return;
   }

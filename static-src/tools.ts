@@ -335,7 +335,7 @@ class ToolsManager {
     this.unsubscribes.push(
       onSSE("tool_job_changed", (_chat, payload) => {
         const job = payload.job;
-        if (job === undefined) {
+        if (job === null) {
           return;
         }
         // The SSE stream is ordered, so its account of what is running is never
@@ -1338,7 +1338,7 @@ export async function installToolAndWait(
   });
   const unChanged = onSSE("tool_job_changed", (_c, p) => {
     const job = p.job;
-    if (job === undefined) {
+    if (job === null) {
       return;
     }
     if (jobRef.id === undefined) {

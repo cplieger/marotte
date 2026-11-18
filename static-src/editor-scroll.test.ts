@@ -230,6 +230,18 @@ describe("scrollToEditorLine", () => {
     expect(Math.abs(area().scrollTop - areaLineTop(300))).toBeLessThan(1);
   });
 
+  // Only the top pad stands above line 1, so its top is where the file opens: the scroller's own top.
+  it("lands line 1 where the file opens, in both states", () => {
+    showRead("a\n".repeat(400));
+    body().scrollTop = 500;
+    scrollToEditorLine(1);
+    expect(body().scrollTop).toBe(0);
+    showEdit("a\n".repeat(400));
+    area().scrollTop = 500;
+    scrollToEditorLine(1);
+    expect(area().scrollTop).toBe(0);
+  });
+
   it("puts a line deep in a long file at the textarea's top in edit state", () => {
     showEdit("a\n".repeat(4000));
     scrollToEditorLine(3000);

@@ -102,6 +102,15 @@ export function optBool(o: globalThis.Record<string, unknown>, key: string, path
   return v;
 }
 
+/** Required JSON value of any shape; throws if absent. Null is a value. */
+export function reqRaw(o: globalThis.Record<string, unknown>, key: string, path = "$"): unknown {
+  const v = own(o, key);
+  if (v === undefined) {
+    fail(`${path}.${key}`, "expected a JSON value, got undefined");
+  }
+  return v;
+}
+
 /** Required string with a fixed enum membership check. */
 export function reqOneOf<T extends string>(
   o: globalThis.Record<string, unknown>,

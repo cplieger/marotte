@@ -1051,6 +1051,8 @@ type testChatStore struct {
 	onGet atomic.Pointer[func(id marotte.ChatID)]
 	// Gets counts Get calls, for a test about how often the store is read.
 	Gets atomic.Int64
+	// OwnerScans counts SessionOwners calls, for a test about how often the whole store is scanned.
+	OwnerScans atomic.Int64
 	// runtime receives the store's broadcasts once wire names it (storeRelay).
 	runtime atomic.Pointer[Runtime]
 	// mutated runs after each Mutate returns, and beforeDeleteIf before each DeleteIf, for a test that lands a write
@@ -1080,6 +1082,7 @@ func (s *testChatStore) SessionInTeardown(sessionID string) bool {
 }
 
 func (s *testChatStore) SessionOwners(ctx context.Context) chat.OwnerScan {
+	s.OwnerScans.Add(1)
 	scan := s.Store.SessionOwners(ctx)
 	if s.ownerScan != nil {
 		return s.ownerScan(ctx, scan)
