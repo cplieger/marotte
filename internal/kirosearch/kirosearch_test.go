@@ -331,14 +331,28 @@ func shortDeadline(t *testing.T, d time.Duration) {
 func TestFiles_DeadlineAnswerSaysItIsPartial(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "pid")
 	bin := slowRG(t, "./a.go", pidFile)
-	shortDeadline(t, 300*time.Millisecond)
+	const deadline = 300 * time.Millisecond
+	shortDeadline(t, deadline)
 
+	start := time.Now()
 	got := Searcher{Bin: bin}.Files(t.Context(), []string{t.TempDir()}, FilesQuery{Pattern: "**/*a.go*", MaxResults: 11})
 
+	if took := time.Since(start); took > deadline+killWait {
+		t.Errorf("Files took %v, want at most the deadline %v plus %v", took, deadline, killWait)
+	}
 	if len(got) != 2 || !isPartialNotice(got[0]) || got[1] != "a.go" {
 		t.Errorf("Files = %q, want the partial notice and then a.go", got)
 	}
 	awaitGone(t, pidFile)
+}
+
+// KAS reruns a search answered after its 30 s client wait on a walker with no deadline, and a loaded
+// host spent up to 17.3 s outside marotte (searchDeadline's measurement).
+func TestSearchDeadline_AnswersWithinKASsClientWait(t *testing.T) {
+	const kasWait, outside = 30 * time.Second, 17300 * time.Millisecond
+	if total := searchDeadline + killWait + outside; total >= kasWait {
+		t.Errorf("deadline %v + kill wait %v + %v outside = %v, want under KAS's %v wait", searchDeadline, killWait, outside, total, kasWait)
+	}
 }
 
 // A caller's own deadline ends the search like a cancel, with no notice: the notice names
@@ -473,6 +487,46 @@ func TestFiles_LaterRootCutWithRoomLeftIsPartial(t *testing.T) {
 
 	if len(got) != 4 || !isPartialNotice(got[0]) {
 		t.Errorf("Files = %q, want the partial notice and the first root's 3 files", got)
+	}
+	awaitGone(t, pidFile)
+}
+
+// The first root's files come first, so the deadline cutting it leaves the answer partial even when
+// a later root alone fills maxResults.
+func TestFiles_FirstRootCutIsPartialWhenALaterRootFillsTheLimit(t *testing.T) {
+	slow, fast := t.TempDir(), t.TempDir()
+	writeTree(t, fast, map[string]string{"fast": ""})
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	bin := twoRootRG(t, 20, pidFile)
+	shortDeadline(t, 300*time.Millisecond)
+
+	got := Searcher{Bin: bin}.Files(t.Context(), []string{slow, fast}, FilesQuery{Pattern: "**/*.go*", MaxResults: 11})
+
+	if len(got) != 11 || !isPartialNotice(got[0]) {
+		t.Errorf("Files = %q, want the partial notice and 10 of the later root's files", got)
+	}
+	awaitGone(t, pidFile)
+}
+
+// The notice counts toward maxResults, so the cap drops a file, never the notice.
+func TestFiles_PartialNoticeCountsTowardMaxResults(t *testing.T) {
+	first, second := t.TempDir(), t.TempDir()
+	writeTree(t, first, map[string]string{"fast": ""})
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	bin := fakeRG(t, `if [ -e fast ]; then
+  i=0; while [ $i -lt 5 ]; do echo ./f$i.go; i=$((i+1)); done
+else
+  i=0; while [ $i -lt 8 ]; do echo ./g$i.go; i=$((i+1)); done
+  /bin/sleep 60 &
+  echo $! > `+pidFile+`
+  wait
+fi`)
+	shortDeadline(t, 300*time.Millisecond)
+
+	got := Searcher{Bin: bin}.Files(t.Context(), []string{first, second}, FilesQuery{Pattern: "**/*.go*", MaxResults: 11})
+
+	if len(got) != 11 || !isPartialNotice(got[0]) || got[5] != "f4.go" || got[10] != filepath.Base(second)+"/g4.go" {
+		t.Errorf("Files = %q, want the partial notice, the first root's 5 files and 5 of the second's", got)
 	}
 	awaitGone(t, pidFile)
 }

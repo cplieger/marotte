@@ -5,11 +5,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 // scopeCase is a pattern as a model writes it and glob, the form rg run in the root is given: the
@@ -414,14 +417,8 @@ func TestSearch_StartsAtTheLiteralLeadingFolder(t *testing.T) {
 		"named ignored folder":      {pattern: "ignored/**", text: run("ignored", ""), files: run("ignored", "49")},
 		"start at the depth cap":    {pattern: capped, text: run(filepath.Dir(capped), ""), files: rgCall{}},
 		"git segment":               {pattern: "repo/.git/**"},
-		"missing folder":            {pattern: "absent/**"},
-		"through a file (ENOTDIR)":  {pattern: "go.mod/x/*.go"},
 		"through a symlink":         {pattern: "link/**"},
 		"symlink out of the root":   {pattern: "out/**"},
-		"through a loop (ELOOP)":    {pattern: "loop/x/**"},
-		"segment over 255 bytes":    {pattern: long + "/x.go"},
-		"prefix over 4096 bytes":    {pattern: "deep/" + strings.Repeat("a/", 2200) + "x.go"},
-		"NUL in the prefix":         {pattern: "a\x00b/x/*.go"},
 		"NUL in one segment":        {pattern: "/a\x00b"},
 		".. segment":                {pattern: "repo/../x/*.go"},
 	}
@@ -438,6 +435,112 @@ func TestSearch_StartsAtTheLiteralLeadingFolder(t *testing.T) {
 				FilesQuery{Pattern: tc.pattern, Exclude: tc.exclude, MaxResults: 11})
 			if got := recordedCall(t, filesArgs); got != tc.files {
 				t.Errorf("Files(%.60q) ran rg %+v, want %+v", tc.pattern, got, tc.files)
+			}
+		})
+	}
+}
+
+// withoutDACOverride runs f on an OS thread without CAP_DAC_OVERRIDE and CAP_DAC_READ_SEARCH, so a
+// mode-0 folder refuses root as it refuses any other user. Capabilities are per thread.
+func withoutDACOverride(t *testing.T, f func()) {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() {
+		// Never unlocked: the goroutine's exit then ends the thread with its reduced capabilities.
+		runtime.LockOSThread()
+		hdr := unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3}
+		var data [2]unix.CapUserData
+		if err := unix.Capget(&hdr, &data[0]); err != nil {
+			done <- err
+			return
+		}
+		data[0].Effective &^= 1<<unix.CAP_DAC_OVERRIDE | 1<<unix.CAP_DAC_READ_SEARCH
+		if err := unix.Capset(&hdr, &data[0]); err != nil {
+			done <- err
+			return
+		}
+		f()
+		done <- nil
+	}()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A literal leading folder that stat or EvalSymlinks refuses skips the root it is under, never
+// widening to that root's whole walk, while every other root is still searched.
+func TestSearch_UnresolvableLeadingFolderSkipsOnlyItsRoot(t *testing.T) {
+	long := strings.Repeat("a", 300)
+	tests := map[string]struct {
+		setup  func(t *testing.T, root string)
+		folder string
+		errno  syscall.Errno
+		// peer is whether another root can hold the folder, and so must still be searched.
+		peer, noDAC bool
+	}{
+		"missing (ENOENT)": {folder: "absent/x", errno: syscall.ENOENT, peer: true},
+		"through a file (ENOTDIR)": {folder: "go.mod/x", errno: syscall.ENOTDIR, peer: true, setup: func(t *testing.T, root string) {
+			writeTree(t, root, map[string]string{"go.mod": ""})
+		}},
+		"segment over 255 bytes (ENAMETOOLONG)": {folder: long + "/x", errno: syscall.ENAMETOOLONG},
+		"prefix over 4096 bytes (ENAMETOOLONG)": {folder: "deep/" + strings.Repeat("a/", 2200) + "x", errno: syscall.ENAMETOOLONG},
+		"NUL (EINVAL)":                          {folder: "a\x00b/x", errno: syscall.EINVAL},
+		"through a loop (ELOOP)": {folder: "loop/x", errno: syscall.ELOOP, peer: true, setup: func(t *testing.T, root string) {
+			if err := os.Symlink("loop", filepath.Join(root, "loop")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		"unsearchable (EACCES)": {folder: "locked/x", errno: syscall.EACCES, peer: true, noDAC: true, setup: func(t *testing.T, root string) {
+			writeTree(t, root, map[string]string{"locked/x/a.go": "hit\n"})
+			locked := filepath.Join(root, "locked")
+			if err := os.Chmod(locked, 0); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+		}},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			bad, good := t.TempDir(), t.TempDir()
+			if tc.setup != nil {
+				tc.setup(t, bad)
+			}
+			roots, want := []string{bad}, []string(nil)
+			if tc.peer {
+				writeTree(t, good, map[string]string{tc.folder + "/a.go": "hit\n"})
+				realGood, err := filepath.EvalSymlinks(good)
+				if err != nil {
+					t.Fatal(err)
+				}
+				roots, want = []string{bad, good}, []string{realGood}
+			}
+			logs := t.TempDir()
+			textRG := fakeRG(t, `/bin/pwd -P >> '`+filepath.Join(logs, "text")+`'`)
+			filesRG := fakeRG(t, `/bin/pwd -P >> '`+filepath.Join(logs, "files")+`'`)
+			var statErr error
+			search := func() {
+				_, statErr = os.Stat(filepath.Join(bad, tc.folder))
+				pattern := tc.folder + "/*.go"
+				Searcher{Bin: textRG}.Text(t.Context(), roots, TextQuery{Pattern: "hit", IncludePattern: pattern})
+				Searcher{Bin: filesRG}.Files(t.Context(), roots, FilesQuery{Pattern: pattern, MaxResults: 11})
+			}
+			if tc.noDAC {
+				withoutDACOverride(t, search)
+			} else {
+				search()
+			}
+			if !errors.Is(statErr, tc.errno) {
+				t.Fatalf("the fixture's stat error is %v, want %v", statErr, tc.errno)
+			}
+			ranIn := func(file string) []string {
+				raw, _ := os.ReadFile(filepath.Join(logs, file))
+				return slices.DeleteFunc(strings.Split(string(raw), "\n"), func(s string) bool { return s == "" })
+			}
+			if got := ranIn("text"); !slices.Equal(got, want) {
+				t.Errorf("Text ran rg in %q, want %q", got, want)
+			}
+			if got := ranIn("files"); !slices.Equal(got, want) {
+				t.Errorf("Files ran rg in %q, want %q", got, want)
 			}
 		})
 	}
