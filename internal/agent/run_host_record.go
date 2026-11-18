@@ -31,8 +31,8 @@ const hostSecurityFileName = "host-security"
 const maxHostSecurityBytes = 64 << 10
 
 // recordHost writes session as workflowID's host session, and the security it opened with. A tombstoned run writes
-// nothing, so a write racing the run's delete cannot recreate its directory. The security is written first, so a host
-// record never exists without the security it opened with (retryHostSecurity).
+// nothing, so a write racing the run's delete cannot recreate its directory. The security is written first, so this
+// build never leaves a host record without its security; a record an older build wrote may lack it (retryHostSecurity).
 func (r *runLog) recordHost(ctx context.Context, workflowID, session string, host *runlease.HostSecurity) error {
 	dir, err := r.dir(workflowID)
 	if err != nil {
@@ -190,7 +190,7 @@ func (rs *Runs) parentlessHost(ctx context.Context, workflowID, session string) 
 	}
 	host, err := rs.log.hostSession(ctx, workflowID)
 	if err != nil {
-		slog.Warn("a run's host record could not be read, so an unreadable chat file still blocks it",
+		slog.Warn("a run's host record could not be read, so the run is not taken for marotte's parentless launch",
 			"workflow_id", workflowID, "error", err)
 		return false
 	}
@@ -202,18 +202,32 @@ func (rs *Runs) parentlessHost(ctx context.Context, workflowID, session string) 
 // launch's permissions. A chat-parented run, and a parentless one marotte did not launch, keep o.host nil. A run
 // marotte launched parentless whose launch security is not on disk is refused with runlease.ErrNoHostSecurity.
 func (rs *Runs) retryHostSecurity(ctx context.Context, workflowID string, o *runOrigin) error {
-	if o.parent.chat != "" || !rs.parentlessHost(ctx, workflowID, o.parent.session) {
+	if o.parent.chat != "" {
 		return nil
+	}
+	host, err := rs.launchHostSecurity(ctx, workflowID, o.parent.session)
+	if err != nil {
+		return err
+	}
+	o.host = host
+	return nil
+}
+
+// launchHostSecurity is the security session opened with at the parentless launch of workflowID marotte made
+// (parentlessHost), nil for a run marotte did not launch parentless. A launch whose security is not on disk is
+// runlease.ErrNoHostSecurity; one whose record cannot be read is errRunHostStart.
+func (rs *Runs) launchHostSecurity(ctx context.Context, workflowID, session string) (*runlease.HostSecurity, error) {
+	if !rs.parentlessHost(ctx, workflowID, session) {
+		return nil, nil
 	}
 	host, found, err := rs.log.hostSecurity(ctx, workflowID)
 	if err != nil {
-		slog.Warn("a parentless run's launch security could not be read, so it was not retried",
+		slog.Warn("a parentless run's launch security could not be read, so its session was not loaded",
 			"workflow_id", workflowID, "error", err)
-		return fmt.Errorf("%w: %w", errRunHostStart, err)
+		return nil, fmt.Errorf("%w: %w", errRunHostStart, err)
 	}
 	if !found {
-		return runlease.ErrNoHostSecurity
+		return nil, runlease.ErrNoHostSecurity
 	}
-	o.host = &host
-	return nil
+	return &host, nil
 }

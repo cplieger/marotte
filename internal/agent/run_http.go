@@ -955,13 +955,18 @@ func gaveUpText(err error) string {
 	return errRunHostSlow.Error()
 }
 
-// launchRefusalText is the sentence a verb whose run's launching session cannot be loaded here answers: the missing
-// security profile when that is the cause, since the session itself can be opened.
-func launchRefusalText(err error) string {
+// launchRefusalText is what verb answers when its run's launching session cannot be loaded here: the cause (the
+// missing security profile when that is it, since the session itself can be opened), then the controls the run still
+// offers. Retry is the one verb a failed or aborted run offers, and that run offers no cancel (runStatusVerbs).
+func launchRefusalText(verb string, err error) string {
+	cause := launchSessionUnavailableText
 	if errors.Is(err, runlease.ErrNoHostSecurity) {
-		return runlease.ErrNoHostSecurity.Error()
+		cause = runlease.ErrNoHostSecurity.Error() + "."
 	}
-	return launchSessionUnavailableText
+	if verb == verbRetry {
+		return cause + " Delete still works."
+	}
+	return cause + " Cancel and delete still work."
 }
 
 // writeControlErr answers a verb that reached KAS and failed: a refusal forwards KAS's actionable sentence;
@@ -990,7 +995,7 @@ func (*runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err er
 		// A state of the run.
 		slog.Info("run control unavailable: the run's launching session cannot be loaded here",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
-		httpreply.Conflict(w, launchRefusalText(err))
+		httpreply.Conflict(w, launchRefusalText(verb, err))
 	case errors.Is(err, errRunDeleting):
 		httpreply.Conflict(w, "This run is already being deleted.")
 	case errors.Is(err, errDeleteUnconfirmed):

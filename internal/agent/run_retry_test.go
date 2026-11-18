@@ -639,6 +639,29 @@ func TestHandleRetry_AnUnansweredReadOfTheRunIsTryAgain(t *testing.T) {
 	}
 }
 
+// A retry of a run kiro-cli names no launching session for is refused 409 for that cause, naming delete as what still
+// works: a failed or aborted run offers no cancel.
+func TestHandleRetry_ARunWithNoLaunchingSessionNamesDeleteAsWhatStillWorks(t *testing.T) {
+	h, _, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", marotte.RunStatusFailed, ""))
+	br.setCallResult(methodKiroWorkflowRetry, retryReply(t, "wf_1", "running", "n1"))
+
+	rec := httptest.NewRecorder()
+	h.runRoutes.handleRetry(rec, retryReq("wf_1"))
+
+	body := rec.Body.String()
+	if rec.Code != http.StatusConflict || !strings.Contains(body, launchSessionUnavailableText) {
+		t.Fatalf("the retry = %d %s, want 409 %q", rec.Code, body, launchSessionUnavailableText)
+	}
+	if !strings.Contains(body, "Delete still works.") || strings.Contains(strings.ToLower(body), "cancel") {
+		t.Errorf("the body = %s, want it to name delete and not cancel, which a failed run does not offer", body)
+	}
+	if br.called(methodKiroWorkflowRetry) {
+		t.Error("the retry verb was sent for a run with no launching session")
+	}
+}
+
 // The retry reads the one run it retries: KAS's whole run inventory, which can take longer than the client waits,
 // is not on its path.
 func TestRetry_ReadsNoRunInventory(t *testing.T) {

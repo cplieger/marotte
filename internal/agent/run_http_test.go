@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/policyfile"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/workflow"
@@ -572,6 +573,71 @@ func TestHandleAnswer_AParentlessRunWithNoRecordedProfileIsRefusedForIt(t *testi
 
 	rec := httptest.NewRecorder()
 	h.runRoutes.handleAnswer(rec, answerReq(t, "wf_1", "a1", "the main branch"))
+
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), runlease.ErrNoHostSecurity.Error()) {
+		t.Errorf("POST answer = %d %s, want 409 %q", rec.Code, rec.Body.String(), runlease.ErrNoHostSecurity)
+	}
+	if !strings.Contains(rec.Body.String(), "Cancel and delete still work.") {
+		t.Errorf("the body = %s, want it to name cancel and delete, which a live run offers", rec.Body.String())
+	}
+	if got := br.startCount() - starts; got != 0 {
+		t.Errorf("%d sessions opened, want 0", got)
+	}
+}
+
+// unleasedParentlessLaunch is a live run marotte launched parentless with the given presets whose lease is gone (its
+// grant never reached disk before a restart), its host record on disk with its launch security when recorded, and one
+// open ask, whose id it returns.
+func unleasedParentlessLaunch(t *testing.T, presets []string, recorded bool) (*Runtime, *fakeBridge, string) {
+	t.Helper()
+	h, _, br := newTestHub(WithConfigDir(t.TempDir()))
+	t.Cleanup(func() { shutdownHub(t, h) })
+	leaseParentless(t, h, "wf_1", presets...)
+	if h.runs.cellFor("wf_1") == nil {
+		t.Fatal("Setup: the leased run has no ask cell")
+	}
+	h.runs.recordHost(t.Context(), "wf_1", testLaunchSession, &runlease.HostSecurity{Presets: presets})
+	if !recorded {
+		if err := os.Remove(filepath.Join(h.runs.log.root, "wf_1", hostSecurityFileName)); err != nil {
+			t.Fatalf("Setup: %s", err)
+		}
+	}
+	if err := h.runs.leaseStore().Release(t.Context(), "wf_1"); err != nil {
+		t.Fatalf("Setup: releasing the lease: %s", err)
+	}
+	br.setCallResult(methodKiroWorkflowInspect, fromParent(t,
+		inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")), testLaunchSession))
+	return h, br, markerlessAskID(h, "wf_1", workflow.PathKey([]string{"root", "review"}), "sess_step")
+}
+
+// An unleased live run marotte launched parentless is answered through its launching session, loaded with the
+// security recorded at launch rather than refused as a session this server cannot open.
+func TestHandleAnswer_AnUnleasedParentlessLaunchLoadsItsLaunchProfile(t *testing.T) {
+	launched, _ := policyfile.ProfileFor(policyfile.ProfileUnrestricted)
+	h, br, askID := unleasedParentlessLaunch(t, launched.Presets, true)
+
+	rec := httptest.NewRecorder()
+	h.runRoutes.handleAnswer(rec, answerReq(t, "wf_1", askID, "the main branch"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST answer = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	if so := br.lastSessionOpts(); so == nil || so.SessionID != testLaunchSession || !slices.Equal(so.Presets, launched.Presets) {
+		t.Errorf("the answer loaded %+v, want %s with the launch's presets %v", so, testLaunchSession, launched.Presets)
+	}
+	if !slices.Contains(br.callLog(), marotte.MethodPrompt) {
+		t.Error("the answer never reached kiro-cli")
+	}
+}
+
+// An unleased live run marotte launched parentless whose launch security is missing from disk is refused 409 for that
+// cause, opening nothing: its launching session can be opened, and any profile would be a guess.
+func TestHandleAnswer_AnUnleasedParentlessLaunchWithNoProfileOnDiskIsRefusedForIt(t *testing.T) {
+	h, br, askID := unleasedParentlessLaunch(t, []string{}, false)
+	starts := br.startCount()
+
+	rec := httptest.NewRecorder()
+	h.runRoutes.handleAnswer(rec, answerReq(t, "wf_1", askID, "the main branch"))
 
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), runlease.ErrNoHostSecurity.Error()) {
 		t.Errorf("POST answer = %d %s, want 409 %q", rec.Code, rec.Body.String(), runlease.ErrNoHostSecurity)

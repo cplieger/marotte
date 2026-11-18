@@ -356,9 +356,9 @@ func TestRunHostedBy_AnUnreadableHostRecordIsAnError(t *testing.T) {
 	}
 }
 
-// An unleased parentless run's verb over an incomplete scan is refused 409 as a run with no lease, never 500 as a run
-// whose launching chat is unknown: its host record proves no chat launched it.
-func TestEnsureResident_AnUnleasedParentlessRunIsRefusedForItsLeaseWhileAChatFileIsUnreadable(t *testing.T) {
+// An unleased run marotte launched parentless loads its launching session over an incomplete scan, with the launch's
+// security, never refused 500 as a run whose launching chat is unknown: its host record proves no chat launched it.
+func TestEnsureResident_AnUnleasedParentlessLaunchLoadsWhileAChatFileIsUnreadable(t *testing.T) {
 	dir := t.TempDir()
 	h, _, br := newTestHub(WithConfigDir(dir))
 	host := launchFailedParentless(t, h, br)
@@ -373,8 +373,11 @@ func TestEnsureResident_AnUnleasedParentlessRunIsRefusedForItsLeaseWhileAChatFil
 
 	_, release, err := h.runs.ensureResident(t.Context(), "wf_1")
 	release()
-	if !errors.Is(err, errLaunchSessionUnavailable) || errors.Is(err, errRunHostStart) {
-		t.Fatalf("ensureResident = %v, want errLaunchSessionUnavailable (409), not errRunHostStart (500)", err)
+	if err != nil {
+		t.Fatalf("ensureResident = %v, want the launching session loaded", err)
+	}
+	if so := br.lastSessionOpts(); so == nil || so.SessionID != host || so.Presets == nil {
+		t.Errorf("the load was %+v, want the host session %s with the launch's presets", so, host)
 	}
 }
 
@@ -430,6 +433,9 @@ func TestHandleRetry_AParentlessRunWithNoRecordedLaunchProfileIsRefusedForIt(t *
 
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), runlease.ErrNoHostSecurity.Error()) {
 		t.Fatalf("POST retry = %d %s, want 409 %q", rec.Code, rec.Body.String(), runlease.ErrNoHostSecurity)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "Delete still works.") || strings.Contains(strings.ToLower(body), "cancel") {
+		t.Errorf("the body = %s, want it to name delete and not cancel, which a failed run does not offer", body)
 	}
 	if br.called(methodKiroWorkflowRetry) {
 		t.Error("the retry verb was sent for a run whose launch profile is unknown")

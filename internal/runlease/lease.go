@@ -97,7 +97,7 @@ type HostSecurity struct {
 // ErrNoHostSecurity refuses to reload a parentless run's host session whose launch recorded no
 // security input: any default would be a guess at the run's permissions.
 var ErrNoHostSecurity = errors.New("this run's security profile was not recorded at launch, so marotte cannot " +
-	"load its session. Launch it again; cancel and delete still work")
+	"load its session. Launch it again")
 
 // HostPresets returns the presets a parentless run's host session reloads with, or
 // ErrNoHostSecurity when the lease recorded none.

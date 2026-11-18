@@ -25,8 +25,7 @@ var errRunHostSlow = errors.New(
 // Driving it from another session would drop the profile's presets from its steps. Answered 409.
 var errLaunchSessionUnavailable = errors.New("the run's launching session cannot be opened here")
 
-const launchSessionUnavailableText = "This run's launching session cannot be opened on this server. " +
-	"Cancel and delete still work."
+const launchSessionUnavailableText = "This run's launching session cannot be opened on this server."
 
 // errRunNotListed means KAS's inventory does not list the run. Answered 404.
 var errRunNotListed = errors.New("run not found")
@@ -42,8 +41,8 @@ type drivenHost struct {
 }
 
 // ensureResident makes the run's launching session resident, one load per run at a time: a chat-parented run's chat
-// session through the chat's own open, a parentless run's host session loaded under run:<id> with the presets its
-// lease recorded at launch. A load runs to completion whatever ctx does, since a cancelled door would detach the
+// session through the chat's own open, a parentless run's host session loaded under run:<id> with the presets
+// recorded at launch (hostPresets). A load runs to completion whatever ctx does, since a cancelled door would detach the
 // session; ctx bounds only this caller's waits, for the run's lock and for the load. release ends a chat-parented
 // run's open hold on its chat's session (openBridge); it is never nil, so the caller defers it before the error check.
 func (rs *Runs) ensureResident(ctx context.Context, workflowID string) (host *drivenHost, release func(), err error) {
@@ -67,15 +66,8 @@ func (rs *Runs) ensureResident(ctx context.Context, workflowID string) (host *dr
 		rs.router.registerOwner(workflowID, marotte.SessionID(o.parent.session))
 		return &drivenHost{sb: sb, chatID: o.parent.chat}, release, nil
 	}
-	l, held := rs.lease(workflowID)
-	if !held {
-		return nil, func() {}, fmt.Errorf("%w: this run holds no lease, so the security profile its launching session needs is unknown",
-			errLaunchSessionUnavailable)
-	}
-	presets, err := l.HostPresets()
+	presets, err := rs.hostPresets(ctx, workflowID, o.parent.session)
 	if err != nil {
-		slog.Warn("a run's launching session was not loaded, because its lease recorded no security profile",
-			"workflow_id", workflowID)
 		return nil, func() {}, err
 	}
 	sb, err := rs.loadHost(ctx, workflowID, o.parent.session, presets)
@@ -83,6 +75,30 @@ func (rs *Runs) ensureResident(ctx context.Context, workflowID string) (host *dr
 		return nil, func() {}, err
 	}
 	return &drivenHost{sb: sb, chatID: runChatID(workflowID)}, func() {}, nil
+}
+
+// hostPresets is the presets a parentless run's host session loads with: its lease's, else, for a run whose lease is
+// gone (a grant that never reached disk, then a restart), the launch's recorded security when marotte launched it.
+func (rs *Runs) hostPresets(ctx context.Context, workflowID, session string) ([]string, error) {
+	l, held := rs.lease(workflowID)
+	if !held {
+		host, err := rs.launchHostSecurity(ctx, workflowID, session)
+		if err != nil {
+			return nil, err
+		}
+		if host == nil {
+			return nil, fmt.Errorf("%w: this run holds no lease, so the security profile its launching session needs is unknown",
+				errLaunchSessionUnavailable)
+		}
+		return host.Presets, nil
+	}
+	presets, err := l.HostPresets()
+	if err != nil {
+		slog.Warn("a run's launching session was not loaded, because its lease recorded no security profile",
+			"workflow_id", workflowID)
+		return nil, err
+	}
+	return presets, nil
 }
 
 // residentFn makes a run's launching session resident for a verb: residentUntil when a person waits on the answer,
