@@ -344,8 +344,8 @@ async function measure(scenario: string): Promise<{ counts: ViewCounts; missing:
   mount();
 
   // The hello's place, as the real server's recording orders a cold load: a step after the stream
-  // opens, after the boot's first reads applied (the `connected` frame then re-reads the chat
-  // list, MEASURED.md X3) and before the reads asked since answer (the tab set, then a run deep
+  // opens, after the boot's first reads applied (so the `connected` frame re-reads the chat
+  // list, as the live server does) and before the reads asked since answer (the tab set, then a run deep
   // link's `open_tab`, which names the parent chat the `connected` frame's live runs carry).
   // A whole step between an answer and the hello keeps that order out of real time.
   const step = async (ms: number): Promise<void> => {
