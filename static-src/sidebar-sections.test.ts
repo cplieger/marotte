@@ -1159,7 +1159,11 @@ describe("a header's box and motion", () => {
           const top = midY(row("p")) - 2;
           const r = await lift("b", top);
           await slotAt(r, top);
-          expect(r.classList.contains("tab-slotted"), "the row took the slot").toBe(true);
+          // The slot's order, not its `.tab-slotted` flash, which a 300 ms timer takes off again.
+          expect(
+            [...el("tab-list").querySelectorAll<HTMLElement>(":scope > [data-tab-id]")].map(refOf),
+            "the row took the slot",
+          ).toEqual(["b", "p", "kid", "a"]);
           pointerAt("pointerup", document.body, window.innerWidth - 2, top);
           await paint();
         },
