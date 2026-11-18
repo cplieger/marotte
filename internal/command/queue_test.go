@@ -136,7 +136,7 @@ func TestUnqueuePrompt_AnAbsentIDIsSuccessAndASendingRowIsConflict(t *testing.T)
 
 func TestResumeQueue_ResumesTheChatsQueueAndNeedsAChat(t *testing.T) {
 	q := liveRun()
-	q.roles.runq = q
+	q.roles.runq, q.roles.door = q, nopDoor{}
 	if _, err := cmdResumeQueue(t.Context(), q.roles, &marotte.ClientCommand{ChatID: "c1"}); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
@@ -193,7 +193,7 @@ func sendNowRun(d *cancelDeps, arm StopArm, err error) *launchingRun {
 func sendNow(t *testing.T, q *launchingRun, d *cancelDeps, payload string) (any, error) {
 	t.Helper()
 	cmd := &marotte.ClientCommand{Type: marotte.CmdSendQueuedNow, ChatID: "c1", Payload: json.RawMessage(payload)}
-	return cmdSendQueuedNow(t.Context(), q, d, d, d, d, cmd)
+	return cmdSendQueuedNow(t.Context(), q, q.roles.admission, nopDoor{}, d, d, d, d, cmd)
 }
 
 // stoppedOf reads a stop's answer: whether it stopped anything.

@@ -43,6 +43,7 @@ type launchingRun struct {
 	unqueue func(id string) error
 	rows    []marotte.QueuedPrompt
 	cleared []string
+	sentNow []string
 	undone  []*TurnStop
 	resumed int
 	steer   bool
@@ -167,7 +168,10 @@ func (q *launchingRun) TakeIdle(ctx context.Context, chatID marotte.ChatID, kind
 
 func (*launchingRun) SummaryLaunched(marotte.ChatID, string, Reservation, string, error) {}
 
-func (q *launchingRun) SendNow(_ context.Context, _ marotte.ChatID, id, stop string, hasStop bool) (RunStop, error) {
+func (q *launchingRun) SendNow(_ context.Context, _ marotte.ChatID, _ uint64, id, stop string, hasStop bool) (RunStop, error) {
+	q.mu.Lock()
+	q.sentNow = append(q.sentNow, id)
+	q.mu.Unlock()
 	if q.sendNow != nil {
 		return q.sendNow(id, stop, hasStop)
 	}
@@ -190,7 +194,7 @@ func (q *launchingRun) Unqueue(_ context.Context, _ marotte.ChatID, id string) e
 	return nil
 }
 
-func (q *launchingRun) Resume(context.Context, marotte.ChatID) error {
+func (q *launchingRun) Resume(context.Context, marotte.ChatID, uint64) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.resumed++

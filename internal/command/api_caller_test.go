@@ -48,7 +48,7 @@ func (f *fixtureDoor) BeginMessage(ctx context.Context, chatID marotte.ChatID, f
 	return stamp(), nil
 }
 
-// callerFixture serves prompt, steer and queue_prompt for chat c1, whose composer holds a draft and a staged file,
+// callerFixture serves prompt, steer, queue_prompt, resume_queue and send_queued_now for chat c1, whose composer holds a draft and a staged file,
 // through the real dispatcher. The prompt's session open fails at once, so no turn outlives the test.
 type callerFixture struct {
 	d      *Dispatcher
@@ -108,6 +108,12 @@ func newCallerFixture(t *testing.T) *callerFixture {
 	})
 	d.register(marotte.CmdQueuePrompt, func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
 		return cmdQueuePrompt(ctx, queue, roles.admission, door, roles.chats, cmd)
+	})
+	d.register(marotte.CmdResumeQueue, func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
+		return cmdResumeQueue(ctx, roles, cmd)
+	})
+	d.register(marotte.CmdSendQueuedNow, func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
+		return cmdSendQueuedNow(ctx, queue, roles.admission, door, host, nil, nil, nil, cmd)
 	})
 	return &callerFixture{d: d, opens: opens, store: store, steers: steers, queue: queue, join: join, door: door, host: host}
 }

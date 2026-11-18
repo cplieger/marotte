@@ -70,6 +70,9 @@ func (m *messageFixture) leftClosed(t *testing.T, before tabState) {
 	if n := len(m.steers.froms); n != 0 {
 		t.Errorf("steers = %d, want none for a closed chat", n)
 	}
+	if m.queue.resumed != 0 || len(m.queue.sentNow) != 0 {
+		t.Errorf("queue resumed %d times, rows sent now %v; want neither for a closed chat", m.queue.resumed, m.queue.sentNow)
+	}
 	if _, ok := chatTabOf(m.st, "c1"); ok {
 		t.Error("c1 has a tab after the message, want it left closed")
 	}
@@ -121,9 +124,11 @@ func TestNotify_IntoAGoneChatIsUnknownAndOpensNothing(t *testing.T) {
 	}
 }
 
-// An API caller's prompt, steer or queued prompt through /api/command meets the notify route's refusal.
+// Every /api/command an API caller can start a turn with meets the notify route's refusal.
 func TestCommand_FromAnAPICallerIntoAChatTheUserClosedIsSessionClosed(t *testing.T) {
-	for _, cmdType := range []marotte.CommandType{marotte.CmdPrompt, marotte.CmdSteer, marotte.CmdQueuePrompt} {
+	for _, cmdType := range []marotte.CommandType{
+		marotte.CmdPrompt, marotte.CmdSteer, marotte.CmdQueuePrompt, marotte.CmdResumeQueue, marotte.CmdSendQueuedNow,
+	} {
 		t.Run(string(cmdType), func(t *testing.T) {
 			m := newMessageFixture(t)
 			before := m.tabState(t)

@@ -310,7 +310,8 @@ const reasonStarting = "starting"
 const reasonChatGone = "chat_not_found"
 
 // reasonChatClosed is the 409 refusal class for a closed chat: a close that committed after the prompt began, or a
-// Bot with no tab when its message began (Membership.BeginMessage). The client keeps the text as the chat's draft.
+// Bot with no tab when the page's message began (Membership.BeginMessage; an outside caller's is
+// reasonSessionClosed). The client keeps the text as the chat's draft.
 const reasonChatClosed = "chat_closed"
 
 // reasonSessionClosed is the 410 refusal class for an outside caller's message into a chat with no tab: the user

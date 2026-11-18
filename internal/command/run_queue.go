@@ -142,15 +142,16 @@ type runQueue interface {
 	// names.
 	SummaryLaunched(chatID marotte.ChatID, entryID string, res Reservation, turnID string, err error)
 	// SendNow moves the row to the front and stops the turn stop names while it is the lone live turn (hasStop false
-	// names RunView.Cancel's target).
-	SendNow(ctx context.Context, chatID marotte.ChatID, id, stop string, hasStop bool) (RunStop, error)
+	// names RunView.Cancel's target). stamp is where the press's intent began: a close since refuses it.
+	SendNow(ctx context.Context, chatID marotte.ChatID, stamp uint64, id, stop string, hasStop bool) (RunStop, error)
 	// ClearNext undoes a send-now whose stop was not delivered.
 	ClearNext(chatID marotte.ChatID, id string)
 	// Unqueue removes a waiting row; a row whose turn starts or runs, or whose steer is being sent, answers
 	// ErrRowSending, a steer kiro-cli holds ErrRowInKAS, an unknown id nil.
 	Unqueue(ctx context.Context, chatID marotte.ChatID, id string) error
-	// Resume lets the rows a stop paused go in order, and a row sent from now on joins the queue unpaused.
-	Resume(ctx context.Context, chatID marotte.ChatID) error
+	// Resume lets the rows a stop paused go in order, and a row sent from now on joins the queue unpaused. stamp is
+	// where the press's intent began: a close since refuses it.
+	Resume(ctx context.Context, chatID marotte.ChatID, stamp uint64) error
 	// Stop stops the live entry target names, or RunView.Cancel's with target "".
 	Stop(ctx context.Context, chatID marotte.ChatID, target string) RunStop
 	// StopUndone restores what a stop whose session/cancel was not delivered marked.

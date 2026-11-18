@@ -45,6 +45,8 @@ type mergeHost struct {
 	// await does when failWrites is set.
 	writeErr   error
 	failWrites error
+	// summaryEnded, when set, runs as the tangent's summary turn ends.
+	summaryEnded func()
 	// reads orders the parent loads and log reads a resumed merge makes.
 	reads    []string
 	released int
@@ -66,7 +68,11 @@ func (h *mergeHost) AwaitTurn(_ context.Context, chatID marotte.ChatID, _ string
 	if chatID == "c-tangent" {
 		h.evMu.Lock()
 		h.writeErr = cmp.Or(h.writeErr, h.failWrites)
+		ended := h.summaryEnded
 		h.evMu.Unlock()
+		if ended != nil {
+			ended()
+		}
 	}
 	if reason, ok := h.unbound[chatID]; ok {
 		return marotte.TurnResult{Stop: marotte.StopReasonInterrupted, Reason: reason}, nil
@@ -218,8 +224,15 @@ func (f *mergeFixture) merge(t *testing.T, tangents TangentAccess) (any, error) 
 
 func (f *mergeFixture) mergeWith(t *testing.T, tangents TangentAccess, payload string) (any, error) {
 	t.Helper()
-	return cmdMergeTangent(t.Context(), tangents, f.merges,
-		&marotte.ClientCommand{Type: marotte.CmdMergeTangent, ChatID: "c-tangent", Payload: json.RawMessage(payload)})
+	return f.mergeFrom(t, tangents, payload, nil)
+}
+
+// mergeFrom is mergeWith sent by from, nil for the page.
+func (f *mergeFixture) mergeFrom(t *testing.T, tangents TangentAccess, payload string, from *marotte.Caller) (any, error) {
+	t.Helper()
+	return cmdMergeTangent(t.Context(), tangents, f.merges, &marotte.ClientCommand{
+		Type: marotte.CmdMergeTangent, ChatID: "c-tangent", Payload: json.RawMessage(payload), From: from,
+	})
 }
 
 // restarted is the fixture as a replacement process sees it: the same chat records, no claims.
@@ -596,7 +609,7 @@ func orphanCases() map[string]orphanCase {
 func orphanedMerge(t *testing.T, tc orphanCase) *mergeFixture {
 	t.Helper()
 	f := newMergeFixture(t)
-	if err := f.merges.admit(t.Context(), tangentOp1, "c-parent", "msg-delivery"); err != nil {
+	if err := f.merges.admit(t.Context(), tangentOp1, "c-parent", "msg-delivery", nil); err != nil {
 		t.Fatal(err)
 	}
 	tc.seed(t, f)
@@ -662,7 +675,7 @@ func TestMergeTangent_ARetryResumesAMergeAnEndedProcessLeftRunning(t *testing.T)
 
 func TestMergeTangent_ARunningMergeThisProcessOwnsStaysRunning(t *testing.T) {
 	f := newMergeFixture(t)
-	if err := f.merges.admit(t.Context(), tangentOp1, "c-parent", "msg-delivery"); err != nil {
+	if err := f.merges.admit(t.Context(), tangentOp1, "c-parent", "msg-delivery", nil); err != nil {
 		t.Fatal(err)
 	}
 	f.merges.claim(tangentOp1)
@@ -678,7 +691,7 @@ func TestTangentMerges_ForgetsATerminalRecordAfterItsTTL(t *testing.T) {
 	now := time.Unix(1000, 0)
 	f.merges.now = func() time.Time { return now }
 	ctx := t.Context()
-	if err := f.merges.admit(ctx, tangentOp1, "c-parent", "msg-1"); err != nil {
+	if err := f.merges.admit(ctx, tangentOp1, "c-parent", "msg-1", nil); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(24 * time.Hour)
@@ -698,7 +711,7 @@ func TestTangentMerges_ForgetsATerminalRecordAfterItsTTL(t *testing.T) {
 	if got := f.merges.status(ctx, tangentOp1).State; got != mergeAbsent {
 		t.Errorf("status at the TTL = %q, want absent", got)
 	}
-	if err := f.merges.admit(ctx, mergeKey{tangent: "c-tangent", op: "op-2"}, "c-parent", "msg-2"); err != nil {
+	if err := f.merges.admit(ctx, mergeKey{tangent: "c-tangent", op: "op-2"}, "c-parent", "msg-2", nil); err != nil {
 		t.Fatal(err)
 	}
 	c, _ := f.host.Get(ctx, "c-tangent")
@@ -709,7 +722,7 @@ func TestTangentMerges_ForgetsATerminalRecordAfterItsTTL(t *testing.T) {
 
 func TestServeMergeStatus_AnswersTheRecordedState(t *testing.T) {
 	f := newMergeFixture(t)
-	if err := f.merges.admit(t.Context(), tangentOp1, "c-parent", "msg-1"); err != nil {
+	if err := f.merges.admit(t.Context(), tangentOp1, "c-parent", "msg-1", nil); err != nil {
 		t.Fatal(err)
 	}
 	f.merges.claim(tangentOp1)
@@ -860,11 +873,11 @@ func TestMergeTangent_PublishesNothingUntilItsOutcomeIsRecorded(t *testing.T) {
 
 func TestTangentMerges_PublishesOnlyTheOutcomeItCommitted(t *testing.T) {
 	f := newMergeFixture(t)
-	if err := f.merges.admit(t.Context(), tangentOp1, "c-parent", "msg-delivery"); err != nil {
+	if err := f.merges.admit(t.Context(), tangentOp1, "c-parent", "msg-delivery", nil); err != nil {
 		t.Fatal(err)
 	}
-	f.merges.conclude(t.Context(), tangentOp1, "c-parent", "")
-	f.merges.conclude(t.Context(), tangentOp1, "c-parent", mergeInterrupted)
+	f.merges.conclude(t.Context(), tangentOp1, "c-parent", nil, "")
+	f.merges.conclude(t.Context(), tangentOp1, "c-parent", nil, mergeInterrupted)
 
 	if rec, _ := f.merges.record(t.Context(), tangentOp1); rec.State != marotte.TangentMergeSucceeded {
 		t.Errorf("record after a second conclude = %+v, want the first outcome, succeeded", rec)

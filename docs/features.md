@@ -44,7 +44,7 @@ Pressing a header folds its section or opens it again, and each browser remember
 
 Click a row, or press Enter on it, to reopen the chat. **Reopen** in the row's menu does the same. A pinned chat reopens pinned, and a reopened chat leaves the list. The trash button at the end of a row, or **Delete** in its menu, deletes the chat for good after asking, as **Delete** on the History page does, and the chat leaves both lists.
 
-A closed chat stays closed. A message another service sends to it through the [notify route](configuration.md#waking-a-chat-from-another-service-marotte_notify_token), or through `/api/command`, is refused with `410` and does not reopen it.
+A closed chat stays closed. A message another service sends to it through the [notify route](configuration.md#waking-a-chat-from-another-service-marotte_notify_token), or a command it sends through `/api/command` that would start a reply there (a message, sending or resuming its queue, or merging a tangent into it or from it), is refused with `410` and does not reopen it.
 
 **More** opens the History page in the main area without opening a tab, and stays selected while the page shows. Picking a tab, starting a chat or going back leaves it.
 

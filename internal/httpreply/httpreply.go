@@ -29,8 +29,7 @@ func ErrorJSON(msg string) map[string]string {
 }
 
 // ErrorJSONWithCode returns an error response map with an additional
-// machine-readable "code" field. Used by forge handlers that surface
-// a stable error code alongside the human-readable message.
+// machine-readable "code" field beside the human-readable message.
 func ErrorJSONWithCode(msg, code string) map[string]string {
 	return map[string]string{jsonKeyError: msg, "code": code}
 }
