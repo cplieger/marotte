@@ -6,7 +6,7 @@ This page lists the upstream issues that affect marotte and is updated when one 
 
 ### Chats in a spec mode wait for each other
 
-A reply in Spec, Quick Spec or Bug Fix waits while any other such reply runs, in any chat. The waiting chat says which chat it waits for, and the wait can last minutes. A workflow step that runs in one of those modes can join the same wait. Chats in every other mode, Plan, Autonomous and agents included, run their replies side by side from kiro-cli 3.4.0.
+A reply in Spec, Quick Spec or Bug Fix waits while any other such reply runs, in any chat. The waiting chat says which chat it waits for, and the wait can last minutes. Workflow steps do not wait, because kiro-cli runs every step as an agent, never in a spec mode. Chats in every other mode, Plan, Autonomous and agents included, run their replies side by side from kiro-cli 3.4.0.
 
 Reported as [kirodotdev/Kiro#11995](https://github.com/kirodotdev/Kiro/issues/11995), closed once kiro-cli 2.37.0 let Default v2 replies run side by side. From kiro-cli 3.4.0 only the spec modes still wait. marotte has no workaround. Use another mode for chats you want to run side by side.
 
@@ -46,7 +46,7 @@ When the engine's thread stops for longer than a command's time limit, and the c
 
 Reported as [kirodotdev/Kiro#12269](https://github.com/kirodotdev/Kiro/issues/12269), open. marotte has no workaround, because kiro-cli decides the timeout before it reads that the command finished. Running fewer chats and workflow steps at once makes the stops in the entry above less frequent.
 
-### A SessionEnd hook is cut off when kiro-cli is stopped with a signal
+### A SessionEnd hook can be cut off when kiro-cli stops
 
 When kiro-cli gets a stop signal, such as the SIGTERM that `docker stop` and `systemctl stop` send, it kills its agent engine about half a second later. The engine allows itself 4 seconds to shut down. A SessionEnd hook that takes longer than that half second is killed before it finishes, and each session's lease file is left behind in `~/.kiro/session-leases/`. While that file is there, kiro-cli can refuse changes to the session for up to 135 seconds.
 
@@ -84,7 +84,7 @@ Reported as [kirodotdev/Kiro#11240](https://github.com/kirodotdev/Kiro/issues/11
 
 ### A failed hook shows as completed, and what a hook prints never shows
 
-A hook whose command fails, or whose command does not exist, shows as completed on its card. Anything a hook's command prints, such as instructions a `PostToolUse` hook gives the agent, is missing from the chat, so that hook counts as a passing hook.
+A hook whose command fails, or whose command does not exist, shows as completed on its card. A hook that allows, denies or rewrites a tool call, or answers its permission prompt, also shows as completed, with nothing about what it decided. Anything a hook's command prints, such as instructions a `PostToolUse` hook gives the agent, is missing from the chat, so that hook counts as a passing hook.
 
 Reported as [kirodotdev/Kiro#11369](https://github.com/kirodotdev/Kiro/issues/11369), open. kiro-cli reports every hook command as completed and sends neither its output nor its exit code. marotte shows what it reports, so it cannot tell a failure or show the output today. It will turn the card red on a failed status or a non-zero exit code, and show the output as its own row, once a kiro-cli release sends them. To check a hook, run its command in the terminal.
 
@@ -168,7 +168,7 @@ Reported as [kirodotdev/Kiro#12326](https://github.com/kirodotdev/Kiro/issues/12
 
 When a turn fails on a model throttle before the model replies, kiro-cli puts a placeholder reply in its place in every later request to the model. The placeholder starts "(No assistant response was recorded for the preceding turn." Later in such a session, a model can answer with that exact text and end its turn. In a workflow step, kiro-cli then counts the step as completed with the placeholder as its output, and the run moves on.
 
-Not tracked upstream: the report was withdrawn and its issue closed. kiro-cli 3.3.0 still inserts the placeholder. marotte marks a step failed when kiro-cli completes it with no completion signal and the step's answer after its last tool call is empty or is the placeholder. The run's tab shows the step as failed with the reason "The step ended with an empty model turn and no completion signal, so its work may be unfinished." A **Workflow runs** notification says the step failed, and the agent that started the run is told which step failed and how to run its work again. kiro-cli has already moved the run past the step, so marotte does not re-run it.
+Not tracked upstream: the report was withdrawn and its issue closed. kiro-cli 3.4.0 still inserts the placeholder. marotte marks a step failed when kiro-cli completes it with no completion signal and the step's answer after its last tool call is empty or is the placeholder. The run's tab shows the step as failed with the reason "The step ended with an empty model turn and no completion signal, so its work may be unfinished." A **Workflow runs** notification says the step failed, and the agent that started the run is told which step failed and how to run its work again. kiro-cli has already moved the run past the step, so marotte does not re-run it.
 
 ### A step that finished inside a parallel group holds up the steps after it
 
