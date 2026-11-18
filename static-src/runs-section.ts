@@ -14,7 +14,7 @@ import {
   registerRunStateDemand,
   runState,
 } from "./run-store.js";
-import { openRunView } from "./run-view.js";
+import { focusRunPage, openRunView } from "./run-view.js";
 import type { SectionHeaderView } from "./section-header.js";
 import { sideSection } from "./side-section.js";
 import type { TabDotState } from "./store.js";
@@ -49,17 +49,9 @@ registerRunStateDemand((id) => rows.has(id), "header");
  *  click, not the repaint, decides where focus goes then. */
 let opening = "";
 
-/** The states a folded header speaks for, most urgent first, in the rows' need order. */
-const URGENCY: readonly Exclude<TabDotState, "">[] = [
-  "input",
-  "waiting",
-  "failed",
-  "working",
-  "done",
-];
-
-/** A row's place by need, so the rows past the list's fold never hide one that wants you: waiting
- *  for you (a decision or a resume) first, then failed, then running, then the rest. */
+/** A row's place by need, the one order the rows and the folded header's dot share, so the rows past
+ *  the list's fold never hide one that wants you: waiting for you (a decision or a resume) first,
+ *  then failed, then running, then finished, then a run whose state has not landed. */
 function need(status: TabDotState): number {
   switch (status) {
     case "input":
@@ -70,9 +62,10 @@ function need(status: TabDotState): number {
     case "working":
       return 2;
     case "done":
+      return 3;
     case "idle":
     case "":
-      return 3;
+      return 4;
   }
 }
 
@@ -106,14 +99,13 @@ function paintRow(row: Row, status: TabDotState, label: string): void {
   setText(row.said, phrase === "" ? "" : `, ${phrase}`);
 }
 
-/** The most urgent state among the rows a fold hides. */
+/** The state of the row a fold hides first: the most urgent by need, as the open list leads with it. */
 function foldDot(): SectionHeaderView["dot"] {
-  for (const status of URGENCY) {
-    if ([...rows.values()].some((r) => r.status === status)) {
-      return { status, phrase: dotPhrase("run", status) };
-    }
+  const first = [...rows.values()].sort(byNeed)[0];
+  if (first === undefined || first.status === "" || first.status === "idle") {
+    return null;
   }
-  return null;
+  return { status: first.status, phrase: dotPhrase("run", first.status) };
 }
 
 async function open(row: Row): Promise<void> {
@@ -131,8 +123,8 @@ async function open(row: Row): Promise<void> {
     return;
   }
   // The phone's open dismissed the drawer, so the tab row is out of sight there.
-  if (!matchMedia("(width <= 48rem)").matches) {
-    focusTabRow(tabID);
+  if (matchMedia("(width <= 48rem)").matches || !focusTabRow(tabID)) {
+    focusRunPage();
   }
 }
 

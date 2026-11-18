@@ -161,8 +161,13 @@ export function sideSection(id: string, listId: string, o: SideSectionOptions): 
     const fold = !folded();
     setSectionFolded(o.key, fold);
     paintHeader();
-    // The header is the section's whole height while its list is hidden, so the close needs no measuring layout.
-    const closed = fold ? { closedHeight: header.getBoundingClientRect().height } : {};
+    // The section less its list is its height while the list is hidden, so the close needs no measuring layout.
+    const closed = fold
+      ? {
+          closedHeight:
+            section.getBoundingClientRect().height - list.getBoundingClientRect().height,
+        }
+      : {};
     // A click that moves no focus (WebKit) leaves it on a row the fold hides.
     const mark = noteFocus();
     slideBox(

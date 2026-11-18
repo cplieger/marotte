@@ -2,10 +2,11 @@
 // inventory, run store and tab projection: which runs it lists, when a row leaves, what its dot says,
 // how the rows are ordered, where the section and the dot sit and where focus goes.
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
-import { userEvent } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 
 import indexHtml from "../static/index.html?raw";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { maybeEl, unpark } from "./dom.js";
 import type * as Router from "./router.js";
 import type * as Toast from "./toast.js";
 import type * as Transport from "./transport.js";
@@ -470,6 +471,41 @@ describe("the section's fold", () => {
     expect(toggle().querySelector(".sr-only")?.textContent).toBe("3 runs, one waiting for you");
   });
 
+  it("lists an older decision under a newer pause and folds to the first row's state", async () => {
+    launched("wf_old_ask", "older-asking", { status: "paused", started: 1 });
+    launched("wf_new_pause", "newer-paused", { status: "paused", started: 2 });
+    asking("wf_old_ask");
+    try {
+      await settle();
+      expect(names()).toEqual(["newer-paused", "older-asking"]);
+      const first = dotOf(link("newer-paused")).dataset["status"];
+      expect(first).toBe("waiting");
+
+      setSectionFolded("runs", true);
+      launched("wf_fold_turn", "folding-run", { started: 0 });
+      await settle();
+
+      expect(toggle().querySelector<HTMLElement>(".side-section-dot")?.dataset["status"]).toBe(
+        first,
+      );
+      expect(toggle().querySelector(".sr-only")?.textContent).toBe("3 runs, one waiting for you");
+    } finally {
+      asking("wf_old_ask", false);
+    }
+  });
+
+  it("slides shut to the height it then rests at", async () => {
+    launched("wf_slide", "sliding-run");
+    await settle();
+    toggle().click();
+    const anims = section().getAnimations();
+    expect(anims, "the section slides shut").not.toHaveLength(0);
+    const to = (anims[0]?.effect as KeyframeEffect | null)?.getKeyframes().at(-1)?.["blockSize"];
+    await Promise.all(anims.map((a) => a.finished));
+    expect(el("runs-list").hidden).toBe(true);
+    expect(to).toBe(`${String(section().getBoundingClientRect().height)}px`);
+  });
+
   it("opens again from its header", async () => {
     setSectionFolded("runs", true);
     launched("wf_unfold", "unfolded-run");
@@ -621,7 +657,7 @@ describe("where focus goes", () => {
     expect(focusedTab()).toBe(tabIdFor("run", "wf_key"));
   });
 
-  it("leaves focus off the tab row at phone width, where the open closes the drawer", async () => {
+  it("moves focus to the run's page at phone width, where the open closes the drawer", async () => {
     launched("wf_phone", "phone-run");
     await settle();
     link("phone-run").focus();
@@ -639,16 +675,25 @@ describe("where focus goes", () => {
           dispatchEvent: () => false,
         }) as MediaQueryList,
     );
+    // The run tab's show reveals its page, as run-view.ts does; the opener here is a stub.
+    const view = maybeEl("run-view");
+    if (view === null) {
+      throw new Error("no #run-view");
+    }
+    unpark(view, () => {
+      view.classList.remove("hidden");
+    });
     try {
       await userEvent.keyboard("{Enter}");
       await settleTabs();
       await settle();
+      expect(tabIdFor("run", "wf_phone")).not.toBe("");
+      expect(focusedTab()).toBe("");
+      expect(document.activeElement).toBe(view.querySelector(":scope > .page-content"));
     } finally {
       vi.unstubAllGlobals();
+      view.classList.add("hidden");
     }
-
-    expect(tabIdFor("run", "wf_phone")).not.toBe("");
-    expect(focusedTab()).toBe("");
   });
 
   it("puts focus back on the row when the open is refused at the tab limit", async () => {
@@ -749,4 +794,108 @@ describe("where the section sits", () => {
       release();
     }
   });
+});
+
+describe("on a short screen", () => {
+  // Last in the file: it resizes the frame and puts back the size it found.
+  let entry: { readonly width: number; readonly height: number } | null = null;
+
+  beforeAll(() => {
+    entry = { width: window.innerWidth, height: window.innerHeight };
+  });
+
+  afterEach(() => {
+    el("sidebar").classList.remove("open");
+  });
+
+  afterAll(async () => {
+    if (entry !== null) {
+      await page.viewport(entry.width, entry.height);
+    }
+  });
+
+  /** Whether `e` lies wholly inside `box`'s rect, and above the sidebar's footer. */
+  const within = (e: Element, box: Element): boolean => {
+    const r = e.getBoundingClientRect();
+    const b = box.getBoundingClientRect();
+    const footer = shell.querySelector(".sidebar-footer")?.getBoundingClientRect().top ?? 0;
+    return (
+      r.height > 0 &&
+      r.top >= b.top - 0.5 &&
+      r.bottom <= b.bottom + 0.5 &&
+      r.bottom <= footer + 0.5 &&
+      r.bottom <= window.innerHeight + 0.5
+    );
+  };
+
+  it("scrolls the sidebar's middle once both floors are reached, Runs keeping its header and a row", async () => {
+    await page.viewport(844, 340);
+    expect(window.innerHeight, "viewport actually resized").toBe(340);
+    for (let i = 0; i < 20; i++) {
+      await openTab({ kind: "chat", ref: `c-shorter-${String(i)}` });
+    }
+    await settleTabs();
+    for (let i = 1; i <= 3; i++) {
+      launched(`wf_shorter${String(i)}`, `shorter-${String(i)}`, { started: 10 - i });
+    }
+    await settle();
+
+    const middle = shell.querySelector<HTMLElement>(".sidebar-middle");
+    if (middle === null) {
+      throw new Error("no .sidebar-middle");
+    }
+    expect(middle.scrollHeight).toBeGreaterThan(middle.clientHeight);
+    const list = el("runs-list");
+    const rowH = links()[0]?.getBoundingClientRect().height ?? Number.NaN;
+    expect(list.clientHeight).toBeGreaterThanOrEqual(rowH);
+    for (const a of links()) {
+      a.focus();
+      expect(within(a, list), `${a.textContent ?? ""} scrolled into view on focus`).toBe(true);
+    }
+  });
+
+  // Sideways, the tab scroller keeps its three rows' height, and Open's header takes one of them.
+  for (const [width, height, posture, whole] of [
+    [844, 390, "a phone held sideways", 2],
+    [390, 844, "a phone's drawer", 3],
+  ] as const) {
+    it(`keeps three tab rows' height and Runs' header and a row in view on ${posture}`, async () => {
+      await page.viewport(width, height);
+      expect([window.innerWidth, window.innerHeight], "viewport actually resized").toEqual([
+        width,
+        height,
+      ]);
+      el("sidebar").classList.add("open");
+      for (let i = 0; i < 20; i++) {
+        await openTab({ kind: "chat", ref: `c-short-${String(i)}` });
+      }
+      await settleTabs();
+      for (let i = 1; i <= 3; i++) {
+        launched(`wf_short${String(i)}`, `short-${String(i)}`, { started: 10 - i });
+      }
+      await settle();
+      const sidebar = el("sidebar");
+      await Promise.all(sidebar.getAnimations().map((a) => a.finished));
+
+      const middle = shell.querySelector<HTMLElement>(".sidebar-middle");
+      expect(middle?.scrollHeight, "Runs gives up rows before the middle scrolls").toBe(
+        middle?.clientHeight,
+      );
+      const sections = el("tab-sections");
+      const tabRows = [...el("tab-list").querySelectorAll(":scope > [data-tab-id]")];
+      // The open scrolled the newest tab into view; three rows fit the scroller at its top.
+      sections.scrollTop = 0;
+      const rowH = tabRows[0]?.getBoundingClientRect().height ?? Number.NaN;
+      expect(sections.getBoundingClientRect().height).toBeGreaterThanOrEqual(3 * rowH);
+      expect(tabRows.filter((r) => within(r, sections)).length).toBeGreaterThanOrEqual(whole);
+      expect(within(toggle(), section())).toBe(true);
+      const list = el("runs-list");
+      expect(links().filter((a) => within(a, list)).length).toBeGreaterThanOrEqual(1);
+
+      for (const a of links()) {
+        a.focus();
+        expect(within(a, list), `${a.textContent ?? ""} scrolled into view on focus`).toBe(true);
+      }
+    });
+  }
 });

@@ -203,12 +203,24 @@ body.sidebar-resizing {
   }
 }
 
-/* The sidebar's scroll region: the tab sections and History scroll together, so none hides another's rows behind a nested scrollbar. Runs is docked below it (12-tabs.css). */
-[id="tab-sections"] {
+/* The sidebar's middle: the tab sections over the docked Runs (12-tabs.css), sized by need with no
+   height measured in script. The tab sections give up height down to three tab rows first, then Runs
+   down to its header and one row; past that the middle scrolls them both. */
+.sidebar-middle {
   flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows:
+    minmax(min(var(--sp-1) + 3 * var(--tab-row-h) + 2 * var(--sp-05), 100%), 1fr)
+    auto;
   overflow-y: auto;
   overscroll-behavior: contain;
-  min-height: 0;
+}
+
+/* The sidebar's scroll region: the tab sections and History scroll together, so none hides another's rows behind a nested scrollbar. */
+[id="tab-sections"] {
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   padding-block-end: var(--sp-1);
@@ -223,7 +235,7 @@ body.sidebar-resizing {
   padding: var(--sp-1) var(--sp-2) 0;
   display: flex;
   flex-direction: column;
-  gap: 0.125rem;
+  gap: var(--sp-05);
 
   &[hidden] {
     display: none;
