@@ -2910,17 +2910,19 @@ export interface PolicyRuleCore {
  */
 export interface PolicyView {
   /**
-   * Profile is the posture in force; Profiles below is the ladder it comes from.
-   * Split apart here only because the two have different alignments — read them
-   * together.
+   * Profile is the Settings profile new chats start on and RunProfile the one a
+   * workflow run not started from a chat opens on; Profiles below is the ladder
+   * they come from and ProfileSaved whether one is stored. Split apart here only
+   * for fieldalignment's field order; read them together.
    */
   profile: string;
+  run_profile: string;
   rules: PolicyRule[];
   writable_scopes: string[];
   capabilities: string[];
   /**
    * Profiles is the security-posture ladder in picker order, loosest last, and
-   * Profile above is the one in force. Both travel here rather than being derived
+   * Profile above is the one new chats start on. Both travel here rather than being derived
    * client-side: the ladder decides what one click grants, so policyfile owns it
    * and the client renders it.
    *
@@ -2936,6 +2938,11 @@ export interface PolicyView {
    */
   load_errors: PolicyErrorItem[];
   available: boolean;
+  /**
+   * ProfileSaved is false while no readable generation of config.json names a known
+   * profile; Profile and RunProfile are then their defaults.
+   */
+  profile_saved: boolean;
 }
 
 /**

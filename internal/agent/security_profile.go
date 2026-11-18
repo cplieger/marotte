@@ -26,24 +26,51 @@ func knownProfile(id string) string {
 		return policyfile.DefaultProfile
 	}
 	if _, ok := policyfile.ProfileFor(id); !ok {
-		slog.Warn("unknown security profile; falling back", "value", id, "fallback", policyfile.DefaultProfile)
+		slog.Warn("unknown security profile; falling back", "value", id, "fallback", policyfile.DefaultProfile,
+			"run_fallback", policyfile.DefaultRunProfile)
 		return policyfile.DefaultProfile
 	}
 	return id
 }
 
-// securityPresets resolves a security profile id into the KAS preset ids a session opens with (SessionOpts.Presets),
-// one resolver for every session.
+// securityPresets resolves a security profile id into the KAS preset ids a chat or observer session opens with
+// (SessionOpts.Presets); runPresets resolves a parentless run host's.
 func securityPresets(id string) []string {
 	p, _ := policyfile.ProfileFor(knownProfile(id))
 	return p.Presets
 }
 
-// settingsProfile is the Settings profile as a known id, the profile a chat with none of its own is pinned to: the
-// one its door sends (readSessionSettings), the default while config.json has never been readable.
+// runProfile is the profile a parentless run's host opens on: the stored id when it names a profile, else
+// policyfile.DefaultRunProfile, so an unknown value counts as no choice.
+func runProfile(id string) string {
+	if _, ok := policyfile.ProfileFor(id); ok {
+		return id
+	}
+	return policyfile.DefaultRunProfile
+}
+
+// runPresets is runProfile's presets.
+func runPresets(id string) []string {
+	p, _ := policyfile.ProfileFor(runProfile(id))
+	return p.Presets
+}
+
+// settingsProfile is the profile a chat with none of its own is pinned to at its door.
 func (rt *Runtime) settingsProfile(ctx context.Context) string {
+	chat, _, _ := rt.SecurityProfileChoice(ctx)
+	return chat
+}
+
+// SecurityProfileChoice is, from one snapshot of config.json, the Settings profile a chat with none of its own is
+// pinned to (settingsProfile), the one a parentless run's host opens on (runProfile), and whether a readable
+// generation names a known profile; while none does the chat profile is policyfile.DefaultProfile.
+func (rt *Runtime) SecurityProfileChoice(ctx context.Context) (chat, run string, saved bool) {
 	doc, _ := rt.configDocument(ctx)
-	return knownProfile(doc.session.profile)
+	run = runProfile(doc.session.profile)
+	if _, ok := policyfile.ProfileFor(doc.session.profile); ok {
+		return doc.session.profile, run, true
+	}
+	return policyfile.DefaultProfile, run, false
 }
 
 // pinSecurityProfile gives a chat with no profile of its own the Settings profile at its door, so a later Settings

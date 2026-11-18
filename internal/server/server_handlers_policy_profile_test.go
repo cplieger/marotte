@@ -21,9 +21,12 @@ import (
 	"github.com/cplieger/marotte/internal/settings"
 )
 
-// fakeEngine records what was broadcast, so a test can assert the client was told.
+// fakeEngine records what was broadcast, so a test can assert the client was told. Its profile choice is
+// profileChoice when set, else a fresh read of configDir.
 type fakeEngine struct {
 	sessionSettings            func(context.Context) string
+	profileChoice              func(context.Context) (string, string, bool)
+	configDir                  string
 	seen                       string
 	events                     []marotte.ServerEvent
 	written                    [][]string
@@ -38,6 +41,20 @@ func (f *fakeEngine) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 }
 func (*fakeEngine) Shutdown(context.Context) error { return nil }
 func (*fakeEngine) Epoch() string                  { return "fake-epoch" }
+
+func (f *fakeEngine) SecurityProfileChoice(ctx context.Context) (chat, run string, saved bool) {
+	if f.profileChoice != nil {
+		return f.profileChoice(ctx)
+	}
+	var id string
+	if !settings.FieldInto(ctx, f.configDir, settings.KeySecurityProfile, &id) {
+		return policyfile.DefaultProfile, policyfile.DefaultRunProfile, false
+	}
+	if _, ok := policyfile.ProfileFor(id); !ok {
+		return policyfile.DefaultProfile, policyfile.DefaultRunProfile, false
+	}
+	return id, id, true
+}
 
 func (f *fakeEngine) fingerprint(ctx context.Context) string {
 	if f.sessionSettings == nil {
@@ -77,14 +94,15 @@ func profileFixture(t *testing.T, live []marotte.PolicyRule) (*Server, *fakeRelo
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	work := t.TempDir()
-	eng := &fakeEngine{}
+	configDir := t.TempDir()
+	eng := &fakeEngine{configDir: configDir}
 	reload := &fakeReload{}
 	s := &Server{
 		policy:       &fakePolicy{rules: live},
 		policyReload: reload,
 		agent:        eng,
 		workDir:      work,
-		configDir:    t.TempDir(),
+		configDir:    configDir,
 	}
 	userPath, err := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
 	if err != nil {
@@ -364,7 +382,7 @@ func TestPolicyProfile_SeedSurvivesADisconnectAfterTheFirstWrite(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.handlePolicyProfile(rec, req)
 
-	profile := s.activeProfile(t.Context())
+	profile := s.profiles().Active(t.Context())
 	rules := ruleCapabilities(loadRules(t, userPath))
 	both := profile == policyfile.ProfileCustom && slices.Equal(rules, []string{"fs_read", "shell"})
 	neither := profile != policyfile.ProfileCustom && slices.Equal(rules, []string{"shell"})
@@ -588,14 +606,34 @@ func TestProfileView_CarriesTheLadderAndTheNewChatDefault(t *testing.T) {
 			t.Errorf("profile %d = %q, want %q", i, view.Profiles[i].ID, want[i].ID)
 		}
 	}
-	if view.Default != policyfile.ProfileTrusted {
-		t.Errorf("unset default = %q, want trusted", view.Default)
+	if view.Default != policyfile.ProfileDelegated {
+		t.Errorf("unset default = %q, want delegated", view.Default)
 	}
 	if rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileReadOnly}); rec.Code != http.StatusOK {
 		t.Fatalf("select: status = %d, body %s", rec.Code, rec.Body)
 	}
 	if got := getProfileView(t, s).Default; got != policyfile.ProfileReadOnly {
 		t.Errorf("default after selecting read-only = %q", got)
+	}
+}
+
+// Both views report the engine's choice, the one a new chat's door is pinned to, not a fresh read of config.json:
+// while it cannot be read, the door keeps the last readable profile.
+func TestProfileViews_ReportTheEnginesChoiceOverAnUnreadableConfig(t *testing.T) {
+	s, _, _, _ := profileFixture(t, nil)
+	s.agent.(*fakeEngine).profileChoice = func(context.Context) (string, string, bool) {
+		return policyfile.ProfileTrusted, policyfile.ProfileTrusted, true
+	}
+	if err := os.WriteFile(filepath.Join(s.configDir, settings.Filename), []byte(`{"security_profile":`), 0o600); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	if view, _ := getPolicyView(t, s); view.Profile != policyfile.ProfileTrusted || view.RunProfile != policyfile.ProfileTrusted ||
+		!view.ProfileSaved {
+		t.Errorf("policy view: profile %q run %q saved %v, want the engine's saved trusted", view.Profile, view.RunProfile,
+			view.ProfileSaved)
+	}
+	if got := getProfileView(t, s).Default; got != policyfile.ProfileTrusted {
+		t.Errorf("profile view default = %q, want the engine's trusted", got)
 	}
 }
 

@@ -120,8 +120,7 @@ func Profiles() []Profile {
 // ProfileFor returns the profile with the given id, and whether it exists.
 //
 // Absence is reported in band rather than through a default, so each caller picks
-// its answer: a settings reader falls back to DefaultProfile with a logged reason,
-// and a command naming an unknown id is refused.
+// its answer.
 func ProfileFor(id string) (Profile, bool) {
 	for i := range profiles {
 		if profiles[i].ID == id {
@@ -168,7 +167,13 @@ func HoldsGrant(ctx context.Context, path string) (bool, error) {
 	return refs.Policies.Kind == yaml.SequenceNode && len(refs.Policies.Content) > 0, nil
 }
 
-// DefaultProfile is what an unset or unrecognised setting resolves to, so a stored choice
+// DefaultProfile is what a chat's unset or unrecognised setting resolves to, so a stored choice
 // is never moved by it. Never Custom, which would remove the fs_read floor from an
 // instance that never chose to.
-const DefaultProfile = ProfileTrusted
+const DefaultProfile = ProfileDelegated
+
+// DefaultRunProfile is what a parentless run's host opens on while no known profile is saved. It
+// never delegates: scheduled and triggered runs are parentless, and handing an unattended run's
+// unsettled requests to Kiro's safety check is consent that must be chosen rather than inherited
+// (settings.KeyScheduledAutoApprove).
+const DefaultRunProfile = ProfileTrusted

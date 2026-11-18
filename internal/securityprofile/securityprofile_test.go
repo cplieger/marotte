@@ -313,3 +313,18 @@ func TestCustomize_ABusyFileReturnsErrBusyAndSwitchesNothing(t *testing.T) {
 		t.Errorf("the user file holds %q, want it untouched", got)
 	}
 }
+
+// Customize decides on the default profile while none is saved, and a saved choice, Trusted included, is never moved
+// by it.
+func TestActive_IsTheDefaultProfileUntilOneIsSaved(t *testing.T) {
+	s := &Store{ConfigDir: t.TempDir()}
+	if got := s.Active(t.Context()); got != policyfile.ProfileDelegated {
+		t.Errorf("Active on a fresh config = %q, want %q", got, policyfile.ProfileDelegated)
+	}
+	if err := s.Select(t.Context(), policyfile.ProfileTrusted); err != nil {
+		t.Fatalf("Select: %v", err)
+	}
+	if got := s.Active(t.Context()); got != policyfile.ProfileTrusted {
+		t.Errorf("Active after saving trusted = %q, want %q", got, policyfile.ProfileTrusted)
+	}
+}
