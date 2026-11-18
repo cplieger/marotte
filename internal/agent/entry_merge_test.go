@@ -364,6 +364,7 @@ func TestMergeEntries_AnEmptyRecordLaneTakesTheProjectedOne(t *testing.T) {
 // TestMergeEntries_AReplayedInvocationPairsWithItsLiveCard pins that KAS's replayed invocation,
 // recorded under the live id plus a suffix, merges into the live card and its result.
 func TestMergeEntries_AReplayedInvocationPairsWithItsLiveCard(t *testing.T) {
+	t.Parallel()
 	c := loadKASCorpusFile(t, "delegate")
 	d := newKASDrive(t, c.Live)
 	d.run()
@@ -1156,6 +1157,7 @@ func TestUnionTurnClose_FailureKindMovesWithTheConclusion(t *testing.T) {
 }
 
 func TestUnionToolResult_FillsAnOffloadOnlyTheReplayHolds(t *testing.T) {
+	t.Parallel()
 	off := &marotte.ToolOffload{Path: "/k/sessions/b/sess_1/tool-outputs/execute_bash-0a1b2c3d.txt", TotalChars: 40000}
 	mk := func(r marotte.EntryToolResult) *marotte.Entry {
 		raw, err := json.Marshal(r)

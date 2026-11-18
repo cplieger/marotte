@@ -84,6 +84,7 @@ func retracted(fp *askPush) []marotte.PushSubject {
 }
 
 func TestRunAsks_ACellLivesExactlyAsLongAsItsLease(t *testing.T) {
+	t.Parallel()
 	h, _, fp := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 	if h.runs.cellFor("wf_unleased") != nil {
 		t.Error("a run with no lease got a cell, so a TUI-launched run would show a card nobody can answer")
@@ -122,6 +123,7 @@ func TestRunAsks_ACellLivesExactlyAsLongAsItsLease(t *testing.T) {
 // A cell rebuilt for the same run after its lease ended and came back must stamp newer snapshots
 // than the old cell's last, or a client holding that one drops every new frame as stale.
 func TestRunAsks_SeqGrowsAcrossARebuiltCell(t *testing.T) {
+	t.Parallel()
 	h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 	readNow(t, h, "wf_1")
 	h.runs.releaseLease(t.Context(), "wf_1")
@@ -165,6 +167,7 @@ func TestRunAsks_ACreateRacingTheEndLeavesNoCell(t *testing.T) {
 }
 
 func TestRunAsks_ASeededCellIsUnreachableUntilRead(t *testing.T) {
+	t.Parallel()
 	h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 	h.runs.asks.seed(h.runs.leaseStore().List())
 	if p := lastAsksOf(t, h, "wf_1"); p.Reachable {
@@ -178,6 +181,7 @@ func TestRunAsks_ASeededCellIsUnreachableUntilRead(t *testing.T) {
 
 // An unreadable reply is "unknown", never "answered": the asks stay and the run reads unreachable.
 func TestRunAsks_AnUndecodableReplyKeepsTheAsks(t *testing.T) {
+	t.Parallel()
 	h, br, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 	readNow(t, h, "wf_1")
 	br.setCallResult(methodKiroWorkflowInspect, json.RawMessage(`{"workflowId":"wf_1","state":{"workflowId":"wf_1","status":7}}`))
@@ -194,6 +198,7 @@ func TestRunAsks_AnUndecodableReplyKeepsTheAsks(t *testing.T) {
 // A cell made mid-run starts its quiet clock at creation, so its first read is settling, and only
 // a settle window with nothing moving turns that final.
 func TestRunAsks_SettlingTurnsUnsettledOnlyAfterTheQuietWindow(t *testing.T) {
+	t.Parallel()
 	h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusRunning, parkedStep("review", "sess_step")))
 	if got := readNow(t, h, "wf_1").asks[0].Wait; got != marotte.RunAskSettling {
 		t.Fatalf("a fresh cell's first read = %q, want settling", got)
@@ -229,6 +234,7 @@ func TestRunAsks_SettlingTurnsUnsettledOnItsOwnTimer(t *testing.T) {
 // A reply is paired with the turn record from before its inspect was sent: a turn_start landing
 // while the inspect is in flight never publishes the old wait under the new turn's id.
 func TestRunAsks_AReplyKeepsTheTurnMarkerFromBeforeItsInspect(t *testing.T) {
+	t.Parallel()
 	h, br, _ := askCoreHub(t, "wf_1", nil)
 	parked := inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step"))
 	running := inspectAsk(t, "wf_1", marotte.RunStatusRunning, askStepNode{id: "review", status: "running", session: "sess_step"})
@@ -273,6 +279,7 @@ func TestRunAsks_AReplyKeepsTheTurnMarkerFromBeforeItsInspect(t *testing.T) {
 
 // A successful pause is not a stop: every ask stays sendable.
 func TestRunAsks_APauseLeavesEveryAskSendable(t *testing.T) {
+	t.Parallel()
 	h, br, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusRunning, parkedStep("review", "sess_step")))
 	readNow(t, h, "wf_1")
 	if err := h.runs.pause(t.Context(), "wf_1", callerPage); err != nil {
@@ -286,6 +293,7 @@ func TestRunAsks_APauseLeavesEveryAskSendable(t *testing.T) {
 }
 
 func TestRunAsks_StoppingClears(t *testing.T) {
+	t.Parallel()
 	t.Run("on a failed cancel", func(t *testing.T) {
 		h, br, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 		readNow(t, h, "wf_1")
@@ -314,6 +322,7 @@ func TestRunAsks_StoppingClears(t *testing.T) {
 
 // marotte's own pending send outlives its reply until the answered step's turn_start, in either order.
 func TestRunAsks_PendingEndsWhenTheStepsTurnStarts(t *testing.T) {
+	t.Parallel()
 	t.Run("turn_start after the reply", func(t *testing.T) {
 		h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 		askID := readNow(t, h, "wf_1").asks[0].ID
@@ -390,6 +399,7 @@ func TestRunAsks_AStopWaitsForAPendingAnswerWithinItsCeiling(t *testing.T) {
 // Resume, retry and pause refuse while an answer is pending rather than queueing behind it. The ordinary
 // paused step beside the ask is what leaves the run's Resume offered.
 func TestRunAsks_AResumeIsRefusedWhileAnAnswerIsPending(t *testing.T) {
+	t.Parallel()
 	plain := askStepNode{id: "build", status: "paused", session: "sess_build"}
 	h, br, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step"), plain))
 	h.runs.registerPending(t.Context(), h.runs.cellFor("wf_1"))
@@ -404,6 +414,7 @@ func TestRunAsks_AResumeIsRefusedWhileAnAnswerIsPending(t *testing.T) {
 // Every verb on a run marotte holds no lease for: an answer has nothing to address,
 // and the run's controls go out unserialized.
 func TestRunAsks_VerbsOnARunWithNoCell(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		do      func(*Runtime) error
 		check   func(*testing.T, *Runtime)
@@ -489,6 +500,7 @@ func TestRunAsks_VerbsOnARunWithNoCell(t *testing.T) {
 // A verb holding a cell that the lease's release ended completes against it, and the release lets
 // go of a stop waiting on that verb's pending answer.
 func TestRunAsks_AnEndMidVerb(t *testing.T) {
+	t.Parallel()
 	t.Run("an answer in flight completes and publishes nothing after the end", func(t *testing.T) {
 		h, br, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 		askID := readNow(t, h, "wf_1").asks[0].ID
@@ -536,6 +548,7 @@ func TestRunAsks_AnEndMidVerb(t *testing.T) {
 // The parking turn's warning is the ask's question: kept on the turn the notify arrives in, and fixed
 // at that turn's end.
 func TestRunAsks_TheParkingTurnsWarningIsTheQuestion(t *testing.T) {
+	t.Parallel()
 	h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 	h.runs.askTurnEdge("wf_1", "sess_step", translate.TurnEdgeStart)
 	h.runs.onNotify(t.Context(), runChatID("wf_1"), runNotif(methodKiroSessionNotify, map[string]any{
@@ -555,6 +568,7 @@ func TestRunAsks_TheParkingTurnsWarningIsTheQuestion(t *testing.T) {
 
 // A lifecycle frame through the run host session is a trigger: the card appears with no request.
 func TestRunAsks_ALifecycleFrameIsATrigger(t *testing.T) {
+	t.Parallel()
 	h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 	h.dispatch(t.Context(), runChatID("wf_1"), h.originOf(runChatID("wf_1")), runNotif(methodWFNodePaused, map[string]any{
 		"workflowId": "wf_1", "nodeId": "review", "nodePath": []string{"root", "review"}, "reason": "waiting",
@@ -566,6 +580,7 @@ func TestRunAsks_ALifecycleFrameIsATrigger(t *testing.T) {
 // (the defer route goes the same way), the step's resume frames are triggers and the next read shows
 // it running, so the card leaves every surface; a second answer through /answer is final ask_gone.
 func TestRunAsks_TheParentsSendMessageEndsTheCard(t *testing.T) {
+	t.Parallel()
 	h, br, _ := askCoreHub(t, recordedRun, recordedReply(t, "parked"))
 	askID := readNow(t, h, recordedRun).asks[0].ID
 	if p := lastAsksOf(t, h, recordedRun); len(p.Asks) != 1 || p.Asks[0].AskID != askID {
@@ -635,6 +650,7 @@ func TestRunAsks_AnAnsweredStepsWakeTurnRaisesNoSecondQuestion(t *testing.T) {
 // No turn_end follows an engine that died mid-turn, so the engine's end closes the step's turn: a step KAS parks
 // after the respawn asks its question.
 func TestRunAsks_AStepTurnOpenWhenTheEngineEndedAsksAfterTheRespawn(t *testing.T) {
+	t.Parallel()
 	h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusRunning,
 		parkedStep("review", "sess_step"), askStepNode{id: "build", status: "running", session: "sess_build"}))
 	h.runs.askTurnEdge("wf_1", "sess_step", translate.TurnEdgeStart)
@@ -651,6 +667,7 @@ func TestRunAsks_AStepTurnOpenWhenTheEngineEndedAsksAfterTheRespawn(t *testing.T
 // An answer typed against the step's older question, at the same position, is stale, not gone:
 // the step has asked again and still waits.
 func TestRunAsks_AnAnswerToAnOlderQuestionIsStale(t *testing.T) {
+	t.Parallel()
 	h, br, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 	older := readNow(t, h, "wf_1").asks[0].ID
 	h.runs.askTurnEdge("wf_1", "sess_step", translate.TurnEdgeStart)
@@ -670,6 +687,7 @@ func TestRunAsks_AnAnswerToAnOlderQuestionIsStale(t *testing.T) {
 // After a restart marotte saw no warning, so the card's text is the parked step's last words from the
 // run's own record: its send_message call's message over any text it wrote, labelled as not its question.
 func TestRunAsks_AnUnseenQuestionReadsTheStepsLastWords(t *testing.T) {
+	t.Parallel()
 	h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 	h.runs.log = newRunLog(t.TempDir())
 	path := workflow.PathKey([]string{"root", "review"})

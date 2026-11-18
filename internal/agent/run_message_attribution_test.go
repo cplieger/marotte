@@ -48,6 +48,7 @@ func stepSteeringMsg(kind, steerID, text string) *marotte.RPCResponse {
 // sends from must attribute the step's frames by itself: with no GET before it, KAS's steering frames
 // still fold as the step's, through either door.
 func TestStepMessage_AColdRegistryStillAttributesTheStepsSteeringFrames(t *testing.T) {
+	t.Parallel()
 	for _, door := range []string{"host_session", "launching_chat"} {
 		t.Run(door, func(t *testing.T) {
 			h, cs, br := newTestHub()

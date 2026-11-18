@@ -6,6 +6,7 @@ import (
 
 // TestByteRing_BoundsAfterOverflow pins the ring at capacity after overflow.
 func TestByteRing_BoundsAfterOverflow(t *testing.T) {
+	t.Parallel()
 	const cap = 16
 	r := newByteRing(cap)
 
@@ -30,6 +31,7 @@ func TestByteRing_ConcurrentWriteRead(t *testing.T) {
 
 // TestByteRing_StringDropsPartialUTF8Leader pins dropping an incomplete leading sequence as well as continuation bytes.
 func TestByteRing_StringDropsPartialUTF8Leader(t *testing.T) {
+	t.Parallel()
 	// 😀 is F0 9F 98 80; a 3-byte ring keeps only continuation bytes, so String() is "".
 	r := newByteRing(3)
 	r.write([]byte{0xF0, 0x9F, 0x98, 0x80})
@@ -41,6 +43,7 @@ func TestByteRing_StringDropsPartialUTF8Leader(t *testing.T) {
 
 // TestByteRing_ExactCapacityWrite pins that an exactly-capacity write fills without evicting.
 func TestByteRing_ExactCapacityWrite(t *testing.T) {
+	t.Parallel()
 	const cap = 8
 	r := newByteRing(cap)
 	data := []byte("12345678")
@@ -66,6 +69,7 @@ func TestByteRing_ExactCapacityWrite(t *testing.T) {
 
 // TestByteRing_ExactCapacityAcrossWrites pins that filling exactly across writes also evicts nothing.
 func TestByteRing_ExactCapacityAcrossWrites(t *testing.T) {
+	t.Parallel()
 	const cap = 8
 	r := newByteRing(cap)
 	r.write([]byte("1234"))

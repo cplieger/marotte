@@ -31,6 +31,7 @@ func stepSteerFrame(t *testing.T, h *Runtime, steerID string) marotte.SteerQueue
 // A step message with no Sec-Fetch-Site and no Origin is a program's: its steer row names an API caller, and the
 // page's own message stays the user's.
 func TestStepMessageRoute_AHeaderlessSteerIsAnAPICallers(t *testing.T) {
+	t.Parallel()
 	tc := stepRouteCases(t)[0]
 	cases := []struct {
 		name       string
@@ -63,6 +64,7 @@ func TestStepMessageRoute_AHeaderlessSteerIsAnAPICallers(t *testing.T) {
 
 // The words that resume a paused step keep their API caller in the step's record.
 func TestMessageStep_AnAPICallersResumeIsRecordedAsTheirs(t *testing.T) {
+	t.Parallel()
 	h, _ := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 
 	if _, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, "carry on", "m-1", "", &marotte.Caller{}); err != nil {
@@ -76,6 +78,7 @@ func TestMessageStep_AnAPICallersResumeIsRecordedAsTheirs(t *testing.T) {
 
 // A run that ends before KAS reopens the step records the resuming words as their API caller's.
 func TestStepMessage_ARunEndingBeforeTheResumedTurnOpensKeepsTheCaller(t *testing.T) {
+	t.Parallel()
 	h, _ := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	h.coord.runs = h.runs.log
 	h.coord.closeHostedRuns(t.Context(), runChatID("wf_1"), marotte.StopReasonInterrupted)

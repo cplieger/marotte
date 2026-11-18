@@ -461,6 +461,7 @@ func (g *wakeRig) endStep(t *testing.T, before, after string, stop marotte.StopR
 // with no signal and the next step stalled. marotte fails the step, wakes the launching agent with the retry it can
 // call, and resumes or re-runs nothing itself.
 func TestRunNodeComplete_AnEmptyAnswerWakesTheLaunchingAgent(t *testing.T) {
+	t.Parallel()
 	nodePath := workflow.PathKey(wakeStepPath)
 	for _, tc := range []struct {
 		desc, before, after string
@@ -523,6 +524,7 @@ func TestRunNodeComplete_AnEmptyAnswerWakesTheLaunchingAgent(t *testing.T) {
 // KAS refuses update_workflow replace_remaining on a finished run (KAS 3.1.0 classifyMutationBoundary), so a step
 // graded at the run's run_complete is offered a new run instead.
 func TestRunNodeComplete_AnEmptyAnswerGradedAtTheRunsEndOffersANewRun(t *testing.T) {
+	t.Parallel()
 	g := newWakeRig(t, wakeRunID, inspectWithStep(t, wakeRunID, "seat-b", "completed", ""))
 	g.br.setCallErr(methodKiroWorkflowInspect, errors.New("the engine did not answer"))
 	g.endStep(t, "Reading the diff.", kasStandIn, marotte.StopReasonEndTurn, "completed")
@@ -548,6 +550,7 @@ func TestRunNodeComplete_AnEmptyAnswerGradedAtTheRunsEndOffersANewRun(t *testing
 // A step that ended by its own signal is graded by it, so no empty-answer wake follows however blank its last
 // answer.
 func TestRunNodeComplete_AStepThatSignalledIsNotAnEmptyAnswer(t *testing.T) {
+	t.Parallel()
 	nodePath := workflow.PathKey(wakeStepPath)
 	for _, tc := range []struct {
 		desc, signal, status string

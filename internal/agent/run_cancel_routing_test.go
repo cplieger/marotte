@@ -186,6 +186,7 @@ func TestRetryTermination_IsBoundedAndDoesNotReFireForever(t *testing.T) {
 // TestRetryTermination_AStallCancelRefusedOnceIsRetried pins that a deadline's refused cancel is retried and lands
 // with the reason the expiry decided.
 func TestRetryTermination_AStallCancelRefusedOnceIsRetried(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	h, br := stepFixture(t, id)
 	setCancelRetryDelay(h.runs, time.Millisecond)

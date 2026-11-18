@@ -173,6 +173,7 @@ func differingReplay(t *testing.T, say string) []translate.ProjectedTurn {
 // TestSwapMerged_WithNoEvidenceOfLossNothingIsWritten pins that a normal
 // resume discards the projection.
 func TestSwapMerged_WithNoEvidenceOfLossNothingIsWritten(t *testing.T) {
+	t.Parallel()
 	f := newSwapFixture(t)
 	f.oneClosedTurn("S")
 	before, beforeChat := f.bytes(), f.chat()
@@ -202,6 +203,7 @@ func TestSwapMerged_WithNoEvidenceOfLossNothingIsWritten(t *testing.T) {
 // TestSwapMerged_AnOrphanedTurnMakesTheMergeRun pins the merge running on loss; the store's own
 // open closer raises the signal.
 func TestSwapMerged_AnOrphanedTurnMakesTheMergeRun(t *testing.T) {
+	t.Parallel()
 	f := newSwapFixture(t)
 	f.oneClosedTurn("S0")
 	orphan := f.promptTurn("and again")
@@ -376,6 +378,7 @@ func TestSwapMerged_AStaleProvenanceDiscardsTheProjection(t *testing.T) {
 // TestSwapMerged_ARewritePreservesEveryIDAndTheTurnOrder pins every id and the turn order, and a second load of
 // the same replay changes nothing.
 func TestSwapMerged_ARewritePreservesEveryIDAndTheTurnOrder(t *testing.T) {
+	t.Parallel()
 	f := newSwapFixture(t)
 	turn := f.oneClosedTurn("S")
 	f.armReconcileSignal(turn)
@@ -468,6 +471,7 @@ func TestSwapMerged_ARewritePreservesEveryIDAndTheTurnOrder(t *testing.T) {
 
 // TestSwapMerged_AnInsertedCompactionMovesTheWatermark is rule 3: a replay-only compaction moves the context bar's watermark.
 func TestSwapMerged_AnInsertedCompactionMovesTheWatermark(t *testing.T) {
+	t.Parallel()
 	f := newSwapFixture(t)
 	f.armReconcileSignal(f.oneClosedTurn("S"))
 	summary := "a sub-execution compacted into the parent's log"
@@ -496,6 +500,7 @@ func TestSwapMerged_AnInsertedCompactionMovesTheWatermark(t *testing.T) {
 // TestSwapMerged_AMergeThatAddedNothingRecordsThatItLooked pins the "looked" records as the
 // whole write, or every resume repeats the merge.
 func TestSwapMerged_AMergeThatAddedNothingRecordsThatItLooked(t *testing.T) {
+	t.Parallel()
 	f := newSwapFixture(t)
 	if _, err := f.header.Update(t.Context(), func(c *marotte.Chat) bool {
 		c.ACPSessionID = "sid-1"
@@ -536,6 +541,7 @@ func TestSwapMerged_AMergeThatAddedNothingRecordsThatItLooked(t *testing.T) {
 // TestSwapMerged_ARewriteRecordsWhatItCouldNotFix pins the rewrite branch recording, in the same
 // write, the signals its output left standing.
 func TestSwapMerged_ARewriteRecordsWhatItCouldNotFix(t *testing.T) {
+	t.Parallel()
 	f := newSwapFixture(t)
 	if _, err := f.header.Update(t.Context(), func(c *marotte.Chat) bool {
 		c.ACPSessionID = "sid-1"
@@ -626,6 +632,7 @@ func TestSwapMerged_ARewriteRecordsWhatItCouldNotFix(t *testing.T) {
 
 // TestSwapMerged_ARewriteRecordsNothingForASignalItSETTLED pins that a signal the union settled gets no record.
 func TestSwapMerged_ARewriteRecordsNothingForASignalItSETTLED(t *testing.T) {
+	t.Parallel()
 	f := newSwapFixture(t)
 	turn := f.promptTurn("go")
 	f.append(turn, marotte.EntryKindText, "S", marotte.EntryText{Text: "half an answer"})
@@ -663,6 +670,7 @@ func TestSwapMerged_ARewriteRecordsNothingForASignalItSETTLED(t *testing.T) {
 // fixture order: the first prompt's append precedes the session/load, so only the unadopted
 // session is evidence. Chat side: TestNeedsReconcile_ConditionOneReadsTheBindSetRatherThanTheFile.
 func TestSwapMerged_AResumedSessionTheRecordNeverAdoptedMakesTheMergeRun(t *testing.T) {
+	t.Parallel()
 	f := newSwapFixture(t)
 	if _, err := f.header.Update(t.Context(), func(c *marotte.Chat) bool {
 		c.RecordSession("sess-1")
@@ -748,6 +756,7 @@ func swapReconciled(t *testing.T, f *swapFixture, turn string) []marotte.EntryRe
 // rewrite carries reverted material untouched (compaction is out of scope). A reverted turn
 // keeps its n, and the surviving view is unchanged across a reopen.
 func TestSwapMerged_ARewriteEmitsEveryRevertedEntryUnchanged(t *testing.T) {
+	t.Parallel()
 	f := newSwapFixture(t)
 	survivor := f.oneClosedTurn("S0")
 	// Two hidden turns, so their stored n and the surviving count disagree.

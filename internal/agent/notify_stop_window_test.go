@@ -25,6 +25,7 @@ func resumeQueue(t *testing.T, h *Runtime) {
 func opensIn(t *testing.T, cs *testChatStore) int { return len(opensOf(t, logOf(t, cs, "c1"))) }
 
 func TestRunList_StopWindows(t *testing.T) {
+	t.Parallel()
 	t.Run("a Stop while the wake's take opens puts it back paused, and Resume opens it", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			s, cs, _ := steerOpsHub(t)

@@ -249,6 +249,7 @@ func TestShutdown_ARowPickedBeforeTheOpenNeverOpens(t *testing.T) {
 // A teardown landing between a drain's pick and its open starts no new turn, for a
 // close (the record survives) and for a delete.
 func TestTeardown_ARowPickedBeforeTheOpenNeverOpens(t *testing.T) {
+	t.Parallel()
 	for _, keep := range []bool{true, false} {
 		name := "close"
 		if !keep {

@@ -94,6 +94,7 @@ func releaseSteerClear(t *testing.T, h *Runtime, br *fakeBridge, workflowID stri
 // Every step verb reaches the execution the client's URL names, whatever the run's id and the node path's
 // root are, through the routes the server registers.
 func TestStepRoutes_ReachTheStepTheClientAddresses(t *testing.T) {
+	t.Parallel()
 	for _, tc := range stepRouteCases(t) {
 		t.Run(tc.ID, func(t *testing.T) {
 			h, br, mux := stepRouteHub(t, tc)
@@ -136,6 +137,7 @@ func TestStepRoutes_ReachTheStepTheClientAddresses(t *testing.T) {
 
 // Discard all deletes the step's unread rows, so the step's log gets no note for them.
 func TestStepRoutes_AClearLeavesTheStepsLogNoNote(t *testing.T) {
+	t.Parallel()
 	tc := stepRouteCases(t)[0]
 	h, br, mux := stepRouteHub(t, tc)
 	if rec := postStep(t, mux, tc.StepURL+"/message", marotte.RunStepMessageRequest{Text: "hi", MessageID: "m-1"}); rec.Code != http.StatusOK {
@@ -155,6 +157,7 @@ func TestStepRoutes_AClearLeavesTheStepsLogNoNote(t *testing.T) {
 
 // A node path is a step of the run only when the run's own tree holds it.
 func TestStepRoutes_APathTheRunsTreeDoesNotHoldIsUnknown(t *testing.T) {
+	t.Parallel()
 	tc := stepRouteCases(t)[0]
 	_, br, mux := stepRouteHub(t, tc)
 

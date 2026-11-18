@@ -173,6 +173,7 @@ func hostedLeasedRun(t *testing.T, reply json.RawMessage) (*Runtime, *fakeBridge
 // TestHandleRun_CarriesTheRunsOpenAsks pins `open_asks` and `asks_reachable`, so an agent handed a
 // deferral can find the question and its ask id, and can tell "nothing waits" from "unknown".
 func TestHandleRun_CarriesTheRunsOpenAsks(t *testing.T) {
+	t.Parallel()
 	t.Run("a parked step is an ask with its id, and the passthrough survives", func(t *testing.T) {
 		h, _ := hostedLeasedRun(t, inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 
@@ -660,6 +661,7 @@ func TestHandleAnswer_AnUnleasedParentlessLaunchWithNoProfileOnDiskIsRefusedForI
 
 // TestHandleAnswer pins the guards and the coded refusals.
 func TestHandleAnswer(t *testing.T) {
+	t.Parallel()
 	t.Run("it refuses a non-POST", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		rec := httptest.NewRecorder()
@@ -772,6 +774,7 @@ func pauseReq(id string) *http.Request {
 
 // TestControlHandler_ForwardsKASsOwnRefusal pins that a hosted run's refused verb answers 409 with KAS's reason.
 func TestControlHandler_ForwardsKASsOwnRefusal(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList:    json.RawMessage(`{"runs":[]}`),
@@ -804,6 +807,7 @@ func TestControlHandler_ForwardsKASsOwnRefusal(t *testing.T) {
 
 // TestHandleResume_AClaimInFlightIsReaderText pins that KAS's "another process" refusal becomes plain words.
 func TestHandleResume_AClaimInFlightIsReaderText(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList:    json.RawMessage(`{"runs":[]}`),
@@ -875,6 +879,7 @@ func TestHandleResume_AQueuedClaimIsWaitedForNotRefused(t *testing.T) {
 // TestHandleResume_AQuestionParkWhoseTreeDoesNotDecodeIsUnread pins that a run whose step tree workflow.DecodeInspect
 // refuses is unreadable, never a run nobody waits on: its step may be parked on a question, which a resume re-parks.
 func TestHandleResume_AQuestionParkWhoseTreeDoesNotDecodeIsUnread(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	parked := inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step"))
 	br.callResults = map[string]json.RawMessage{

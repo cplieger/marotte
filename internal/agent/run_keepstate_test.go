@@ -181,6 +181,7 @@ func triggeredMarkRig(t *testing.T, fc *fakeConfirmer) *Runtime {
 
 // The run's first run_start confirms its event once; a resume's run_start of the same life confirms nothing more.
 func TestRunStartConfirmsTriggeredEvent(t *testing.T) {
+	t.Parallel()
 	t.Run("fake confirmer", func(t *testing.T) {
 		fc := &fakeConfirmer{live: map[string]string{testEventKey: "wf_1"}}
 		h := triggeredMarkRig(t, fc)
@@ -262,6 +263,7 @@ func TestRunStartWithoutRuleConfirmsNothing(t *testing.T) {
 
 // A run_start and an outcome of a run whose rule was deleted write no state file for the rule.
 func TestConfirmForDeletedRuleWritesNothing(t *testing.T) {
+	t.Parallel()
 	t.Run("fake confirmer", confirmForDeletedClockRule)
 	t.Run("the confirmer", func(t *testing.T) {
 		cr := newConfirmerRig(t)

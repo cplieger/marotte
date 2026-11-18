@@ -254,6 +254,7 @@ func (w *lifetimeWatchingEngine) stop() {
 // left a session ending in that window to reach the death closer with a dead context. close(lifecycle.done) stays
 // at step 0.
 func TestShutdown_CancelsTheLifetimeAfterStoppingTheEngine(t *testing.T) {
+	t.Parallel()
 	cs := newTestChatStore()
 	watcher := &lifetimeWatchingEngine{}
 	src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)

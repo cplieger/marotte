@@ -15,6 +15,7 @@ import (
 // marotte's page sends it (fetch metadata, or only Origin over plain HTTP) and once as an agent's curl does (neither),
 // and reads what KAS was told.
 func TestRunControls_AttributeACallerOutsideThePage(t *testing.T) {
+	t.Parallel()
 	hosted := func(t *testing.T, status marotte.RunStatus, result string) (*Runtime, *fakeBridge) {
 		t.Helper()
 		h, _, br := newTestHub()

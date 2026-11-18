@@ -725,6 +725,7 @@ func heldQueue(n int) *launchrule.State {
 }
 
 func TestRebaselineEditDropsHeldEvents(t *testing.T) {
+	t.Parallel()
 	rh := newRuleHub(t, &fakeEventRuleChecker{}, "")
 	dir, st, mux := rh.dir, rh.st, rh.mux
 	r, err := st.Create(t.Context(), eventRuleOf("cplieger/animap-source"))

@@ -125,6 +125,7 @@ func TestRefillDeadline_ThrottlesAWriteItWouldBarelyMove(t *testing.T) {
 // TestRefillDeadline_SwapsTheTimerForTheNewDeadline pins that the callback compares its captured deadline with
 // the lease, so an unswapped timer always refuses. Driven by Reset, which keeps the captured deadline.
 func TestRefillDeadline_SwapsTheTimerForTheNewDeadline(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
@@ -211,6 +212,7 @@ func TestCancelExpiredRun_AStallSaysWhichBoundCameDue(t *testing.T) {
 // TestRefillDeadline_ConcurrentRefillsLeaveALiveTimerForTheStoredDeadline pins that concurrent stampers must leave
 // the timer armed for the stored deadline. Observed under one hold, on a disk-backed store to widen the window.
 func TestRefillDeadline_ConcurrentRefillsLeaveALiveTimerForTheStoredDeadline(t *testing.T) {
+	t.Parallel()
 	const rounds, refills = 6, 4
 	for round := range rounds {
 		h, _, br := newTestHub()

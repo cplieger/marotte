@@ -467,6 +467,7 @@ func BenchmarkEmit(b *testing.B) {
 // The hook's post-handshake state: a permission dialog aged out of the ring would block the agent unseen. v3
 // rides the aggregate, legacy its own frame; neither synthesizes a turn_state.
 func TestHandleSSE_ReplaysTheStateAClientCannotDeriveFromTheEventLog(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 
 	h.bus.pendingPerms.add(9, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",

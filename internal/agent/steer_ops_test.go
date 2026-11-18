@@ -71,6 +71,7 @@ func clearReply(ids []string) json.RawMessage {
 // A read emitted before the clear's reply that never folds leaves the clear unsettled: nothing is deleted,
 // and the late read is the row's one entry.
 func TestCmdSteerRemove_AReadThatCannotFoldBeforeTheBarrierDeletesNothing(t *testing.T) {
+	t.Parallel()
 	s, _, br := steerOpsHub(t)
 	att := s.h.coord.turns.attachForwardNow("c1")
 	gen := att.gen
@@ -212,6 +213,7 @@ func (b failingClear) CallAt(ctx context.Context, method string, params any) (*m
 // A turn ending during the delete's clear skips the op's rows; the op deletes its target and the close's
 // pipeline resends the kept rows as the next prompt.
 func TestCmdSteerRemove_ATurnEndingUnderTheClearResendsTheKeptRows(t *testing.T) {
+	t.Parallel()
 	deathExit := make(chan struct{})
 	close(deathExit)
 	for _, tc := range []struct {
@@ -314,6 +316,7 @@ func resendPrompt(t *testing.T, cs *testChatStore) *marotte.EntryPrompt {
 // A cancel naming a queued row as its lead ends the turn and opens the next with every unread row as its
 // prompt, lead first; the log carries those words only as that prompt, never as a "not read" note.
 func TestCmdCancel_TheSendNowRowOpensTheNextTurnWithNoNotReadNote(t *testing.T) {
+	t.Parallel()
 	s, cs, br := steerOpsHub(t)
 	s.recs.note = func(ctx context.Context, chatID marotte.ChatID, id string, steer *marotte.EntrySteer) {
 		s.h.coord.recordSteer(ctx, chatID, id, steer)
@@ -353,6 +356,7 @@ func TestCmdCancel_TheSendNowRowOpensTheNextTurnWithNoNotReadNote(t *testing.T) 
 // A send-now press whose stop stops nothing (the turn it was drawn against is gone) leaves no lead behind: the next
 // plain stop pauses both unread steers in the order they were written and opens no turn, as it would with no press.
 func TestCmdCancel_ALeadWhoseStopStopsNothingIsNotKept(t *testing.T) {
+	t.Parallel()
 	s, cs, _ := steerOpsHub(t)
 	s.recs.note = func(ctx context.Context, chatID marotte.ChatID, id string, steer *marotte.EntrySteer) {
 		s.h.coord.recordSteer(ctx, chatID, id, steer)
@@ -391,6 +395,7 @@ func TestCmdCancel_ALeadWhoseStopStopsNothingIsNotKept(t *testing.T) {
 // The reader pressed send now on a steer as its turn closed on its own, and that close already sent the steer as
 // the next prompt: the stop arriving now would cancel the very turn the reader asked for.
 func TestCmdCancel_ALeadWhoseResendOpenedBeforeTheStopIsNotCancelled(t *testing.T) {
+	t.Parallel()
 	s, cs, br := steerOpsHub(t)
 	id, _ := s.h.stagePromptTurn(t, "c1")
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
@@ -435,6 +440,7 @@ func TestCmdCancel_ALeadWhoseResendOpenedBeforeTheStopIsNotCancelled(t *testing.
 // (a turn outlives its TTL), the read entry still names both rows, so a later session/load merge inserts no
 // "Not read" note for either.
 func TestSteerRead_ACombinedResendReadAfterTheLedgerForgotItNamesItsRows(t *testing.T) {
+	t.Parallel()
 	s, cs, br := steerOpsHub(t)
 	id, _ := s.h.stagePromptTurn(t, "c1")
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
@@ -714,6 +720,7 @@ func TestCmdSteerRemove_ATurnStartingUnderADeleteWaitsForIt(t *testing.T) {
 
 // A resubmit failing after the clear still answers deleted; every kept row stays outstanding under the probe KAS may hold.
 func TestCmdSteerRemove_AFailedResubmitKeepsEveryKeptRowInCustody(t *testing.T) {
+	t.Parallel()
 	s, _, br := steerOpsHub(t)
 	s.bind()
 	s.steer("steer-a", "a")
@@ -757,6 +764,7 @@ func TestCmdSteerRemove_AFailedResubmitKeepsEveryKeptRowInCustody(t *testing.T) 
 // The recorded delete end to end, with KAS's queued report arriving only after it: deleting the user's steer clears it
 // from KAS's buffer and answers deleted instead of "starting to read", and the late report changes nothing.
 func TestCmdSteerRemove_ASteerOfAStarterKASHasNotReportedIsDeleted(t *testing.T) {
+	t.Parallel()
 	s, _, br := steerOpsHub(t)
 	s.h.stagePromptTurn(t, "c1")
 	sends, _ := s.q.RouteSteer("c1", "steer-late", "?", nil, promptHolder)
@@ -789,6 +797,7 @@ func TestCmdSteerRemove_ASteerOfAStarterKASHasNotReportedIsDeleted(t *testing.T)
 // The same recorded moment as the reader sees it: a turn whose execution KAS queued shows as waiting, never as a
 // silent turn, and its steer as sent, never as read.
 func TestQueuedReport_AQueuedStarterShowsItsWaitAndLeavesTheSteerSent(t *testing.T) {
+	t.Parallel()
 	s, _, _ := steerOpsHub(t)
 	s.h.stagePromptTurn(t, "c1")
 	sends, _ := s.q.RouteSteer("c1", "steer-late", "?", nil, promptHolder)
@@ -808,6 +817,7 @@ func TestQueuedReport_AQueuedStarterShowsItsWaitAndLeavesTheSteerSent(t *testing
 // Send now on a queued row stops the turn, and the stop's close opens that row's turn ahead of the unread
 // steers and the other queued rows. The steers are not lost: they reach the agent no earlier than that turn.
 func TestSendQueuedNow_StopsTheTurnAndItsCloseSendsThatRowFirst(t *testing.T) {
+	t.Parallel()
 	s, cs, br := steerOpsHub(t)
 	s.recs.note = func(ctx context.Context, chatID marotte.ChatID, id string, steer *marotte.EntrySteer) {
 		s.h.coord.recordSteer(ctx, chatID, id, steer)
@@ -851,6 +861,7 @@ func TestSendQueuedNow_StopsTheTurnAndItsCloseSendsThatRowFirst(t *testing.T) {
 // The unread steer does not ride into the marked row's turn: kiro-cli gets that row's prompt with no steer ahead of it,
 // then the steer's words as the next prompt, so the reader's send-now message is the next thing the agent reads.
 func TestSendQueuedNow_TheUnreadSteerWaitsForTheTurnAfterTheMarkedRow(t *testing.T) {
+	t.Parallel()
 	s, cs, br := steerOpsHub(t)
 	s.recs.note = func(ctx context.Context, chatID marotte.ChatID, id string, steer *marotte.EntrySteer) {
 		s.h.coord.recordSteer(ctx, chatID, id, steer)

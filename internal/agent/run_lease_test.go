@@ -462,6 +462,7 @@ func TestCancelRun_ACancelledContextEndsTheWait(t *testing.T) {
 
 // LiveRuns answers leased runs; released or unknown ids are not live.
 func TestLiveRuns_NamesTheHeldLeasesAndNoOthers(t *testing.T) {
+	t.Parallel()
 	h, _ := heldRun(t, "wf_held", "code-review")
 	h.runs.grantLease(t.Context(), "wf_released", "publish", manualLaunch(), hostSec())
 	h.runs.releaseLease(t.Context(), "wf_released")

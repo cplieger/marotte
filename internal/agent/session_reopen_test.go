@@ -160,6 +160,7 @@ func TestSecurityProfileChanged_LeavesOpenChatsOnTheirProfile(t *testing.T) {
 }
 
 func TestSpecPlanningAskFirst_ReopensOnlyWhilePlanningIsOn(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		planning string
 		want     bool
@@ -183,6 +184,7 @@ func TestSpecPlanningAskFirst_ReopensOnlyWhilePlanningIsOn(t *testing.T) {
 // KAS delivers a peer send_message only when messaging is on for both the sender's and the target's session, so
 // every chat door carries the setting: off until the user turns it on, then on at the chat's reload.
 func TestChatMessaging_ReachesEveryChatDoor(t *testing.T) {
+	t.Parallel()
 	h, configDir := reopenFixture(t)
 	first, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
@@ -204,6 +206,7 @@ func TestChatMessaging_ReachesEveryChatDoor(t *testing.T) {
 // KAS fixes a session's search method at session/new and keeps it on load, so a change reloads no open chat and
 // reaches the next new chat.
 func TestChatAwarenessMode_ReachesNewChatsOnly(t *testing.T) {
+	t.Parallel()
 	h, configDir := reopenFixture(t)
 	writeSetting(t, configDir, settings.KeyChatAwareness, true)
 
@@ -224,6 +227,7 @@ func TestChatAwarenessMode_ReachesNewChatsOnly(t *testing.T) {
 }
 
 func TestWorkflowLaunch_ReopensOnlyWhileWorkflowsAreOn(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		workflows bool
 		want      bool
@@ -396,6 +400,7 @@ func reloadsAfter(t *testing.T, h *Runtime, write func()) bool {
 }
 
 func TestConfigWrites_ReachChatsByTheirRoute(t *testing.T) {
+	t.Parallel()
 	for i, tc := range configWrites {
 		t.Run(fmt.Sprintf("%02d_%s", i, tc.key), func(t *testing.T) {
 			h, configDir := reopenFixture(t)

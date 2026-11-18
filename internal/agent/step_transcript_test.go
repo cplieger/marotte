@@ -361,6 +361,7 @@ func TestStepTranscript_ARefusedLoadLeavesNoReplayOpen(t *testing.T) {
 
 // TestStepTranscript_IncludesReaderInterventions pins the row filter: the pane owns the instruction, the transcript a later human answer, and event rows have no card.
 func TestStepTranscript_IncludesReaderInterventions(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)

@@ -61,6 +61,7 @@ func settleHeals(t *testing.T, h *Runtime) {
 
 // TestHealEffort_RepairsALevelTheSessionMovedOnItsOwn covers the turn that opens the session, which repairEffort cannot reach.
 func TestHealEffort_RepairsALevelTheSessionMovedOnItsOwn(t *testing.T) {
+	t.Parallel()
 	h, br := healEffortFixture(t, "max")
 
 	h.handleSessionUpdate(t.Context(), "c1", configOptionFrame(t, "high", "", false))
@@ -76,6 +77,7 @@ func TestHealEffort_RepairsALevelTheSessionMovedOnItsOwn(t *testing.T) {
 
 // TestHealEffort_RepairsOncePerBridge pins the latch; it is claimed synchronously, so spending it in the fixture proves the second frame did nothing.
 func TestHealEffort_RepairsOncePerBridge(t *testing.T) {
+	t.Parallel()
 	h, br := healEffortFixture(t, "max")
 	sb := h.coord.bridgeFor("c1")
 	if !sb.claimEffortHeal() {
@@ -95,6 +97,7 @@ func TestHealEffort_RepairsOncePerBridge(t *testing.T) {
 
 // TestHealEffort_SendsNothingWhenThereIsNothingToRepair covers the three distinct "nothing" cases.
 func TestHealEffort_SendsNothingWhenThereIsNothingToRepair(t *testing.T) {
+	t.Parallel()
 	tests := map[string]struct {
 		chose   string
 		running string
@@ -119,6 +122,7 @@ func TestHealEffort_SendsNothingWhenThereIsNothingToRepair(t *testing.T) {
 
 // TestHealEffort_IgnoresAWorkflowStepsFrame pins that a step's level never repairs the chat's.
 func TestHealEffort_IgnoresAWorkflowStepsFrame(t *testing.T) {
+	t.Parallel()
 	h, br := healEffortFixture(t, "max")
 
 	h.handleSessionUpdate(t.Context(), "c1", configOptionFrame(t, "high", "sess-step", true))
@@ -245,6 +249,7 @@ func reopenSessionOpts(t *testing.T, h *Runtime) *marotte.SessionOpts {
 
 // A prompt on the open bridge re-asserts the level the chat runs at, not the seed another chat moved.
 func TestEffortDrift_ThePromptRepairKeepsTheChatsLevel(t *testing.T) {
+	t.Parallel()
 	d := newEffortDrift(t)
 	h := d.boot(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -261,6 +266,7 @@ func TestEffortDrift_ThePromptRepairKeepsTheChatsLevel(t *testing.T) {
 
 // The reopen after an engine crash loads the session at the level it ran before the crash.
 func TestEffortDrift_AnEngineRestartLoadsTheChatsLevel(t *testing.T) {
+	t.Parallel()
 	d := newEffortDrift(t)
 	h := d.boot(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -279,6 +285,7 @@ func TestEffortDrift_AnEngineRestartLoadsTheChatsLevel(t *testing.T) {
 
 // A marotte restart reads the record from disk; the first load of the new process keeps the level.
 func TestEffortDrift_ARestartLoadsTheChatsLevel(t *testing.T) {
+	t.Parallel()
 	d := newEffortDrift(t)
 	before := d.boot(t)
 	d.firstSessionThenDrift(t, before)
@@ -296,6 +303,7 @@ func TestEffortDrift_ARestartLoadsTheChatsLevel(t *testing.T) {
 
 // The empty-turn retry retires the session (refreshRetrySession); the new session keeps the level.
 func TestEffortDrift_ARefreshedSessionKeepsTheChatsLevel(t *testing.T) {
+	t.Parallel()
 	d := newEffortDrift(t)
 	h := d.boot(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -312,6 +320,7 @@ func TestEffortDrift_ARefreshedSessionKeepsTheChatsLevel(t *testing.T) {
 
 // A load KAS refuses falls back to a new session, which keeps the level too.
 func TestEffortDrift_ANewSessionAfterAFailedLoadKeepsTheChatsLevel(t *testing.T) {
+	t.Parallel()
 	d := newEffortDrift(t)
 	h := d.boot(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -345,6 +354,7 @@ func (d *effortDrift) recordRanWithoutLevel(t *testing.T, sessionID string) {
 
 // A record holding no level whose load KAS refuses opens the new session at the level the chat ran.
 func TestEffortDrift_ANewSessionAfterAFailedLoadKeepsTheLevelTheChatRan(t *testing.T) {
+	t.Parallel()
 	d := newEffortDrift(t)
 	d.recordRanWithoutLevel(t, "sess-old")
 	d.failLoads = true
@@ -364,6 +374,7 @@ func TestEffortDrift_ANewSessionAfterAFailedLoadKeepsTheLevelTheChatRan(t *testi
 
 // The load of a record holding no level asserts none: KAS restores the level it stored itself.
 func TestEffortDrift_ALoadOfARecordWithoutLevelAssertsNone(t *testing.T) {
+	t.Parallel()
 	d := newEffortDrift(t)
 	d.recordRanWithoutLevel(t, "sess-old")
 	h := d.boot(t)
@@ -379,6 +390,7 @@ func TestEffortDrift_ALoadOfARecordWithoutLevelAssertsNone(t *testing.T) {
 
 // A detached record holding no level opens its new session at the level the chat ran, not the seed.
 func TestEffortDrift_ARefreshedSessionKeepsTheLevelTheChatRan(t *testing.T) {
+	t.Parallel()
 	d := newEffortDrift(t)
 	d.recordRanWithoutLevel(t, "")
 	h := d.boot(t)
@@ -398,6 +410,7 @@ func TestEffortDrift_ARefreshedSessionKeepsTheLevelTheChatRan(t *testing.T) {
 // A session resumed into a new chat keeps the level KAS stored for it: the load sends none, the
 // record adopts the reported level, and the next prompt holds the session to it, not to the seed.
 func TestEffortDrift_AResumedSessionKeepsItsOwnLevel(t *testing.T) {
+	t.Parallel()
 	d := newEffortDrift(t)
 	if _, err := d.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Model = ""
@@ -433,6 +446,7 @@ func TestEffortDrift_AResumedSessionKeepsItsOwnLevel(t *testing.T) {
 // A bridgeless model pick pins the new model's first level, so the session that opens later sends
 // it although the seed moved in between.
 func TestEffortDrift_ABridgelessModelPickKeepsItsLevel(t *testing.T) {
+	t.Parallel()
 	d := newEffortDrift(t)
 	writeEffortSeed(t, d.dir, map[string]string{"m2": "low"})
 	if _, err := d.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -457,6 +471,7 @@ func TestEffortDrift_ABridgelessModelPickKeepsItsLevel(t *testing.T) {
 
 // A heal never re-asserts the seed: a chat with a session and no level adopts what KAS reports.
 func TestHealEffort_AdoptsTheReportedLevelRatherThanTheSeed(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeEffortSeed(t, dir, map[string]string{"fake-model": "medium"})
 	h, br := healEffortFixture(t, "", WithConfigDir(dir))
@@ -482,6 +497,7 @@ func TestHealEffort_AdoptsTheReportedLevelRatherThanTheSeed(t *testing.T) {
 // Once the session runs the picked model the record still holds the old model's level until the
 // switch persists; the switch asserts its own. A pick parked behind a turn is not a switch yet.
 func TestHealEffort_LeavesAModelSwitchInFlightAlone(t *testing.T) {
+	t.Parallel()
 	tests := map[string]struct {
 		model    string
 		wantHeal string
@@ -563,6 +579,7 @@ func TestApplyPendingModel_CapsTheSwitchLevelForThinkingOff(t *testing.T) {
 // A chat's first session on a default-off model that has reported no tiers sends the catalog's
 // thinking-off cap and pins the uncapped seed, and the respawn after a crash sends the cap again.
 func TestEffortDrift_AFirstSessionOnADefaultOffModelSendsTheCapAndPinsTheSeed(t *testing.T) {
+	t.Parallel()
 	d := newEffortDrift(t)
 	writeEffortSeed(t, d.dir, map[string]string{"fake-model": "max"})
 	h := d.boot(t)
@@ -636,6 +653,7 @@ func detach(t *testing.T, h *Runtime) {
 // The tier fake-model's session reported is fake-model's: after a move onto m-flat (listed with no
 // tiers) or auto, the next session/new sends none and pins none, whichever door moved the chat and opens anew.
 func TestModelMove_TheOldModelsTierReachesNoLaterSession(t *testing.T) {
+	t.Parallel()
 	tests := map[string]func(t *testing.T, d *effortDrift, h *Runtime){
 		"a bridgeless pick, then a refreshed session": func(t *testing.T, d *effortDrift, h *Runtime) {
 			parkPick(t, d, "m-flat")

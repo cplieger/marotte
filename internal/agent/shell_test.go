@@ -14,6 +14,7 @@ func TestByteRing_Empty(t *testing.T) {
 }
 
 func TestByteRing_PartialFill(t *testing.T) {
+	t.Parallel()
 	r := newByteRing(64)
 	r.write([]byte("hello"))
 	got := r.Bytes()
@@ -23,6 +24,7 @@ func TestByteRing_PartialFill(t *testing.T) {
 }
 
 func TestByteRing_Wrap(t *testing.T) {
+	t.Parallel()
 	r := newByteRing(8)
 	r.write([]byte("ABCDEFGH")) // fills exactly
 	r.write([]byte("IJ"))       // wraps: overwrites A,B
@@ -33,6 +35,7 @@ func TestByteRing_Wrap(t *testing.T) {
 }
 
 func TestByteRing_MultiWrap(t *testing.T) {
+	t.Parallel()
 	r := newByteRing(4)
 	// More than twice the buffer.
 	r.write([]byte("ABCDEFGHIJ"))

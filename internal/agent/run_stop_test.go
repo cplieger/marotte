@@ -68,6 +68,7 @@ func TestCancelRun_NamesTheRewindAsTheReason(t *testing.T) {
 }
 
 func TestBoundCancel_AttributesNoOne(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	h, br := stepFixture(t, id)
 	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
@@ -94,6 +95,7 @@ func TestRetryTermination_KeepsTheUsersAttribution(t *testing.T) {
 }
 
 func TestPause_TellsKASTheUserAskedForIt(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowPause:   json.RawMessage(`{}`),
@@ -109,6 +111,7 @@ func TestPause_TellsKASTheUserAskedForIt(t *testing.T) {
 }
 
 func TestResume_IsNotAttributed(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowResume:  json.RawMessage(`{}`),
@@ -124,6 +127,7 @@ func TestResume_IsNotAttributed(t *testing.T) {
 }
 
 func TestDeleteChatStateByChain_AttributesByCause(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		reason string
 		cause  command.RunStopCause
@@ -150,6 +154,7 @@ func TestDeleteChatStateByChain_AttributesByCause(t *testing.T) {
 }
 
 func TestDeleteChatStateByChain_NamesTheChatDeletion(t *testing.T) {
+	t.Parallel()
 	h, cs, rig := newDeleteRig(t, kasRuns(t, map[string]any{
 		"workflowId": "wf_live", "name": "r", "status": "running", "parentSessionId": "sess_cur",
 	}))
@@ -171,6 +176,7 @@ func TestDeleteChatStateByChain_NamesTheChatDeletion(t *testing.T) {
 }
 
 func TestCloseChatState_NamesTheTabClose(t *testing.T) {
+	t.Parallel()
 	h, cs, rig := newDeleteRig(t, kasRuns(t, map[string]any{
 		"workflowId": "wf_live", "name": "r", "status": "running", "parentSessionId": "sess_cur",
 	}))

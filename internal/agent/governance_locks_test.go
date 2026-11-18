@@ -141,6 +141,7 @@ func (r *govRecorder) settle() (events []marotte.GovernanceStatePayload, hooks i
 }
 
 func TestSettingsGovernance_PublishesComposedStateOnChangeOnly(t *testing.T) {
+	t.Parallel()
 	r := newGovRecorder(t)
 	r.st.SetGovernance(t.Context(), *enterpriseProfile())
 	r.st.SetGovernance(t.Context(), *enterpriseProfile())
@@ -192,6 +193,7 @@ func TestGovernanceLocks_ColdCacheCarriesAdminLocks(t *testing.T) {
 
 // Once the managed file fails to load, the lock map fails closed until a reload reports it healthy.
 func TestPolicyChanged_FatalAdministrationErrorFailsClosed(t *testing.T) {
+	t.Parallel()
 	fatal := []marotte.PolicyErrorItem{{Scope: "administration", Message: "parse", Fatal: true}}
 	allLocked := []string{marotte.LockWorkflows, marotte.LockWebTools, marotte.LockPowers, marotte.LockMCP}
 	assertFailedClosed := func(t *testing.T, st *Settings) {
@@ -250,6 +252,7 @@ func writeSettings(t *testing.T, body string) string {
 }
 
 func TestContentCollectionEnabled(t *testing.T) {
+	t.Parallel()
 	pinned := map[string]marotte.GovernanceLock{marotte.LockContentCollection: {Value: false}}
 	tests := []struct {
 		locks        map[string]marotte.GovernanceLock

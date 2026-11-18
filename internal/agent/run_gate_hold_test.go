@@ -3318,6 +3318,7 @@ func (c *holdCell) run(t *testing.T, steps []gateHoldStep) {
 // per door: the closed generation's late exit then finds its replacement registered and leaves it, where one handle
 // shared by every door would remove the replacement (removeIfBridge) and open a further generation.
 func TestGateHold_EachDoorOpensItsOwnHandleOverTheCellsRun(t *testing.T) {
+	t.Parallel()
 	c := newHoldCell(t, &holdLogs{sinks: &sync.Map{}}, holdCombo{kind: kindChat, form: formGate})
 	reopen := func() *sharedBridge {
 		t.Helper()

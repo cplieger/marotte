@@ -306,6 +306,7 @@ func lapsedDisk() *filemodetest.Disk {
 // A boot with no sign-in resumes nothing it would fail: the rehydrate sweep holds the restart-paused run, and the
 // sign-in that commits resumes it exactly once.
 func TestSignInGate_ABootWithNoSignInHoldsTheRunUntilTheSignIn(t *testing.T) {
+	t.Parallel()
 	g := newGateRun(t, filemodetest.NewDisk())
 	resumes := countResumes(t, g.br, gateRunID)
 
@@ -317,6 +318,7 @@ func TestSignInGate_ABootWithNoSignInHoldsTheRunUntilTheSignIn(t *testing.T) {
 }
 
 func TestSignInGate_ALapsedSignInAtBootHoldsTheRun(t *testing.T) {
+	t.Parallel()
 	g := newGateRun(t, lapsedDisk())
 	if st := g.vault.Status(gateBackendID); st.Kind != signin.StatusSignedOut {
 		t.Fatalf("Setup: Status = %v, want the lapsed record read as signed out", st.Kind)
@@ -332,6 +334,7 @@ func TestSignInGate_ALapsedSignInAtBootHoldsTheRun(t *testing.T) {
 
 // An API key authenticates the engine, so the vault's sign-in never holds a run.
 func TestSignInGate_APIKeyModePassesTheGate(t *testing.T) {
+	t.Parallel()
 	g := newGateRun(t, filemodetest.NewDisk(), WithAPIKey(true))
 	resumes := countResumes(t, g.br, gateRunID)
 	if _, err := g.h.runs.admitRunWork(refuseClosed, gateRunID, ""); err != nil {
@@ -345,6 +348,7 @@ func TestSignInGate_APIKeyModePassesTheGate(t *testing.T) {
 // A lapse while signed in pauses the running run with marotte's reason, which no heal resumes, and the next sign-in
 // resumes it.
 func TestSignInGate_ALapsePausesTheRunningRunAndTheNextSignInResumesIt(t *testing.T) {
+	t.Parallel()
 	g := newGateRun(t, filemodetest.NewDisk())
 	g.signIn(t)
 	g.listed(marotte.RunStatusRunning)
@@ -452,6 +456,7 @@ func TestResume_EveryAutomaticResumerAtOnceResumesOnce(t *testing.T) {
 
 // Every driving verb a person sends while the gate is closed is refused unwritten, with the sign-in's reason.
 func TestSignInGate_AUserResumeIsRefusedUnwritten(t *testing.T) {
+	t.Parallel()
 	g := newGateRun(t, filemodetest.NewDisk())
 	resumes := countResumes(t, g.br, gateRunID)
 
@@ -526,6 +531,7 @@ func watchChain(t *testing.T, br *fakeBridge, ids ...string) *chainRuns {
 // A run whose heal budget is spent stays paused however its chat comes back: a sibling run's reopen sweeps the chain
 // and resumes only the sibling. The user's own resume needs no budget.
 func TestHealBudget_ASpentRunIsNotResumedByItsChatsSweep(t *testing.T) {
+	t.Parallel()
 	h, br := agentRunOnChat(t, "wf_spent")
 	t.Cleanup(func() { shutdownHub(t, h) })
 	for _, id := range []string{"wf_spent", "wf_sibling"} {
@@ -554,6 +560,7 @@ func TestHealBudget_ASpentRunIsNotResumedByItsChatsSweep(t *testing.T) {
 
 // With the gate closed no run is created: a launch is refused before workflow/new, with the sign-in's reason.
 func TestSignInGate_ALaunchIsRefusedBeforeAnythingIsCreated(t *testing.T) {
+	t.Parallel()
 	g := newGateRun(t, filemodetest.NewDisk())
 	if _, err := g.h.runs.admitRunWork(refuseClosed, gateRunID, ""); !errors.Is(err, errRunsNeedSignIn) {
 		t.Fatalf("admission signed out = %v, want the sign-in refusal", err)

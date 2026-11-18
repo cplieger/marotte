@@ -1036,6 +1036,7 @@ func TestLastWords_TakesTheTrailingProseRunAcrossAnAppliedFallback(t *testing.T)
 // A step's hook_update on a parentless run's host session lands in entries.jsonl as the chat's
 // hook card, and survives the step's turn closing.
 func TestRunLog_RecordsAStepsHook(t *testing.T) {
+	t.Parallel()
 	h, _ := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
 	update, _ := json.Marshal(map[string]any{
 		"sessionUpdate": "session_info_update",

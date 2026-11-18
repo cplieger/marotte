@@ -97,6 +97,7 @@ func mergedResendPrompts(t *testing.T, merged []mergedTurn) (shown []marotte.Ent
 }
 
 func TestUnreadSteerResend_ShowsTheUsersWordsLiveAndAfterReplay(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		lead string

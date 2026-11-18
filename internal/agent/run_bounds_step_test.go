@@ -49,6 +49,7 @@ func wantWindowHeld(t *testing.T, h *Runtime, br *fakeBridge, id string) {
 
 // A model reasoning past the window sends nothing: some models stream no thinking frames.
 func TestCancelExpired_AStepReasoningSilentlyPastTheWindowIsNotStopped(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	h, br := stepFixture(t, id)
 	openStep(t, h, id, []string{"root", "a"}, "step-session-a")
@@ -62,6 +63,7 @@ func TestCancelExpired_AStepReasoningSilentlyPastTheWindowIsNotStopped(t *testin
 // The wire's own sequence: KAS sends node_start twice (only the second names the session), then a tool
 // it runs itself, which emits nothing until it returns.
 func TestCancelExpired_AStepInsideALongKASToolIsNotStopped(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	h, br := stepFixture(t, id)
 	host := runChatID(id)
@@ -82,6 +84,7 @@ func TestCancelExpired_AStepInsideALongKASToolIsNotStopped(t *testing.T) {
 // agent-mail-watch's shape: a repeat around a command watch that polls and answers idle. KAS sends a
 // watch_poll per idle poll and nothing else, so only the open watch turn says the run is working.
 func TestCancelExpired_ACommandWatchPollingIdleIsNotStopped(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	h, br := stepFixture(t, id)
 	host := runChatID(id)
@@ -109,6 +112,7 @@ func TestCancelExpired_ACommandWatchPollingIdleIsNotStopped(t *testing.T) {
 
 // A path over keyenc.MaxComponentBytes keys its turn by a hash, and the open turn still holds the window.
 func TestCancelExpired_AStepWithAHashedPathKeyHoldsTheWindow(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	h, br := stepFixture(t, id)
 	long := strings.Repeat("x", 9<<10)
@@ -128,6 +132,7 @@ func TestCancelExpired_AStepWithAHashedPathKeyHoldsTheWindow(t *testing.T) {
 // After a restart the step registry is cold, so the content frame opening a resumed step's turn names the
 // node only in its workflow _meta; that turn holds the window too.
 func TestCancelExpired_AStepOpenedByItsMetaHoldsTheWindow(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	h, br := stepFixture(t, id)
 	h.dispatch(t.Context(), runChatID(id), h.originOf(runChatID(id)), stepMetaChunk(t, "step-session-a", map[string]any{

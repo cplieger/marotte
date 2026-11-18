@@ -15,6 +15,7 @@ import (
 
 // A waiting_on_user claim is owed to the agent; when it dies the claim is false.
 func TestForward_DischargesWaitingOnUserWhenTheAgentDies(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	h.bus.chatStatus.Merge("c1", marotte.ChatStatusPayload{
 		Status:      marotte.ChatStatusWaitingOnUser,
@@ -32,6 +33,7 @@ func TestForward_DischargesWaitingOnUserWhenTheAgentDies(t *testing.T) {
 
 // Only the retained waiting_on_user claim is Forward's to discharge; ClearAtTurnEnd owns the rest.
 func TestForward_LeavesANonWaitingStatusAlone(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	h.bus.chatStatus.Merge("c1", marotte.ChatStatusPayload{
 		Status:      "in_progress",
@@ -94,6 +96,7 @@ func TestForward_BridgeExitedNamesSessionAndCause(t *testing.T) {
 // session closed within one generation leaves a successor on the same connection, which never repeats an id. A stale
 // entry would also hold a crashed run's idle window open.
 func TestBridgeEnd_RetiresTheAsksItCarriedAsEnded(t *testing.T) {
+	t.Parallel()
 	for name, engineExited := range map[string]bool{"engineExited": true, "replacedBySuccessor": false} {
 		t.Run(name, func(t *testing.T) {
 			h, _, br := newTestHub()

@@ -80,6 +80,7 @@ func settlementsOf(t *testing.T, cs *testChatStore) []marotte.EntrySteerDelivere
 // re-prompts the message it names, so the message waits for that re-wake; a tab close's cancel is a boundary, since
 // the session/close aborts that re-delivery, so the message it names reads dropped.
 func TestWorkflowMessage_AStopsClearRecordsWhoStopped(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		stop        func(t *testing.T, h *Runtime, tab marotte.TabSubject)
 		name        string
@@ -124,6 +125,7 @@ func TestWorkflowMessage_AStopsClearRecordsWhoStopped(t *testing.T) {
 // A reader's Stop landing between a tab close's session/cancel and the clear that cancel produced leaves the clear the
 // teardown's: two clients can issue both at once, and the close still aborts KAS's re-delivery.
 func TestWorkflowMessage_ATeardownsClearKeepsItsCauseWhenAReadersStopOverlaps(t *testing.T) {
+	t.Parallel()
 	teardownCancelWritten := make(chan struct{})
 	readerCancelWritten := make(chan struct{})
 	var cancels atomic.Int32
@@ -171,6 +173,7 @@ func TestWorkflowMessage_ATeardownsClearKeepsItsCauseWhenAReadersStopOverlaps(t 
 // the frame carries no cause, so the message it names waits for a re-wake rather than reading dropped; with no
 // re-wake, the next turn settles it cleared (wakeLedger.turnStarted).
 func TestWorkflowMessage_AnErrorClearFoldedAfterTheReadersStopWaitsForTheRewake(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := clearCauseHub(t, func(func()) {})
 
 	if rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {

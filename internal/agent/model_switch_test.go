@@ -436,6 +436,7 @@ func TestSwitchModel_AllowsADeprecatedModelTheAccountStillServes(t *testing.T) {
 
 // The chat's recorded set outranks the bridge's older snapshot.
 func TestSwitchModel_TheChatRecordOutranksTheLiveSession(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		recorded []string

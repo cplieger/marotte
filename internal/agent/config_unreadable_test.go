@@ -82,6 +82,7 @@ func TestUnreadableConfig_ATelemetryMoveIsQueuedAndAppliedOnceConfigReads(t *tes
 }
 
 func TestUnreadableConfig_AKiroCLIVersionMoveIsQueuedAndAppliedOnceConfigReads(t *testing.T) {
+	t.Parallel()
 	h, dir, src := restartFixture(t)
 	const next = "/fake/v2/kiro-cli"
 
@@ -98,6 +99,7 @@ type notLiveBackend struct{ flowBackend }
 func (*notLiveBackend) LiveSwitchable(_, _ signin.Credential) bool { return false }
 
 func TestUnreadableConfig_AnAccountSwitchIsQueuedAndAppliedOnceConfigReads(t *testing.T) {
+	t.Parallel()
 	vault := openVault(t, filemodetest.NewDisk(), &notLiveBackend{flowBackend{id: "test"}})
 	h, dir := reopenFixture(t, WithSignIn(vault, "test"))
 	awaitBoot(h)

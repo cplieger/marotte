@@ -81,6 +81,7 @@ func TestEngineStatus_NamesABusyRunsLaunchingChat(t *testing.T) {
 }
 
 func TestLiveRuns_NamesALeasedRunByItsDisplayName(t *testing.T) {
+	t.Parallel()
 	h, _ := heldRun(t, "wf_held", promptRecipe)
 	h.translator.RecordInspect(t.Context(), labelledInspect(t, "wf_held", "Fix the run bar", promptRecipe))
 

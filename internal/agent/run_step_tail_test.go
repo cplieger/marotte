@@ -255,6 +255,7 @@ func TestRunLog_StepStartsCarryAnInFlightStepsTurnAndLine(t *testing.T) {
 
 // For every card kind, a step's dock line settles where a reload draws its card, live and read back from the log.
 func TestRunLog_TheDockSettlesOnTheReloadedCardsTitle(t *testing.T) {
+	t.Parallel()
 	step := workflow.PathKey([]string{"wf1", "build"})
 	placeholder := marotte.EntryToolCall{ID: "call-1", Title: "Run Command", Kind: marotte.ToolKindExecute, Input: json.RawMessage(`{}`)}
 	vet := json.RawMessage(`{"command":"go vet ./..."}`)
@@ -548,6 +549,7 @@ func servedRow(t *testing.T, h *Runtime, query, path string) servedStart {
 // step carries the streaming root-lane entry as it stands when the read is written: its id and delta count, which the
 // next entry_delta follows, and text from which the dock line reads.
 func TestHandleRun_AnInFlightStepsRowCarriesItsStreamingEntry(t *testing.T) {
+	t.Parallel()
 	h, _ := hostedLeasedRun(t, repeatInspect(t, 1))
 	h.runs.log = newRunLog(t.TempDir())
 	path := workflow.PathKey([]string{"wf_1", "lane", "iter-0", "build"})
@@ -601,6 +603,7 @@ func TestHandleRun_AnInFlightStepsRowCarriesItsStreamingEntry(t *testing.T) {
 // A step's turn prints between revisions with no revision of its own, so a read's in-flight row carries the line
 // as it stands when the read is written.
 func TestHandleRun_AnInFlightStepsRowCarriesTheLinePrintedSinceTheRevision(t *testing.T) {
+	t.Parallel()
 	h, _ := hostedLeasedRun(t, repeatInspect(t, 1))
 	h.runs.log = newRunLog(t.TempDir())
 	path := workflow.PathKey([]string{"wf_1", "lane", "iter-0", "build"})

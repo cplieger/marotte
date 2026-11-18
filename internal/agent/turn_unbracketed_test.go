@@ -623,6 +623,7 @@ func heldPrompt(t *testing.T, h *Runtime, br *fakeBridge, record func(string)) c
 // A prompt waiting out the hold must not reach the session before the model switch parked during it lands: it would
 // run on the old model, and the switch would stay parked behind it.
 func TestAfterTurnClose_AWaitingPromptFollowsTheParkedModelSwitch(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, _, br := newTestHub()
 		defer shutdownHub(t, h)
@@ -664,6 +665,7 @@ func TestAfterTurnClose_AWaitingPromptFollowsTheParkedModelSwitch(t *testing.T) 
 }
 
 func TestAfterTurnClose_Order(t *testing.T) {
+	t.Parallel()
 	var mu sync.Mutex
 	var order []string
 	record := func(step string) {

@@ -580,6 +580,7 @@ func scheduleAfterAFailedSlot(t *testing.T, h *Runtime) (*launchrule.Store, stri
 // A run the boot list omits but inspect reads as over writes its slot's ending before its lease goes, so the
 // schedule's failed-slot count follows that slot.
 func TestSweepOrphanedRuns_AnAbsentRunInspectReadsOverRecordsItsSlot(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		inspect     func(br *fakeBridge)
 		wantStatus  launchrule.OutcomeStatus

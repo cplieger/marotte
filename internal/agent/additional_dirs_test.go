@@ -136,6 +136,7 @@ func TestRemovingTheSetting_RevokesAccessForNewSessions_AtTheDoor(t *testing.T) 
 
 // Every door opened while config.json cannot be read carries the last readable profile and directories.
 func TestUnreadableConfig_EverySessionDoorOpensOnTheLastReadableSettings(t *testing.T) {
+	t.Parallel()
 	want, _ := policyfile.ProfileFor(policyfile.ProfileUnrestricted)
 	// boot builds the runtime over a granted directory and the unrestricted profile, then breaks config.json.
 	boot := func(t *testing.T, src *fakeEngineSource) (*Runtime, agentRootsFixture) {

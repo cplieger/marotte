@@ -551,6 +551,7 @@ func wakeTurnHub(t *testing.T) (*Runtime, *testChatStore, *fakeBridge) {
 // The composer's Send beside an agent-initiated turn is steered into it: no turn of its own opens and no
 // session/prompt reaches KAS, which would abort that turn.
 func TestCmdPrompt_BesideAWireTurnIsSteeredAndOpensNoTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, br := wakeTurnHub(t)
 	opens := len(opensOf(t, logOf(t, cs, "c1")))
 
@@ -583,6 +584,7 @@ func TestCmdPrompt_BesideAWireTurnIsSteeredAndOpensNoTurn(t *testing.T) {
 // A prompt steered into the running turn is a dock row under the id KAS stamps on it, `steer-<messageId>`
 // (handleSessionSteer), so KAS's steering_queued for it updates that row instead of adding a second one.
 func TestCmdPrompt_ASteeredPromptsRowIsKeyedByTheIDKASStampsOnIt(t *testing.T) {
+	t.Parallel()
 	s, _, _ := steerOpsHub(t)
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnStartMsg())
 
@@ -606,6 +608,7 @@ func TestCmdPrompt_ASteeredPromptsRowIsKeyedByTheIDKASStampsOnIt(t *testing.T) {
 // A Send bound for the running turn as a steer while the unread steers already fill kiro-cli's buffer budget is refused
 // 409 full, so the client keeps the text: it is neither steered nor queued as a row.
 func TestCmdPrompt_ASteerPastTheSteerBudgetIsRefusedFull(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		text string
@@ -650,6 +653,7 @@ func TestCmdPrompt_ASteerPastTheSteerBudgetIsRefusedFull(t *testing.T) {
 // A prompt that reads as a KAS notification is never steered: KAS would file it under a notify- id no row
 // carries. It waits for the running turn's end instead.
 func TestCmdPrompt_NotificationShapedTextBesideATurnIsQueuedNotSteered(t *testing.T) {
+	t.Parallel()
 	h, _, br := wakeTurnHub(t)
 
 	rec := postCmd(t, h, marotte.ClientCommand{

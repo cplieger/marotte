@@ -51,6 +51,7 @@ func checkpointMsg(t *testing.T, artifactPath string) *marotte.RPCResponse {
 
 // The non-marking operation runs first, so a wrong mark could only come from it.
 func TestSpecProducers_MarkTheSpecDirectory(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		run  func(t *testing.T, h *Runtime, work string)

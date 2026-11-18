@@ -290,6 +290,7 @@ func probeSent(s *steerHarness) command.SteerOpResult {
 // that applies it, with the row and channel it must leave. rowDone means the row
 // left the dock.
 func TestSteerTables_TheFoldsApplyTheirCells(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		run     func(s *steerHarness)
 		name    string
@@ -1143,6 +1144,7 @@ func TestSteerRecords_TheReplayListsEachRowWithItsBatch(t *testing.T) {
 // a clear that never answered and a clear an agent row blocked both keep it, and a clear that lands gives it back,
 // still a steer for the turn whose start ran the clear.
 func TestSteerRecords_AnUnsettledPostLoadClearHoldsTheReloadedEntry(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		settle   func(s *steerHarness)
 		name     string
@@ -1286,6 +1288,7 @@ func TestSteerRecords_AQueuedFrameIsTheRowsOwnOrABatch(t *testing.T) {
 // A read answers the rows its id carries when that id is not a row's own key, by
 // either read path, for the read entry's Resends; a row read under its key carries none.
 func TestSteerRecords_AReadAnswersTheRowsItsIDCarries(t *testing.T) {
+	t.Parallel()
 	combined := func(s *steerHarness) string {
 		s.bind()
 		s.steer("steer-a", "a")

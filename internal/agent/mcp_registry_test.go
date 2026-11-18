@@ -993,6 +993,7 @@ func TestMCPPool_ChatViewElseUnion(t *testing.T) {
 
 // A chat's view ends with its session's forward, unless a reload already serves the same session id.
 func TestBridgeExit_DropsTheChatView(t *testing.T) {
+	t.Parallel()
 	open := func(t *testing.T) (*Runtime, *fakeBridge) {
 		t.Helper()
 		h, cs, br := newTestHub()
@@ -1035,6 +1036,7 @@ func TestBridgeExit_DropsTheChatView(t *testing.T) {
 
 // A deleted run's step sessions take their views with them.
 func TestRunEnd_DropsStepViews(t *testing.T) {
+	t.Parallel()
 	h, _, rig := newDeleteRig(t, kasRuns(t,
 		map[string]any{"workflowId": "wf_1", "name": "r", "status": "completed", "parentSessionId": "sess_cur"},
 	))

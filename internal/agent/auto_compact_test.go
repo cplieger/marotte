@@ -266,6 +266,7 @@ func TestAutoCompact_AnIdleChatAfterAFailureStartsNothing(t *testing.T) {
 // The retry needs no state of its own: a runtime restarted between the failure and the next turn end reads the
 // stored reading at that end and attempts.
 func TestAutoCompact_ARestartBetweenTheFailureAndTheNextTurnEndStillAttempts(t *testing.T) {
+	t.Parallel()
 	cs := newTestChatStore()
 	boot := func() *Runtime {
 		h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession {

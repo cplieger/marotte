@@ -17,6 +17,7 @@ import (
 // The agent's config document is one more reader of config.json's one rule: a read the rule holds answers the applied
 // document, and bytes the rule refuses are unreadable however they parse.
 func TestLastReadable_ReadsThroughTheOwnedFileRule(t *testing.T) {
+	t.Parallel()
 	read := func(l *lastReadable, dir string) (configDocument, docSource) {
 		return l.read(t.Context(), dir, readConfigDocument)
 	}

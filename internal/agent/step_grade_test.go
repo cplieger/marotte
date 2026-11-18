@@ -416,6 +416,7 @@ func TestStepEnd_AStoredModelCallLimitFailureOfAStepKASCompletedOnSuccessReadsCo
 // after a tool result: KAS records the step completed with no signal, and its session holds no answer or KAS's
 // "No assistant response was recorded" stand-in.
 func TestStepEnd_AStepKASCompletedWithNoSignalAfterAnEmptyAnswerReadsFailed(t *testing.T) {
+	t.Parallel()
 	const (
 		id      = "wf_aabb60d3e105b178"
 		session = "step-session-1"
@@ -610,6 +611,7 @@ func (s *stepEnding) complete(status string) {
 // done and the parent's update_status clear the signal (applyPausedStepFinish), and a run's end closes what is open.
 // Mark step done and update_status read completed, ended by hand.
 func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *testing.T) {
+	t.Parallel()
 	const (
 		id      = "wf_aabb60d3e105b178"
 		session = "step-session-1"

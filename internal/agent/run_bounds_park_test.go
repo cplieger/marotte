@@ -81,6 +81,7 @@ func wantParked(t *testing.T, h *Runtime, br *fakeBridge, id string) {
 // A resume landing while the expiry reads KAS takes the run back: the park is refused and the window
 // refilled, since the timer that fired was the run's only one.
 func TestCancelExpired_AResumeDuringTheVerdictKeepsTheRunBounded(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	h, br := agentRunOnChat(t, id)
 	closeReviewStep(t, h, id)
@@ -113,6 +114,7 @@ func TestCancelExpired_AResumeDuringTheVerdictKeepsTheRunBounded(t *testing.T) {
 
 // KAS paused the run where marotte never saw the frame: the expiry parks it rather than call it stalled.
 func TestCancelExpired_ARunKASReportsPausedIsParked(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	h, br := agentRunOnChat(t, id)
 	closeReviewStep(t, h, id)
@@ -167,6 +169,7 @@ func TestCancelExpired_ARunKiroCLIDoesNotKnowIsAStall(t *testing.T) {
 
 // A park must not disarm a deadline a resume re-stamped after this expiry was armed.
 func TestCancelExpired_AParkLeavesADeadlineArmedSinceAlone(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	h, br := agentRunOnChat(t, id)
 	closeReviewStep(t, h, id)
@@ -186,6 +189,7 @@ func TestCancelExpired_AParkLeavesADeadlineArmedSinceAlone(t *testing.T) {
 
 // A resumed run that then opens no step before its fresh window runs out is a stall, not still parked.
 func TestCancelExpired_AResumedRunWithNoOpenStepIsAStall(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	h, br := agentRunOnChat(t, id)
 	h.runs.grantLease(t.Context(), id, "publish", agentLaunch(), hostSec())
@@ -237,6 +241,7 @@ func listCount(t *testing.T, br *fakeBridge, id string, statusAt func(n int32) s
 
 // A chat back inside KAS's stale window finds its orphan still listed running; the sweep reads again.
 func TestResumeInterruptedRuns_ReReadsAnOrphanKASStillListsRunning(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	h, br := agentRunOnChat(t, id, withOrphanResumeDelay(time.Millisecond))
 	defer shutdownHub(t, h)

@@ -126,6 +126,7 @@ func TestReconnect_SendsNoStartOAuth(t *testing.T) {
 
 // KAS's startOAuth discards every stored credential, so only a server waiting for sign-in may take one.
 func TestSignIn_RefusesAConnectedServer(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		record func(t *testing.T, h *Runtime)
 		want   string

@@ -25,6 +25,7 @@ func promptCount(br *fakeBridge) int {
 // The reader goes away after KAS received the prompt and before it replied: the words KAS took stay in
 // the step's record, whether they join its open turn or head the turn KAS reopens.
 func TestMessageStep_AReaderLeavingAfterTheWriteKeepsTheWordsKASTook(t *testing.T) {
+	t.Parallel()
 	for _, turn := range []string{"open_turn", "closed_turn"} {
 		t.Run(turn, func(t *testing.T) {
 			h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
@@ -67,6 +68,7 @@ func TestMessageStep_AReaderLeavingAfterTheWriteKeepsTheWordsKASTook(t *testing.
 // A host session that ends between the write and the reply leaves the words recorded once, and a retry under
 // the same message id answers the first verb without a second session/prompt.
 func TestMessageStep_AnEngineExitBeforeItsReplyRecordsTheWordsOnceAndARetrySendsNothing(t *testing.T) {
+	t.Parallel()
 	h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	br.setCallErr(marotte.MethodPrompt, &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true})
 
@@ -135,6 +137,7 @@ func TestDelete_AfterAnUnconfirmedSendClearsItsRetryRecord(t *testing.T) {
 // An answer to the step's words that arrived but could not be decoded may hide words KAS took, so they are recorded
 // as sent and a second send is answered from that record instead of reaching KAS again.
 func TestMessageStep_AnUndecodedAnswerRecordsTheWordsAsSent(t *testing.T) {
+	t.Parallel()
 	h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	newStepScript(t, br, "paused")
 	br.setCallErr(marotte.MethodPrompt, fmt.Errorf("%w: %w", marotte.ErrReplyUndecoded,
@@ -154,6 +157,7 @@ func TestMessageStep_AnUndecodedAnswerRecordsTheWordsAsSent(t *testing.T) {
 // Delete winning over a retry: the retry record of a send made before it goes with the run, so the
 // retry is not answered as delivered.
 func TestMessageStep_ARetryAfterDeleteIsNotAnsweredFromTheDeletedRun(t *testing.T) {
+	t.Parallel()
 	h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	s := newStepScript(t, br, "paused")
 	br.setCallErr(marotte.MethodPrompt, &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true})
@@ -178,6 +182,7 @@ func TestMessageStep_ARetryAfterDeleteIsNotAnsweredFromTheDeletedRun(t *testing.
 // The answer route's twin: the words are recorded once, and a second answer is refused while the
 // first one's turn has not started, instead of reaching KAS again.
 func TestAnswerInput_AnEngineExitBeforeItsReplyHoldsTheAsk(t *testing.T) {
+	t.Parallel()
 	h, br := askHub(t)
 	askID := readNow(t, h, "wf_1").asks[0].ID
 	br.setCallErr(marotte.MethodPrompt, &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true})
@@ -203,6 +208,7 @@ func callIndex(br *fakeBridge, method string) int {
 // A retry of an unconfirmed send while a Delete is with KAS is refused rather than answered from the
 // record the deletion is taking.
 func TestMessageStep_ARetryDuringADeleteIsNotAnsweredFromTheRecord(t *testing.T) {
+	t.Parallel()
 	h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	br.setCallErr(marotte.MethodPrompt, &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true})
 	if _, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, "carry on", "m-42", "", nil); !errors.Is(err, errStepUnconfirmed) {

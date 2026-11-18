@@ -198,6 +198,7 @@ func noRuns(t *testing.T) json.RawMessage {
 // Every chain session is deleted with an engine call, before the chat's own session is closed, so KAS still holds the
 // session it deletes and SessionEnd fires there.
 func TestDeleteChatStateByChain_DeletesEveryChainSessionThroughTheEngine(t *testing.T) {
+	t.Parallel()
 	h, _, rig := newDeleteRig(t, noRuns(t))
 	owner := insertChatSession(t, h, rig, "c1", "sess_cur")
 	var mu sync.Mutex
@@ -233,6 +234,7 @@ func TestDeleteChatStateByChain_DeletesEveryChainSessionThroughTheEngine(t *test
 }
 
 func TestDeleteForSessions_DeletesEveryOwnedRunWhateverItsStatus(t *testing.T) {
+	t.Parallel()
 	h, _, rig := newDeleteRig(t, kasRuns(t,
 		map[string]any{"workflowId": "wf_done", "name": "r", "status": "completed", "parentSessionId": "sess_cur"},
 		map[string]any{"workflowId": "wf_live", "name": "r", "status": "running", "parentSessionId": "sess_old"},
@@ -274,6 +276,7 @@ func TestDeleteForSessions_AnUnansweredRunListDeletesTheRunsKASKeepsOnDisk(t *te
 }
 
 func TestDeleteChatStateByChain_DeletesRunsBeforeSessions(t *testing.T) {
+	t.Parallel()
 	h, _, rig := newDeleteRig(t, kasRuns(t,
 		map[string]any{"workflowId": "wf_1", "name": "r", "status": "paused", "parentSessionId": "sess_cur"},
 	))
@@ -320,6 +323,7 @@ func TestDeleteChatStateByChain_ReapsWhenTheDeleteIsRefused(t *testing.T) {
 }
 
 func TestCloseChatState_DeletesNothing(t *testing.T) {
+	t.Parallel()
 	h, cs, rig := newDeleteRig(t, kasRuns(t,
 		map[string]any{"workflowId": "wf_1", "name": "r", "status": "running", "parentSessionId": "sess_cur"},
 	))

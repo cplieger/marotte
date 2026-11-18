@@ -454,6 +454,7 @@ func compactionSends(t *testing.T, cs *testChatStore, chatID marotte.ChatID) (ru
 // of no end owed would let a held close's take go while an end is still owed. Sequence 0 is the process's first facts
 // state, so it is older than 1.
 func TestRunFactsChanged_AnOlderReadKeepsTheEndOwed(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name         string
 		newer, older uint64

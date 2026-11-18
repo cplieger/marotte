@@ -26,6 +26,7 @@ import (
 func bareTerminals() *agentTerminals { return newAgentTerminals(nil, nil, nil, nil) }
 
 func TestRingBuffer(t *testing.T) {
+	t.Parallel()
 	r := newByteRing(10)
 	r.write([]byte("hello"))
 	if r.String() != "hello" {
@@ -43,6 +44,7 @@ func TestRingBuffer(t *testing.T) {
 }
 
 func TestRingBufferUTF8(t *testing.T) {
+	t.Parallel()
 	r := newByteRing(8)
 	r.write([]byte("aaaaaé"))
 	got := r.String()

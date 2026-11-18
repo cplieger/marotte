@@ -843,6 +843,7 @@ func assertGenerationOneKeepsItsQueue(t *testing.T, o *engineOwner, src *fakeEng
 }
 
 func TestEngineOwner_AnUnreadableSpecQueuesReasonsAndHoldsEveryRestart(t *testing.T) {
+	t.Parallel()
 	t.Run("held_edges_and_restarts_keep_the_engine", func(t *testing.T) {
 		o, src, m := heldOwner(t)
 		release := holdEngineDoor(t, o)
@@ -1009,6 +1010,7 @@ func scriptedOwner(t *testing.T, boot scriptRead) (*engineOwner, *fakeEngineSour
 func reasonsOf(o *engineOwner) []marotte.EngineReason { return o.status().Restart.Reasons }
 
 func TestEngineOwner_TheHoldFollowsTheCacheVerdict(t *testing.T) {
+	t.Parallel()
 	t.Run("an_older_readable_read_during_an_unordered_failure_admits_no_restart", func(t *testing.T) {
 		o, src, c := scriptedOwner(t, scriptRead{5, 2048, true})
 		release := holdEngineDoor(t, o)
@@ -1054,6 +1056,7 @@ func TestEngineOwner_TheHoldFollowsTheCacheVerdict(t *testing.T) {
 
 // A queue diffed on the last readable values is re-diffed on the repaired document before anything applies it.
 func TestEngineOwner_AQueueComputedHeldIsReDiffedBeforeItApplies(t *testing.T) {
+	t.Parallel()
 	setup := func(t *testing.T) (*engineOwner, *fakeEngineSource, *scriptedCache) {
 		t.Helper()
 		o, src, c := scriptedOwner(t, scriptRead{5, 0, true})

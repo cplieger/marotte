@@ -224,6 +224,7 @@ func TestAffordance_AskingWithholdsResume(t *testing.T) {
 
 // TestHandleControls_ReadsTheAskCell pins that the controls route takes `asking` from the run's ask cell.
 func TestHandleControls_ReadsTheAskCell(t *testing.T) {
+	t.Parallel()
 	controls := func(t *testing.T, h *Runtime) marotte.RunControlsResponse {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/api/runs/wf_1/controls", nil)

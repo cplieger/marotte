@@ -30,6 +30,7 @@ func chatParentedHub(t *testing.T, l runlease.Lease) (*Runtime, *fakeBridge) {
 // The user's case: the park raises the card on the launching chat, and the parent's send_message plus the step's
 // resumed turn take it down.
 func TestRunAsks_AChatParentedRunsAskIsRaisedAndClearedOnItsChat(t *testing.T) {
+	t.Parallel()
 	h, engine := chatParentedHub(t, runlease.Lease{WorkflowID: recordedRun, ChatID: "c1", ParentSessionID: "sess_parent"})
 
 	h.chatHandlers[methodWFNodePaused](t.Context(), "c1", runNotif(methodWFNodePaused, map[string]any{
@@ -48,6 +49,7 @@ func TestRunAsks_AChatParentedRunsAskIsRaisedAndClearedOnItsChat(t *testing.T) {
 
 // A lease minted before its run named a parent session learns it from run_start, which ensureResident reads.
 func TestRunAsks_RunStartRecordsTheParentSessionOnTheLease(t *testing.T) {
+	t.Parallel()
 	h, _ := chatParentedHub(t, runlease.Lease{WorkflowID: recordedRun, ChatID: "c1"})
 
 	h.chatHandlers[methodWFRunStart](t.Context(), "c1", runNotif(methodWFRunStart, map[string]any{
@@ -104,6 +106,7 @@ func TestRunAsks_AnEngineRestartKeepsTheRunsQuestion(t *testing.T) {
 
 // One run's wedged inspect blocks nothing on another run on the same engine: its read, publish and verbs go through.
 func TestRunAsks_AWedgedRunBlocksNoOtherRun(t *testing.T) {
+	t.Parallel()
 	h, wedged, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 	other := newFakeBridge()
 	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_2", ParentSessionID: testLaunchSession})

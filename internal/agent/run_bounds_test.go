@@ -106,6 +106,7 @@ func TestArmRunDeadline_FeedsTheLeasesSlotIntoTheOneDeadline(t *testing.T) {
 // TestArmRunDeadline_ConcurrentArmsLeaveALiveTimerForTheStoredDeadline asserts the invariant that a bounded
 // lease always has a timer: observed under one hold, then the survivor fired. Disk-backed to widen the window.
 func TestArmRunDeadline_ConcurrentArmsLeaveALiveTimerForTheStoredDeadline(t *testing.T) {
+	t.Parallel()
 	const rounds, arms = 6, 4
 	for round := range rounds {
 		h, _, br := newTestHub()

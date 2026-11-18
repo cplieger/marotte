@@ -62,6 +62,7 @@ func wantRunning(t *testing.T, h *Runtime, br *fakeBridge) {
 }
 
 func TestSilentStep_FiftyNineMinutesIsNotFlagged(t *testing.T) {
+	t.Parallel()
 	for name, launch := range map[string]launchOrigin{"chat-launched": agentLaunch(), "parentless": manualLaunch()} {
 		t.Run(name, func(t *testing.T) {
 			fp := newRunOutcomePush()
@@ -87,6 +88,7 @@ func TestSilentStep_FiftyNineMinutesIsNotFlagged(t *testing.T) {
 }
 
 func TestSilentStep_AnHourFlagsAChatLaunchedRunAndKeepsItRunning(t *testing.T) {
+	t.Parallel()
 	fp := newRunOutcomePush()
 	h, br, deadline := silentStep(t, agentLaunch(), time.Hour, WithPush(fp))
 
@@ -121,6 +123,7 @@ func TestSilentStep_AnHourFlagsAChatLaunchedRunAndKeepsItRunning(t *testing.T) {
 }
 
 func TestSilentStep_AFrameClearsTheFlagAndANewSilencePushesAgain(t *testing.T) {
+	t.Parallel()
 	fp := newRunOutcomePush()
 	h, br, deadline := silentStep(t, agentLaunch(), time.Hour, WithPush(fp))
 	h.runs.cancelExpired(silentRunID, deadline)
@@ -148,6 +151,7 @@ func TestSilentStep_AFrameClearsTheFlagAndANewSilencePushesAgain(t *testing.T) {
 
 // A lifecycle frame, a watch's idle poll among them, is activity too: a polling watch is never flagged.
 func TestSilentStep_AWatchPollIsAFrame(t *testing.T) {
+	t.Parallel()
 	h, _, deadline := silentStep(t, manualLaunch(), time.Hour)
 	host := runChatID(silentRunID)
 	h.dispatch(t.Context(), host, h.originOf(host), runNotif(methodWFWatchPoll, map[string]any{
@@ -163,6 +167,7 @@ func TestSilentStep_AWatchPollIsAFrame(t *testing.T) {
 
 // A run no chat launched has nobody to tell, so its hour of silence ends it as the idle window's stall does.
 func TestSilentStep_AnHourStopsAParentlessRunAsStalled(t *testing.T) {
+	t.Parallel()
 	fp := newRunOutcomePush()
 	h, br, deadline := silentStep(t, manualLaunch(), time.Hour, WithPush(fp))
 
@@ -190,6 +195,7 @@ func fileStepAsk(t *testing.T, h *Runtime, kind marotte.EventType) marotte.Serve
 
 // A step waiting on a person's answer is not hung, whoever launched the run.
 func TestSilentStep_AnOpenAskIsNotSilence(t *testing.T) {
+	t.Parallel()
 	kinds := []marotte.EventType{marotte.EventPermissionNeeded, marotte.EventUserInputNeeded, marotte.EventElicitationNeeded}
 	for name, launch := range silenceLaunches {
 		for _, kind := range kinds {
@@ -248,6 +254,7 @@ func TestSilentStep_AnAnswerRestartsTheCount(t *testing.T) {
 
 // A paused step has no timer running, so no length of pause flags or stops it.
 func TestSilentStep_APausedStepIsNotSilence(t *testing.T) {
+	t.Parallel()
 	for name, launch := range silenceLaunches {
 		t.Run(name, func(t *testing.T) {
 			fp := newRunOutcomePush()
@@ -287,6 +294,7 @@ func TestSilentStep_APausedStepIsNotSilence(t *testing.T) {
 
 // A watch's bound is its own idleTimeoutSec: an hourly poll inside a repeat is neither flagged nor stopped.
 func TestSilentStep_AnHourlyWatchIsNeitherFlaggedNorStopped(t *testing.T) {
+	t.Parallel()
 	for name, launch := range silenceLaunches {
 		t.Run(name, func(t *testing.T) {
 			fp := newRunOutcomePush()
@@ -419,6 +427,7 @@ const (
 // The run is silent only when a step that is running, open, asks nobody and is no watch sent nothing for an hour; any
 // frame from any node, an answer included, restarts the count.
 func TestSilence_OnePredicateOverTheRunTree(t *testing.T) {
+	t.Parallel()
 	var answered marotte.ServerEvent
 	for _, tc := range []struct {
 		arrange func(r runTree)

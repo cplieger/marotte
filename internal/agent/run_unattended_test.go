@@ -421,6 +421,7 @@ func TestOptionIDByKind_MatchesTheKindExactly(t *testing.T) {
 // TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption pins that answer with an offered choice. TakePendingPerm runs
 // before the response, since the floor races a human.
 func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		options     string
 		meta        string
@@ -498,6 +499,7 @@ func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 
 // TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove pins that KAS treats any allow_once as satisfying an administrator ask.
 func TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	body, err := json.Marshal(map[string]any{settings.KeyScheduledAutoApprove: true})
 	if err != nil {
@@ -540,6 +542,7 @@ func TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove(t *testing
 // asked. KAS stamps only a tripped breaker and an oversized action; under a delegated session every other implicit
 // tool ask (a failed or timed-out check, a sensitive path) reaches the floor unstamped and is refused too.
 func TestAnswerUnattended_RefusesClassifierHandedAsk(t *testing.T) {
+	t.Parallel()
 	const implicitWrite = `,"_meta":{"kiro":{"toolId":"fs_write","consent":{"askType":"implicit","capability":"fs_write"}}}`
 	for _, tc := range []struct {
 		name, meta, wantOption string
@@ -617,6 +620,7 @@ func TestAnswerUnattended_RefusesClassifierHandedAsk(t *testing.T) {
 // the account's safety rules, and "Allow anyway" with nobody watching would undo the block. The params are KAS's
 // requestSafetyOverridePermission shape (toolCall {toolCallId "safety-override-<uuid>", status, title}, no _meta).
 func TestAnswerUnattended_RefusesTheCloudFormationBlock(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	body, err := json.Marshal(map[string]any{settings.KeyScheduledAutoApprove: true})
 	if err != nil {
@@ -921,6 +925,7 @@ func TestUnattendedLineCarriesRuleID(t *testing.T) {
 
 // An administrator ask needs a person, for a triggered run as for a scheduled one.
 func TestTriggeredAdminAskStillRefused(t *testing.T) {
+	t.Parallel()
 	outcome, _ := answerTriggered(t, true, `{`+triggeredAskOptions+`,"_meta":{"kiro":{"consent":{"scope":"administration"}}}}`)
 	if outcome.Outcome.OptionID != "reject" {
 		t.Errorf("optionId = %q, want reject: an administrator ask was auto-approved in a triggered run",
@@ -930,6 +935,7 @@ func TestTriggeredAdminAskStillRefused(t *testing.T) {
 
 // The deny note is read by the step's agent, which a triggered run has as well: it must not call the run scheduled.
 func TestTriggeredDenyNoteNamesNoSchedule(t *testing.T) {
+	t.Parallel()
 	outcome, _ := answerTriggered(t, false, `{`+triggeredAskOptions+`}`)
 	var note string
 	if outcome.Meta != nil {

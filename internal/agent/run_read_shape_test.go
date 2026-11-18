@@ -86,6 +86,7 @@ func TestHandleRun_ServesACaptureSummaryPerNode(t *testing.T) {
 // The capture read is where a step's whole captured output comes from: the result pane of the
 // shown step draws it, and the run read carries only its summary.
 func TestStepCapture_AnswersTheStepsWholeCapture(t *testing.T) {
+	t.Parallel()
 	capture := strings.Repeat("a long report line\n", 300)
 	raw, err := json.Marshal(map[string]any{
 		"workflowId": "wf_1",

@@ -814,6 +814,7 @@ func TestRunOrder_AChatClosedDuringAGrantedTakeLeavesNoEntry(t *testing.T) {
 // A steer kiro-cli had not read when its turn closed clean is the next prompt once its end resolves, and no prompt
 // goes before: until the clear lands, kiro-cli may still hold it.
 func TestRunOrder_ASteerTheAgentDroppedAtACleanCloseIsSentNext(t *testing.T) {
+	t.Parallel()
 	s, cs, br := steerOpsHub(t)
 	at := s.h.originOf("c1")
 	id, _ := s.h.stagePromptTurn(t, "c1")

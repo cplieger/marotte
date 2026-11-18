@@ -177,6 +177,7 @@ var placedIDs = []string{"m-a", "x", "x2", "x3", "u", "v", "y", "t-w"}
 // chat's whole queue, every sender's rows alike, and nothing launches by itself after it; one caller has at most one
 // waiting row.
 func TestRunList_RowStates(t *testing.T) {
+	t.Parallel()
 	type cell struct {
 		sender, state, event string
 		// want is the list after the event (a row put back under a new id reads "copy"); cut the steers a restart or
@@ -321,6 +322,7 @@ func TestRunList_AStoppedUnsentRowKeepsItsCallerAndWords(t *testing.T) {
 // The cells that need a second row beside the stopped one: a user row waiting, the caller's second wake, another
 // caller's wake, a wire turn the stop names, or the chat's close inside the stopped turn's close window.
 func TestRunList_RowStatesWithASecondRow(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		run      func(t *testing.T, w *tableWorld)

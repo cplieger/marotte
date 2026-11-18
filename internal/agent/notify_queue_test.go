@@ -58,6 +58,7 @@ func fromGrelot(c *marotte.Caller) bool { return c != nil && c.Label == "grelot"
 // A wake arriving while the user's row waits behind the running turn goes behind that row as its own row, labelled
 // with its caller: it is never steered into the running turn ahead of the user's message.
 func TestNotify_AWakeQueuesBehindTheUsersWaitingRow(t *testing.T) {
+	t.Parallel()
 	s, _, br := steerOpsHub(t)
 	id, _ := s.h.stagePromptTurn(t, "c1")
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
@@ -104,6 +105,7 @@ const (
 // Send now on the only steer row stops the turn so that message takes the next turn; a wake arriving before the press
 // or in the gap the stop opens goes after it, never in its place or folded into it.
 func TestNotify_SendNowOnTheOnlySteerTakesTheNextTurnOverAWake(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		at   wakeAt
@@ -251,6 +253,7 @@ func stateOf(h *Runtime, chatID marotte.ChatID, id string) marotte.RunEntryState
 // A wake arriving while the user's steer is in kiro-cli's buffer waits; once the agent reads the user's steer, the
 // wake is steered into the running turn (nothing of the user's waits any more).
 func TestNotify_AWakeIsSteeredOnceTheUsersSteerIsRead(t *testing.T) {
+	t.Parallel()
 	s, _, br := steerOpsHub(t)
 	k := kas320On(s.h, "c1", br)
 	id, _ := s.h.stagePromptTurn(t, "c1")
@@ -289,6 +292,7 @@ func TestNotify_AWakeIsSteeredOnceTheUsersSteerIsRead(t *testing.T) {
 // place on the list: a wake placed meanwhile goes behind it, the user's words take the next turn, and the wake waits
 // until that turn's prompt is written.
 func TestNotify_AUserSteerRefusedForNoTurnTakesTheNextTurnBeforeAWake(t *testing.T) {
+	t.Parallel()
 	s, cs, br := steerOpsHub(t)
 	id, _ := s.h.stagePromptTurn(t, "c1")
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
@@ -342,6 +346,7 @@ func TestNotify_AUserSteerRefusedForNoTurnTakesTheNextTurnBeforeAWake(t *testing
 // A wake kiro-cli 3.2.0 drops at a turn boundary ({"queued":false,"dropped":"epoch_changed"}) is not steered again
 // into that turn; it waits as a row and takes a turn of its own once the turn closes.
 func TestNotify_AWakeKiroCLIDropsWaitsForATurnOfItsOwn(t *testing.T) {
+	t.Parallel()
 	s, cs, br := steerOpsHub(t)
 	k := kas320On(s.h, "c1", br)
 	id, _ := s.h.stagePromptTurn(t, "c1")
@@ -421,6 +426,7 @@ func grelotWaits(h *Runtime, chatID marotte.ChatID, id string) bool {
 // A wake kiro-cli held unread when the turn ended goes behind the row the user queued meanwhile: the user's row takes
 // the next turn, alone.
 func TestNotify_AWakeBackUnreadGoesBehindTheUsersQueuedRow(t *testing.T) {
+	t.Parallel()
 	s, cs, br := steerOpsHub(t)
 	k := kas320On(s.h, "c1", br)
 	id, _ := s.h.stagePromptTurn(t, "c1")
@@ -450,6 +456,7 @@ func TestNotify_AWakeBackUnreadGoesBehindTheUsersQueuedRow(t *testing.T) {
 
 // A user's Send while a wake's turn starts is the user's own steer into that turn, never carried in the wake's prompt.
 func TestNotify_AUserSendDuringAWakesTurnIsSteeredUnderTheUsersName(t *testing.T) {
+	t.Parallel()
 	s, cs, br := steerOpsHub(t)
 	k := kas320On(s.h, "c1", br)
 	id, _ := s.h.stagePromptTurn(t, "c1")
@@ -483,6 +490,7 @@ func TestNotify_AUserSendDuringAWakesTurnIsSteeredUnderTheUsersName(t *testing.T
 // The user's steers a turn left unread go out together as the next prompt under the user's name, and a wake held
 // beside them is never part of it.
 func TestNotify_TheUsersUnreadSteersJoinWithoutTheWake(t *testing.T) {
+	t.Parallel()
 	s, cs, br := steerOpsHub(t)
 	k := kas320On(s.h, "c1", br)
 	id, _ := s.h.stagePromptTurn(t, "c1")
@@ -526,6 +534,7 @@ func TestNotify_TheUsersUnreadSteersJoinWithoutTheWake(t *testing.T) {
 // The steer command is a send of the user's like the composer's: a wake arriving while the user's steer is in
 // kiro-cli's buffer waits on the list, and is steered once the agent read the user's.
 func TestNotify_AWakeWaitsBehindTheUsersSteerCommand(t *testing.T) {
+	t.Parallel()
 	s, _, br := steerOpsHub(t)
 	k := kas320On(s.h, "c1", br)
 	id, _ := s.h.stagePromptTurn(t, "c1")
@@ -557,6 +566,7 @@ func TestNotify_AWakeWaitsBehindTheUsersSteerCommand(t *testing.T) {
 
 // A steer command with no running turn to take it is refused no_turn and leaves nothing on the list for a later turn.
 func TestNotify_ASteerCommandWithNothingRunningPlacesNothing(t *testing.T) {
+	t.Parallel()
 	s, _, _ := steerOpsHub(t)
 	if code := postSteer(t, s.h, "m-u", "check the logs"); code != http.StatusConflict {
 		t.Fatalf("steer = %d, want 409 no_turn", code)
@@ -586,6 +596,7 @@ func grelotRows(h *Runtime, chatID marotte.ChatID) (ids, texts []string) {
 // A wake into an idle chat opens its turn under grelot's name; the draft cap, which holds what
 // waits on the list, does not apply to it.
 func TestNotify_AWakeIntoAnIdleChatOpensItsTurn(t *testing.T) {
+	t.Parallel()
 	for name, text := range map[string]string{
 		"a short wake":              grelotWake,
 		"a wake past the draft cap": strings.Repeat("x", marotte.MaxDraftBytes+1),
@@ -616,6 +627,7 @@ func TestNotify_AWakeIntoAnIdleChatOpensItsTurn(t *testing.T) {
 // A later wake from the same caller while its earlier one waits replaces that row's text and keeps its id and its
 // place behind the user's row: one waiting row per caller, whose id Notify answers.
 func TestNotify_ALaterWakeReplacesTheWaitingOnesTextInPlace(t *testing.T) {
+	t.Parallel()
 	s, _, br := steerOpsHub(t)
 	id, _ := s.h.stagePromptTurn(t, "c1")
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
@@ -654,6 +666,7 @@ func TestNotify_ALaterWakeReplacesTheWaitingOnesTextInPlace(t *testing.T) {
 // A wake into a running turn with nothing of the user's waiting is steered; a later wake while kiro-cli still holds it
 // unread is accepted and adds nothing, since the agent reads the earlier one anyway.
 func TestNotify_AWakeBesideOneTheAgentHoldsAddsNothing(t *testing.T) {
+	t.Parallel()
 	s, _, br := steerOpsHub(t)
 	k := kas320On(s.h, "c1", br)
 	id, _ := s.h.stagePromptTurn(t, "c1")
@@ -686,6 +699,7 @@ func TestNotify_AWakeBesideOneTheAgentHoldsAddsNothing(t *testing.T) {
 // A wake past the draft cap that would wait behind a running turn is refused as one to retry later, and places
 // nothing; a waiting wake keeps its text when a later one is refused so.
 func TestNotify_AWakePastTheDraftCapBehindARunningTurnIsRetriedLater(t *testing.T) {
+	t.Parallel()
 	s, _, _ := steerOpsHub(t)
 	id, _ := s.h.stagePromptTurn(t, "c1")
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
@@ -717,6 +731,7 @@ func TestNotify_AWakePastTheDraftCapBehindARunningTurnIsRetriedLater(t *testing.
 
 // The draft cap holds a wake that would wait on the list, not one the running turn takes as a steer at once.
 func TestNotify_AWakePastTheDraftCapIsSteeredWhenNothingWaits(t *testing.T) {
+	t.Parallel()
 	s, _, br := steerOpsHub(t)
 	k := kas320On(s.h, "c1", br)
 	id, _ := s.h.stagePromptTurn(t, "c1")

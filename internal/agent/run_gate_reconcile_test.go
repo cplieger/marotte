@@ -458,6 +458,7 @@ func withReleaseRetryBase(d time.Duration) Option {
 // The step whose credential ask finds the sign-in rejected is answered only once its run's pause was accepted: KAS
 // parks a step on a refused ask when a pause was requested first, and fails it permanently otherwise.
 func TestSignInGate_ARefusedAskIsAnsweredOnlyAfterTheRunningRunIsPaused(t *testing.T) {
+	t.Parallel()
 	g := newGateRun(t, filemodetest.NewDisk())
 	g.signIn(t)
 	g.runningNow(t)
@@ -635,6 +636,7 @@ func TestSignInGate_AHeldRefusalWakesOnTheSignIn(t *testing.T) {
 // The ask KAS sends while its engine starts is answered at once: a starting engine runs no run, and an unanswered
 // ask would stall the start.
 func TestSignInGate_ARefusedAskWhileTheEngineStartsIsAnsweredAtOnce(t *testing.T) {
+	t.Parallel()
 	g := newGateRun(t, filemodetest.NewDisk())
 	src := fakeSourceOf(t, g.h)
 	starting := make(chan struct{})
@@ -670,6 +672,7 @@ func TestSignInGate_ARefusedAskWhileTheEngineStartsIsAnsweredAtOnce(t *testing.T
 // A sign-in that lands while a refused ask's sweep is pausing the running runs ends the sweep, and the ask is
 // answered again from the signed-in vault rather than refused.
 func TestSignInGate_ARefusedAskIsAskedAgainWhenASignInLandsMidSweep(t *testing.T) {
+	t.Parallel()
 	g := newGateRun(t, filemodetest.NewDisk())
 	g.signIn(t)
 	g.br.setCallResult(methodKiroWorkflowList, kasRuns(t,
@@ -706,6 +709,7 @@ func TestSignInGate_ARefusedAskIsAskedAgainWhenASignInLandsMidSweep(t *testing.T
 // A renewal whose lease is too short to use closes the gate like an outage: the running run is paused, with the
 // unreachable reason, before the refusal; nothing launches; the next usable renewal resumes it.
 func TestSignInGate_AShortLeaseClosesTheGateUntilAUsableRenewal(t *testing.T) {
+	t.Parallel()
 	g := newGateRun(t, filemodetest.NewDisk())
 	g.signIn(t)
 	g.runningNow(t)
@@ -738,6 +742,7 @@ func TestSignInGate_AShortLeaseClosesTheGateUntilAUsableRenewal(t *testing.T) {
 // A run verb admitted while the gate was open and landing after it closed is not left running: the gate's
 // closing sweep listed the run before the verb started it, so the verb's own settle sweeps again and pauses it.
 func TestSignInGate_AVerbCrossingTheClosingEdgeLeavesNoRunRunning(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		verb string
@@ -820,6 +825,7 @@ func TestSignInGate_AVerbCrossingTheClosingEdgeLeavesNoRunRunning(t *testing.T) 
 // The closing sweep's pause waits for a resume already being written, so the pause is the run's last verb. The run
 // has no ask cell, whose own ordering (controlSerialized) would hide a missing one.
 func TestSignInGate_TheClosingPauseLandsAfterAnInFlightResume(t *testing.T) {
+	t.Parallel()
 	g := newGateRun(t, filemodetest.NewDisk())
 	g.signIn(t)
 	g.h.runs.asks.mu.Lock()
@@ -975,6 +981,7 @@ func (g *gateRun) lapseAndAsk(t *testing.T) {
 // A person's pause is never replaced by the gate's, whichever lands first, so the next sign-in resumes nothing the
 // person paused.
 func TestSignInGate_APersonsPauseOutlivesTheGatesSweep(t *testing.T) {
+	t.Parallel()
 	gatePauses := func(v *gateVerbs) int {
 		n := 0
 		for _, p := range v.pauseParams() {
@@ -1079,6 +1086,7 @@ func pendingInspect(t *testing.T) json.RawMessage {
 // The sweep pauses a listed run only on a fresh read of it: a read that fails, or answers about another run, is a
 // sweep to retry, and a run KAS no longer knows is done.
 func TestSignInGate_TheSweepPausesOnlyARunItReadRunning(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		set     func(g *gateRun)
 		name    string

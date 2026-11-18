@@ -14,6 +14,7 @@ import (
 // registered under the chat: KAS settles a response by its per-connection id, so an answer on
 // the successor would resolve whatever that connection has pending under the same id.
 func TestInboundRequest_AnswersOnTheBridgeItArrivedOn(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		msg  func(t *testing.T, id int64) *marotte.RPCResponse
 		name string

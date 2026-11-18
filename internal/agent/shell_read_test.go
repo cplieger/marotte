@@ -67,6 +67,7 @@ func TestReadShell_ResolvesWhileThePTYWrites(t *testing.T) {
 
 // A restart swaps the handler under the mutex, so a read skipping it races (-race).
 func TestReadShell_RacesARestartSafely(t *testing.T) {
+	t.Parallel()
 	sm := &shellManager{workDir: t.TempDir()}
 	sm.handler = sm.newHandler()
 	t.Cleanup(func() { retireHandler(context.Background(), sm.handler, "test") })

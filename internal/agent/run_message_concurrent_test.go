@@ -187,6 +187,7 @@ func TestMessageStep_ACompletionWaitsForAnInFlightSteer(t *testing.T) {
 // A decision read before the step completed is made again once the send holds the run: the message is
 // refused as finished and nothing reaches the finished step.
 func TestMessageStep_AStepThatCompletesDuringTheReadIsRefusedFinished(t *testing.T) {
+	t.Parallel()
 	h, br := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
 	s := newStepScript(t, br, "running")
 	readIn, releaseRead := s.hold(methodKiroWorkflowInspect, 1)
@@ -209,6 +210,7 @@ func TestMessageStep_AStepThatCompletesDuringTheReadIsRefusedFinished(t *testing
 // A step that pauses after the decision but before the steer is routed takes no row: the send is refused
 // and the dock keeps nothing for a step whose execution stopped.
 func TestMessageStep_AStepThatPausesBeforeTheRouteKeepsNoRow(t *testing.T) {
+	t.Parallel()
 	h, br := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
 	s := newStepScript(t, br, "running")
 	unlockOps, err := h.runs.steers.queue.LockSteerOps(t.Context(), marotte.StepSteerKey("sess_step"))
@@ -250,6 +252,7 @@ func (r *stepEndOnRecord) RecordUserSteer(chatID marotte.ChatID, steerID string)
 // A step that completes after its steer was routed and before it was sent: the send does not reach KAS,
 // and the row is recorded "not read" in the step's turn.
 func TestMessageStep_AStepThatCompletesBeforeTheSendIsNotSteered(t *testing.T) {
+	t.Parallel()
 	h, br := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
 	h.runs.steers.ledger = &stepEndOnRecord{SteerRecorder: h.runs.steers.ledger, end: func() {
 		h.runs.RunNodeComplete(t.Context(), "wf_1", reviewSegments, "completed", "")

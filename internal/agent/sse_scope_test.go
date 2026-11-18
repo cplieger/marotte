@@ -137,6 +137,7 @@ func publishRunsThenChat(h *Runtime, runs ...string) {
 }
 
 func TestHandleSSE_EachScopeReceivesItsOwnRunsAndEveryBroadcast(t *testing.T) {
+	t.Parallel()
 	h, srv := scopeServer(t)
 	streams := map[string]*liveStream{
 		`["run:wf_a"]`: openStream(t, srv, `["run:wf_a"]`),
@@ -211,6 +212,7 @@ func scopeBody(conn string, seq int, topics string) string {
 }
 
 func TestScopeRoute_ReplacesTheScopeOfALiveConnection(t *testing.T) {
+	t.Parallel()
 	h, srv := scopeServer(t)
 	s := openStream(t, srv, `[]`)
 	if s.conn == "" {
@@ -228,6 +230,7 @@ func TestScopeRoute_ReplacesTheScopeOfALiveConnection(t *testing.T) {
 }
 
 func TestScopeRoute_AnswersTheWireContractsRefusals(t *testing.T) {
+	t.Parallel()
 	_, srv := scopeServer(t)
 	s := openStream(t, srv, `[]`)
 
@@ -300,6 +303,7 @@ func openForeignStream(t *testing.T, srv *httptest.Server) string {
 // The drain gate refuses new streams, but a live one may still narrow: a late scope request changes nothing
 // a shutdown cares about.
 func TestScopeRoute_AnswersWhileDraining(t *testing.T) {
+	t.Parallel()
 	h, srv := scopeServer(t)
 	s := openStream(t, srv, `[]`)
 	h.lifecycle.draining.Store(true)

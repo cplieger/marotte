@@ -240,6 +240,7 @@ func TestStepTranscript_AGradedStepReadsNoRecordAgain(t *testing.T) {
 // KAS's record was unreadable at node_complete, so a later read records the grade, and the launching chat's note
 // follows that grade rather than the seal.
 func TestStepGrade_TheRunReadRecordsAGradeTheNodeCompleteMissed(t *testing.T) {
+	t.Parallel()
 	const chatID = marotte.ChatID("c1")
 	down := errors.New("the engine is gone")
 

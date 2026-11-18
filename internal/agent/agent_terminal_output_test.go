@@ -355,6 +355,7 @@ func TestTerminalOutput_KnownButSilentIsNotMissing(t *testing.T) {
 
 // Deleting a chat must not retire: nothing is left to adopt into, and no boundary would evict it.
 func TestKillForChat_DropsRetiredOutput(t *testing.T) {
+	t.Parallel()
 	at := bareTerminals()
 	term := newAgentTerminal(&exec.Cmd{}, "c1", 64)
 	term.output.write([]byte("secret\n"))

@@ -90,6 +90,7 @@ func (w *tableWorld) wantOrder(t *testing.T, step, want string) {
 // turn the user's stop or send-now asked for, waits behind every user entry waiting ahead of it, is never stranded on
 // an idle list, and one prompt never joins two senders.
 func TestRunList_Events(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		run       func(t *testing.T, w *tableWorld)
 		name      string

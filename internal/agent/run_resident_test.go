@@ -59,6 +59,7 @@ func leaseParentless(t *testing.T, h *Runtime, workflowID string, presets ...str
 
 // A terminal run's host session closes; a pause keeps it resident, since one engine holds it at no process cost.
 func TestRunComplete_ATerminalRunReleasesItsHostSessionAndAPauseKeepsIt(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		status    string
 		wantOpen  bool
@@ -95,6 +96,7 @@ func TestRunComplete_ATerminalRunReleasesItsHostSessionAndAPauseKeepsIt(t *testi
 
 // A paused lease must keep its fields, minus the deadline, which the pause parks.
 func TestRunStopped_APausedRunKeepsTheFieldsItsLeaseIsFor(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
@@ -123,6 +125,7 @@ func TestRunStopped_APausedRunKeepsTheFieldsItsLeaseIsFor(t *testing.T) {
 
 // A resident host session is handed back with no second load.
 func TestEnsureResident_AResidentRunIsHandedBackWithNoLoad(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	incumbent := newFakeBridge()

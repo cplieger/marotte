@@ -74,6 +74,7 @@ func TestCancelExpired_NoOpenStepTurnIsAStall(t *testing.T) {
 
 // An unreadable run keeps the stall verdict: the bound is never lifted by a failed read.
 func TestCancelExpired_AnUnreadableRunWithNoOpenStepIsAStall(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
@@ -93,6 +94,7 @@ func TestCancelExpired_AnUnreadableRunWithNoOpenStepIsAStall(t *testing.T) {
 
 // A manual run's next slot outranks an open step.
 func TestCancelExpired_ASlotOutranksAnOpenStep(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	h, br := stepFixture(t, id)
 	openStep(t, h, id, []string{"root", "a"}, "step-session-a")
@@ -211,6 +213,7 @@ func TestHandleSessionUpdate_AReplayedStepFrameIsNotProgress(t *testing.T) {
 
 // TestFinishTermination_TellsTheLaunchingChatWhy pins that KAS's cancel carries no reason, so the bound leaves an agent-origin note.
 func TestFinishTermination_TellsTheLaunchingChatWhy(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	defer shutdownHub(t, h)
 	const (
@@ -262,6 +265,7 @@ func TestFinishTermination_TellsTheLaunchingChatWhy(t *testing.T) {
 // KAS can answer the cancel after the run's terminal frame, whose forgetBounds has already released the
 // lease; the note still reaches the launching chat.
 func TestFinishTermination_NotesTheStopWhenTheTerminalFrameWinsTheRace(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	defer shutdownHub(t, h)
 	const (
@@ -302,6 +306,7 @@ func TestFinishTermination_NotesTheStopWhenTheTerminalFrameWinsTheRace(t *testin
 
 // A parentless run has no chat to tell; its row carries the reason.
 func TestFinishTermination_AParentlessRunLeavesNoNote(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	defer shutdownHub(t, h)
 	const id = "wf_1"

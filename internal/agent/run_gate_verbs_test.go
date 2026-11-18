@@ -295,6 +295,7 @@ func TestSignInGate_EveryRunVerbRouteIsInTheTable(t *testing.T) {
 // A steer refused while the gate is closed leaves no row in the step's dock, so the user's text goes back to the
 // composer; the same message is steered once the sign-in answers again.
 func TestSignInGate_AStepSteerIsRefusedBeforeItsRowIsRouted(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		state signin.Answerability
 		want  error
@@ -327,6 +328,7 @@ func TestSignInGate_AStepSteerIsRefusedBeforeItsRowIsRouted(t *testing.T) {
 
 // A step's steer target built with no admission sends no steer: the engine's guard refuses it unwritten.
 func TestStepSteer_AnUnadmittedTargetWritesNoSteer(t *testing.T) {
+	t.Parallel()
 	h, br := runningStepHub(t)
 	lease, err := h.runs.life.admit("wf_1")
 	if err != nil {
@@ -367,6 +369,7 @@ func waitingRows(h *Runtime) int {
 
 // A step's queued flush while the gate is closed sends nothing and keeps its rows waiting; the sign-in sends them.
 func TestSignInGate_AStepsQueuedFlushWaitsForTheSignIn(t *testing.T) {
+	t.Parallel()
 	h, br := runningStepHub(t)
 	waitingRow(t, h)
 	gate := wireGate(h, signin.NeedsSignIn)
@@ -386,6 +389,7 @@ func TestSignInGate_AStepsQueuedFlushWaitsForTheSignIn(t *testing.T) {
 
 // Deleting a row KAS never held sends nothing, so the closed gate lets it through.
 func TestSignInGate_ARemovalThatSendsNothingIsLetThrough(t *testing.T) {
+	t.Parallel()
 	h, br := runningStepHub(t)
 	waitingRow(t, h)
 	wireGate(h, signin.NeedsSignIn)
@@ -404,6 +408,7 @@ func TestSignInGate_ARemovalThatSendsNothingIsLetThrough(t *testing.T) {
 // A removal of a row KAS holds that the queue refuses before any clear sends nothing either: the closed gate leaves
 // the queue's own refusal standing.
 func TestSignInGate_ARemovalTheQueueRefusesKeepsItsReason(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		setup func(rec *steerRecord)
 		name  string
@@ -439,6 +444,7 @@ func TestSignInGate_ARemovalTheQueueRefusesKeepsItsReason(t *testing.T) {
 // A queued flush waiting on a closed gate ends when its step's run ends, with no gate move: it holds no in-flight
 // slot for the rest of the outage.
 func TestSignInGate_AWaitingFlushEndsWithItsStep(t *testing.T) {
+	t.Parallel()
 	h, br := runningStepHub(t)
 	waitingRow(t, h)
 	wireGate(h, signin.NeedsSignIn)
@@ -473,6 +479,7 @@ func TestSignInGate_AWaitingFlushEndsWithItsStep(t *testing.T) {
 // A steer admitted before the gate closed and answered after it sweeps the running runs again, since the closing
 // edge's sweep may have read the run before the steer reached it.
 func TestSignInGate_AStepSteerCrossingTheClosingEdgeSweepsAgain(t *testing.T) {
+	t.Parallel()
 	h, br := runningStepHub(t)
 	gate := wireGate(h, signin.Answerable)
 	br.setCallResult(methodKiroWorkflowList, kasRuns(t, map[string]any{"workflowId": "wf_1", "status": "paused"}))
@@ -505,6 +512,7 @@ func TestSignInGate_AStepSteerCrossingTheClosingEdgeSweepsAgain(t *testing.T) {
 // A restart-paused run KAS parks again once its heal budget is spent is recorded as stopped off the pause frame
 // itself, with no pause written and no resume.
 func TestHealBudget_ASpentRunsNextPauseStopsItsAutoResume(t *testing.T) {
+	t.Parallel()
 	h, br := agentRunOnChat(t, gateRunID)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	h.runs.grantLease(t.Context(), gateRunID, "publish", agentLaunch(), hostSec())

@@ -135,6 +135,7 @@ func awaitCall(t *testing.T, br *fakeBridge, method string) bool {
 
 // KAS skips its turn-end clear on an abnormal end, so marotte clears a settled chat's buffer itself while a notice is held.
 func TestTurnClosed_ClearsTheBufferOfASettledChatHoldingANotice(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	defer shutdownHub(t, h)
 	br.callResults = map[string]json.RawMessage{
@@ -271,6 +272,7 @@ func TestTurnClosed_TheNoticeClearsDropIsCarriedByTheSameClose(t *testing.T) {
 
 // Shutdown stops the bridge itself, so a close once it began sends no clear.
 func TestTurnClosed_OnceShutdownBeganSendsNoClear(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	defer shutdownHub(t, h)
 	br.callResults = map[string]json.RawMessage{
@@ -293,6 +295,7 @@ func TestTurnClosed_OnceShutdownBeganSendsNoClear(t *testing.T) {
 
 // No held notice, no clear.
 func TestTurnClosed_LeavesAChatHoldingNoNoticeAlone(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	defer shutdownHub(t, h)
 	br.callResults = map[string]json.RawMessage{marotte.MethodSessionSteerClear: json.RawMessage(`{"cleared":true}`)}

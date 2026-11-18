@@ -85,6 +85,7 @@ func laneState(t *testing.T, run marotte.RunStatus, gate, signal, build string) 
 // A signalled paused step seen beside a running sibling: only its lane moving on while that sibling
 // never stopped trips, which KAS 2.37.1 never does. Its own end or resume moves no lane.
 func TestSignalTripwire_TripsOnlyOnALaneAdvanceBesideARunningSibling(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		signal string
@@ -144,6 +145,7 @@ func TestSignalTripwire_TripsOnlyOnALaneAdvanceBesideARunningSibling(t *testing.
 
 // An inspect read never trips: an end or a resume it shows is what a client's verb also produces.
 func TestSignalTripwire_AReadShowingTheStepEndedOrResumedIsNoEvidence(t *testing.T) {
+	t.Parallel()
 	for _, step := range []string{"completed", "failed", "running"} {
 		t.Run(step, func(t *testing.T) {
 			rs := tripRuns(t)
@@ -158,6 +160,7 @@ func TestSignalTripwire_AReadShowingTheStepEndedOrResumedIsNoEvidence(t *testing
 
 // KAS clears a step's signal when it completes it, so the signal seen while it was paused is what counts.
 func TestSignalTripwire_TheSignalSeenWhilePausedOutlivesTheEnd(t *testing.T) {
+	t.Parallel()
 	rs := tripRuns(t)
 	rs.signals.observe("wf_1", laneState(t, marotte.RunStatusRunning, "paused", "need_input", "running"))
 	rs.signals.observe("wf_1", laneState(t, marotte.RunStatusRunning, "paused", "success", "running"))
@@ -169,6 +172,7 @@ func TestSignalTripwire_TheSignalSeenWhilePausedOutlivesTheEnd(t *testing.T) {
 }
 
 func TestSignalTripwire_ASignalSeenWithNoRunningSiblingIsNotWatched(t *testing.T) {
+	t.Parallel()
 	rs := tripRuns(t)
 	rs.signals.observe("wf_1", laneState(t, marotte.RunStatusRunning, "paused", "success", "completed"))
 	rs.signals.observe("wf_1", laneState(t, marotte.RunStatusRunning, "paused", "success", "running"))
@@ -181,6 +185,7 @@ func TestSignalTripwire_ASignalSeenWithNoRunningSiblingIsNotWatched(t *testing.T
 // A step that is itself a parallel's branch has no lane past it short of the join, which waits for
 // every sibling.
 func TestSignalTripwire_ABranchStepHasNoLane(t *testing.T) {
+	t.Parallel()
 	rs := tripRuns(t)
 	in, err := workflow.DecodeInspect("wf_1", inspectAsk(t, "wf_1", marotte.RunStatusRunning,
 		askStepNode{id: "review", status: "paused", session: "sess_step", signal: "success"},
@@ -197,6 +202,7 @@ func TestSignalTripwire_ABranchStepHasNoLane(t *testing.T) {
 
 // A run pause stops every sibling: no lane advance after it is a candidate.
 func TestSignalTripwire_APauseIsNoEvidence(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		stop func(rs *Runs)
@@ -244,6 +250,7 @@ func TestSignalTripwire_LogsOnceAndCountsEverySighting(t *testing.T) {
 // The Runs hooks feed it: an inspect read watches, the frames decide. A parent agent's update_status
 // reaches marotte as a bare node_complete and moves no lane.
 func TestRuns_TheTripwireReadsInspectsAndFrames(t *testing.T) {
+	t.Parallel()
 	gateStart := &translate.RunStep{RunID: "wf_1", NodePath: gatePath, SessionID: "sess_gate", Path: gateSegments}
 	afterStart := &translate.RunStep{RunID: "wf_1", NodePath: workflow.PathKey(afterSegments), SessionID: "sess_after", Path: afterSegments}
 	for _, tc := range []struct {
@@ -298,6 +305,7 @@ func TestRuns_ARunCompleteFramePausingTheRunClearsTheWatch(t *testing.T) {
 
 // Mark step done applies at once while a sibling runs and moves no lane: it is marotte's own end.
 func TestEndStep_APersonsEndIsNoTripwireEvidence(t *testing.T) {
+	t.Parallel()
 	h, _ := endHub(t, laneInspect(t, marotte.RunStatusRunning, "paused", "success", "running"))
 	if err := h.runs.endStep(t.Context(), "wf_1", gatePath, runStepCompleted); err != nil {
 		t.Fatalf("Setup: endStep = %v", err)

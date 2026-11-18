@@ -88,6 +88,7 @@ func TestRunRev_LiveWorkDoesNotGrowWithTheRun(t *testing.T) {
 
 // A step turn opening moves that step's start row and its node into the next revision, with no engine read.
 func TestRunRev_AStepFrameRevisesThatStep(t *testing.T) {
+	t.Parallel()
 	h, br := hostedLeasedRun(t, wideRunInspect(t, 2, 3))
 	h.runs.log = newRunLog(t.TempDir())
 	rev := revOf(t, h)

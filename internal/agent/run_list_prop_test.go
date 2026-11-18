@@ -946,6 +946,7 @@ func (w *listWorld) ends() {
 }
 
 func TestRunList_Invariants(t *testing.T) {
+	t.Parallel()
 	steps := 10000
 	if testing.Short() {
 		steps = 2000
@@ -1245,6 +1246,7 @@ func (h *holdWorld) check() {
 // The user's Stop ruling as a property: after a Stop that paused the queue, no row is taken or steered until the
 // user sends or resumes, whatever kiro-cli, the outside callers, the closes, a failed launch or a reopen do.
 func TestRunList_AStopHoldsTheQueueUntilTheUserActs(t *testing.T) {
+	t.Parallel()
 	steps := 400
 	if testing.Short() {
 		steps = 100

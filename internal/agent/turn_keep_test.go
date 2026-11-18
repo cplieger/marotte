@@ -116,6 +116,7 @@ func (p *lockProbeRecords) AnnounceHeader(context.Context, marotte.ChatID) {
 
 // The release must run inside the lifecycle mutex, or the next turn's open can write the fact the release then deletes.
 func TestTurnRelease_RunsUnderTheLifecycleLockAndAnnouncesAfter(t *testing.T) {
+	t.Parallel()
 	cases := map[string]func(reg *turnRegistry, chatID marotte.ChatID){
 		"finish": func(reg *turnRegistry, chatID marotte.ChatID) {
 			reg.finish(openTestTurn(t, reg, chatID), &marotte.TurnResult{})

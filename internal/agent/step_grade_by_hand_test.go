@@ -75,6 +75,7 @@ func byHandHub(t *testing.T, id, nodeID, status, signal string) (*Runtime, *test
 // turn on the parked node signalled and answered, and the parent's update_status completed it, so KAS records it
 // completed with no signal. A step its own warning parked and Mark step done completed (account-gate) reads the same.
 func TestStepEnd_AStepEndedByHandAfterAThrottledTurnReadsCompletedEndedByHand(t *testing.T) {
+	t.Parallel()
 	const id = "wf_by_hand"
 	for _, tc := range []struct {
 		desc  string

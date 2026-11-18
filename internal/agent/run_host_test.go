@@ -211,6 +211,7 @@ func TestRunDispatch_PermissionKeyedToRunChat(t *testing.T) {
 
 // TestRunDispatch_UnknownRequestIsRefused pins that an unanswered A→C request wedges the step.
 func TestRunDispatch_UnknownRequestIsRefused(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
 
@@ -478,6 +479,7 @@ func TestLaunchRun_SingleRunRule(t *testing.T) {
 
 // TestBridgeManagerInsert_RefusesReplacement pins that inserting over a live entry would orphan its session.
 func TestBridgeManagerInsert_RefusesReplacement(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	first := testBridge(br, bridgeReady)
 	if !h.insertBridgeNow("run:wf_1", first) {
@@ -493,6 +495,7 @@ func TestBridgeManagerInsert_RefusesReplacement(t *testing.T) {
 
 // TestRetry_SuccessClearsTheOldTerminalReason pins that retry reuses the id, and a stale end_reason outranks live status on the client.
 func TestRetry_SuccessClearsTheOldTerminalReason(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowRetry: json.RawMessage(`{}`)}
@@ -520,6 +523,7 @@ func TestRetry_SuccessClearsTheOldTerminalReason(t *testing.T) {
 
 // TestRetry_FailureKeepsTheOldTerminalReason pins that the clear follows the RPC, since a refused retry re-drove nothing.
 func TestRetry_FailureKeepsTheOldTerminalReason(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callErrs = map[string]error{methodKiroWorkflowRetry: errors.New("kas refused")}
@@ -542,6 +546,7 @@ func TestRetry_FailureKeepsTheOldTerminalReason(t *testing.T) {
 // TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable pins that a reloaded parentless run's first frame
 // can beat the retry reply; blockOn holds the call open so the frame lands inside the window.
 func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{
@@ -649,6 +654,7 @@ func TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.T) 
 
 // TestCancelRun_LostClaimIssuesNoSecondCancel pins that the loser sends nothing and overwrites nothing, reporting success.
 func TestCancelRun_LostClaimIssuesNoSecondCancel(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
@@ -672,6 +678,7 @@ func TestCancelRun_LostClaimIssuesNoSecondCancel(t *testing.T) {
 
 // TestCancelRun_WinsTheClaimAndRecordsNothing pins that a user cancel records no reason.
 func TestCancelRun_WinsTheClaimAndRecordsNothing(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
@@ -699,6 +706,7 @@ func TestCancelRun_WinsTheClaimAndRecordsNothing(t *testing.T) {
 
 // TestCancelRun_FailedRPCHandsTheClaimBack pins that a held claim after a refusal mutes every later Cancel.
 func TestCancelRun_FailedRPCHandsTheClaimBack(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("kas refused")}
@@ -715,6 +723,7 @@ func TestCancelRun_FailedRPCHandsTheClaimBack(t *testing.T) {
 // TestRunDispatch_TheOtherAskKindsReachTheRunTab pins that elicitations and questions block the step too, so they
 // must route through the synthetic chat id, not the refusal ladder.
 func TestRunDispatch_TheOtherAskKindsReachTheRunTab(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		method string
@@ -786,6 +795,7 @@ func TestRunDispatch_TheOtherAskKindsReachTheRunTab(t *testing.T) {
 // TestRunDispatch_TerminalCompletionClosesTheRunsHostSession pins the close on run_complete; it runs on its own
 // goroutine (it closes the forward loop's channel), hence the bounded poll.
 func TestRunDispatch_TerminalCompletionClosesTheRunsHostSession(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
@@ -1102,7 +1112,6 @@ func sentInputs(t *testing.T, br *fakeBridge) map[string]any {
 }
 
 func TestScheduledLaunchDropsUndeclaredInputs(t *testing.T) {
-	t.Parallel()
 	h, _, br := newTestHub()
 	declaringRecipe(br)
 	rec := capture.Default(t)
@@ -1123,7 +1132,6 @@ func TestScheduledLaunchDropsUndeclaredInputs(t *testing.T) {
 }
 
 func TestScheduledLaunchSendsDeclaredInputs(t *testing.T) {
-	t.Parallel()
 	h, _, br := newTestHub()
 	declaringRecipe(br)
 	rec := capture.Default(t)
@@ -1310,6 +1318,7 @@ func readKASProbe(t *testing.T, name string, v any) {
 // ReleaseTriggered releases the lease and closes the run's host session. Replayed in the recorded order (the cancel's
 // run_complete on the host lane, then the cancel's answer, then the release), the run ends aborted with nothing left.
 func TestReleaseTriggeredReleasesLeaseAndHost(t *testing.T) {
+	t.Parallel()
 	t.Run("releases the lease, the termination claim and the host session", func(t *testing.T) {
 		h, _, br := newTestHub()
 		h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
@@ -1498,6 +1507,7 @@ func TestCancelAbandonedEndsUninvokedRun(t *testing.T) {
 
 // A refused cancel of a run that was never invoked, so never armed, is still re-attempted while its lease is held.
 func TestCancelAbandonedRefusedRetriesUnarmedRun(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	setCancelRetryDelay(h.runs, time.Millisecond)
 	br.callRPCErrs = map[string]*marotte.RPCError{methodKiroWorkflowCancel: {Code: -32603, Message: "cancel refused"}}
@@ -1520,6 +1530,7 @@ func TestCancelAbandonedRefusedRetriesUnarmedRun(t *testing.T) {
 
 // A cancel KAS refuses leaves the run and its lease, so the recipe stays busy and the next launch names the run.
 func TestCancelAbandonedRefusedKeepsRecipeBusy(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	h.runs.cancelRetryBase = time.Hour
 	launchableRecipe(br, "wf_2")
@@ -1546,6 +1557,7 @@ func TestCancelAbandonedRefusedKeepsRecipeBusy(t *testing.T) {
 
 // A cancel that loses the termination claim sent nothing, so it is an error and not a landed cancel.
 func TestCancelAbandonedLostClaimIsAnError(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
@@ -1690,6 +1702,7 @@ func retryFailed(t *testing.T, h *Runtime) error {
 // triggered lease: a manual lease is held before the verb, its run_start confirms nothing, and a restart finds no
 // triggered lease to cancel. A failed hand-back refuses the retry and leaves the lease as it was.
 func TestRetryOfAbandonedRunTakesRetryLease(t *testing.T) {
+	t.Parallel()
 	t.Run("handed back", func(t *testing.T) {
 		dir := t.TempDir()
 		fc := &fakeConfirmer{retried: true}
@@ -1824,6 +1837,7 @@ func abandonedOnRig(t *testing.T) *confirmerRig {
 // A retry of a run whose attempt is still live keeps the triggered lease and starts a new life, so the retried run's
 // run_start reaches the confirmer again.
 func TestRetryOfLiveTriggeredRunRestartsBound(t *testing.T) {
+	t.Parallel()
 	t.Run("fake confirmer", retryLiveOnFake)
 	t.Run("the confirmer, the triggered lease held", func(t *testing.T) {
 		cr := newConfirmerRig(t)
