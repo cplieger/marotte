@@ -19,7 +19,7 @@ require (
 require (
 	github.com/cplieger/forgeapi/v3 v3.0.0-dev.2
 	github.com/cplieger/go/envx v1.1.0
-	github.com/cplieger/go/filesafe v1.1.0
+	github.com/cplieger/go/filesafe v1.2.0-dev.1
 	github.com/cplieger/go/health/v2 v2.0.0
 	github.com/cplieger/go/httpserver v1.5.0
 	github.com/cplieger/go/keyenc v1.3.0
@@ -32,7 +32,7 @@ require (
 	github.com/cplieger/go/textsafe v1.1.0
 	github.com/cplieger/go/wiregen/v2 v2.3.0-dev.4
 	github.com/cplieger/go/yamlenv v1.1.0
-	github.com/cplieger/toolbelt/v3 v3.16.0-dev.5
+	github.com/cplieger/toolbelt/v3 v3.16.0-dev.6
 	github.com/cplieger/web-terminal-engine/v6 v6.6.0-dev.3
 	github.com/creack/pty v1.1.24
 	github.com/evanw/esbuild v0.28.2

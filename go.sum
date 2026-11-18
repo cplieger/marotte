@@ -6,8 +6,8 @@ github.com/cplieger/forgeapi/v3 v3.0.0-dev.2 h1:2XAoyj4Bx/njSCmJuQuWopf0XwozthsB
 github.com/cplieger/forgeapi/v3 v3.0.0-dev.2/go.mod h1:/n8tTsY6OkZHsnQOinlJ7MG5CnnaZ8Od6TQCpGdA9dY=
 github.com/cplieger/go/envx v1.1.0 h1:AfJm5r7oR3zHmpplYwpNQL6yB7b50bmNAaOAijeG9aM=
 github.com/cplieger/go/envx v1.1.0/go.mod h1:USzzGAzdJGsU8ZYRmVaMGvKzgEGDDhXvUUsckSv4VfM=
-github.com/cplieger/go/filesafe v1.1.0 h1:zCInOHIkszZQKNxIQvPgaFg592E5J27+/2hfbPmzEfA=
-github.com/cplieger/go/filesafe v1.1.0/go.mod h1:ji4TnJD8S8kgKelJlCQxlHyX0UXQGTW1ylSBqH5xqhI=
+github.com/cplieger/go/filesafe v1.2.0-dev.1 h1:dAx3rSGWZaF4GfrL8a8tnBd7kHliXJ3RR+DFFePvaoE=
+github.com/cplieger/go/filesafe v1.2.0-dev.1/go.mod h1:ji4TnJD8S8kgKelJlCQxlHyX0UXQGTW1ylSBqH5xqhI=
 github.com/cplieger/go/health/v2 v2.0.0 h1:WHZiSYIyvmaFvkohJopPptEg9oW4QxRSV5HUxaeFUKo=
 github.com/cplieger/go/health/v2 v2.0.0/go.mod h1:Dmp78r+0ZHF2xMfOQqZ7c5pBiZF1el3QhLHA1y9um2A=
 github.com/cplieger/go/httpcache v1.1.0 h1:v5BOjRilWhWMKvi9ygNgfw/q/SufZLcO6y/CSHzk8Gs=
@@ -42,8 +42,8 @@ github.com/cplieger/go/wiregen/v2 v2.3.0-dev.4 h1:Pu05sCxMGStxXkBvh5QWG8rbTvlL5H
 github.com/cplieger/go/wiregen/v2 v2.3.0-dev.4/go.mod h1:nQ6ftWl/tPZj9tZf3kErrZgPFNBsP2vJrs6O6E8ta2I=
 github.com/cplieger/go/yamlenv v1.1.0 h1:vNaxHJnJMmg7MfRhqTBDaFPhMylEzzEtNefCvqU9ZPc=
 github.com/cplieger/go/yamlenv v1.1.0/go.mod h1:2kEi6iiRSxaaAusNrPoC6l0BUqvVVskkR1Cdpt15nUg=
-github.com/cplieger/toolbelt/v3 v3.16.0-dev.5 h1:7jcE9A6YxHlbeFjLzL9d5bUgZV7a+e6RPAcEos0Jb3A=
-github.com/cplieger/toolbelt/v3 v3.16.0-dev.5/go.mod h1:2RZjMKtDm0BEFSMirzps8ZLPuAv9txMkN77//vYHDF8=
+github.com/cplieger/toolbelt/v3 v3.16.0-dev.6 h1:5vRGFcvEQBtYwBAJdUXgsfB/CU7S84gs+rT/7QkNJag=
+github.com/cplieger/toolbelt/v3 v3.16.0-dev.6/go.mod h1:QDdU2+YOtIxPGMDI7O+EGo6L4YKPbVqJnthbfOdzGFY=
 github.com/cplieger/web-terminal-engine/v6 v6.6.0-dev.3 h1:m4ecookrXtoEoHSJnTUascE0RscSrvmdOknT3+SSSFg=
 github.com/cplieger/web-terminal-engine/v6 v6.6.0-dev.3/go.mod h1:Q9FfHBKIYRzkwHND2f1/psB2MeZtO9CgA8lev7LLx6c=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
