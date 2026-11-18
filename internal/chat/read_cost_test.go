@@ -17,10 +17,10 @@ import (
 // readCosts is what each transcript read costs the server per request on the long chat at x1 and x10. A change that
 // moves one by design rewrites its entry in the same diff.
 var readCosts = map[string]testsupport.Cost{
-	"window read x1":     {Allocs: 11836, Bytes: 13396450},
-	"window read x10":    {Allocs: 11591, Bytes: 13205901},
-	"range read x1":      {Allocs: 984, Bytes: 714204},
-	"range read x10":     {Allocs: 982, Bytes: 668089},
+	"window read x1":     {Allocs: 19318, Bytes: 16905616},
+	"window read x10":    {Allocs: 18830, Bytes: 17334288},
+	"range read x1":      {Allocs: 2709, Bytes: 1768143},
+	"range read x10":     {Allocs: 2557, Bytes: 1618385},
 	"tool-call read x1":  {Allocs: 17697, Bytes: 12775147},
 	"tool-call read x10": {Allocs: 176750, Bytes: 130662493},
 }

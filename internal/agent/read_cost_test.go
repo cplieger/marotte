@@ -43,7 +43,7 @@ func startStepTurn(t *testing.T, h *Runtime, path string) {
 	}
 	evt := marotte.NewEvent(marotte.EventTurnOpened, "", marotte.TurnOpenedPayload{WorkflowID: "wf_1", Entry: *opened})
 	h.runs.noteRunEvent(&evt)
-	joinInflight(t, h)
+	joinInflight(h)
 }
 
 // serveRun answers GET /api/runs/wf_1?query from the run routes and fails t unless it is a 200; it decodes nothing,
