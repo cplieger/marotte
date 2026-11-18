@@ -339,7 +339,9 @@ type Runtime struct {
 	bootPass sync.Once
 	// sessionExportMu serializes session exports: KAS writes each to a fixed file name per process.
 	sessionExportMu sync.Mutex
-	ciBusy          atomic.Bool
+	// codeIndex is kiro-cli's latest code-index status per workspace root (code_index.go).
+	codeIndex codeIndexStatuses
+	ciBusy    atomic.Bool
 }
 
 // Option configures optional Runtime parameters.

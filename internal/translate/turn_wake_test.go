@@ -349,6 +349,23 @@ func TestTurnWake_AnUnknownReasonIsKeptUnknown(t *testing.T) {
 	}
 }
 
+// A job's end wakes for no workflow message, even with one waiting, and the wake frames name no job.
+func TestTurnWake_AJobEndWakeIsKnownAndNamesNothing(t *testing.T) {
+	resetCensus(t)
+	var logbuf bytes.Buffer
+	captureSlog(t, &logbuf)
+	h := newWakeHarness(t)
+	h.send("notify_info")
+	h.wake("chunk_job_end_wake")
+
+	if w := h.onlyWake(); w.Reason != marotte.WakeReasonJobEnded || len(w.Steers) != 0 || w.Run != "" || w.Note != "" {
+		t.Errorf("turn_wake = %+v, want job_ended naming nothing", w)
+	}
+	if n := strings.Count(logbuf.String(), "UNKNOWN agentInitiatedReason"); n != 0 {
+		t.Errorf("the census reported job-end-wake %d times, want 0: %s", n, logbuf.String())
+	}
+}
+
 // KAS wakes the idle chat for the first message to reach it and buffers what follows behind that wake, even when
 // the first was filed before marotte closed the previous turn.
 func TestTurnWake_TheOldestMessageWaitingWhenTheTurnOpenedIsTheWaker(t *testing.T) {

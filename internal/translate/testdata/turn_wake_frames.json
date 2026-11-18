@@ -244,6 +244,19 @@
       }
     }
   },
+  "chunk_job_end_wake": {
+    "content": {
+      "type": "text",
+      "text": "The test run in the background finished; reading its result."
+    },
+    "_meta": {
+      "kiro": {
+        "agentInitiated": true,
+        "agentInitiatedReason": "job-end-wake",
+        "agentMode": "vibe"
+      }
+    }
+  },
   "tool_call_send_message_wake": {
     "sessionUpdate": "tool_call",
     "toolCallId": "tooluse_0001",

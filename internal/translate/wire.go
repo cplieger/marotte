@@ -126,9 +126,8 @@ type acpTrustClassifier struct {
 // classifierAsksPerson is the acpTrustClassifier decision that hands the call to a person.
 const classifierAsksPerson = "prompt"
 
-// agentInitiatedReason is KAS's engine-turn cause from its closed set. job-end-wake (kiro-cli 3.4.0) wakes a
-// session with jobs on, an arm marotte pins off (kascap's universalBackgroundTool rows), so it maps to no constant;
-// an unknown value is kept as sent.
+// agentInitiatedReason is KAS's engine-turn cause, from a closed set of four values; an unknown value is
+// kept as sent.
 type agentInitiatedReason string
 
 const (
@@ -141,6 +140,9 @@ const (
 	// reasonNotificationRewake re-delivers the notifications a reader's cancel cleared
 	// (rewakeClearedNotifications).
 	reasonNotificationRewake agentInitiatedReason = "notification-rewake"
+	// reasonJobEndWake is a background job of a session with jobs on ending while the session was
+	// idle (JobEndNotifications).
+	reasonJobEndWake agentInitiatedReason = "job-end-wake"
 )
 
 // wakeReason maps KAS's cause onto the turn_wake's; any other value, an empty one included, is
@@ -153,6 +155,8 @@ func (r agentInitiatedReason) wakeReason() marotte.WakeReason {
 		return marotte.WakeReasonRunFinished
 	case reasonNotificationRewake:
 		return marotte.WakeReasonRewake
+	case reasonJobEndWake:
+		return marotte.WakeReasonJobEnded
 	}
 	censusWakeReason(string(r))
 	return marotte.WakeReasonUnknown

@@ -34,7 +34,7 @@ func (t *Translator) recordWake(ctx context.Context, chatID marotte.ChatID, turn
 // A step message's is otherwise the oldest message still waiting that the chat received before the
 // turn opened and KAS could wake for: KAS reserves the wake for the first one reaching the idle
 // session and buffers the rest behind it. A finished run's is the run_complete this chat saw while
-// idle (wakeMemory.takeFinished).
+// idle (wakeMemory.takeFinished). A job's end names nothing.
 func (t *Translator) wakeOf(ctx context.Context, chatID marotte.ChatID, reason marotte.WakeReason) marotte.EntryTurnWake {
 	w := marotte.EntryTurnWake{Reason: reason}
 	switch reason {
@@ -44,7 +44,7 @@ func (t *Translator) wakeOf(ctx context.Context, chatID marotte.ChatID, reason m
 		}
 		return w
 	case marotte.WakeReasonStepMessage, marotte.WakeReasonRewake:
-	case marotte.WakeReasonUnknown:
+	case marotte.WakeReasonJobEnded, marotte.WakeReasonUnknown:
 		return w
 	}
 	causes, err := t.chats.WakeCauses(ctx, chatID, t.sessions.ParentACPSession(chatID))

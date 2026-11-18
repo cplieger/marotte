@@ -182,10 +182,10 @@ func TestWorkflowMessage_AWakeSettlesOnlyAMessageThatCanHaveStartedItOnce(t *tes
 	}
 }
 
-// Only a send-message-wake names a message as its cause: a run's completion wake, KAS's re-prompt after a cancel and a
-// reason this build does not know settle nothing.
+// Only a send-message-wake names a message as its cause: a run's completion wake, KAS's re-prompt after a cancel, a
+// background job's end and a reason this build does not know settle nothing.
 func TestWorkflowMessage_AnEngineTurnOfAnotherReasonSettlesNoMessage(t *testing.T) {
-	for _, reason := range []string{"workflow-complete-wake", "notification-rewake", "some-later-wake"} {
+	for _, reason := range []string{"workflow-complete-wake", "notification-rewake", "job-end-wake", "some-later-wake"} {
 		t.Run(reason, func(t *testing.T) {
 			deps, tr := messageDeps(t)
 			stepReport(t, tr, "warning", "a report")

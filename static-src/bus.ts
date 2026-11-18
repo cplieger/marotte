@@ -4,8 +4,10 @@
 import { createBus } from "@cplieger/reactive";
 
 import type {
+  CodeIndexStatusPayload,
   EngineStatus,
   FilesChangedPayload,
+  MCPIdentityProviderPayload,
   MCPPrewarmPayload,
   MCPSignInClosedPayload,
   MCPStatusPayload,
@@ -120,12 +122,14 @@ export interface SSEPayloads {
   readonly mcp_config_changed: undefined;
   readonly mcp_pool_changed: undefined;
   readonly mcp_status: MCPStatusPayload;
+  readonly mcp_identity_provider: MCPIdentityProviderPayload;
   readonly mcp_sign_in_closed: MCPSignInClosedPayload;
   readonly mcp_prewarm: MCPPrewarmPayload;
   readonly mode_changed: { readonly mode_id: string };
   readonly safety_status: SafetyStatusPayload;
   readonly safety_properties: SafetyPropertiesPayload;
   readonly knowledge_indexing: KnowledgeIndexingPayload;
+  readonly code_index_status: CodeIndexStatusPayload;
   readonly governance_state: GovernanceStatePayload;
   readonly open_external_url: OpenExternalURLPayload;
   readonly compaction_started: undefined;

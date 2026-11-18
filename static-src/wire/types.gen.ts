@@ -174,7 +174,7 @@ export type TurnSeverity = "running" | "clean" | "stopped" | "broken";
 
 export type WakeNote = "network" | "network_lost" | "repeat_cap";
 
-export type WakeReason = "step_message" | "run_finished" | "rewake" | "unknown";
+export type WakeReason = "step_message" | "run_finished" | "rewake" | "job_ended" | "unknown";
 
 export type WhoamiState = "signed_in" | "signed_out" | "unavailable";
 
@@ -596,6 +596,55 @@ export interface CloneRepo {
  */
 export interface CloseImpact {
   chats: ChatWork[];
+}
+
+/**
+ * CodeIndexBuild is one index build. State is kiro-cli's pending, running, succeeded, failed or canceled;
+ * Phase is scan, parse, graph or save, "" when kiro-cli names none. Both are kept as sent. Message is
+ * kiro-cli's progress line; Reason and Detail say why a build failed or was canceled.
+ */
+export interface CodeIndexBuild {
+  build_id: string;
+  state: string;
+  phase?: string;
+  message?: string;
+  reason?: string;
+  detail?: string;
+}
+
+/**
+ * CodeIndexStatusPayload is the payload for type="code_index_status" and one row of GET /api/code-index:
+ * kiro-cli's latest report on a workspace root's code index (_kiro/codeIntelligence/indexStatus). Build is
+ * the newest build kiro-cli knows for the root, nil when none ran since the engine started.
+ */
+export interface CodeIndexStatusPayload {
+  build?: CodeIndexBuild;
+  workspace_root: string;
+  store: CodeIndexStore;
+}
+
+/**
+ * CodeIndexStore is the saved index. State is kiro-cli's none, ready or unreadable, kept as sent because
+ * its set is open; Summary counts a ready index.
+ */
+export interface CodeIndexStore {
+  summary?: CodeIndexSummary;
+  state: string;
+}
+
+/** CodeIndexSummary is what a saved index holds. */
+export interface CodeIndexSummary {
+  files: number;
+  functions: number;
+}
+
+/**
+ * CodeIndexView is GET /api/code-index: Root is the workspace root Build and Cancel act on, and Statuses
+ * is the latest status of every root kiro-cli reported, sorted by root.
+ */
+export interface CodeIndexView {
+  root: string;
+  statuses: CodeIndexStatusPayload[];
 }
 
 /**

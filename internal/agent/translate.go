@@ -55,6 +55,8 @@ func (rt *Runtime) initDispatch() {
 		// A custom agent's own knowledge bases; the Settings list never shows them.
 		methodKiroKnowledgeIndexingStarted:   rt.translator.HandleKnowledgeIndexing(marotte.KnowledgeIndexingStarted),
 		methodKiroKnowledgeIndexingCompleted: rt.translator.HandleKnowledgeIndexing(marotte.KnowledgeIndexingCompleted),
+		// Also on a run host's door ((*Runtime).dispatch).
+		methodKiroCodeIndexStatus: rt.onCodeIndexStatus,
 	}
 	for method, kind := range map[string]marotte.RunProgressKind{
 		methodWFNodeStart:     marotte.RunProgressNodeStart,

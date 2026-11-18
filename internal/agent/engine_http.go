@@ -8,11 +8,15 @@ import (
 	"github.com/cplieger/marotte/internal/httpreply"
 )
 
-// registerEngineRoutes mounts the engine's status, its confirmed restart and the configuration standing.
+// registerEngineRoutes mounts the engine's status, its confirmed restart, the configuration standing and the code
+// index's status and controls (code_index.go).
 func (rt *Runtime) registerEngineRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/engine", rt.handleEngineStatus)
 	mux.Handle("POST /api/engine/restart", rt.lifecycle.admitUnlessDraining(http.HandlerFunc(rt.handleEngineRestart)))
 	mux.HandleFunc("GET /api/config/standing", rt.standing.handle)
+	mux.HandleFunc("GET /api/code-index", rt.handleCodeIndex)
+	mux.HandleFunc("POST /api/code-index/build", rt.handleCodeIndexBuild)
+	mux.HandleFunc("POST /api/code-index/cancel", rt.handleCodeIndexCancel)
 }
 
 func (rt *Runtime) handleEngineStatus(w http.ResponseWriter, _ *http.Request) {

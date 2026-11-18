@@ -42,6 +42,13 @@ const (
 	methodKiroCodeIntel       = "_kiro/codeIntelligence" // C→A request: code-intelligence status/init (subcommand param); needs the session opted in via initialize _meta.kiro.settings
 )
 
+// The code index's verbs, served while the engine's c2s setting is on; a refusal is -32000.
+const (
+	methodKiroCodeIndexStatus      = "_kiro/codeIntelligence/indexStatus" // A→C notification: {sessionId, workspaceRoot, store {state, summary? {files, functions}}, build? {buildId, state, phase, message, reason?, detail?}}
+	methodKiroCodeIndexStartBuild  = "_kiro/codeIntelligence/startBuild"  // C→A request: {sessionId, analysisScope?} → {buildId, workspaceRoot, analysisScope, status}
+	methodKiroCodeIndexCancelBuild = "_kiro/codeIntelligence/cancelBuild" // C→A request: {sessionId, buildId?} → {status: canceled|not-running}
+)
+
 // methodKiroSessionNotify is the notification KAS's `send_message` builtin raises:
 // `{sessionId, callerSessionId, message, severity, workflowId?, nodeId?}`. `message` is the only
 // carrier of a step's question (KAS's pause detail is empty); a `session/prompt` to
