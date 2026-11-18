@@ -10,7 +10,7 @@ import { _resetForTest as resetScrollLock } from "../legacy-ui/modal.js";
 
 import indexHtml from "../../static/index.html?raw";
 import type { Pele } from "../mermaid-svg.js";
-import type { Inventory, PolicyView } from "../wire/types.gen.js";
+import type { Inventory, PolicyView, SearchResponse } from "../wire/types.gen.js";
 import type { RunNode } from "../run-store.js";
 import { settingsPayload } from "./settings.js";
 
@@ -64,6 +64,7 @@ const { buildAttachmentPill } = await import("../attachment-pill.js");
 const { buildChip } = await import("../chip.js");
 const { initNativePolicyUI, loadNativePolicy } = await import("../permissions-ui.js");
 const { initTools, loadToolsList } = await import("../tools.js");
+const { formatDate, formatSize } = await import("../files-shared.js");
 const { initKnowledge, loadKnowledge } = await import("../knowledge.js");
 const { mountNewDocButton } = await import("../docs-new.js");
 const { mountSteerStack } = await import("../pending-steers.js");
@@ -824,6 +825,43 @@ async function plantToolRows(): Promise<void> {
   await rendered("#tools-list .list-row", 3);
 }
 
+/** GET /api/tools/search's answer: a catalog entry, a Debian package with its version, an LSP. */
+const TOOL_HITS: SearchResponse = {
+  results: [
+    {
+      name: "ripgrep",
+      source: "aqua:BurntSushi/ripgrep",
+      description: "Recursively search directories for a regex pattern",
+    },
+    {
+      name: "ripgrep",
+      source: "apt:ripgrep",
+      apt: true,
+      version: "14.1.1-1",
+      description: "Recursively searches directories for a regex pattern",
+    },
+    {
+      name: "pyright",
+      source: "npm:pyright",
+      lsp: true,
+      description: "Static type checker for Python",
+    },
+  ],
+  apt_available: true,
+  truncated: false,
+};
+
+/** The Add-tool modal's search hits, opened by its button and rendered by `tools.ts`. */
+export async function plantToolSearch(): Promise<void> {
+  await serve(
+    http.get("/api/tools", () => HttpResponse.json(INVENTORY)),
+    http.get("/api/tools/search", () => HttpResponse.json(TOOL_HITS)),
+  );
+  initTools();
+  q("#tool-add-btn").click();
+  await rendered("#tool-search-results .tool-hit", TOOL_HITS.results.length);
+}
+
 /** The knowledge rows `knowledge.ts` renders from GET /api/knowledge. */
 async function plantKnowledgeRows(): Promise<void> {
   await serve(
@@ -914,7 +952,8 @@ function plantFileRows(): void {
       badge.setAttribute("aria-label", "Git status: modified");
       row.appendChild(badge);
     }
-    row.appendChild(text("span", "fb-meta", "1.2 KB"));
+    const meta = [formatSize(1234), formatDate(Date.UTC(2026, 7, 14, 9, 30)), "-rw-r--r--"];
+    row.appendChild(text("span", "fb-meta", meta.join("   ·   ")));
     host.appendChild(row);
   }
 }

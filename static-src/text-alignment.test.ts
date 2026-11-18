@@ -19,6 +19,7 @@ import {
   clearSurface,
   frames,
   mountSurface,
+  plantToolSearch,
   q,
   type Size,
   type Surface,
@@ -287,7 +288,7 @@ const SITES: readonly Site[] = [
     surface: surface("the model popup"),
     frame: ".pill-model-scroll .pill-model-item",
     sizes: [1180, 390],
-    must: [/^label: .*pill-model-name$/, /^label: .*pill-model-meta$/],
+    must: [/^label: .*pill-model-name$/, /^line: .*pill-model-name \| .*pill-model-meta$/],
   },
   {
     id: "the role card's name, shadow and scope",
@@ -541,5 +542,93 @@ describe("every line of a row", () => {
         },
       );
     }
+  }
+});
+
+const fileRows = surface("the file browser's rows");
+
+/** A fine pointer's list too narrow for one line: the other arm of the stacked row (19-files.css). */
+const NARROW_FILE_ROWS: Surface = {
+  ...fileRows,
+  name: "the file browser's rows in a narrow list",
+  setup: async (size) => {
+    await fileRows.setup(size);
+    q(".fb-list-wrap").style.inlineSize = "24rem";
+  },
+};
+
+/** A layout unit: Blink's 1/64 px, the finest step a box edge takes. */
+const LAYOUT_UNIT_PX = 1 / 64;
+
+describe("the stacked file row's meta line", () => {
+  for (const [vp, sf] of [
+    [VPS[0], NARROW_FILE_ROWS],
+    [VPS[1], fileRows],
+  ] as const) {
+    it(`stays in the row's content box and holds its text at ${String(vp.w)}x${String(vp.h)}`, async () => {
+      await page.viewport(vp.w, vp.h);
+      await mountSurface(sf, vp.size, vp.tier);
+      await frames();
+      const metas = [...document.querySelectorAll<HTMLElement>("#fb-list .fb-row > .fb-meta")];
+      expect(metas.length, "a file row's meta").toBeGreaterThan(0);
+      const off: string[] = [];
+      for (const meta of metas) {
+        const row = meta.parentElement!;
+        const rcs = getComputedStyle(row);
+        expect(rcs.display, "the row stacks its meta under its name").toBe("grid");
+        const rb = row.getBoundingClientRect();
+        // The row's padding is sized so its two line boxes are its content height (19-files.css).
+        const content = {
+          top: rb.top + parseFloat(rcs.borderTopWidth) + parseFloat(rcs.paddingTop),
+          bottom: rb.bottom - parseFloat(rcs.borderBottomWidth) - parseFloat(rcs.paddingBottom),
+        };
+        const box = meta.getBoundingClientRect();
+        // The meta clips at its box (`overflow: hidden`), so its text's content area must fit it.
+        const range = document.createRange();
+        range.selectNodeContents(meta);
+        const text = range.getClientRects()[0]!;
+        const past = {
+          "box below the row's content": box.bottom - content.bottom,
+          "box above the row's content": content.top - box.top,
+          "text below the box": text.bottom - box.bottom,
+          "text above the box": box.top - text.top,
+        };
+        for (const [what, px] of Object.entries(past)) {
+          if (px > LAYOUT_UNIT_PX) {
+            off.push(`${meta.textContent}: ${what} by ${String(r2(px))} px`);
+          }
+        }
+      }
+      expect(off, `at DPR ${String(window.devicePixelRatio)}`).toEqual([]);
+    });
+  }
+});
+
+/** A hit row's height with no row trim on its runs, which the trim must keep: measured on
+ *  marotte 768fa985^ in Chromium and WebKit at ratios 1 and 2, in the fonts this suite renders. */
+const UNTRIMMED_HIT_PX = 56.390625;
+
+const TOOL_SEARCH: Surface = {
+  ...surface("Settings, Tools"),
+  name: "the Add-tool search",
+  setup: plantToolSearch,
+};
+
+describe("the Add-tool search's hit rows", () => {
+  for (const vp of VPS) {
+    it(`keep their untrimmed height at ${String(vp.w)}x${String(vp.h)}`, async () => {
+      await page.viewport(vp.w, vp.h);
+      await mountSurface(TOOL_SEARCH, vp.size, vp.tier);
+      await frames();
+      const heights = [...document.querySelectorAll(".tool-hit")].map(
+        (h) => h.getBoundingClientRect().height,
+      );
+      expect(heights.length, "the search's hits").toBe(3);
+      // Exact to a layout unit: a box edge's finest step.
+      expect(
+        heights.filter((h) => Math.abs(h - UNTRIMMED_HIT_PX) >= LAYOUT_UNIT_PX),
+        `at DPR ${String(window.devicePixelRatio)}, not ${String(UNTRIMMED_HIT_PX)} px`,
+      ).toEqual([]);
+    });
   }
 });
