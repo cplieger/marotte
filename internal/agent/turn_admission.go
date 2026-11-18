@@ -218,7 +218,7 @@ const kasHoldWarnAfter = 15 * time.Minute
 const wakeHoldBound = 60 * time.Second
 
 // awaitKASIdle waits, after the fenced turn closed, until KAS's state permits session calls (kasPermits), so the
-// closer's model switch, compaction and drain are not queued beside a run KAS still reports, such as the cancelled
+// closer's model switch and drain are not queued beside a run KAS still reports, such as the cancelled
 // one or KAS's re-wake of the notifications a cancel cleared, where KAS streams only one of them (its adapter owns
 // the last execution). False when a turn opened meanwhile, whose own close drains, when the life ended (its end
 // re-mints the epoch, so the fence fails), or when ctx ended.

@@ -2223,6 +2223,28 @@ func TestSessionDoorCarriesDisableAutoCompaction(t *testing.T) {
 	}
 }
 
+// TestSessionDoorCarriesTheAutoCompactionThreshold pins SessionOpts.AutoCompactionThreshold on both verbs: sent with
+// enabled true, which KAS needs to read it, and withheld at zero.
+func TestSessionDoorCarriesTheAutoCompactionThreshold(t *testing.T) {
+	for _, method := range []string{"session/new", "session/load"} {
+		for _, pct := range []int{0, 65} {
+			opts := &marotte.SessionOpts{Model: "m", AutoCompactionThreshold: pct}
+			if method == "session/load" {
+				opts.SessionID = "sess_resume_door"
+			}
+			settings := metaKiroSettings(t, captureRequest(t, method, opts))
+			got, present := settings["compaction"].(map[string]any)
+			switch {
+			case pct == 0 && present:
+				t.Errorf("%s with no threshold sent compaction=%v, want it withheld", method, got)
+			case pct != 0 && (got["enabled"] != true || got["autoCompactionThreshold"] != float64(pct)):
+				t.Errorf("%s with threshold %d sent compaction=%v, want {\"enabled\":true,\"autoCompactionThreshold\":%d}",
+					method, pct, settings["compaction"], pct)
+			}
+		}
+	}
+}
+
 // TestSessionDoorWorkflowsFollowsTheSetting pins the Workflows setting on both verbs; off is sent as
 // {"enabled":false}, since on load an absent key keeps the persisted value.
 func TestSessionDoorWorkflowsFollowsTheSetting(t *testing.T) {

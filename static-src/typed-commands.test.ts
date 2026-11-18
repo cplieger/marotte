@@ -123,13 +123,30 @@ describe("handleTypedCommand", () => {
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
-  // The server queues a compaction asked for mid-turn and runs it at the turn's end.
-  it("dispatches /compact mid-turn and refuses nothing", () => {
+  // kiro-cli refuses a compaction while a turn runs, so the press says so and sends nothing.
+  it("refuses /compact mid-turn", () => {
     seedConversation();
     setBusy("c1", true);
     expect(handleTypedCommand("c1", "/compact")).toBe(true);
-    expect(dispatch).toHaveBeenCalledExactlyOnceWith({ chatID: "c1" });
-    expect(toasts).toEqual([]);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(toasts).toEqual(["Compaction is unavailable while the agent is working."]);
+  });
+
+  it("refuses /compact while the chat's compaction runs", () => {
+    seedConversation();
+    store.upsertHeader({
+      id: "c1",
+      name: "test",
+      run: runAt(++runVersion, []),
+      usage: { context_pct: 0, context_size: 0, credits: 0, last_turn_ms: 0, has_real_data: false },
+      turn_count: 1,
+      created_at: 0,
+      updated_at: 0,
+      compacting: true,
+    });
+    expect(handleTypedCommand("c1", "/compact")).toBe(true);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(toasts).toEqual(["The context is already being compacted."]);
   });
 
   it("refuses /compact on a chat with no conversation", () => {

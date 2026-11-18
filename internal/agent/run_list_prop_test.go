@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"errors"
 	"fmt"
 	"math/rand/v2"
 	"slices"
@@ -14,7 +13,7 @@ import (
 )
 
 // listWorld models what a runList's glue reports to it: kiro-cli's state, the admission slot, the stop holds, the
-// turns the registry holds open, close tails and reservations owed, and the compaction calls written.
+// turns the registry holds open, and close tails and reservations owed.
 type listWorld struct {
 	r          *rand.Rand
 	l          *runList
@@ -22,7 +21,6 @@ type listWorld struct {
 	turns      map[string]*worldTurn
 	tails      map[string]string // closing entry id -> its turn id, for each tail owed
 	releases   []uint64          // reservations a closed turn's runner still holds
-	calls      map[string]*worldCall
 	t          *testing.T
 	step       int
 	tok        uint64
@@ -30,20 +28,12 @@ type listWorld struct {
 	nextSeq    uint64
 	stopSeq    uint64
 	ids        int
-	resumes    int // resumes opened since the last turn the reader sent opened
 	admit      bool
 	gate       bool
 	composerBy map[string]int      // submit-origin entry id -> composer claims made
 	reached    map[string]int      // the shapes and events the run reached
 	idle       *runEntry           // a revert or summary whose caller waits on takeIdle
 	retryAhead map[string][]string // a retry's id -> the turn-kind entries pending ahead of it when it was listed
-	failsafeOf map[string]string   // a resume's id -> the compaction it follows
-	accepted   map[string]bool     // compactions whose call was accepted with no cancel
-	cancelled  map[string]bool     // compactions the reader cancelled while running
-	// readerStopped names the resumes that waited when the reader stopped something or pressed send-now.
-	readerStopped map[string]bool
-	// limited names the turns a failsafe stop at the resume limit holds, whose close owes the reader the notice.
-	limited map[string]bool
 }
 
 type worldTurn struct {
@@ -56,18 +46,11 @@ type worldTurn struct {
 	stopped   bool
 }
 
-type worldCall struct {
-	sawTurn bool
-}
-
 func newListWorld(t *testing.T, seed uint64) *listWorld {
 	return &listWorld{
 		t: t, r: rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)), l: &runList{}, admit: true,
 		stops: map[uint64]bool{}, turns: map[string]*worldTurn{}, tails: map[string]string{},
-		calls: map[string]*worldCall{}, composerBy: map[string]int{},
-		reached: map[string]int{}, retryAhead: map[string][]string{},
-		failsafeOf: map[string]string{}, accepted: map[string]bool{}, cancelled: map[string]bool{},
-		readerStopped: map[string]bool{}, limited: map[string]bool{},
+		composerBy: map[string]int{}, reached: map[string]int{}, retryAhead: map[string][]string{},
 	}
 }
 
@@ -82,8 +65,7 @@ func (w *listWorld) facts() *orderFacts {
 			return command.Reservation{Chat: "c1", Token: w.tok, Stamp: 1}, takeGranted
 		},
 		newOffer: func() uint64 { w.ids++; return uint64(w.ids) },
-		stamp:    1, nextSeq: w.nextSeq, stopSeq: w.stopSeq, stops: len(w.stops),
-		admit: w.admit, sessionCall: w.admit,
+		stamp:    1, nextSeq: w.nextSeq, stopSeq: w.stopSeq, admit: w.admit,
 	}
 }
 
@@ -126,12 +108,6 @@ func (w *listWorld) settle() {
 		if e.kind == marotte.RunKindRetry && before[e.id] {
 			w.fail("retry %s taken after a later wire turn or a stop overtook its turn", e.id)
 		}
-		if e.kind == marotte.RunKindResume && !w.accepted[w.failsafeOf[e.id]] {
-			w.fail("resume %s taken though its compaction %s was not accepted", e.id, w.failsafeOf[e.id])
-		}
-		if e.kind == marotte.RunKindResume && w.readerStopped[e.id] {
-			w.fail("resume %s taken after a stop of the reader's", e.id)
-		}
 		for _, id := range w.retryAhead[e.id] {
 			if _, a := w.l.find(id); a != nil && a.state == marotte.RunPending {
 				w.fail("retry %s taken while %s, queued ahead of it, still waits", e.id, id)
@@ -169,35 +145,28 @@ func (w *listWorld) check() {
 	case 0, 1:
 	case 2:
 		a, b := live[0], live[1]
-		s1 := (a.kind == marotte.RunKindCompaction || a.kind == marotte.RunKindRevert) && a.state == marotte.RunRunning && b.wire()
+		s1 := a.kind == marotte.RunKindRevert && a.state == marotte.RunRunning && b.wire()
 		s2 := a.wire() && b.kind.TurnKind() && !b.kiroCLI() &&
 			(a.state != marotte.RunClosing || (b.state != marotte.RunStarting && b.state != marotte.RunRunning))
-		s3 := a.wire() && a.yields && a.state.Live() && a.state != marotte.RunStarting &&
-			b.kind == marotte.RunKindCompaction && b.state == marotte.RunStarting
 		switch {
 		case s1:
-			w.reached["turn under a compaction"]++
+			w.reached["wire turn under a revert"]++
 		case s2 && b.state == marotte.RunRunning:
 			w.reached["wire turn beside a sent prompt"]++
 		case s2:
 			w.reached["wire turn beside a taken turn"]++
-		case s3:
-			w.reached["fold turn ahead of its compaction"]++
 		default:
 			w.fail("two live entries in no allowed shape")
 		}
 	default:
 		w.fail("%d live entries", n)
 	}
-	compactions, ids := 0, map[string]bool{}
+	ids := map[string]bool{}
 	for i, e := range l.entries {
 		if ids[e.id] {
 			w.fail("id %s twice", e.id)
 		}
 		ids[e.id] = true
-		if e.kind == marotte.RunKindCompaction {
-			compactions++
-		}
 		if e.runEntry() && (i != 0 || n != 1) {
 			w.fail("a run entry beside another live entry")
 		}
@@ -215,10 +184,6 @@ func (w *listWorld) check() {
 			w.fail("a held %s", e.kind)
 		}
 	}
-	if compactions > 1 {
-		w.fail("%d compactions", compactions)
-	}
-	w.checkResume()
 	others := 0
 	for _, e := range live {
 		if !e.runEntry() {
@@ -248,131 +213,7 @@ func (w *listWorld) check() {
 			w.fail("open turn %s (wire %v) has %d live entries", id, tr.wire, named)
 		}
 	}
-	for _, e := range live {
-		if e.kind == marotte.RunKindCompaction && e.state == marotte.RunRunning && w.calls[e.id] == nil {
-			w.fail("compaction %s running with no call written", e.id)
-		}
-	}
 	w.checkTaken()
-}
-
-// checkResume asserts the failsafe's rules: at most one resume waiting (a running resume can itself be stopped and
-// list the next), and a resume waiting behind its compaction or after that compaction was accepted.
-func (w *listWorld) checkResume() {
-	resumes := w.where(func(e *runEntry) bool { return e.kind == marotte.RunKindResume && !e.live() })
-	if len(resumes) > 1 {
-		w.fail("%d resumes waiting", len(resumes))
-	}
-	for _, r := range resumes {
-		c := w.failsafeOf[r.id]
-		ci, ce := w.l.find(c)
-		ri, _ := w.l.find(r.id)
-		if (ce == nil || ci > ri) && !w.accepted[c] {
-			w.fail("resume %s waits with its compaction %s neither ahead of it nor accepted", r.id, c)
-		}
-	}
-}
-
-// failsafe is a reading at the failsafe point during the turn of a live entry, or a reading under the point.
-func (w *listWorld) failsafe() {
-	if w.r.IntN(3) == 0 {
-		w.l.usageUnderThePoint()
-		return
-	}
-	turn := ""
-	if h := w.pick(w.live()); h != nil {
-		turn = h.turnID
-	}
-	w.fireIn(turn)
-}
-
-// refill reads under the point and then at the failsafe point in a resume's own turn (sent once the stop holds
-// ended), or in kiro-cli's turn opened ahead of a waiting resume.
-func (w *listWorld) refill() {
-	live := w.live()
-	switch {
-	case len(live) == 1 && live[0].kind == marotte.RunKindResume && live[0].turnID != "":
-		// kiro-cli admitted the resume's take and waits for its prompt.
-		clear(w.stops)
-		w.admit = true
-		w.send(live[0])
-	case len(live) == 0 && w.l.resume() != nil:
-		w.wireOpen()
-	default:
-		return
-	}
-	w.l.usageUnderThePoint()
-	if h := w.live(); len(h) == 1 {
-		w.fireIn(h[0].turnID)
-	}
-}
-
-// fireIn is a reading at the failsafe point during turn.
-func (w *listWorld) fireIn(turn string) {
-	waiting := w.l.resume()
-	if c := w.l.compaction(); c != nil && c.origin == marotte.RunFromFailsafe {
-		waiting = nil
-	}
-	notices := len(w.l.fx.notices)
-	w.tok++
-	token := w.tok
-	w.ids++
-	resumeID := "fs-" + strconv.Itoa(w.ids)
-	snap := w.snapshot()
-	plan := w.l.failsafe(failsafeFacts{turnID: turn, resumeID: resumeID, token: token})
-	if plan.arm == stopNothing {
-		if !slices.EqualFunc(snap, w.l.project(), runEntryEqual) {
-			w.fail("a failsafe that stopped nothing changed the list")
-		}
-		return
-	}
-	if plan.arm != stopRunning || plan.entry == nil || plan.entry.turnID != turn {
-		w.fail("the failsafe for %s answered %+v", turn, plan)
-	}
-	w.reached["failsafe fired"]++
-	c := w.l.compaction()
-	if c == nil {
-		w.fail("the failsafe listed no compaction")
-	}
-	_, listed := w.l.find(resumeID)
-	var waitedOn string
-	switch {
-	case waiting != nil:
-		w.reached["failsafe ahead of a waiting resume"]++
-		if listed != nil || w.l.resume() != waiting {
-			w.fail("a fire ahead of the waiting resume %s left %v waiting", waiting.id, w.l.resume())
-		}
-		waitedOn, w.failsafeOf[waiting.id] = w.failsafeOf[waiting.id], c.id
-	case listed != nil:
-		w.failsafeOf[resumeID] = c.id
-	case c.fsToken == token:
-		w.reached["failsafe at the resume limit"]++
-		w.limited[turn] = true
-	}
-	if len(w.l.fx.notices) > notices {
-		w.fail("the failsafe told the reader of its stop before the stop held")
-	}
-	w.stops[token] = true
-	w.stopSeq = w.nextSeq
-	// A fire at the resume limit is rare and is left standing, so the generator reaches its notice at the close.
-	if !w.limited[turn] && w.r.IntN(4) == 0 {
-		w.reached["failsafe undone"]++
-		delete(w.limited, turn)
-		w.l.stopUndone(token, func(id string) bool { return w.turns[id] != nil })
-		if _, r := w.l.find(resumeID); r != nil {
-			w.fail("an undone failsafe left its resume %s", resumeID)
-		}
-		if waiting != nil {
-			if w.l.resume() != waiting {
-				w.fail("an undone failsafe took the resume %s an earlier stop listed", waiting.id)
-			}
-			w.failsafeOf[waiting.id] = waitedOn
-		}
-		return
-	}
-	if tr := w.turns[turn]; tr != nil {
-		tr.stopped = true
-	}
 }
 
 // checkTaken asserts the head rule's liveness: a pending entry the rule allows is taken.
@@ -390,10 +231,6 @@ func (w *listWorld) checkTaken() {
 			continue
 		}
 		switch e.kind {
-		case marotte.RunKindCompaction:
-			if w.admit && len(w.stops) == 0 {
-				w.fail("pending compaction %s not taken", e.id)
-			}
 		case marotte.RunKindRevert:
 		default:
 			// A row waits while the reader's stop holds the queue, which the page reads as StopPaused.
@@ -461,17 +298,6 @@ func (w *listWorld) launch() {
 	if e == nil {
 		return
 	}
-	if e.kind == marotte.RunKindCompaction {
-		step, fold := w.l.compactionStart(e.id, w.facts())
-		switch step {
-		case compactCloseFold:
-			w.closeTurn(fold.turnID, true)
-		case compactWrite:
-			w.calls[e.id] = &worldCall{}
-		case compactAbort, compactWaitFold:
-		}
-		return
-	}
 	if e.turnID != "" {
 		w.send(e)
 		return
@@ -479,10 +305,7 @@ func (w *listWorld) launch() {
 	if w.r.IntN(5) == 0 {
 		token := e.res.Token
 		w.release(token)
-		removed := w.l.launched(e.id, e.res.Token, "", launchFailed, marotte.ErrChatClosedDuringCall)
-		if removed && w.l.compaction() != nil && w.l.compaction().id == e.id {
-			w.fail("a refused launch removed the compaction")
-		}
+		w.l.launched(e.id, e.res.Token, "", launchFailed, marotte.ErrChatClosedDuringCall)
 		return
 	}
 	w.nextSeq++
@@ -491,14 +314,6 @@ func (w *listWorld) launch() {
 		w.fail("prompt-class open of %s not placed", e.id)
 	}
 	w.turns[id] = &worldTurn{entry: e.id, token: e.res.Token, seq: w.nextSeq}
-	switch e.kind {
-	case marotte.RunKindResume:
-		if w.resumes++; w.resumes > compactionFailsafeResumes {
-			w.fail("resume %s is the %d. since the reader's last turn", e.id, w.resumes)
-		}
-	case marotte.RunKindRow:
-		w.resumes = 0
-	}
 	if w.composerBy[e.id] == 0 && w.l.claimComposer(e.id) {
 		w.composerBy[e.id]++
 	}
@@ -541,10 +356,6 @@ func (w *listWorld) closeTurn(turnID string, handoff bool) {
 	}
 	delete(w.turns, turnID)
 	clean := !handoff && !tr.stopped && w.r.IntN(3) > 0
-	var compact marotte.RunEntryOrigin
-	if w.r.IntN(4) == 0 {
-		compact = marotte.RunFromTurnEnd
-	}
 	var queued []string
 	for _, q := range w.l.entries[w.l.liveLen():] {
 		if q.kind.TurnKind() {
@@ -552,19 +363,10 @@ func (w *listWorld) closeTurn(turnID string, handoff bool) {
 		}
 	}
 	w.ids++
-	notices := len(w.l.fx.notices)
 	w.l.turnClosed(listClose{
-		turnID: turnID, retryID: "r-" + strconv.Itoa(w.ids), compact: compact, seq: tr.seq, clean: clean, completed: clean,
+		turnID: turnID, retryID: "r-" + strconv.Itoa(w.ids), seq: tr.seq, clean: clean,
 		handoff: handoff, emptyRetry: clean && w.r.IntN(2) == 0,
 	}, w.facts())
-	told := len(w.l.fx.notices) > notices
-	if want := w.limited[turnID] && !clean; told != want {
-		w.fail("the close of %s told the reader of a stop at the resume limit: %v, want %v", turnID, told, want)
-	}
-	if told {
-		w.reached["resume limit notice at the close"]++
-	}
-	delete(w.limited, turnID)
 	for i, r := range w.l.entries {
 		if r.kind != marotte.RunKindRetry || r.replaces != turnID {
 			continue
@@ -603,54 +405,13 @@ func (w *listWorld) wireOpen() {
 	w.nextSeq++
 	id := "w-" + strconv.FormatUint(w.nextSeq, 10)
 	bracketed := w.r.IntN(2) == 0
-	for _, e := range w.live() {
-		if e.kind == marotte.RunKindCompaction && e.state == marotte.RunRunning && w.calls[e.id] != nil {
-			w.calls[e.id].sawTurn = true
-		}
-	}
 	if !w.l.turnOpened(openFacts{turnID: id, seq: w.nextSeq, wire: true, bracketed: bracketed}) {
 		w.fail("wire open not placed")
 	}
 	w.turns[id] = &worldTurn{wire: true, bracketed: bracketed, seq: w.nextSeq}
 }
 
-func (w *listWorld) endCall() {
-	var id string
-	for k := range w.calls {
-		if id == "" || k < id {
-			id = k
-		}
-	}
-	if id == "" {
-		return
-	}
-	call := w.calls[id]
-	delete(w.calls, id)
-	accepted := w.r.IntN(3) == 0
-	var err error
-	if !accepted && w.r.IntN(3) == 0 {
-		err = errors.New("model failure")
-	}
-	if accepted && !w.cancelled[id] {
-		w.accepted[id] = true
-	}
-	if w.l.compactionRowDue(id, accepted, err) {
-		w.reached["compaction row owed"]++
-	}
-	w.l.compactionEnded(id, accepted, err)
-	if _, still := w.l.find(id); still != nil {
-		w.reached["compaction requeued"]++
-	}
-	if _, still := w.l.find(id); still != nil && !call.sawTurn {
-		w.fail("compaction %s requeued with no turn beside its attempt", id)
-	}
-}
-
 func (w *listWorld) stop() {
-	// A reader stop withdraws a waiting resume; most runs leave it, so the generator reaches the resume's take.
-	if w.l.resume() != nil && w.r.IntN(4) > 0 {
-		return
-	}
 	w.tok++
 	token := w.tok
 	var target string
@@ -663,21 +424,8 @@ func (w *listWorld) stop() {
 			target = e.id
 		}
 	}
-	before := w.l.compaction()
-	var beforeState marotte.RunEntryState
-	if before != nil {
-		beforeState = before.state
-	}
 	snap := w.snapshot()
-	// Any stop of the reader's withdraws the waiting resume, whatever runs then, and changes nothing else.
-	if r := w.readerStopping(); r != nil {
-		snap = slices.DeleteFunc(snap, func(x marotte.RunEntry) bool { return x.ID == r.id })
-	}
 	plan := w.l.readerStop(target, token)
-	clear(w.limited)
-	if c := w.l.compaction(); before != nil && (c != before || c.state != beforeState) {
-		w.fail("a stop changed the compaction")
-	}
 	if plan.arm == stopNothing || plan.arm == stopSession {
 		if !slices.EqualFunc(snap, w.l.project(), runEntryEqual) {
 			w.fail("a stop of %q that stopped no entry changed the list", target)
@@ -720,26 +468,11 @@ func (w *listWorld) stop() {
 	}
 }
 
-// readerStopping records a stop of the reader's against the resume waiting then, which must never start, and
-// returns that resume, or nil. TestFailsafe_NoResumeStartsAfterAReaderStop walks every window such a stop lands in.
-func (w *listWorld) readerStopping() *runEntry {
-	r := w.l.resume()
-	if r != nil {
-		w.readerStopped[r.id] = true
-		w.reached["reader stop ahead of a resume"]++
-	}
-	return r
-}
-
 func runEntryEqual(a, b marotte.RunEntry) bool {
 	return a.ID == b.ID && a.State == b.State && a.Kind == b.Kind && a.Turn == b.Turn && a.Next == b.Next
 }
 
 func (w *listWorld) sendNow() {
-	// A press drops a waiting resume; most runs leave it, so the generator reaches the resume's take.
-	if w.l.resume() != nil && w.r.IntN(4) > 0 {
-		return
-	}
 	rows := w.where(func(e *runEntry) bool { return e.kind == marotte.RunKindRow && !e.live() })
 	e := w.pick(rows)
 	if e == nil {
@@ -753,16 +486,9 @@ func (w *listWorld) sendNow() {
 			stop = "gone-" + strconv.Itoa(w.step)
 		}
 	}
-	waiting := w.l.resume()
 	h, err := w.l.sendNow(e.id, stop, has)
 	if err != nil {
 		return
-	}
-	// Any press is the reader taking over (readerTookOver), stopping something or not: no failsafe stop it lands
-	// on tells of the resume limit.
-	clear(w.limited)
-	if waiting != nil {
-		w.readerStopped[waiting.id] = true
 	}
 	if h != nil {
 		if has && h.id != stop {
@@ -788,7 +514,7 @@ func (w *listWorld) sendNow() {
 }
 
 func (w *listWorld) do() {
-	switch w.r.IntN(27) {
+	switch w.r.IntN(22) {
 	case 0, 1, 2:
 		w.submit()
 	case 3:
@@ -800,16 +526,7 @@ func (w *listWorld) do() {
 		if marotte.VerbFor(w.l.project(), marotte.InterruptQueue, marotte.SendQueuePrompt) != marotte.SendPrompt {
 			w.l.submit(e, w.facts(), 1, false)
 		}
-	case 4:
-		if w.r.IntN(2) == 0 {
-			break
-		}
-		turn := ""
-		if h := w.pick(w.live()); h != nil {
-			turn = h.turnID
-		}
-		w.l.requestCompaction(marotte.RunFromRequest, turn)
-	case 5, 6, 7:
+	case 4, 5, 6, 7:
 		w.launch()
 	case 8, 9:
 		var open []string
@@ -842,16 +559,8 @@ func (w *listWorld) do() {
 		if w.r.IntN(8) == 0 {
 			w.wireOpen()
 		}
-	case 13:
-		w.endCall()
-	case 14:
+	case 13, 14:
 		w.admit = !w.admit || w.r.IntN(4) > 0
-		if !w.admit {
-			w.l.kasReportedActive()
-			for _, c := range w.calls {
-				c.sawTurn = true
-			}
-		}
 	case 15:
 		if w.r.IntN(3) == 0 {
 			w.stop()
@@ -868,23 +577,11 @@ func (w *listWorld) do() {
 			w.l.unqueue(e.id)
 		}
 	case 19:
-		// As in sendNow: a cancel of the failsafe's compaction drops its resume.
-		if c := w.l.compaction(); c != nil && (c.origin != marotte.RunFromFailsafe || w.r.IntN(4) == 0) {
-			if c.state == marotte.RunRunning {
-				w.cancelled[c.id] = true
-			}
-			w.l.cancelCompaction(c.id)
-		}
-	case 20:
 		w.ends()
-	case 21:
+	case 20:
 		w.gate = !w.gate && w.r.IntN(4) == 0
-	case 22:
+	case 21:
 		w.takeIdle()
-	case 23, 24, 25:
-		w.failsafe()
-	case 26:
-		w.refill()
 	}
 	w.l.takeEffects()
 	w.settle()
@@ -963,12 +660,9 @@ func TestRunList_Invariants(t *testing.T) {
 		})
 	}
 	for _, want := range []string{
-		"turn under a compaction", "wire turn beside a taken turn", "wire turn beside a sent prompt",
-		"fold turn ahead of its compaction", "run entry", "take row", "take compaction", "take unread", "take retry",
-		"compaction requeued", "compaction row owed", "withdraw", "stop unsent", "stop running", "stop undone", "idle revert", "idle turn",
-		"failsafe fired", "failsafe undone", "take resume", "failsafe ahead of a waiting resume",
-		"failsafe at the resume limit", "resume limit notice at the close",
-		"reader stop ahead of a resume",
+		"wire turn under a revert", "wire turn beside a taken turn", "wire turn beside a sent prompt",
+		"run entry", "take row", "take unread", "take retry",
+		"withdraw", "stop unsent", "stop running", "stop undone", "idle revert", "idle turn",
 	} {
 		if reached[want] == 0 {
 			t.Errorf("the generator never reached %q", want)
@@ -1161,7 +855,7 @@ func (h *holdWorld) closeOne() {
 	h.log = append(h.log, fmt.Sprintf("close %s clean=%v", e.id, clean))
 	h.l.turnEnded(held)
 	delete(h.stopping, e.turnID)
-	h.closed(e.id, listClose{clean: clean, completed: clean})
+	h.closed(e.id, listClose{clean: clean})
 }
 
 // launchOne moves a take on: its turn opens and its prompt is written, or its launch fails; kiro-cli takes a steer

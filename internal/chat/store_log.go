@@ -61,9 +61,9 @@ func (s *Store) logFor(ctx context.Context, chatID marotte.ChatID) (*EntryLog, e
 // holdQueuedLocked settles the run list a previous process left, at the log's first open in this one and after the
 // store-open closer. A row whose id a turn_open already carries was sent and only lost its removal, so it goes; every
 // other row is held, shown and never sent automatically, because nothing in this process saw it queued, and every
-// entry that is not a row (a head, a compaction) goes with the process that ran it (marotte.SanitizeRun). It answers
-// the header, nil for a chat with no header, which has nothing to settle, and whether it saved one, which it does not
-// announce. Caller holds the chat's mutex.
+// entry that is not a row (a head, a retry) goes with the process that ran it (marotte.SanitizeRun), as does a
+// compaction's Chat.Compacting. It answers the header, nil for a chat with no header, which has nothing to settle,
+// and whether it saved one, which it does not announce. Caller holds the chat's mutex.
 func (s *Store) holdQueuedLocked(ctx context.Context, chatID marotte.ChatID, l *EntryLog) (*marotte.Chat, bool, error) {
 	c, err := s.load(ctx, chatID)
 	switch {
@@ -71,7 +71,7 @@ func (s *Store) holdQueuedLocked(ctx context.Context, chatID marotte.ChatID, l *
 		return nil, false, nil
 	case err != nil:
 		return nil, false, err
-	case !slices.ContainsFunc(c.Run, func(e marotte.RunEntry) bool { return e.State != marotte.RunHeld }):
+	case !c.Compacting && !slices.ContainsFunc(c.Run, func(e marotte.RunEntry) bool { return e.State != marotte.RunHeld }):
 		return c, false, nil
 	}
 	entries, err := l.All()
@@ -91,6 +91,7 @@ func (s *Store) holdQueuedLocked(ctx context.Context, chatID marotte.ChatID, l *
 		run := slices.DeleteFunc(slices.Clone(c.Run), func(e marotte.RunEntry) bool { return sent[e.ID] })
 		c.Run = marotte.SanitizeRun(run, true)
 		c.RunVersion++
+		c.Compacting = false
 		return true
 	})
 	if err != nil {

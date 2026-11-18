@@ -26,7 +26,7 @@ export type EngineState = "starting" | "ready" | "restarting" | "down";
 
 export type EntryKind = "turn_open" | "turn_bind" | "turn_wake" | "run_named" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "steer_cleared" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "profile_switched" | "turn_revert" | "context_reset" | "reconciled" | "turn_close" | "step_graded";
 
-export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "memory_not_loaded" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed" | "resume_not_sent";
+export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "memory_not_loaded" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed";
 
 export type FailureKind = "context_limit" | "model_call_limit" | "empty_answer" | "sign_in" | "sign_in_unreachable" | "api_key_refused";
 
@@ -96,9 +96,9 @@ export type RunAskRefusal = "ask_stopping" | "ask_pending" | "ask_stale" | "ask_
 
 export type RunAskText = "asked" | "last_message" | "unseen";
 
-export type RunEntryKind = "turn" | "row" | "retry" | "compaction" | "revert" | "resume";
+export type RunEntryKind = "turn" | "row" | "retry" | "revert";
 
-export type RunEntryOrigin = "prompt" | "queue" | "tangent" | "summary" | "retry" | "wire" | "run" | "carried" | "request" | "threshold" | "turn_end" | "context_limit" | "rewind" | "failsafe" | "notify";
+export type RunEntryOrigin = "prompt" | "queue" | "tangent" | "summary" | "retry" | "wire" | "run" | "carried" | "rewind" | "notify";
 
 export type RunEntryState = "pending" | "paused" | "held" | "offered" | "in_kas" | "starting" | "running" | "stopping" | "closing";
 
@@ -120,7 +120,7 @@ export type RunStepMessageVerb = "steer" | "answer" | "prompt";
 
 export type RunStepTranscriptState = "ready" | "gone" | "unavailable";
 
-export type RunWaitAfter = "running" | "starting" | "next" | "compaction" | "turns" | "held" | "paused";
+export type RunWaitAfter = "running" | "starting" | "next" | "turns" | "held" | "paused";
 
 export type RunWant = "either" | "prompt";
 
@@ -128,7 +128,7 @@ export type SafetyStatus = "idle" | "formalizing" | "evaluating" | "blocked" | "
 
 export type SegmentKind = "content" | "reasoning" | "tool_title" | "tool_diff" | "tool_denial" | "tool_input" | "tool_output" | "steer" | "prompt" | "plan" | "attachment" | "turn_failure" | "wake";
 
-export type SendNowKind = "stop" | "stop_then_compaction" | "after_compaction" | "now";
+export type SendNowKind = "stop" | "now";
 
 export type SendVerb = "prompt" | "steer" | "queue";
 
@@ -557,6 +557,11 @@ export interface ChatHeader {
   supervised_mode?: boolean;
   /** Tangent mirrors Chat's for the merge controls. */
   tangent?: boolean;
+  /**
+   * Compacting mirrors Chat's for the dock's Compacting row and the Compact controls. Outside Run: the run version
+   * does not move with it, so a page takes it from every header.
+   */
+  compacting?: boolean;
 }
 
 /**
@@ -1408,8 +1413,6 @@ export interface EntryPrompt {
   label?: string;
   attachments?: Attachment[];
   resends?: string[];
-  /** Automatic marks a prompt marotte sent on its own: the resume after a failsafe compaction. */
-  automatic?: boolean;
 }
 
 /**
@@ -1699,8 +1702,6 @@ export interface EntryTurnClose {
    * or its turn had not ended, when node_complete came.
    */
   ended_off_turn?: boolean;
-  /** StoppedToCompact marks a cancelled close of a turn marotte stopped to compact; FailureReason is then its notice. */
-  stopped_to_compact?: boolean;
 }
 
 /**
@@ -2100,8 +2101,6 @@ export interface Hit {
   segments: SegmentKind[];
   /** Turn is the 1-based session-absolute ordinal (turn_open's n), for marking the rail beyond the window. */
   turn: number;
-  /** Automatic is set on a hit in a prompt marotte sent on its own (EntryPrompt.Automatic). */
-  automatic?: boolean;
 }
 
 /**
@@ -3756,7 +3755,7 @@ export interface RunEntry {
   /** Unread marks a row a turn end left unread in kiro-cli's steer buffer: one sender's run of them is one prompt. */
   unread?: boolean;
   steerable?: boolean;
-  /** Yields marks a fold-opened wire turn, which owes no close: a turn-kind take or a compaction goes beside it. */
+  /** Yields marks a fold-opened wire turn, which owes no close: a turn-kind take goes beside it. */
   yields?: boolean;
   /** Admits, with Yields, is whether kiro-cli's state admits a take beside it now. */
   admits?: boolean;
@@ -3790,7 +3789,7 @@ export interface RunEntryView {
   /** Unread marks a row a turn end left unread in kiro-cli's steer buffer: one sender's run of them is one prompt. */
   unread?: boolean;
   steerable?: boolean;
-  /** Yields marks a fold-opened wire turn, which owes no close: a turn-kind take or a compaction goes beside it. */
+  /** Yields marks a fold-opened wire turn, which owes no close: a turn-kind take goes beside it. */
   yields?: boolean;
   /** Admits, with Yields, is whether kiro-cli's state admits a take beside it now. */
   admits?: boolean;

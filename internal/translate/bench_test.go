@@ -63,10 +63,10 @@ type baseDeps struct {
 	prompts map[marotte.ChatID]*turnlog.Turn
 	// compactionFailures records failed-compaction facts sent to the host.
 	compactionFailures []compactionFailure
-	// usageReadings records every context reading ObserveContextUsage heard, in order.
-	usageReadings []float64
-	// compactorHeard records the compactor's signals in order: "tool" per ObserveToolCall, "reading" per reading.
-	compactorHeard []string
+	// failuresObserved counts the summary failures ObserveCompactionFailed heard.
+	failuresObserved int
+	// summaryRunning is each ObserveSummaryRunning call's running, in order.
+	summaryRunning []bool
 	// catalogModels is the last model list SetModels was handed.
 	catalogModels []marotte.SessionModel
 	// parent is returned by ParentACPSession; "" means parent unknown.
@@ -738,18 +738,10 @@ func (d *baseDeps) CompactionFailed(chatID marotte.ChatID, turnID, detail string
 	d.compactionFailures = append(d.compactionFailures, compactionFailure{chatID: chatID, turnID: turnID, detail: detail})
 }
 
-func (d *baseDeps) ObserveContextUsage(_ context.Context, _ marotte.ChatID, pct float64) {
-	d.usageReadings = append(d.usageReadings, pct)
-	d.compactorHeard = append(d.compactorHeard, "reading")
-}
+func (d *baseDeps) ObserveCompactionFailed(marotte.ChatID) { d.failuresObserved++ }
 
-func (d *baseDeps) ObserveToolCall(marotte.ChatID) {
-	d.compactorHeard = append(d.compactorHeard, "tool")
-}
-
-// ObserveCompactionFailed answers the reason unchanged: a chat whose next turn end does not try again.
-func (*baseDeps) ObserveCompactionFailed(_ context.Context, _ marotte.ChatID, reason string) string {
-	return reason
+func (d *baseDeps) ObserveSummaryRunning(_ context.Context, _ marotte.ChatID, running bool) {
+	d.summaryRunning = append(d.summaryRunning, running)
 }
 
 // AccumulateSpend and StageConversationTurnSummary stand in for the host's per-turn

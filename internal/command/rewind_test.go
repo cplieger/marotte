@@ -208,7 +208,7 @@ func TestCmdRewindChat_A409NamesTheLiveRunsTheCutLaunchedAndRecordsNothing(t *te
 	host := idleHost(store, b, b)
 	runs := &rewindRuns{live: map[string]string{"wf-1": "code-review"}}
 
-	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), runs, host, rewindReq(t, "c1", "u2"))
+	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), runs, host, &streakLog{}, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 naming the run (body %s)", statusOf(err), errText(err))
@@ -236,7 +236,7 @@ func TestCmdRewindChat_ConfirmedStopsTheRunsBeforeTheRevertAndCutsOnce(t *testin
 	host := idleHost(store, b, b)
 	runs := &rewindRuns{live: map[string]string{"wf-1": "code-review", "wf-2": "docs-sweep"}, order: &order}
 
-	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), runs, host, rewindReqConfirmed(t, "c1", "u2", true))
+	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), runs, host, &streakLog{}, rewindReqConfirmed(t, "c1", "u2", true))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -266,7 +266,7 @@ func TestCmdRewindChat_ARunOutsideTheCutIsNeitherCancelledNorNamed(t *testing.T)
 			host := idleHost(store, b, b)
 			runs := &rewindRuns{live: map[string]string{"wf-0": "code-review"}}
 
-			_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), runs, host, rewindReq(t, "c1", "u2"))
+			_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), runs, host, &streakLog{}, rewindReq(t, "c1", "u2"))
 
 			if statusOf(err) != http.StatusOK {
 				t.Fatalf("status = %d, want 200 with no confirmation asked (body %s)", statusOf(err), errText(err))
@@ -319,7 +319,7 @@ func TestCmdRewindChat_RecordsTheRevertAtTheTargetsTurn(t *testing.T) {
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
 	host := idleHost(store, b, b)
 
-	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, rewindReq(t, "c1", "u2"))
+	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, &streakLog{}, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -334,7 +334,7 @@ func TestCmdRewindChat_CallsTheRevertVerbWithTheSessionAndMessage(t *testing.T) 
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
 	host := idleHost(store, b, b)
 
-	_, _ = cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, rewindReq(t, "c1", "u1"))
+	_, _ = cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, &streakLog{}, rewindReq(t, "c1", "u1"))
 
 	if b.gotMethod != marotte.MethodCheckpointRevertMultiple {
 		t.Errorf("method = %q, want %q", b.gotMethod, marotte.MethodCheckpointRevertMultiple)
@@ -357,7 +357,7 @@ func TestCmdRewindChat_RefusesATargetNoPromptCarries(t *testing.T) {
 			b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
 			host := idleHost(store, b, b)
 
-			_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, rewindReq(t, "c1", id))
+			_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, &streakLog{}, rewindReq(t, "c1", id))
 
 			if statusOf(err) != http.StatusBadRequest {
 				t.Errorf("status = %d, want 400", statusOf(err))
@@ -377,7 +377,7 @@ func TestCmdRewindChat_RejectsAnEmptyMessageID(t *testing.T) {
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
 	host := idleHost(store, b, b)
 
-	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, rewindReq(t, "c1", ""))
+	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, &streakLog{}, rewindReq(t, "c1", ""))
 
 	if statusOf(err) != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", statusOf(err))
@@ -395,7 +395,7 @@ func TestCmdRewindChat_RefusedWhileTheRegistryHoldsATurn(t *testing.T) {
 	host := idleHost(store, b, b)
 	held := newBridgeHost(store, b)
 
-	_, err := cmdRewindChat(t.Context(), host, host, held, runOver(held), host, host, rewindReq(t, "c1", "u2"))
+	_, err := cmdRewindChat(t.Context(), host, host, held, runOver(held), host, host, &streakLog{}, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusConflict {
 		t.Errorf("status = %d, want 409", statusOf(err))
@@ -415,7 +415,7 @@ func TestCmdRewindChat_ResumesABridgelessChatAndReverts(t *testing.T) {
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
 	host := idleHost(store, nil, b)
 
-	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, rewindReq(t, "c1", "u2"))
+	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, &streakLog{}, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -432,7 +432,7 @@ func TestCmdRewindChat_AFailedResumeIsA502(t *testing.T) {
 	store := seedRewindChat(t, false)
 	host := idleHost(store, nil, nil)
 
-	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, rewindReq(t, "c1", "u2"))
+	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, &streakLog{}, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusBadGateway {
 		t.Errorf("status = %d, want 502", statusOf(err))
@@ -453,7 +453,7 @@ func TestCmdRewindChat_RefusesAChatWithNoSession(t *testing.T) {
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
 	host := idleHost(store, nil, b)
 
-	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, rewindReq(t, "c1", "u2"))
+	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, &streakLog{}, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusConflict {
 		t.Errorf("status = %d, want 409", statusOf(err))
@@ -474,7 +474,7 @@ func TestCmdRewindChat_RefusesWhenTheOriginalSessionWasNotResumed(t *testing.T) 
 	b := &recordingBridge{result: okResult(), sessionID: "sess-fresh"}
 	host := idleHost(store, nil, b)
 
-	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, rewindReq(t, "c1", "u2"))
+	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, &streakLog{}, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusConflict {
 		t.Errorf("status = %d, want 409", statusOf(err))
@@ -497,7 +497,7 @@ func TestCmdRewindChat_RevertsBeforeItRecords(t *testing.T) {
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1", order: &order}
 	host := idleHost(store, nil, b)
 
-	if _, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, rewindReq(t, "c1", "u2")); err != nil {
+	if _, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, &streakLog{}, rewindReq(t, "c1", "u2")); err != nil {
 		t.Fatalf("CmdRewindChat = %v, want it to succeed", err)
 	}
 	if len(order) != 2 || order[0] != "call" || order[1] != "revert" {
@@ -518,7 +518,7 @@ func TestCmdRewindChat_InBandRefusalLeavesTheRecordIntact(t *testing.T) {
 	}
 	host := idleHost(store, b, b)
 
-	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, rewindReq(t, "c1", "u2"))
+	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, &streakLog{}, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusConflict {
 		t.Errorf("status = %d, want 409", statusOf(err))
@@ -536,7 +536,7 @@ func TestCmdRewindChat_TransportFailureLeavesTheRecordIntact(t *testing.T) {
 	b := &recordingBridge{callErr: errors.New("broken pipe"), sessionID: "sess-1"}
 	host := idleHost(store, b, b)
 
-	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, rewindReq(t, "c1", "u2"))
+	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, &streakLog{}, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusBadGateway {
 		t.Errorf("status = %d, want 502", statusOf(err))
@@ -555,11 +555,57 @@ func TestCmdRewindChat_ARecordFailureIsA500(t *testing.T) {
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
 	host := idleHost(store, b, b)
 
-	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, rewindReq(t, "c1", "u2"))
+	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, &streakLog{}, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500 (body %s)", statusOf(err), errText(err))
 	}
+}
+
+// streakLog records the chats whose shown summary failure a command ended.
+type streakLog struct{ ended []marotte.ChatID }
+
+func (s *streakLog) EndSummaryStreak(chatID marotte.ChatID) { s.ended = append(s.ended, chatID) }
+
+// A recorded rewind can cut the Compaction failed entry that stood for kiro-cli's failing streak, so it ends the
+// streak and the next failure is shown; a rewind that recorded nothing leaves the entry, and the streak, standing.
+func TestCmdRewindChat_ARecordedRewindEndsTheSummaryFailureStreak(t *testing.T) {
+	t.Run("recorded", func(t *testing.T) {
+		store := seedRewindChat(t, false)
+		b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
+		host := idleHost(store, b, b)
+		streaks := &streakLog{}
+
+		if _, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, streaks, rewindReq(t, "c1", "u2")); err != nil {
+			t.Fatalf("rewind: %v", err)
+		}
+		if want := []marotte.ChatID{"c1"}; !slices.Equal(streaks.ended, want) {
+			t.Errorf("streaks ended = %v, want %v", streaks.ended, want)
+		}
+	})
+	t.Run("refused by kiro-cli", func(t *testing.T) {
+		store := seedRewindChat(t, false)
+		b := &recordingBridge{result: map[string]any{"success": false, "error": "no"}, sessionID: "sess-1"}
+		host := idleHost(store, b, b)
+		streaks := &streakLog{}
+
+		_, _ = cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, streaks, rewindReq(t, "c1", "u2"))
+		if len(streaks.ended) != 0 {
+			t.Errorf("streaks ended = %v, want none for a rewind kiro-cli refused", streaks.ended)
+		}
+	})
+	t.Run("record refused", func(t *testing.T) {
+		store := seedRewindChat(t, false)
+		store.revertErr = errors.New("entry log refused the cut")
+		b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
+		host := idleHost(store, b, b)
+		streaks := &streakLog{}
+
+		_, _ = cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, streaks, rewindReq(t, "c1", "u2"))
+		if len(streaks.ended) != 0 {
+			t.Errorf("streaks ended = %v, want none for a rewind the log did not record", streaks.ended)
+		}
+	})
 }
 
 // The log line names the turn the revert was recorded at and whether the log had to
@@ -572,7 +618,7 @@ func TestCmdRewindChat_LogsTheTurnAndWhetherACarrierWasMinted(t *testing.T) {
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
 	host := idleHost(store, b, b)
 
-	if _, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, rewindReq(t, "c1", "u2")); err != nil {
+	if _, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, &streakLog{}, rewindReq(t, "c1", "u2")); err != nil {
 		t.Fatalf("CmdRewindChat = %v, want it to succeed", err)
 	}
 	if got := logs.String(); !strings.Contains(got, "turn=t2") || !strings.Contains(got, "carrier_minted=true") {
@@ -589,7 +635,7 @@ func TestCmdRewindChat_AnnouncesAMintedCarrierOpenedAndClosedBeforeTheRecord(t *
 	host := idleHost(store, b, b)
 	bus := &recordingBus{}
 
-	if _, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, bus, rewindReq(t, "c1", "u2")); err != nil {
+	if _, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, bus, &streakLog{}, rewindReq(t, "c1", "u2")); err != nil {
 		t.Fatalf("CmdRewindChat = %v, want it to succeed", err)
 	}
 	var got []string
@@ -617,7 +663,7 @@ func TestCmdRewindChat_AddressesKASByItsOwnRecordID(t *testing.T) {
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
 	host := idleHost(store, b, b)
 
-	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, rewindReq(t, "c1", "u2"))
+	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, &streakLog{}, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -634,7 +680,7 @@ func TestCmdRewindChat_FallsBackToTheRowsOwnIDWhenNoKASIDIsHeld(t *testing.T) {
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
 	host := idleHost(store, b, b)
 
-	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, rewindReq(t, "c1", "u2"))
+	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, &streakLog{}, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -654,7 +700,7 @@ func TestCmdRewindChat_ExplainsARefusalOnATurnItCannotAddress(t *testing.T) {
 	}
 	host := idleHost(store, b, b)
 
-	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, rewindReq(t, "c1", "u2"))
+	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, &streakLog{}, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusConflict {
 		t.Fatalf("status = %d, want 409", statusOf(err))
@@ -679,7 +725,7 @@ func TestCmdRewindChat_DoesNotBlameIDCaptureWhenTheKASIDWasSent(t *testing.T) {
 	}
 	host := idleHost(store, b, b)
 
-	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, rewindReq(t, "c1", "u2"))
+	_, err := cmdRewindChat(t.Context(), host, host, host, runOver(host), host, host, &streakLog{}, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusConflict {
 		t.Fatalf("status = %d, want 409", statusOf(err))
@@ -753,7 +799,7 @@ func TestCmdRewindChat_AdmitsNoPromptWhileTheRevertRuns(t *testing.T) {
 	req := rewindReq(t, "c1", "u2")
 	done := make(chan error, 1)
 	go func() {
-		_, err := cmdRewindChat(t.Context(), host, host, admission, runOver(admission), host, host, req)
+		_, err := cmdRewindChat(t.Context(), host, host, admission, runOver(admission), host, host, &streakLog{}, req)
 		done <- err
 	}()
 
@@ -784,7 +830,7 @@ func TestCmdRewindChat_ReleasesTheAdmissionSlotWhenKASRefuses(t *testing.T) {
 	b := &recordingBridge{result: map[string]any{"success": false, "error": "refused"}, sessionID: "sess-1"}
 	host := idleHost(store, b, b)
 
-	_, err := cmdRewindChat(t.Context(), host, host, admission, runOver(admission), host, host, rewindReq(t, "c1", "u2"))
+	_, err := cmdRewindChat(t.Context(), host, host, admission, runOver(admission), host, host, &streakLog{}, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 (body %s)", statusOf(err), errText(err))
@@ -807,7 +853,7 @@ func TestCmdRewindChat_RefusedWhenAPromptTakesTheSlotFirst(t *testing.T) {
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
 	host := idleHost(store, b, b)
 
-	_, err := cmdRewindChat(t.Context(), host, host, lostSlot{&benchDeps{}}, runOver(lostSlot{&benchDeps{}}), host, host, rewindReq(t, "c1", "u2"))
+	_, err := cmdRewindChat(t.Context(), host, host, lostSlot{&benchDeps{}}, runOver(lostSlot{&benchDeps{}}), host, host, &streakLog{}, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusConflict {
 		t.Errorf("status = %d, want 409", statusOf(err))

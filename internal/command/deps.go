@@ -581,12 +581,13 @@ type signInReach interface {
 
 // compactRequester takes the reader's compaction requests.
 type compactRequester interface {
-	// RequestCompact compacts the chat now, or queues the compaction for the running turn's close. An error is the
-	// engine call's.
+	// RequestCompact sends the chat's one compaction call unless one runs, answering without waiting for it.
 	RequestCompact(ctx context.Context, chatID marotte.ChatID) (CompactOutcome, error)
-	// CancelCompact withdraws the compaction entry id ("" names the chat's one): a pending one goes, a running one
-	// is not stopped but never comes back queued; a stale id is success.
-	CancelCompact(ctx context.Context, chatID marotte.ChatID, id string) error
+}
+
+// summaryStreakEnder forgets a chat's shown summary failure, so its next one is shown again.
+type summaryStreakEnder interface {
+	EndSummaryStreak(chatID marotte.ChatID)
 }
 
 // SteerRecorder is what the steer commands need of the steer ledger: record that
@@ -867,8 +868,10 @@ type Roles struct {
 	// Status ends a chat's retained waiting_on_user claim after a command that IS
 	// the user answering.
 	Status chatStatus
-	// Compactor takes the reader's compaction requests, which the run order places.
+	// Compactor takes the reader's compaction requests.
 	Compactor compactRequester
+	// SummaryStreaks ends a chat's shown summary failure after a rewind.
+	SummaryStreaks summaryStreakEnder
 	// SignIn tells an unreachable identity provider apart from a refused credential. Nil reads every
 	// credential failure as one a sign-in fixes.
 	SignIn signInReach

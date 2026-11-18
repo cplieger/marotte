@@ -25,7 +25,6 @@ const (
 	CmdUserInputResponse   CommandType = "user_input_response"
 	CmdRewindChat          CommandType = "rewind_chat"
 	CmdCompact             CommandType = "compact"
-	CmdCancelCompact       CommandType = "cancel_compact"
 	CmdSetEffort           CommandType = "set_effort"
 	CmdSetThinking         CommandType = "set_thinking"
 	CmdSetDraft            CommandType = "set_draft"
@@ -106,8 +105,6 @@ type PromptCommand struct {
 	// ForAgent marks a server-authored prompt whose answer an agent reads, so the user's output
 	// style is withheld from it. Server-only: no client payload can set it.
 	ForAgent bool `json:"-"`
-	// Automatic marks a prompt marotte sent on its own (EntryPrompt.Automatic). Server-only.
-	Automatic bool `json:"-"`
 }
 
 // Attachment is a file staged beside a prompt; its extension decides whether it
@@ -424,12 +421,6 @@ type SteerRemoveCommand struct {
 type CancelCommand struct {
 	Target string `json:"target,omitempty"`
 	Lead   string `json:"lead,omitempty"`
-}
-
-// CancelCompactCommand is the payload for type="cancel_compact": the compaction entry to withdraw. A stale id is a
-// no-op.
-type CancelCompactCommand struct {
-	ID string `json:"id,omitempty"`
 }
 
 // QueuePromptCommand is the payload for type="queue_prompt": a message held for

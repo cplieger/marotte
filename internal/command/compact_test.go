@@ -17,18 +17,12 @@ func compactReq(chatID marotte.ChatID) *marotte.ClientCommand {
 type fakeCompactor struct {
 	err       error
 	requested []marotte.ChatID
-	cancelled []marotte.ChatID
 	out       CompactOutcome
 }
 
 func (f *fakeCompactor) RequestCompact(_ context.Context, chatID marotte.ChatID) (CompactOutcome, error) {
 	f.requested = append(f.requested, chatID)
 	return f.out, f.err
-}
-
-func (f *fakeCompactor) CancelCompact(_ context.Context, chatID marotte.ChatID, _ string) error {
-	f.cancelled = append(f.cancelled, chatID)
-	return f.err
 }
 
 // TestCompact_SendsTheSessionsWire pins the verb and its params.
@@ -73,35 +67,49 @@ func TestCompact_AnswersTheReplysPosition(t *testing.T) {
 	}
 }
 
-// TestCmdCompact_ReportsAcceptanceNotCompaction asserts that `{success: true}` covers five outcomes, three of
-// which compact nothing, so the log line must not claim the chat was compacted.
-func TestCmdCompact_ReportsAcceptanceNotCompaction(t *testing.T) {
-	buf := captureLogs(t)
-	f := &fakeCompactor{out: CompactAccepted}
+// The press is answered once its call is under way: the outcome comes later, as kiro-cli's compaction entry or one
+// toast, so the answer claims neither.
+func TestCmdCompact_AnswersOnceTheCallIsUnderWay(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		out  CompactOutcome
+		log  string
+	}{
+		{name: "started", out: CompactStarted, log: `msg="compact started"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			buf := captureLogs(t)
+			f := &fakeCompactor{out: tc.out}
 
-	body, err := cmdCompact(t.Context(), f, compactReq("c1"))
-	if err != nil {
-		t.Fatalf("CmdCompact: %v", err)
-	}
-	if m, _ := body.(map[string]any); m["ok"] != true || m["queued"] != nil {
-		t.Errorf("body = %v, want ok and not queued", body)
-	}
-	if got := buf.String(); !strings.Contains(got, `msg="compact accepted"`) {
-		t.Errorf("log did not report acceptance; got %q", got)
-	}
-	if len(f.requested) != 1 || f.requested[0] != "c1" {
-		t.Errorf("requests = %v, want [c1]", f.requested)
+			body, err := cmdCompact(t.Context(), f, compactReq("c1"))
+			if err != nil {
+				t.Fatalf("CmdCompact: %v", err)
+			}
+			if m, _ := body.(map[string]any); m["ok"] != true || len(m) != 1 {
+				t.Errorf("body = %v, want only ok", body)
+			}
+			if got := buf.String(); !strings.Contains(got, tc.log) {
+				t.Errorf("log = %q, want %s", got, tc.log)
+			}
+			if len(f.requested) != 1 || f.requested[0] != "c1" {
+				t.Errorf("requests = %v, want [c1]", f.requested)
+			}
+		})
 	}
 }
 
-// TestCmdCompact_AQueuedRequestAnswersQueued: the client shows the queued row from the answer and the header.
-func TestCmdCompact_AQueuedRequestAnswersQueued(t *testing.T) {
-	body, err := cmdCompact(t.Context(), &fakeCompactor{out: CompactQueued}, compactReq("c1"))
-	if err != nil {
-		t.Fatalf("CmdCompact: %v", err)
+// A press while the chat's call runs is refused in words the page shows, so the pressing device sees an outcome.
+func TestCmdCompact_APressWhileOneRunsIsRefused(t *testing.T) {
+	buf := captureLogs(t)
+	_, err := cmdCompact(t.Context(), &fakeCompactor{out: CompactRunning}, compactReq("c1"))
+	if got := statusOf(err); got != 409 {
+		t.Errorf("status = %d, want 409", got)
 	}
-	if m, _ := body.(map[string]any); m["ok"] != true || m["queued"] != true {
-		t.Errorf("body = %v, want ok and queued", body)
+	if got, want := errText(err), "the context is already being compacted"; got != want {
+		t.Errorf("refusal = %q, want %q", got, want)
+	}
+	if got := buf.String(); !strings.Contains(got, `msg="compact already running"`) {
+		t.Errorf("log = %q, want compact already running", got)
 	}
 }
 
@@ -120,70 +128,9 @@ func TestCmdCompact_NoSessionSaysNothingWasCompacted(t *testing.T) {
 	}
 }
 
-// TestCmdCompact_RefusalNamesEveryCause: every {success: false} gets this one text, whether KAS
-// refused to start, a started summary did not commit, or a PreCompact hook blocked it.
-func TestCmdCompact_RefusalNamesEveryCause(t *testing.T) {
-	_, err := cmdCompact(t.Context(), &fakeCompactor{out: CompactRefused}, compactReq("c1"))
-	if err == nil {
-		t.Fatal("a refused compaction reported success")
-	}
-	if got := statusOf(err); got != 409 {
-		t.Errorf("status = %d, want 409", got)
-	}
-	text := errText(err)
-	for _, want := range []string{"busy", "summary failed", "PreCompact hook"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("refusal %q does not contain %q", text, want)
-		}
-	}
-}
-
-// A refusal the next turn end retries says so; a plain refusal keeps its own text.
-func TestCmdCompact_ARefusalThatRetriesSaysTheNextTurnEnd(t *testing.T) {
-	_, err := cmdCompact(t.Context(), &fakeCompactor{out: CompactRefusedRetrying}, compactReq("c1"))
-	if got := statusOf(err); got != 409 {
-		t.Errorf("status = %d, want 409", got)
-	}
-	if got, want := errText(err), errCompactRefusedRetrying.Error(); got != want {
-		t.Errorf("refusal = %q, want %q", got, want)
-	}
-	if !strings.HasSuffix(errText(err), "marotte tries again at the end of the next turn") {
-		t.Errorf("refusal %q does not say the next turn end tries again", errText(err))
-	}
-	_, err = cmdCompact(t.Context(), &fakeCompactor{out: CompactRefused}, compactReq("c1"))
-	if got, want := errText(err), errCompactRefused.Error(); got != want {
-		t.Errorf("plain refusal = %q, want %q", got, want)
-	}
-}
-
-// A call error the next turn end retries keeps its cause and says so.
-func TestCmdCompact_ACallErrorThatRetriesSaysTheNextTurnEnd(t *testing.T) {
-	_, err := cmdCompact(t.Context(), &fakeCompactor{out: CompactRefusedRetrying, err: errors.New("pipe closed")}, compactReq("c1"))
+func TestCmdCompact_ARequestErrorIsBadGateway(t *testing.T) {
+	_, err := cmdCompact(t.Context(), &fakeCompactor{err: errors.New("pipe closed")}, compactReq("c1"))
 	if got := statusOf(err); got != 502 {
 		t.Errorf("status = %d, want 502", got)
-	}
-	if got, want := errText(err), "pipe closed. marotte tries again at the end of the next turn"; got != want {
-		t.Errorf("error = %q, want %q", got, want)
-	}
-}
-
-func TestCmdCompact_ACallErrorIsBadGateway(t *testing.T) {
-	_, err := cmdCompact(t.Context(), &fakeCompactor{out: CompactRefused, err: errors.New("pipe closed")}, compactReq("c1"))
-	if got := statusOf(err); got != 502 {
-		t.Errorf("status = %d, want 502", got)
-	}
-}
-
-func TestCmdCancelCompact_CancelsTheChatsQueuedCompaction(t *testing.T) {
-	f := &fakeCompactor{}
-	cmd := &marotte.ClientCommand{Type: marotte.CmdCancelCompact, ChatID: "c1"}
-	if _, err := cmdCancelCompact(t.Context(), f, cmd); err != nil {
-		t.Fatalf("CmdCancelCompact: %v", err)
-	}
-	if len(f.cancelled) != 1 || f.cancelled[0] != "c1" {
-		t.Errorf("cancels = %v, want [c1]", f.cancelled)
-	}
-	if _, err := cmdCancelCompact(t.Context(), f, &marotte.ClientCommand{Type: marotte.CmdCancelCompact}); statusOf(err) != 400 {
-		t.Errorf("a cancel with no chat = %v, want 400", err)
 	}
 }

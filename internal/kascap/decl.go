@@ -139,8 +139,10 @@ type SessionSpawn struct {
 	// Custom profile, so the key is withheld. KAS persists neither door's ids, so both doors resolve from this field.
 	Presets []string
 	// CustomAgents are the session's client custom agents; none withholds the key.
-	CustomAgents     []marotte.ClientCustomAgent
-	MemoryReflection bool
+	CustomAgents []marotte.ClientCustomAgent
+	// AutoCompactionThreshold is KAS's in-turn compaction point in percent; zero withholds the key.
+	AutoCompactionThreshold int
+	MemoryReflection        bool
 	// DisableAutoCompaction turns KAS's own compaction off for this session; the row is value-gated, so false is
 	// sent too.
 	DisableAutoCompaction bool
@@ -166,8 +168,8 @@ type Prompt struct {
 	Label string
 	// Tag is the chat turn id the engine echoes on this prompt's turn_start; empty for a step message.
 	Tag string
-	// Caller names who sent a chat prompt through marotte's API, or marotte for its own resume; empty for the user's
-	// own and for a tangent's, which Label marks.
+	// Caller names who sent a chat prompt through marotte's API; empty for the user's own and for a tangent's, which
+	// Label marks.
 	Caller string
 }
 

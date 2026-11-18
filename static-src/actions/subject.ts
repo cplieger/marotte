@@ -42,18 +42,6 @@ export function errorAbout<A>(
   return spec;
 }
 
-export function successAbout<A, R = unknown>(
-  subjectOf: (args: A) => string,
-  message: string | ((result: R) => string),
-): (args: A, result: R) => string {
-  const spec = (args: A, result: R): string => {
-    stage(subjectOf(args), args);
-    return typeof message === "string" ? message : message(result);
-  };
-  subjectOfSpec.set(spec, subjectOf);
-  return spec;
-}
-
 /** The library calls a spec and then its notifier in one synchronous step, so the
  *  notifier takes its own spec's subject; the read clears it. */
 export function takeSubject(): StagedSubject {
@@ -64,7 +52,6 @@ export function takeSubject(): StagedSubject {
 
 interface SubjectHooks<A> {
   readonly error?: unknown;
-  readonly success?: unknown;
   readonly optimistic?: (args: A) => unknown;
   readonly onSettled?: (args: A) => void;
 }
@@ -76,7 +63,7 @@ function specSubject(spec: unknown): ((args: never) => string) | undefined {
 /** `optimistic` is the library's one synchronous hook before run(), so the name is
  *  captured there; `onSettled` runs after the notifier and releases it. */
 export function captureSubjectNames<A, D extends SubjectHooks<A>>(def: D): D {
-  const found = specSubject(def.error) ?? specSubject(def.success);
+  const found = specSubject(def.error);
   if (found === undefined) {
     return def;
   }
