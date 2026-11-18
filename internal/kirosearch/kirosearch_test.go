@@ -132,11 +132,19 @@ func TestText_IncludeFormsSearchOnlyTheFolderTheyName(t *testing.T) {
 // includeForms are the ways a model writes "the .go files under repo/internal" of root.
 func includeForms(root string) map[string]string {
 	return map[string]string{
-		"relative":       "repo/internal/**/*.go",
-		"absolute":       root + "/repo/internal/**/*.go",
-		"dot-led":        "./repo/internal/**/*.go",
-		"root-anchored":  "/repo/internal/**/*.go",
-		"trailing slash": "repo/internal/",
+		"relative":               "repo/internal/**/*.go",
+		"absolute":               root + "/repo/internal/**/*.go",
+		"dot-led":                "./repo/internal/**/*.go",
+		"root-anchored":          "/repo/internal/**/*.go",
+		"trailing slash":         "repo/internal/",
+		"dot segment":            "repo/./internal/**/*.go",
+		"doubled slash":          "repo//internal/**/*.go",
+		"doubled leading slash":  "//repo/internal/**/*.go",
+		"led by slash-dot":       "/./repo/internal/**/*.go",
+		"doubled trailing slash": "repo/internal//",
+		"bare folder":            "repo/internal",
+		"absolute bare folder":   root + "/repo/internal",
+		"root-anchored folder":   "/repo/internal",
 	}
 }
 
@@ -182,10 +190,16 @@ func TestText_RealRGExcludeFormsLeaveOutTheFolderTheyName(t *testing.T) {
 	writeTree(t, root, map[string]string{"repo/internal/a.go": "hit\n", "keep/b.go": "hit\n"})
 	want := []Match{{FilePath: "keep/b.go", LineNumber: 1, LineText: "hit"}}
 	for name, exclude := range map[string]string{
-		"relative":       "repo/internal/**",
-		"absolute":       root + "/repo/internal/**",
-		"dot-led":        "./repo/internal/**",
-		"trailing slash": "repo/internal/",
+		"relative":               "repo/internal/**",
+		"absolute":               root + "/repo/internal/**",
+		"dot-led":                "./repo/internal/**",
+		"trailing slash":         "repo/internal/",
+		"bare folder":            "repo/internal",
+		"dot segment":            "repo/./internal/**",
+		"doubled slash":          "repo//internal/**",
+		"doubled leading slash":  "//repo/internal/**",
+		"led by slash-dot":       "/./repo/internal/**",
+		"doubled trailing slash": "repo/internal//",
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := Searcher{Bin: bin}.Text(t.Context(), []string{root}, TextQuery{Pattern: "hit", ExcludePattern: exclude})
@@ -209,6 +223,68 @@ func TestFiles_RealRGAbsoluteAndDotLedPatternsFindUnderTheRoot(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			got := Searcher{Bin: bin}.Files(t.Context(), []string{root}, FilesQuery{Pattern: pattern, MaxResults: 11})
 			if want := []string{"repo/internal/build.go"}; !slices.Equal(got, want) {
+				t.Errorf("Files(%q) = %q, want %q", pattern, got, want)
+			}
+		})
+	}
+}
+
+// A path written from the root ("./x.go", "<root>/x.go") names the root's own file, not every file
+// of that name in the tree.
+func TestText_RealRGRootFileFormsFindOnlyTheRootFile(t *testing.T) {
+	bin := realRG(t)
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"x.go": "hit\n", "sub/x.go": "hit\n"})
+	want := []Match{{FilePath: "x.go", LineNumber: 1, LineText: "hit"}}
+	for name, include := range map[string]string{
+		"root-anchored": "/x.go",
+		"dot-led":       "./x.go",
+		"absolute":      root + "/x.go",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := Searcher{Bin: bin}.Text(t.Context(), []string{root}, TextQuery{Pattern: "hit", IncludePattern: include})
+			if !slices.Equal(got, want) {
+				t.Errorf("Text(include %q) = %+v, want %+v", include, got, want)
+			}
+		})
+	}
+}
+
+// An include naming the root itself searches all of it.
+func TestText_RealRGRootIncludeFormsSearchTheWholeRoot(t *testing.T) {
+	bin := realRG(t)
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"a.go": "hit\n"})
+	want := []Match{{FilePath: "a.go", LineNumber: 1, LineText: "hit"}}
+	for name, include := range map[string]string{"dot": ".", "dot slash": "./", "slash": "/", "absolute": root, "absolute, slash": root + "/"} {
+		t.Run(name, func(t *testing.T) {
+			got := Searcher{Bin: bin}.Text(t.Context(), []string{root}, TextQuery{Pattern: "hit", IncludePattern: include})
+			if !slices.Equal(got, want) {
+				t.Errorf("Text(include %q) = %+v, want %+v", include, got, want)
+			}
+		})
+	}
+}
+
+// KAS turns a file_search query "^repo/internal" into "repo/internal*" and "^repo/internal/" into
+// "repo/internal/*": each names the folder, so it lists the folder's files at every depth.
+func TestFiles_RealRGFolderPatternsListTheWholeFolder(t *testing.T) {
+	bin := realRG(t)
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"repo/internal/b.go": "", "repo/internal/deeper/a.go": "", "other/c.go": ""})
+	want := []string{"repo/internal/b.go", "repo/internal/deeper/a.go"}
+	for name, pattern := range map[string]string{
+		"anchored folder":           "repo/internal*",
+		"anchored folder, slash":    "repo/internal/*",
+		"bare folder":               "repo/internal",
+		"absolute folder":           root + "/repo/internal",
+		"doubled slash":             "repo//internal/*",
+		"absolute folder, dot-segs": root + "/./repo/./internal/*",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := Searcher{Bin: bin}.Files(t.Context(), []string{root}, FilesQuery{Pattern: pattern, MaxResults: 11})
+			slices.Sort(got)
+			if !slices.Equal(got, want) {
 				t.Errorf("Files(%q) = %q, want %q", pattern, got, want)
 			}
 		})
@@ -435,6 +511,59 @@ func TestText_DeadlineEndsTheReadWhenAChildOutsideTheSessionHoldsTheOutput(t *te
 	if len(got) != 2 || !isPartialNotice(got[0].FilePath) || got[1].FilePath != "a.go" {
 		t.Errorf("Text = %+v, want the partial notice and then a.go", got)
 	}
+}
+
+// twoRootRG lists n files in a root holding a "fast" file, and in any other root lists nothing until
+// it is killed, leaving a child whose pid it writes to pidFile.
+func twoRootRG(t *testing.T, n int, pidFile string) string {
+	t.Helper()
+	return fakeRG(t, `if [ -e fast ]; then
+  i=0; while [ $i -lt `+strconv.Itoa(n)+` ]; do echo ./f$i.go; i=$((i+1)); done
+else
+  /bin/sleep 60 &
+  echo $! > `+pidFile+`
+  wait
+fi`)
+}
+
+// Files shows the first root's files first, so once the first root alone fills maxResults a slow
+// later root can add nothing: the answer comes without waiting for it, and it is whole.
+func TestFiles_FirstRootFillingTheLimitEndsTheSearchWhole(t *testing.T) {
+	first, second := t.TempDir(), t.TempDir()
+	writeTree(t, first, map[string]string{"fast": ""})
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	bin := twoRootRG(t, 20, pidFile)
+	const deadline = 5 * time.Second
+	shortDeadline(t, deadline)
+
+	start := time.Now()
+	got := Searcher{Bin: bin}.Files(t.Context(), []string{first, second}, FilesQuery{Pattern: "**/*.go*", MaxResults: 11})
+
+	if took := time.Since(start); took > deadline/2 {
+		t.Errorf("Files took %v, want the answer well before the %v deadline", took, deadline)
+	}
+	if len(got) != 11 || slices.ContainsFunc(got, isPartialNotice) {
+		t.Errorf("Files = %q, want 11 files and no partial notice", got)
+	}
+	if _, err := os.Stat(pidFile); err == nil {
+		awaitGone(t, pidFile)
+	}
+}
+
+// A later root the deadline cut still makes the answer partial while the earlier roots left room.
+func TestFiles_LaterRootCutWithRoomLeftIsPartial(t *testing.T) {
+	first, second := t.TempDir(), t.TempDir()
+	writeTree(t, first, map[string]string{"fast": ""})
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	bin := twoRootRG(t, 3, pidFile)
+	shortDeadline(t, 300*time.Millisecond)
+
+	got := Searcher{Bin: bin}.Files(t.Context(), []string{first, second}, FilesQuery{Pattern: "**/*.go*", MaxResults: 11})
+
+	if len(got) != 4 || !isPartialNotice(got[0]) {
+		t.Errorf("Files = %q, want the partial notice and the first root's 3 files", got)
+	}
+	awaitGone(t, pidFile)
 }
 
 func TestFiles_CancelReturnsThePartialResultAndKillsTheSession(t *testing.T) {
@@ -681,6 +810,10 @@ func TestScope(t *testing.T) {
 		"led by ..":                       {"../x/*.go", "", false},
 		".. after a folder":               {"repo/../x/*.go", "", false},
 		".. after a glob":                 {"**/../x/*.go", "", false},
+		"bare folder":                     {"repo/internal", filepath.Join("repo", "internal"), true},
+		"bare top folder":                 {"repo", "repo", true},
+		"bare file":                       {"repo/internal/a.go", filepath.Join("repo", "internal"), true},
+		"bare top file":                   {"go.mod", ".", true},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
