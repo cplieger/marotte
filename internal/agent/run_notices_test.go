@@ -17,6 +17,7 @@ func runComplete(workflowID, status string) *marotte.RPCResponse {
 
 // KAS queues a notice only into a busy parent's buffer, so only a live launching chat records, in finish order.
 func TestObserveComplete_QueuesANoticeForABusyLaunchingChatOnly(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	defer shutdownHub(t, h)
 	h.stagePromptTurn(t, "c1")
@@ -49,6 +50,7 @@ func TestObserveComplete_QueuesANoticeForABusyLaunchingChatOnly(t *testing.T) {
 
 // A clear carries no words, so it forgets as many notices as it names, and a notice no label matches names no run.
 func TestRunNotice_AClearForgetsAndUnmatchedWordsNameNoRun(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	defer shutdownHub(t, h)
 	h.stagePromptTurn(t, "c1")
@@ -72,6 +74,7 @@ func TestRunNotice_AClearForgetsAndUnmatchedWordsNameNoRun(t *testing.T) {
 // Two launches of one workflow quote one label, so the words cannot tell their notices apart: reversed delivery
 // must stamp neither notice with the other run's provenance.
 func TestRunNotice_ASharedLabelNamesNoRun(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	defer shutdownHub(t, h)
 	h.stagePromptTurn(t, "c1")
@@ -94,6 +97,7 @@ func TestRunNotice_ASharedLabelNamesNoRun(t *testing.T) {
 
 // After one of two same-label notices is read, KAS clearing the other must not take a third run's notice with it.
 func TestRunNotice_AClearAfterAnAmbiguousReadSparesAnotherRunsNotice(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	defer shutdownHub(t, h)
 	h.stagePromptTurn(t, "c1")
@@ -160,6 +164,7 @@ func TestTurnClosed_ClearsTheBufferOfASettledChatHoldingANotice(t *testing.T) {
 // KAS continues a turn while a notice is unread, so the clear waits for KAS's idle report: before it, the clear would
 // empty the buffer under that continuation, which then runs on KAS's announcement alone.
 func TestTurnClosed_TheNoticeClearWaitsForKASIdle(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, _, br := newTestHub()
 		defer shutdownHub(t, h)
@@ -190,6 +195,7 @@ func TestTurnClosed_TheNoticeClearWaitsForKASIdle(t *testing.T) {
 // KAS opened a continuation for the unread notice before it went idle: the continuation reads the notice, so no
 // clear goes out under it.
 func TestTurnClosed_NoNoticeClearWhenATurnOpensBeforeKASIdle(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, _, br := newTestHub()
 		defer shutdownHub(t, h)
@@ -217,6 +223,7 @@ func TestTurnClosed_NoNoticeClearWhenATurnOpensBeforeKASIdle(t *testing.T) {
 // The notice clear also drops the user rows the end released beside the notice: the close's drain reads the rows
 // only after the frames before the clear's reply have folded, so it carries them as this close's one prompt.
 func TestTurnClosed_TheNoticeClearsDropIsCarriedByTheSameClose(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s, cs, br := steerOpsHub(t)
 		att := s.h.coord.turns.attachForwardNow("c1")

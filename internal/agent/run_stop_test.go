@@ -36,6 +36,7 @@ func wantStopParams(t *testing.T, verb string, params map[string]any, byUser boo
 }
 
 func TestCancel_TellsKASTheUserAskedForIt(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
@@ -51,6 +52,7 @@ func TestCancel_TellsKASTheUserAskedForIt(t *testing.T) {
 }
 
 func TestCancelRun_NamesTheRewindAsTheReason(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
@@ -76,6 +78,7 @@ func TestBoundCancel_AttributesNoOne(t *testing.T) {
 }
 
 func TestRetryTermination_KeepsTheUsersAttribution(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner is live")}
 	setCancelRetryDelay(h.runs, time.Millisecond)
@@ -198,6 +201,7 @@ func inspectUserParked(t *testing.T, state map[string]any) json.RawMessage {
 }
 
 func TestPausePredicates_SpareAUserPark(t *testing.T) {
+	t.Parallel()
 	for name, state := range map[string]map[string]any{
 		"a landed user pause": {
 			"status": "paused", "pauseReason": stalePauseReason, "stopInitiator": "user",
@@ -235,6 +239,7 @@ func TestPausePredicates_SpareAUserPark(t *testing.T) {
 }
 
 func TestLaunch_OnlyAScheduledRunSendsALabel(t *testing.T) {
+	t.Parallel()
 	t.Run("scheduled", func(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_sched")
@@ -258,6 +263,7 @@ func TestLaunch_OnlyAScheduledRunSendsALabel(t *testing.T) {
 }
 
 func TestRunLabelFor_FitsKASsRule(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct{ in, want string }{
 		"plain":                {"publish · scheduled", "publish · scheduled"},
 		"double quote":         {`say "hi"`, "say 'hi'"},

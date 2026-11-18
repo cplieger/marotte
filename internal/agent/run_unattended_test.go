@@ -32,6 +32,7 @@ func TestUnattendedBudget_MatchesTheDisclaimer(t *testing.T) {
 // TestUnattendedOrigin_ReadsTheLeasesOrigin pins the `unattended` field's source: only the launch path can tell a
 // scheduled or triggered parentless run from a manual one, and the lease records it.
 func TestUnattendedOrigin_ReadsTheLeasesOrigin(t *testing.T) {
+	t.Parallel()
 	h := &Runs{chats: newTestChatStore()}
 
 	if got := h.UnattendedOrigin("wf_1"); got != "" {
@@ -60,6 +61,7 @@ func TestUnattendedOrigin_ReadsTheLeasesOrigin(t *testing.T) {
 }
 
 func TestRunLabel_RebuildsTheLaunchLabelFromTheLease(t *testing.T) {
+	t.Parallel()
 	h := &Runs{chats: newTestChatStore()}
 	h.grantLease(t.Context(), "wf_manual", "publish", manualLaunch(), hostSec())
 	h.grantLease(t.Context(), "wf_sched", "publish", scheduledLaunch(launchrule.Row{ID: "sched-1"}, time.Time{}), hostSec())
@@ -77,6 +79,7 @@ func TestRunLabel_RebuildsTheLaunchLabelFromTheLease(t *testing.T) {
 // TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart pins that the durable lease keeps the deny-fast budget across a
 // restart, or a parked scheduled run waits on a human and parks its recipe.
 func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	store, err := runlease.NewStore(dir)
 	if err != nil {
@@ -177,6 +180,7 @@ func TestUnattendedFloor_DelegatedLeaseRefusesAnUnclearedAsk(t *testing.T) {
 // TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk pins that the floor answers by request id, so an id-less ask must
 // not arm (it would dereference nothing); the ordinary handler still runs.
 func TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk(t *testing.T) {
+	t.Parallel()
 	rs := &Runs{chats: newTestChatStore()}
 	rs.grantLease(t.Context(), "wf_1", "nightly",
 		scheduledLaunch(launchrule.Row{ID: "sched-1"}, time.Now().Add(30*time.Second)), hostSec())

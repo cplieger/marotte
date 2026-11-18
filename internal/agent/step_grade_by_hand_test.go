@@ -125,6 +125,7 @@ func TestStepEnd_AStepEndedByHandAfterAThrottledTurnReadsCompletedEndedByHand(t 
 // TestStepEnd_AStepKASFailedAfterAThrottledTurnStaysFailed: KAS's failed status is the step's end, whatever turn
 // came before it.
 func TestStepEnd_AStepKASFailedAfterAThrottledTurnStaysFailed(t *testing.T) {
+	t.Parallel()
 	const id = "wf_by_hand"
 	h, _, s := byHandHub(t, id, "account-review-a", "failed", "")
 	s.throttle()
@@ -141,6 +142,7 @@ func TestStepEnd_AStepKASFailedAfterAThrottledTurnStaysFailed(t *testing.T) {
 // TestStepEnd_AStepThatSignalledSuccessAfterThrottlesReadsPlainCompleted: three throttled turns, then the step's own
 // success signal applied.
 func TestStepEnd_AStepThatSignalledSuccessAfterThrottlesReadsPlainCompleted(t *testing.T) {
+	t.Parallel()
 	const id = "wf_by_hand"
 	h, cs, s := byHandHub(t, id, "account-build", "completed", "success")
 	s.throttle()

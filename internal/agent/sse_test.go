@@ -28,6 +28,7 @@ import (
 // topics, the frame-cap substitute, the handshake, the initial-state hook, the draining gate.
 
 func TestEmit_AppendsToReplayBuffer(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	base := h.bus.fanout.Position().Head
 	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
@@ -46,6 +47,7 @@ func TestEmit_AppendsToReplayBuffer(t *testing.T) {
 }
 
 func TestEmit_CapsBufferAtReplayBufSize(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	for range replayBufSize + 100 {
 		h.bus.emit(marotte.ServerEvent{Type: "test"})
@@ -59,6 +61,7 @@ func TestEmit_CapsBufferAtReplayBufSize(t *testing.T) {
 // TestEmit_PublishesOnTheEventsTopic pins the publish topics: a chat's frame and a global one ride the
 // broadcast topic "", which every connection receives, and a run's log frame rides "run:<workflowID>".
 func TestEmit_PublishesOnTheEventsTopic(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	base := h.bus.fanout.Position().Head
 	h.bus.emit(marotte.ServerEvent{Type: marotte.EventChatUpdated, ChatID: "c1"})
@@ -83,6 +86,7 @@ func TestEmit_PublishesOnTheEventsTopic(t *testing.T) {
 // TestEmit_ARunChatsWorkingLabelIsNotPublished pins that a run step's working label, which no tab reads (a run
 // chat id names no chat in the client's store), reaches no connection, while a chat's still does.
 func TestEmit_ARunChatsWorkingLabelIsNotPublished(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	base := h.bus.fanout.Position().Head
 	label := marotte.WorkingLabelPayload{Label: marotte.WorkingLabelThinking}
@@ -203,6 +207,7 @@ func (r rawJSON) MarshalJSON() ([]byte, error) { return []byte(r), nil }
 
 // TestHandleSSE_AdvertisesReconnectDelay pins the hub's reconnect hint, which carries no type or id to assert otherwise.
 func TestHandleSSE_AdvertisesReconnectDelay(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
 
@@ -284,6 +289,7 @@ func cursorAt(h *Runtime, offset uint64) string {
 }
 
 func TestHandleSSE_ReplaysSinceLastEventID(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	base := h.bus.fanout.Position().Head
 
@@ -313,6 +319,7 @@ func TestHandleSSE_ReplaysSinceLastEventID(t *testing.T) {
 
 // A resume past the reply cap is a gap: the hello says so and nothing is replayed.
 func TestHandleSSE_AResumePastTheReplyCapIsAGap(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	for i := 1; i <= replyMaxEvents+50; i++ {
 		h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: marotte.ChatID(fmt.Sprintf("c%d", i))})
@@ -345,6 +352,7 @@ func TestHandleSSE_AResumePastTheReplyCapIsAGap(t *testing.T) {
 }
 
 func TestHandleSSE_RejectsNonFlusher(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	rec := &nonFlusherWriter{}
 	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
@@ -357,6 +365,7 @@ func TestHandleSSE_RejectsNonFlusher(t *testing.T) {
 // Through the mux: the gate is a registration-time wrapper. An ungated route is checked too: a health probe
 // must report the wind-down.
 func TestRegisterRoutes_DrainingGate(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		method string
@@ -499,6 +508,7 @@ func TestHandleSSE_ReplaysTheStateAClientCannotDeriveFromTheEventLog(t *testing.
 // Every connect carries every leased run's asks in its pending_snapshot, and a run whose lease ended is
 // not named, so a client that missed the run's last frame drops its card on the next connect.
 func TestHandleSSE_ThePendingSnapshotNamesEveryLeasedRunAndNoEndedOne(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1", ChatID: "c1", Origin: runlease.OriginAgent})
 	c := h.runs.cellFor("wf_1")
@@ -526,6 +536,7 @@ func TestHandleSSE_ThePendingSnapshotNamesEveryLeasedRunAndNoEndedOne(t *testing
 }
 
 func TestHandleSSE_OnlyAReconnectAppliesNotificationTogglesEditedWhileTheStreamWasDown(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name        string
 		lastEventID bool
@@ -594,6 +605,7 @@ func askCommandOf(t *testing.T, item json.RawMessage) *marotte.PermissionCommand
 }
 
 func TestFitPendingItems_PastTheBudgetTheRemainingAsksLoseTheirCommandText(t *testing.T) {
+	t.Parallel()
 	text := strings.Repeat("x", 1000)
 	events := []marotte.ServerEvent{
 		commandAsk(1, text), commandAsk(2, text), commandAsk(3, text), commandAsk(4, text),
@@ -633,6 +645,7 @@ func TestFitPendingItems_PastTheBudgetTheRemainingAsksLoseTheirCommandText(t *te
 }
 
 func TestFitPendingItems_AnItemTooLargeEvenWithoutItsCommandIsLeftOut(t *testing.T) {
+	t.Parallel()
 	huge := marotte.NewEvent(marotte.EventPermissionNeeded, "c1", marotte.PermissionNeededPayload{
 		RequestID: 1, Title: strings.Repeat("t", 4000), Command: &marotte.PermissionCommand{Text: "ls"},
 	})
@@ -645,6 +658,7 @@ func TestFitPendingItems_AnItemTooLargeEvenWithoutItsCommandIsLeftOut(t *testing
 
 // A pending set larger than one frame still opens the stream: a refused connect frame would fail every reconnect while it stood.
 func TestHandleSSE_APendingSetOverOneFrameStillOpensTheStream(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	const asks = 160
 	for i := range asks {
@@ -680,6 +694,7 @@ func TestHandleSSE_APendingSetOverOneFrameStillOpensTheStream(t *testing.T) {
 }
 
 func TestHandleSSE_AFrameOverTheCapIsSkippedAndTheConnectGoesOn(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	h.bus.pendingPerms.add(1, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 		marotte.PermissionNeededPayload{RequestID: 1, Title: strings.Repeat("t", sse.MaxFrameBytes)}), nil)

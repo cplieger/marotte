@@ -5,6 +5,7 @@ import (
 )
 
 func TestByteRing_Empty(t *testing.T) {
+	t.Parallel()
 	r := newByteRing(64)
 	got := r.Bytes()
 	if len(got) != 0 {
@@ -42,6 +43,7 @@ func TestByteRing_MultiWrap(t *testing.T) {
 }
 
 func TestKillShell_NoShellIsOK(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	h.shellMgr.kill(t.Context())
 }

@@ -29,6 +29,7 @@ func settledNow(s *sessionSettle) (settled bool, err error) {
 }
 
 func TestReplayProjection_SettlesTheLoadsGateOnlyOnceItsSwapRan(t *testing.T) {
+	t.Parallel()
 	const chatID marotte.ChatID = "c1"
 	errSwap := errors.New("disk full")
 
@@ -98,6 +99,7 @@ func newReplayingHub(t *testing.T, withhold int) (*Runtime, *testChatStore) {
 }
 
 func TestLoadSession_AnswersOnlyOnceTheReplayMergedIntoTheLog(t *testing.T) {
+	t.Parallel()
 	h, cs := newReplayingHub(t, 1)
 
 	// The load returns while Forward is a frame short, so only the gate can hold this.
@@ -134,6 +136,7 @@ func TestLoadSession_AnswersOnlyOnceTheReplayMergedIntoTheLog(t *testing.T) {
 // A failed replay swap fails its generation, which leaves the registry stopped, so the next load
 // reconciles through a fresh bridge once storage recovers rather than inheriting the failure.
 func TestLoadSession_AFailedReplaySwapRecoversThroughASecondGeneration(t *testing.T) {
+	t.Parallel()
 	h, cs := newReplayingHub(t, 0)
 	errSwap := errors.New("disk full")
 	var mu sync.Mutex
@@ -174,6 +177,7 @@ func TestLoadSession_AFailedReplaySwapRecoversThroughASecondGeneration(t *testin
 // A failed generation answers that failure, never a reopen in the same call, and resumes no runs:
 // either would reopen on the same failure over and over.
 func TestLoadSession_AFailedGenerationIsNotReopenedOrResumed(t *testing.T) {
+	t.Parallel()
 	cs := newTestChatStore()
 	var opens atomic.Int32
 	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession {
@@ -216,6 +220,7 @@ func TestLoadSession_AFailedGenerationIsNotReopenedOrResumed(t *testing.T) {
 // No opener receives a generation before its replay merged, so a prompt cannot hold one whose swap then
 // fails, and the failure leaves nothing registered for the next load to inherit.
 func TestOpenBridge_AdmitsNoCallerBeforeTheReplayMerged(t *testing.T) {
+	t.Parallel()
 	cs := newTestChatStore()
 	var opens atomic.Int32
 	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession {
@@ -281,6 +286,7 @@ func TestOpenBridge_AdmitsNoCallerBeforeTheReplayMerged(t *testing.T) {
 // The caller's context bounds its own wait from the first instant, while the door it started runs
 // on under the runtime's lifetime and keeps the chat's session.
 func TestLoadSession_ACancelledWaiterReturnsBeforeAHeldOpenCompletes(t *testing.T) {
+	t.Parallel()
 	cs := newTestChatStore()
 	gate := make(chan struct{})
 	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession {
@@ -320,6 +326,7 @@ func TestLoadSession_ACancelledWaiterReturnsBeforeAHeldOpenCompletes(t *testing.
 
 // A chat whose record is gone is a terminal answer, distinct from every retryable failure.
 func TestLoadSession_AMissingChatIsTerminal(t *testing.T) {
+	t.Parallel()
 	h, _ := newReplayingHub(t, 0)
 
 	if err := h.coord.LoadSession(t.Context(), "c-deleted"); !errors.Is(err, command.ErrChatGone) {
@@ -351,6 +358,7 @@ func (s *unreadableOnce) Lookup(ctx context.Context, id marotte.ChatID) (*marott
 // A record the session open could not read is not the chat's absence: the answer is retryable, and the
 // next load opens the chat.
 func TestLoadSession_AnUnreadableRecordIsRetryable(t *testing.T) {
+	t.Parallel()
 	cs := newTestChatStore()
 	store := &unreadableOnce{testChatStore: cs, chatID: "c1"}
 	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), store)
@@ -371,6 +379,7 @@ func TestLoadSession_AnUnreadableRecordIsRetryable(t *testing.T) {
 // A header the real store cannot stat is a storage fault: the load is retryable, never the
 // chat's deletion, and a fresh generation opens the chat once storage recovers.
 func TestLoadSession_AnUnstattableHeaderIsRetryable(t *testing.T) {
+	t.Parallel()
 	cs := newTestChatStore()
 	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs)
 	cs.wire(h)
@@ -420,6 +429,7 @@ func (s *deletingAfterPresence) Presence(id marotte.ChatID) chat.Presence {
 // A generation is admitted only while its record is present at the publication itself: a delete
 // can land before it (the open answers ErrChatGone) or after it, never between the two.
 func TestOpenBridge_AdmitsNoBridgeForARecordDeletedBeforeItsReadinessPublished(t *testing.T) {
+	t.Parallel()
 	cs := newTestChatStore()
 	store := &deletingAfterPresence{testChatStore: cs, chatID: "c1"}
 	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), store)
@@ -483,6 +493,7 @@ func newResumingHub(t *testing.T, store *refusedAtPublication) (*Runtime, *atomi
 // A resumed generation whose replay merged and then failed admission at publication resumes no
 // runs: only the readiness it published decides, and it published a failure.
 func TestLoadSession_AResumedGenerationRefusedAtPublicationResumesNoRuns(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		verdict  chat.Presence
 		wantGone bool
@@ -511,6 +522,7 @@ func TestLoadSession_AResumedGenerationRefusedAtPublicationResumesNoRuns(t *test
 
 // The control for the test above: a resumed generation that published ready resumes its runs once.
 func TestLoadSession_AResumedGenerationPublishedReadyResumesItsRuns(t *testing.T) {
+	t.Parallel()
 	store := &refusedAtPublication{testChatStore: newTestChatStore(), chatID: "c1"}
 	h, resumed := newResumingHub(t, store)
 
@@ -557,6 +569,7 @@ func (b generationProbe) SupervisedApplied() bool {
 // A header that becomes unstattable after the session open read it fails the generation retryably at
 // publication, never as a success and never as the chat's deletion.
 func TestLoadSession_AHeaderUnstattableAtPublicationIsRetryable(t *testing.T) {
+	t.Parallel()
 	cs := newTestChatStore()
 	recorded := make(chan struct{}, 2)
 	release := make(chan struct{})
@@ -602,6 +615,7 @@ func TestLoadSession_AHeaderUnstattableAtPublicationIsRetryable(t *testing.T) {
 // A header that stops decoding after the session open read it fails the generation retryably at
 // publication: the stat still finds the file, but no record stands under the readiness.
 func TestLoadSession_AHeaderThatStopsDecodingAtPublicationIsRetryable(t *testing.T) {
+	t.Parallel()
 	cs := newTestChatStore()
 	recorded := make(chan struct{}, 2)
 	release := make(chan struct{})
@@ -643,6 +657,7 @@ func TestLoadSession_AHeaderThatStopsDecodingAtPublicationIsRetryable(t *testing
 // A fresh session the record could not take because its header stopped decoding fails the
 // generation retryably, removes it, and is reaped: no record holds it, so no delete's chain will.
 func TestOpenGeneration_ASessionAnUnreadableRecordRefusedIsReapedAndRetryable(t *testing.T) {
+	t.Parallel()
 	cs := newTestChatStore()
 	gate := make(chan struct{})
 	entered := make(chan *fakeBridge, 2)
@@ -700,6 +715,7 @@ func TestOpenGeneration_ASessionAnUnreadableRecordRefusedIsReapedAndRetryable(t 
 // A fresh session a removed record refused is in no delete's chain, so its own generation
 // reaps it; one the record took before the delete is the teardown's, through that chain.
 func TestOpenGeneration_ReapsOnlyTheFreshSessionNoRecordHolds(t *testing.T) {
+	t.Parallel()
 	removals := map[string]func(cs *testChatStore) error{
 		"refused by the deleted record": func(cs *testChatStore) error {
 			_, err := cs.Delete(context.Background(), "c1")
@@ -826,6 +842,7 @@ func (b enteringBridge) door(ctx context.Context, so *marotte.SessionOpts, eo *m
 // A parent deleted while a tangent's recovery is loading its session, after the session open read the
 // record and before it settled, is the terminal answer: the merge fails once and no bridge survives.
 func TestTangentMerge_AParentDeletedWhileItsSessionLoadsFailsTheMergeOnce(t *testing.T) {
+	t.Parallel()
 	seeds := map[string]func(c *marotte.Chat){
 		"a resumed parent": func(c *marotte.Chat) { c.RecordSession("old-acp") },
 		"a fresh parent":   func(*marotte.Chat) {},

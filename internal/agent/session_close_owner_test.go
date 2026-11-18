@@ -236,6 +236,7 @@ func (o *ownerHub) logHolds(t *testing.T, text string) bool {
 }
 
 func TestCloseOwner_ReloadWaitsForAKASWireTurn(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, true)
 		o.h.markSessionsForReload("test")
@@ -260,6 +261,7 @@ func TestCloseOwner_ReloadWaitsForAKASWireTurn(t *testing.T) {
 }
 
 func TestCloseOwner_ReloadWaitsForAWireTurnBesideTheOpenersPrompt(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, true)
 		o.h.markSessionsForReload("test")
@@ -295,6 +297,7 @@ func TestCloseOwner_ReloadWaitsForAWireTurnBesideTheOpenersPrompt(t *testing.T) 
 }
 
 func TestCloseOwner_ReloadWaitsForAnotherCallersReservation(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, true)
 		o.h.markSessionsForReload("test")
@@ -314,6 +317,7 @@ func TestCloseOwner_ReloadWaitsForAnotherCallersReservation(t *testing.T) {
 }
 
 func TestCloseOwner_PromptDoorReloadsUnderItsOwnAdmission(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, true)
 		o.h.markSessionsForReload("test")
@@ -338,6 +342,7 @@ func TestCloseOwner_PromptDoorReloadsUnderItsOwnAdmission(t *testing.T) {
 }
 
 func TestCloseOwner_ANonPromptDoorReloadsATabbedChatInline(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, true)
 		o.h.markSessionsForReload("test")
@@ -351,6 +356,7 @@ func TestCloseOwner_ANonPromptDoorReloadsATabbedChatInline(t *testing.T) {
 }
 
 func TestCloseOwner_QueuedReloadIgnoresTheOpenersExemption(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		o.h.markSessionsForReload("test")
@@ -388,6 +394,7 @@ func TestCloseOwner_QueuedReloadIgnoresTheOpenersExemption(t *testing.T) {
 }
 
 func TestCloseOwner_ReloadWaitsForAHostedStep(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		o.h.markSessionsForReload("test")
@@ -417,6 +424,7 @@ func TestCloseOwner_ReloadWaitsForAHostedStep(t *testing.T) {
 }
 
 func TestCloseOwner_ReleaseWaitsForAHostedStep(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		endStep := hostStepOn(t, o.h, "sess-step")
@@ -435,6 +443,7 @@ func TestCloseOwner_ReleaseWaitsForAHostedStep(t *testing.T) {
 }
 
 func TestCloseOwner_ReleaseWaitsForADoorInProgress(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		br := newFakeBridge()
@@ -461,6 +470,7 @@ func TestCloseOwner_ReleaseWaitsForADoorInProgress(t *testing.T) {
 }
 
 func TestCloseOwner_ReleaseWaitsForKASRun(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		o.h.coord.turns.noteKASActivity("c1", true)
@@ -479,6 +489,7 @@ func TestCloseOwner_ReleaseWaitsForKASRun(t *testing.T) {
 }
 
 func TestCloseOwner_ReleaseWaitsForASessionCall(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		gate := make(chan struct{})
@@ -509,6 +520,7 @@ func TestCloseOwner_ReleaseWaitsForASessionCall(t *testing.T) {
 }
 
 func TestCloseOwner_ReleaseWaitsForTheCloseTailOfARealTurnEnd(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		tails := blockTails(t, o.h)
@@ -530,6 +542,7 @@ func TestCloseOwner_ReleaseWaitsForTheCloseTailOfARealTurnEnd(t *testing.T) {
 }
 
 func TestCloseOwner_ReleaseWaitsForATailHeldBeforeTheAsk(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		_, done, ok := o.h.coord.turns.beginTail(lifecycleOf(t, o.h, "c1"))
@@ -553,6 +566,7 @@ func TestCloseOwner_ReleaseWaitsForATailHeldBeforeTheAsk(t *testing.T) {
 }
 
 func TestCloseOwner_TwoReleaseAsksWhileTheTailIsHeldCloseOnce(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		closes := countCloses(o.br)
@@ -583,6 +597,7 @@ func TestCloseOwner_TwoReleaseAsksWhileTheTailIsHeldCloseOnce(t *testing.T) {
 }
 
 func TestCloseOwner_OpenBridgeHoldsTheSessionUntilReleased(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		sb, release, err := o.h.coord.openBridge(t.Context(), "c1", "")
@@ -611,6 +626,7 @@ func TestCloseOwner_OpenBridgeHoldsTheSessionUntilReleased(t *testing.T) {
 }
 
 func TestCloseOwner_LeaseEndAloneDoesNotCloseAnOpenedBridge(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		if _, err := o.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Effort = "max"; return true }); err != nil {
@@ -644,6 +660,7 @@ func TestCloseOwner_LeaseEndAloneDoesNotCloseAnOpenedBridge(t *testing.T) {
 }
 
 func TestCloseOwner_OpenDuringAGrantedCloseGetsAFreshSession(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		gate := make(chan struct{})
@@ -681,6 +698,7 @@ func TestCloseOwner_OpenDuringAGrantedCloseGetsAFreshSession(t *testing.T) {
 }
 
 func TestCloseOwner_DrainedPromptReloadsBeforeTheTailEnds(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name            string
 		pendingFirst    bool
@@ -770,6 +788,7 @@ func TestCloseOwner_DrainedPromptReloadsBeforeTheTailEnds(t *testing.T) {
 }
 
 func TestCloseOwner_PendingReloadClosesAndTheNextOpenLoads(t *testing.T) {
+	t.Parallel()
 	// pendBehindKAS makes the reload pending behind a reported KAS run, then ends that run.
 	pendBehindKAS := func(t *testing.T, o *ownerHub) {
 		t.Helper()
@@ -846,6 +865,7 @@ func TestCloseOwner_PendingReloadClosesAndTheNextOpenLoads(t *testing.T) {
 }
 
 func TestCloseOwner_AStepMessageReachesItsParentAfterAPendingReload(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 		if err != nil {
@@ -988,6 +1008,7 @@ func answerTheChatsAsk(t *testing.T, h *Runtime) {
 }
 
 func TestCloseOwner_ARunEndKeepsTheChatForAnImmediateWake(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		o.launchRun(t, recordedRun)
@@ -1009,6 +1030,7 @@ func TestCloseOwner_ARunEndKeepsTheChatForAnImmediateWake(t *testing.T) {
 }
 
 func TestCloseOwner_ARunEndKeepsTheChatForALateWake(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		o.launchRun(t, recordedRun)
@@ -1031,6 +1053,7 @@ func TestCloseOwner_ARunEndKeepsTheChatForALateWake(t *testing.T) {
 }
 
 func TestCloseOwner_ARunEndOwingNoWakeReleasesAtOnce(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		end  func(t *testing.T, o *ownerHub)
 		name string
@@ -1063,6 +1086,7 @@ func TestCloseOwner_ARunEndOwingNoWakeReleasesAtOnce(t *testing.T) {
 }
 
 func TestCloseOwner_TheWakeBoundReleasesTheChat(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		o.launchRun(t, recordedRun)
@@ -1083,6 +1107,7 @@ func TestCloseOwner_TheWakeBoundReleasesTheChat(t *testing.T) {
 }
 
 func TestCloseOwner_ABusyParentsWakeHoldsUntilTheNextTurn(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		o.launchRun(t, recordedRun)
@@ -1106,6 +1131,7 @@ func TestCloseOwner_ABusyParentsWakeHoldsUntilTheNextTurn(t *testing.T) {
 }
 
 func TestCloseOwner_EachRunEndKeepsTheChatForItsOwnWake(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		o.launchRun(t, recordedRun)
@@ -1233,6 +1259,7 @@ var closeHoldRows = []holdRow{
 }
 
 func TestCloseOwner_EachHoldRefusesThenReleases(t *testing.T) {
+	t.Parallel()
 	for _, row := range closeHoldRows {
 		t.Run(row.name, func(t *testing.T) {
 			t.Run("release", func(t *testing.T) {
@@ -1451,6 +1478,7 @@ var ownerHolds = map[holdKind]struct {
 }
 
 func TestCloseOwner_EveryHoldKindHasARow(t *testing.T) {
+	t.Parallel()
 	rows := make(map[holdKind]bool)
 	for _, row := range closeHoldRows {
 		rows[row.kind] = true
@@ -1479,6 +1507,7 @@ func TestCloseOwner_EveryHoldKindHasARow(t *testing.T) {
 }
 
 func TestCloseOwner_TheOpenersOwnAdmissionAndUnsentTurnDoNotRefuse(t *testing.T) {
+	t.Parallel()
 	o := newOwnerLife(t)
 	res := o.reserve(t)
 	o.lc.mu.Lock()
@@ -1499,6 +1528,7 @@ func TestCloseOwner_TheOpenersOwnAdmissionAndUnsentTurnDoNotRefuse(t *testing.T)
 }
 
 func TestCloseOwner_TwoAsksWhileHeldMakeOneClose(t *testing.T) {
+	t.Parallel()
 	for _, k := range []holdKind{holdKAS, holdTail, holdStep} {
 		h := ownerHolds[k]
 		t.Run(h.name, func(t *testing.T) {
@@ -1543,6 +1573,7 @@ func TestCloseOwner_TwoAsksWhileHeldMakeOneClose(t *testing.T) {
 }
 
 func TestCloseOwner_EndCloseTwiceIsANoOp(t *testing.T) {
+	t.Parallel()
 	o := newOwnerLife(t)
 	o.lc.askClose(o.sb, closeRelease, 0, false)
 	g := o.state().closing
@@ -1577,6 +1608,7 @@ func TestCloseOwner_EndCloseTwiceIsANoOp(t *testing.T) {
 }
 
 func TestCloseOwner_AskOnANewEntryReplacesTheStaleAsk(t *testing.T) {
+	t.Parallel()
 	o := newOwnerLife(t)
 	o.r.noteKASActivity("c1", true)
 	if a := o.lc.askClose(o.sb, closeRelease, 0, false); !a.startCloser {
@@ -1601,6 +1633,7 @@ func TestCloseOwner_AskOnANewEntryReplacesTheStaleAsk(t *testing.T) {
 }
 
 func TestCloseOwner_AReservationReleaseEndsItsDoorsOpenHold(t *testing.T) {
+	t.Parallel()
 	o := newOwnerLife(t)
 	res := o.reserve(t)
 	promptDoor := o.holdOpen(res.Token)
@@ -1659,6 +1692,7 @@ func (c *ownerCloser) snapshot() (ran []*sharedBridge, running, most, extra int)
 }
 
 func TestCloseOwner_AnInlineGrantStartsTheCloserItLeavesWork(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerLife(t)
 		sb2 := newSharedBridge(o.lc)
@@ -1703,6 +1737,7 @@ func TestCloseOwner_AnInlineGrantStartsTheCloserItLeavesWork(t *testing.T) {
 }
 
 func TestCloseOwner_OnlyAConfirmedCloseRefusesALease(t *testing.T) {
+	t.Parallel()
 	o := newOwnerLife(t)
 	o.lc.askClose(o.sb, closeRelease, 0, false)
 	g, _, ok := o.lc.nextClose()
@@ -1742,6 +1777,7 @@ func TestCloseOwner_OnlyAConfirmedCloseRefusesALease(t *testing.T) {
 }
 
 func TestCloseOwner_AHoldStartedSinceTheGrantPutsTheCloseBack(t *testing.T) {
+	t.Parallel()
 	for _, k := range []holdKind{holdTurn, holdTail, holdKAS, holdStep, holdWake, holdLease} {
 		h := ownerHolds[k]
 		t.Run(h.name, func(t *testing.T) {
@@ -1768,6 +1804,7 @@ func TestCloseOwner_AHoldStartedSinceTheGrantPutsTheCloseBack(t *testing.T) {
 }
 
 func TestCloseOwner_OnlyAWireTurnTakesAWake(t *testing.T) {
+	t.Parallel()
 	for _, row := range []struct {
 		name   string
 		source marotte.TurnOpenSource
@@ -1807,6 +1844,7 @@ func TestCloseOwner_OnlyAWireTurnTakesAWake(t *testing.T) {
 }
 
 func TestCloseOwner_TheLifesEndEndsAGrantNoCloserTook(t *testing.T) {
+	t.Parallel()
 	o := newOwnerLife(t)
 	o.lc.askClose(o.sb, closeRelease, 0, false)
 	if g := o.state().closing; g == nil || g.frozen {
@@ -1830,6 +1868,7 @@ func TestCloseOwner_TheLifesEndEndsAGrantNoCloserTook(t *testing.T) {
 }
 
 func TestCloseOwner_AWakeHoldEndsAtItsBoundOrATurn(t *testing.T) {
+	t.Parallel()
 	t.Run("the bound", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			o := newOwnerLife(t)
@@ -1891,6 +1930,7 @@ func TestCloseOwner_AWakeHoldEndsAtItsBoundOrATurn(t *testing.T) {
 }
 
 func TestCloseOwner_AWithdrawnCloseAsksItsLatePurposesAgain(t *testing.T) {
+	t.Parallel()
 	o := newOwnerLife(t)
 	o.lc.askClose(o.sb, closeRelease, 0, false)
 	g, why, ok := o.lc.nextClose()
@@ -1923,6 +1963,7 @@ func holdCloser(t *testing.T, h *Runtime) (reached *atomic.Int32, open func()) {
 }
 
 func TestCloseOwner_TheRunEndKeepsATabbedParentResident(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, _ := newTestHub(WithConfigDir(t.TempDir()))
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -1984,6 +2025,7 @@ func TestCloseOwner_TheRunEndKeepsATabbedParentResident(t *testing.T) {
 }
 
 func TestCloseOwner_AKeptChatsLeaseIsNeverRefusedForACloseThatWillNotHappen(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		// ask runs while c1 runs a wire turn: a close asked that its re-check will find c1 kept resident.
 		ask func(t *testing.T, o *ownerHub)
@@ -2029,6 +2071,7 @@ func TestCloseOwner_AKeptChatsLeaseIsNeverRefusedForACloseThatWillNotHappen(t *t
 }
 
 func TestCloseOwner_ARunEndDuringAFrozenCloseRequeues(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		reached, openHook := holdCloser(t, o.h)
@@ -2063,6 +2106,7 @@ func TestCloseOwner_ARunEndDuringAFrozenCloseRequeues(t *testing.T) {
 }
 
 func TestCloseOwner_AReleaseAskedDuringTheNextDoorRunsOnTheCloser(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		o.h.markSessionsForReload("test")
@@ -2105,6 +2149,7 @@ func TestCloseOwner_AReleaseAskedDuringTheNextDoorRunsOnTheCloser(t *testing.T) 
 }
 
 func TestCloseOwner_ReleaseAskOnTheForwardNeverBlocks(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		gate := make(chan struct{})
@@ -2131,6 +2176,7 @@ func TestCloseOwner_ReleaseAskOnTheForwardNeverBlocks(t *testing.T) {
 }
 
 func TestCloseOwner_AStaleReleaseGrantMovesToTheCurrentEntry(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		_, done, ok := o.h.coord.turns.beginTail(lifecycleOf(t, o.h, "c1"))
@@ -2163,6 +2209,7 @@ func TestCloseOwner_AStaleReleaseGrantMovesToTheCurrentEntry(t *testing.T) {
 }
 
 func TestCloseOwner_AStepOpenedBeforeTheChatsFirstDoorHolds(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		if _, err := o.cs.Mutate(t.Context(), "c2", func(c *marotte.Chat, _ bool) bool { c.Name = "B"; return true }); err != nil {
@@ -2195,6 +2242,7 @@ func TestCloseOwner_AStepOpenedBeforeTheChatsFirstDoorHolds(t *testing.T) {
 }
 
 func TestCloseOwner_EveryAcquireReleasesOnError(t *testing.T) {
+	t.Parallel()
 	t.Run("a closer the runtime refuses to start", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			o := newOwnerHub(t, false)
@@ -2330,6 +2378,7 @@ func (o *ownerHub) assertNoHolds(t *testing.T, chatID marotte.ChatID) {
 }
 
 func TestCloseOwner_TeardownEndsWithAnOpenHoldHeld(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
 		_, withheld, err := o.h.coord.openBridge(t.Context(), "c1", "")

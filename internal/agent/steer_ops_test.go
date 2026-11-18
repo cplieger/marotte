@@ -105,6 +105,7 @@ func TestCmdSteerRemove_AReadThatCannotFoldBeforeTheBarrierDeletesNothing(t *tes
 // Two deletes take the lock in turn; the second re-reads, finds its target in the first's probe, clears again
 // and resends the rest under a fresh probe.
 func TestCmdSteerRemove_TwoDeletesInFlightTakeTurns(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s, _, br := steerOpsHub(t)
 		s.bind()
@@ -165,6 +166,7 @@ func TestCmdSteerRemove_TwoDeletesInFlightTakeTurns(t *testing.T) {
 
 // The same row deleted twice at once: the second finds nothing waiting.
 func TestCmdSteerRemove_TheSameRowTwiceAnswersNotWaiting(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s, _, br := steerOpsHub(t)
 		s.bind()
@@ -481,6 +483,7 @@ func TestSteerRead_ACombinedResendReadAfterTheLedgerForgotItNamesItsRows(t *test
 // Between a turn_end and KAS going idle, a row KAS still holds is the continuation's to read: it reads
 // delivering, and a delete is refused with a clear-free 409 that says so rather than claiming a resend.
 func TestCmdSteerRemove_ARowKASIsDeliveringIsRefusedWithNoClear(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s, _, br := turnEndedBesideASteer(t)
 
@@ -505,6 +508,7 @@ func TestCmdSteerRemove_ARowKASIsDeliveringIsRefusedWithNoClear(t *testing.T) {
 // A bridge death with a probe outstanding and a steer waiting collects both for one resend, marks the
 // outstanding one possibly still in KAS's log, and owes the post-load clear.
 func TestSteerRecords_ABridgeDeathCollectsOutstandingAndWaitingRows(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	probeSent(s)
 	s.q.RouteSteer(s.chat, "steer-c", "c", nil, promptHolder)
@@ -555,6 +559,7 @@ func TestCmdSteerRemove_ATeardownUnderTheClearWritesNothing(t *testing.T) {
 
 // A pending end resolved after the chat's teardown finds no rows to send.
 func TestSteerRecords_AnEndResolvedAfterTeardownFindsTheChatGone(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.bind()
 	s.steer("steer-a", "a")
@@ -648,6 +653,7 @@ func TestPromptDrain_ADeadBuffersRowWaitsForThePostLoadClear(t *testing.T) {
 
 // A turn StartTurn began during a NONE-state delete cannot read the buffer until the delete ends.
 func TestCmdSteerRemove_ATurnStartingUnderADeleteWaitsForIt(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s, _, br := steerOpsHub(t)
 		for _, key := range []string{"steer-a", "steer-b"} {

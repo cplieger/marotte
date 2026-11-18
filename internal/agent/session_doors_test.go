@@ -18,6 +18,7 @@ import (
 )
 
 func TestEnsureResident_DrivingVerbsLoadTheHostSessionFirst(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		method string
@@ -50,6 +51,7 @@ func TestEnsureResident_DrivingVerbsLoadTheHostSessionFirst(t *testing.T) {
 }
 
 func TestReadVerbsNeedNoHost(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		verb func(t *testing.T, h *Runtime)
@@ -85,6 +87,7 @@ func stepCloseRequested(br *fakeBridge, sessionID string) bool {
 }
 
 func TestStepTranscript_TerminalRunsStepSessionIsClosedAfterReplay(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
@@ -103,6 +106,7 @@ func TestStepTranscript_TerminalRunsStepSessionIsClosedAfterReplay(t *testing.T)
 }
 
 func TestStepTranscript_LiveRunsStepSessionIsNeverClosed(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	armStepReplay(br, "sess_pass0", "still going")
 	br.mu.Lock()
@@ -131,6 +135,7 @@ func reloadMarked(h *Runtime, chatID marotte.ChatID) bool {
 }
 
 func TestSettings_SessionDoorMoveReloadsSessionsAndNeverRestarts(t *testing.T) {
+	t.Parallel()
 	h, dir, src := restartFixture(t)
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
@@ -147,6 +152,7 @@ func TestSettings_SessionDoorMoveReloadsSessionsAndNeverRestarts(t *testing.T) {
 }
 
 func TestSettings_EngineDoorMoveMakesRestartPending(t *testing.T) {
+	t.Parallel()
 	h, dir, src := restartFixture(t)
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
@@ -163,6 +169,7 @@ func TestSettings_EngineDoorMoveMakesRestartPending(t *testing.T) {
 }
 
 func TestSignIn_FirstSignInMarksResidentSessionsForReload(t *testing.T) {
+	t.Parallel()
 	h, _, _ := restartFixture(t)
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
@@ -196,6 +203,7 @@ func (*flowBackend) Poll(context.Context, signin.DeviceStart) (signin.Credential
 }
 
 func TestSignIn_AnotherBackendsSignInLeavesTheEngineSessionsAlone(t *testing.T) {
+	t.Parallel()
 	vault := openVault(t, filemodetest.NewDisk(), &flowBackend{id: "test"}, &flowBackend{id: "other"})
 	h, _ := reopenFixture(t, WithSignIn(vault, "test"))
 	awaitBoot(h)
@@ -271,6 +279,7 @@ func TestEnsureResident_ACallerWaitsOnlyItsOwnContextAndALaterCallerJoinsTheLoad
 }
 
 func TestUnreadableConfig_AResidentSessionIsNotMarkedUntilTheRepairMovesAValue(t *testing.T) {
+	t.Parallel()
 	dir := writeSettings(t, `{"memory_mode":"learn"}`)
 	h := reopenFixtureIn(t, dir, nil)
 	awaitBoot(h)
@@ -297,6 +306,7 @@ func TestUnreadableConfig_AResidentSessionIsNotMarkedUntilTheRepairMovesAValue(t
 
 // A chat marked before config.json broke keeps its session until the file reads again, then reloads once.
 func TestUnreadableConfig_AMarkedSessionWaitsForConfigToReadBeforeItReloads(t *testing.T) {
+	t.Parallel()
 	h, dir, _ := restartFixture(t)
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)

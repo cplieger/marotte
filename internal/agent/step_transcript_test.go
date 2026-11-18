@@ -117,6 +117,7 @@ func shortStepBudget(t *testing.T, d time.Duration) {
 }
 
 func TestStepTranscript_AStepsFramesProject(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
@@ -141,6 +142,7 @@ func TestStepTranscript_AStepsFramesProject(t *testing.T) {
 
 // TestStepTranscript_ARepeatsIterationsAreDistinct pins that only the path separates two `build` steps, each reaching its own session.
 func TestStepTranscript_ARepeatsIterationsAreDistinct(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
@@ -173,6 +175,7 @@ func TestStepTranscript_ARepeatsIterationsAreDistinct(t *testing.T) {
 
 // TestStepTranscript_AStepThatNeverRanIsGone pins that no session to load, and the step is real, so `gone`, not 404.
 func TestStepTranscript_AStepThatNeverRanIsGone(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
@@ -195,6 +198,7 @@ func TestStepTranscript_AStepThatNeverRanIsGone(t *testing.T) {
 
 // TestStepTranscript_AnUnknownPathIsAClientError separates the step-gone verdict from no-such-step.
 func TestStepTranscript_AnUnknownPathIsAClientError(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
@@ -221,6 +225,7 @@ func TestStepTranscript_AnUnknownPathIsAClientError(t *testing.T) {
 
 // TestStepTranscript_AFailedLoadIsUnavailable pins that KAS's unknown-id and transient answers look alike, so never `gone`.
 func TestStepTranscript_AFailedLoadIsUnavailable(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
@@ -245,6 +250,7 @@ func TestStepTranscript_AFailedLoadIsUnavailable(t *testing.T) {
 // TestStepTranscript_AnUnreadableRunIsUnavailable pins that a 200 `unavailable`, for both arms: an empty result (rawCall
 // drops in-band errors) and undecodable bytes.
 func TestStepTranscript_AnUnreadableRunIsUnavailable(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		desc  string
 		arm   func(*fakeBridge)
@@ -322,6 +328,7 @@ func TestStepTranscript_TheBudgetBoundsTheBarrier(t *testing.T) {
 
 // TestStepTranscript_ARefusedLoadLeavesNoReplayOpen pins that every exit takes the replay, so a retry is not refused by a corpse.
 func TestStepTranscript_ARefusedLoadLeavesNoReplayOpen(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
@@ -404,6 +411,7 @@ func TestStepTranscript_IncludesReaderInterventions(t *testing.T) {
 // A step session is replayed by an engine-level load, never opened as a session: no door, no lane, and the
 // reaper's keep-list is unchanged.
 func TestStepTranscript_TheLoadOpensNoSessionLane(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
@@ -433,6 +441,7 @@ func TestStepTranscript_TheLoadOpensNoSessionLane(t *testing.T) {
 // TestEngineCallAt_CarriesTheResponsePosition pins that a zero would make the condition trivially true. It also names
 // the generation, since a restarted engine's lane restarts at zero.
 func TestEngineCallAt_CarriesTheResponsePosition(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepReplay(br, "sess_pass0", "one ", "two ", "three")
@@ -465,6 +474,7 @@ func getStepTranscript(t *testing.T, h *Runtime, target string) *httptest.Respon
 }
 
 func TestHandleStepTranscript_HTTP(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
@@ -492,6 +502,7 @@ func TestHandleStepTranscript_HTTP(t *testing.T) {
 
 // TestHandleStepTranscript_AGoneVerdictIsA200 pins that only a path the run does not name is an HTTP error.
 func TestHandleStepTranscript_AGoneVerdictIsA200(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
@@ -510,6 +521,7 @@ func TestHandleStepTranscript_AGoneVerdictIsA200(t *testing.T) {
 }
 
 func TestHandleStepTranscript_Refusals(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
@@ -575,6 +587,7 @@ func TestHandleStepTranscript_Refusals(t *testing.T) {
 // TestHandleStepTranscript_APercentEncodedSegmentDecodes pins that the key is one encodeURIComponent segment after the
 // run id, which ServeMux's `{path}` hands over decoded.
 func TestHandleStepTranscript_APercentEncodedSegmentDecodes(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	// `loop#0` is a repeat child's fallback id when KAS sends no `iteration`.
@@ -604,6 +617,7 @@ func TestHandleStepTranscript_APercentEncodedSegmentDecodes(t *testing.T) {
 }
 
 func TestHandleStepTranscript_SlashBearingNodeIDsStayDistinct(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.mu.Lock()
@@ -639,6 +653,7 @@ func TestHandleStepTranscript_SlashBearingNodeIDsStayDistinct(t *testing.T) {
 // TestStepReplays_TheSettleSpansTheDrain pins that a returned load settles only once the consumer folded everything
 // before its result: frames precede it and the channel is buffered.
 func TestStepReplays_TheSettleSpansTheDrain(t *testing.T) {
+	t.Parallel()
 	var sr stepReplays
 	if !sr.open("sess_a", translate.NewEntryProjection(newMessageID, "")) {
 		t.Fatal("open reported a duplicate on an empty registry")
@@ -666,6 +681,7 @@ func TestStepReplays_TheSettleSpansTheDrain(t *testing.T) {
 // TestStepReplays_ADrainedReplaySettlesWhenTheLoadReturns pins that a replay fully folded before the RPC returns must
 // settle on the load's own attempt, or the read waits out 60s and answers `unavailable`.
 func TestStepReplays_ADrainedReplaySettlesWhenTheLoadReturns(t *testing.T) {
+	t.Parallel()
 	var sr stepReplays
 	if !sr.open("sess_a", translate.NewEntryProjection(newMessageID, "")) {
 		t.Fatal("open reported a duplicate on an empty registry")
@@ -688,6 +704,7 @@ func TestStepReplays_ADrainedReplaySettlesWhenTheLoadReturns(t *testing.T) {
 // TestStepReplays_AStragglerFromAPreviousAttachmentSettlesNothing pins that the engine restarts, and the previous
 // generation's positions run far ahead of a restarted sequence.
 func TestStepReplays_AStragglerFromAPreviousAttachmentSettlesNothing(t *testing.T) {
+	t.Parallel()
 	var sr stepReplays
 	if !sr.open("sess_a", translate.NewEntryProjection(newMessageID, "")) {
 		t.Fatal("open reported a duplicate on an empty registry")
@@ -720,6 +737,7 @@ func TestStepReplays_AStragglerFromAPreviousAttachmentSettlesNothing(t *testing.
 
 // TestStepReplays_NoReplayOpenAnswersImmediately pins that never wait on a load that is not happening.
 func TestStepReplays_NoReplayOpenAnswersImmediately(t *testing.T) {
+	t.Parallel()
 	var sr stepReplays
 	if !closedNow(sr.barrier("nobody")) {
 		t.Error("an unknown session's barrier is not already closed")
@@ -734,6 +752,7 @@ func TestStepReplays_NoReplayOpenAnswersImmediately(t *testing.T) {
 
 // TestStepReplays_ASecondReadOfOneStepIsRefused, without disturbing the first.
 func TestStepReplays_ASecondReadOfOneStepIsRefused(t *testing.T) {
+	t.Parallel()
 	var sr stepReplays
 	if !sr.open("sess_a", translate.NewEntryProjection(newMessageID, "")) {
 		t.Fatal("the first open was refused")
@@ -755,6 +774,7 @@ func TestStepReplays_ASecondReadOfOneStepIsRefused(t *testing.T) {
 
 // TestStepReplays_TakeIsIdempotentAndClosesTheBarrier pins that take runs on timeout too.
 func TestStepReplays_TakeIsIdempotentAndClosesTheBarrier(t *testing.T) {
+	t.Parallel()
 	var sr stepReplays
 	sr.open("sess_a", translate.NewEntryProjection(newMessageID, ""))
 	b := sr.barrier("sess_a")
@@ -771,6 +791,7 @@ func TestStepReplays_TakeIsIdempotentAndClosesTheBarrier(t *testing.T) {
 
 // TestStepReplays_IngestReportsWhetherItConsumed lets the engine lane tell a replay frame from a foreign one.
 func TestStepReplays_IngestReportsWhetherItConsumed(t *testing.T) {
+	t.Parallel()
 	var sr stepReplays
 	raw := json.RawMessage(`{"content":{"type":"text","text":"x"}}`)
 	if sr.ingest("sess_a", marotte.ACPUpdateAgentChunk, raw) {

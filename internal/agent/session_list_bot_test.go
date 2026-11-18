@@ -86,6 +86,7 @@ func wantNewestFirst(t *testing.T, rows []marotte.ResumableSession) {
 }
 
 func TestHandleSessionList_ListsEachBotWithNoListedSessionByItsRecord(t *testing.T) {
+	t.Parallel()
 	h, cs, br := botHistory(t)
 	br.callResults = map[string]json.RawMessage{
 		marotte.MethodSessionList: json.RawMessage(`{"sessions":[
@@ -124,6 +125,7 @@ func TestHandleSessionList_ListsEachBotWithNoListedSessionByItsRecord(t *testing
 // The rows come from the records alone, read beside no tab set and no Recently closed list, so a Bot whose entry
 // expired or was pushed out by later closes is still listed.
 func TestHandleSessionList_ListsTheBotRowsWhileKASCannotList(t *testing.T) {
+	t.Parallel()
 	h, cs, br := botHistory(t)
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`)}
 	br.callErrs = map[string]error{marotte.MethodSessionList: errors.New("kas gone")}

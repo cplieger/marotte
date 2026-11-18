@@ -194,6 +194,7 @@ func serveConnect(t *testing.T, rt *Runtime, ctx context.Context, legacy bool, q
 }
 
 func TestHandleSSE_ColdConnectIsFlatInTheNumberOfBusyChats(t *testing.T) {
+	t.Parallel()
 	few := measureColdConnect(t, fixtureBusyChats)
 	many := measureColdConnect(t, fixtureManyBusyChats)
 	if delta := many - few; delta > fixtureFlatnessBudget {
@@ -219,6 +220,7 @@ func measureColdConnect(t *testing.T, n int) int {
 
 // TestHandleSSE_ConnectedCarriesEveryBusyChatUpToTheCap pins the one per-chat cost, 37 bytes, and BusyStated while it fits.
 func TestHandleSSE_ConnectedCarriesEveryBusyChatUpToTheCap(t *testing.T) {
+	t.Parallel()
 	rt := newBudgetRuntime(t)
 	ids := busyChatsWithHugeTurns(t, rt, fixtureBusyChats)
 	p := connectPayload(t, rt, "")

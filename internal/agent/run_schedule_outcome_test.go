@@ -40,6 +40,7 @@ func launchScheduled(t *testing.T, h *Runtime, br *fakeBridge, entry *launchrule
 // A launch refused by the single-run rule names the live run and is not a hold; the manual route still answers 409
 // with the sentence.
 func TestLaunch_ARecipeBusyRefusalNamesTheLiveRun(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_new")
 	br.callResults[methodKiroWorkflowList] = kasRuns(t, map[string]any{

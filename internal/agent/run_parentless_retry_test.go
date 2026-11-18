@@ -59,6 +59,7 @@ func launchFailedParentless(t *testing.T, h *Runtime, br *fakeBridge) string {
 // A failed parentless run retries while a chat file is unreadable, after a restart lost everything in memory: no chat
 // can have launched it, so the unread chat hides no launcher.
 func TestRetry_AFailedParentlessRunRetriesAcrossARestartWhileAChatFileIsUnreadable(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	h, _, br := newTestHub(WithConfigDir(dir))
 	host := launchFailedParentless(t, h, br)
@@ -79,6 +80,7 @@ func TestRetry_AFailedParentlessRunRetriesAcrossARestartWhileAChatFileIsUnreadab
 
 // A run whose launching chat is the unreadable one is refused 503, saying why: the retry would host it elsewhere.
 func TestRetry_AChatLaunchedRunWhoseLauncherIsUnreadableIsRefused(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub(WithConfigDir(t.TempDir()))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	unreadableChat(t, cs, "c9")
@@ -95,6 +97,7 @@ func TestRetry_AChatLaunchedRunWhoseLauncherIsUnreadableIsRefused(t *testing.T) 
 
 // A run whose launching chat is being deleted is refused 409, whatever the scan read.
 func TestRetry_ARunWhoseLaunchingChatIsInTeardownIsRefused(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub(WithConfigDir(t.TempDir()))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	cs.tearDown("sess_c9")
@@ -108,6 +111,7 @@ func TestRetry_ARunWhoseLaunchingChatIsInTeardownIsRefused(t *testing.T) {
 
 // A failed parentless run is answered parentless while a chat file is unreadable, after a restart.
 func TestRunOwner_AFailedParentlessRunIsParentlessWhileAChatFileIsUnreadable(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	h, _, br := newTestHub(WithConfigDir(dir))
 	host := launchFailedParentless(t, h, br)
@@ -126,6 +130,7 @@ func TestRunOwner_AFailedParentlessRunIsParentlessWhileAChatFileIsUnreadable(t *
 
 // A parentless run's run_start keeps no unread chat as a doubt holder: none of them can own its host session.
 func TestObserveStart_AParentlessRunKeepsNoUnreadChat(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub(WithConfigDir(t.TempDir()))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	launchableRecipe(br, "wf_1")
@@ -147,6 +152,7 @@ func TestObserveStart_AParentlessRunKeepsNoUnreadChat(t *testing.T) {
 
 // Deleting a parentless run drops its host record, so nothing outlives the run to vouch for its session.
 func TestDelete_DropsAParentlessRunsHostRecord(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub(WithConfigDir(t.TempDir()))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	host := launchFailedParentless(t, h, br)
@@ -174,6 +180,7 @@ func dirExists(path string) bool {
 // A retry records no host: a chat-launched run retried once over a complete scan after its launcher was deleted is
 // still refused 503 when a later retry cannot read a chat, since a chat may have resumed its session since.
 func TestRetry_ARetriedChatLaunchedRunIsStillRefusedWhileAChatFileIsUnreadable(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub(WithConfigDir(t.TempDir()))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowRetry: json.RawMessage(`{}`)}
@@ -197,6 +204,7 @@ func TestRetry_ARetriedChatLaunchedRunIsStillRefusedWhileAChatFileIsUnreadable(t
 
 // Reattributing an unattributed parentless run over an incomplete scan keeps no unread chat and clears its mark.
 func TestReattributeRuns_AParentlessRunKeepsNoUnreadChat(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub(WithConfigDir(t.TempDir()))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	launchableRecipe(br, "wf_1")
@@ -221,6 +229,7 @@ func TestReattributeRuns_AParentlessRunKeepsNoUnreadChat(t *testing.T) {
 
 // A parentless run's run_start over an unlistable chats directory is attributed: no chat can own its host session.
 func TestObserveStart_AParentlessRunIsAttributedWhenTheChatsDirectoryIsUnlistable(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub(WithConfigDir(t.TempDir()))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	launchableRecipe(br, "wf_1")
@@ -242,6 +251,7 @@ func TestObserveStart_AParentlessRunIsAttributedWhenTheChatsDirectoryIsUnlistabl
 // RunHostedBy names the run whose recorded host a session is, which the claim check refuses to bind into a chat, and
 // names none for any other session, past a run directory that holds no host record.
 func TestRunHostedBy_NamesTheParentlessRunASessionHosts(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub(WithConfigDir(t.TempDir()))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	host := launchFailedParentless(t, h, br)
@@ -260,6 +270,7 @@ func TestRunHostedBy_NamesTheParentlessRunASessionHosts(t *testing.T) {
 // A launch's host session is hosted from its mint, before workflow/new names the run and long before its record is
 // written, and a launch that fails leaves it hosting nothing.
 func TestRunHostedBy_ALaunchHostsItsSessionFromItsMint(t *testing.T) {
+	t.Parallel()
 	t.Run("before workflow/new", func(t *testing.T) {
 		h, _, br := newTestHub(WithConfigDir(t.TempDir()))
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -311,6 +322,7 @@ func TestRunHostedBy_ALaunchHostsItsSessionFromItsMint(t *testing.T) {
 
 // An unlistable runs/ directory is an error, never "hosts nothing", which would let a host session be bound.
 func TestRunHostedBy_AnUnlistableRunsDirectoryIsAnError(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub(WithConfigDir(t.TempDir()))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if err := os.RemoveAll(h.runs.log.root); err != nil {
@@ -328,6 +340,7 @@ func TestRunHostedBy_AnUnlistableRunsDirectoryIsAnError(t *testing.T) {
 // A host record that exists but cannot be read is an error for RunHostedBy and proves nothing for parentlessHost:
 // answering "hosts nothing" would let a chat bind the host session the record names once it reads again.
 func TestRunHostedBy_AnUnreadableHostRecordIsAnError(t *testing.T) {
+	t.Parallel()
 	for name, plant := range map[string]func(path string) error{
 		"a directory": func(path string) error { return os.Mkdir(path, 0o700) },
 		"an oversized file": func(path string) error {

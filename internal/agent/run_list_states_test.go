@@ -298,6 +298,7 @@ func TestRunList_RowStates(t *testing.T) {
 
 // A row put back by a stop keeps its sender and words, so its paused row says who sent what.
 func TestRunList_AStoppedUnsentRowKeepsItsCallerAndWords(t *testing.T) {
+	t.Parallel()
 	for _, s := range senders[1:] {
 		t.Run(s.name, func(t *testing.T) {
 			w := stateSetups["unsent"](t, s)
@@ -1040,6 +1041,7 @@ func stoppedWakeReopened(t *testing.T, w *tableWorld) {
 // No path takes or steers a row while the reader's stop holds the queue, whatever left it pending: a retry listed
 // behind the paused rows, or a returned row beside a turn kiro-cli runs.
 func TestRunList_NothingIsTakenOrSteeredWhileAStopHoldsTheQueue(t *testing.T) {
+	t.Parallel()
 	held := func(t *testing.T) *tableWorld {
 		t.Helper()
 		w := newTableWorld()

@@ -511,6 +511,7 @@ func joinedIDs(es []*runEntry) []string {
 // The queue cap counts every row but the notify door's (one entry per caller) and the user's steers in flight, which
 // count under the steer cap; an API caller's rows still count.
 func TestQueueRefusal_LeavesDoorEntriesAndSteersOutOfTheCap(t *testing.T) {
+	t.Parallel()
 	head := marotte.RunEntry{
 		ID: "m-a", Kind: marotte.RunKindRow, State: marotte.RunRunning, Origin: marotte.RunFromPrompt,
 		Steerable: true, Row: &marotte.QueuedPrompt{ID: "m-a", Text: "a"},
@@ -555,6 +556,7 @@ func TestQueueRefusal_LeavesDoorEntriesAndSteersOutOfTheCap(t *testing.T) {
 // A fate the steer record reports for an offer moves the row only while that offer is the row's latest: a row
 // kiro-cli refused and that was offered again keeps its new offer when the old one's late fate lands.
 func TestRunList_SteerFatesApplyOnlyToTheirOffer(t *testing.T) {
+	t.Parallel()
 	w := newTableWorld()
 	w.head()
 	w.door("d", "1 new")
@@ -581,6 +583,7 @@ func TestRunList_SteerFatesApplyOnlyToTheirOffer(t *testing.T) {
 // A door entry a clear of the user's took out of kiro-cli's buffer waits behind the user's steer kiro-cli still
 // holds, and is steered into the same turn once the agent read the user's.
 func TestRunList_AClearedDoorEntryWaitsBehindTheUsersSteer(t *testing.T) {
+	t.Parallel()
 	w := newTableWorld()
 	w.head()
 	w.door("d", "1 new")
@@ -612,6 +615,7 @@ func (w *tableWorld) unreadUser(id string) {
 // The user's unread steers ride one prompt; a stop before that prompt opens gives every one of them back, in order,
 // and a life ending before it opens keeps every one for the next life.
 func TestRunList_AJoinedPromptNotOpenedKeepsEveryRow(t *testing.T) {
+	t.Parallel()
 	t.Run("withdrawn by a stop", func(t *testing.T) {
 		w := newTableWorld()
 		w.unreadUser("u1")
@@ -652,6 +656,7 @@ func (w *tableWorld) failLaunch(t *testing.T, id string) {
 // whoever sent it. A notify caller was answered before the launch, so its next send carries the retry: the paused
 // row takes the new text and is taken again, at the caller's pace.
 func TestRunList_AnEntryWhoseLaunchFailsIsPausedNotTakenAgain(t *testing.T) {
+	t.Parallel()
 	t.Run("a door entry", func(t *testing.T) {
 		w := newTableWorld()
 		w.door("d", "1 new")
@@ -921,6 +926,7 @@ func TestRunList_AnEntryWhoseLaunchFailsIsPausedNotTakenAgain(t *testing.T) {
 // A door send names the entry that carries its text, the key its delivery is logged under: its own when placed, the
 // caller's waiting entry when that took the text, and the one kiro-cli holds when that covers it.
 func TestRunList_ADoorSendNamesTheEntryHoldingItsText(t *testing.T) {
+	t.Parallel()
 	t.Run("placed", func(t *testing.T) {
 		w := newTableWorld()
 		if at, holder := w.doorHolder("d", "1 new"); at != doorPlaced || holder != "d" {
@@ -959,6 +965,7 @@ func TestRunList_ADoorSendNamesTheEntryHoldingItsText(t *testing.T) {
 // A door send folds only into its own sender's waiting entry. A rule's sender is one event of one rule, whatever its
 // name, so a rule never takes over an API caller's entry under the same label, nor one event's entry another's.
 func TestRunList_ADoorSendFoldsOnlyIntoItsOwnSendersEntry(t *testing.T) {
+	t.Parallel()
 	ruleEvent := func(event string) *marotte.Caller {
 		return &marotte.Caller{Kind: marotte.CallerKindRule, Label: "Weekly", Rule: "r1", Event: event, Depth: 1}
 	}

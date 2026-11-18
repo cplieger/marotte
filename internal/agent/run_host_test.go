@@ -62,6 +62,7 @@ func runNotif(method string, params map[string]any) *marotte.RPCResponse {
 
 // TestRunChatID_Namespace pins the synthetic id shape; a real chat id never reads as a run's.
 func TestRunChatID_Namespace(t *testing.T) {
+	t.Parallel()
 	if got := runChatID("wf_1"); got != "run:wf_1" {
 		t.Errorf("runChatID = %q, want run:wf_1", got)
 	}
@@ -77,6 +78,7 @@ func TestRunChatID_Namespace(t *testing.T) {
 
 // TestRunDispatch_LifecycleGoesWorkspaceGlobal pins that a parentless run's lifecycle events carry an empty chat id, never the synthetic one.
 func TestRunDispatch_LifecycleGoesWorkspaceGlobal(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	before := h.bus.fanout.Position().Head
 
@@ -162,6 +164,7 @@ func TestRunDispatch_StepContentIsProjected(t *testing.T) {
 
 // TestRunDispatch_UnmarkedStepContentIsDropped pins that a `session/update` without `_meta.kiro.workflow` names no node.
 func TestRunDispatch_UnmarkedStepContentIsDropped(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	before := h.bus.fanout.Position().Head
 
@@ -180,6 +183,7 @@ func TestRunDispatch_UnmarkedStepContentIsDropped(t *testing.T) {
 
 // TestRunDispatch_PermissionKeyedToRunChat pins that a step's permission broadcasts under the synthetic chat id, the run tab's dock key and reply route.
 func TestRunDispatch_PermissionKeyedToRunChat(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 
 	id := int64(7)
@@ -222,6 +226,7 @@ func TestRunDispatch_UnknownRequestIsRefused(t *testing.T) {
 
 // TestLaunchRun_SequencesNewRegisterInvoke pins created, registered, then invoked.
 func TestLaunchRun_SequencesNewRegisterInvoke(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish","builtIn":true}]}`),
@@ -259,6 +264,7 @@ func TestLaunchRun_SequencesNewRegisterInvoke(t *testing.T) {
 // TestLaunchRun_RefusesAnUnknownSource pins that a source the held catalog lacks is checked against a live listing
 // before workflow/new, so no arbitrary file is sent.
 func TestLaunchRun_RefusesAnUnknownSource(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish"}]}`),
@@ -274,6 +280,7 @@ func TestLaunchRun_RefusesAnUnknownSource(t *testing.T) {
 // TestListRecipes_CarriesKASsValidationError pins that a recipe KAS cannot launch reaches the
 // client with KAS's reason, and a launchable one with none.
 func TestListRecipes_CarriesKASsValidationError(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[
@@ -352,6 +359,7 @@ func badgedRows(t *testing.T, getState json.RawMessage, keys map[string]string) 
 }
 
 func TestListRecipes_KeysEachRecipeAsTheCapturedStandingKeysItsFile(t *testing.T) {
+	t.Parallel()
 	data, err := os.ReadFile(filepath.Join("testdata", "workflow_standing_capture.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -398,6 +406,7 @@ func TestListRecipes_KeysEachRecipeAsTheCapturedStandingKeysItsFile(t *testing.T
 
 // TestLaunchRun_AnAgentSourceGoesStraightToNew pins that agent:// skips listRecipes.
 func TestLaunchRun_AnAgentSourceGoesStraightToNew(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList:   json.RawMessage(`{"runs":[]}`),
@@ -420,6 +429,7 @@ func TestLaunchRun_AnAgentSourceGoesStraightToNew(t *testing.T) {
 }
 
 func TestLaunchRun_AnAgentSourceIsValidatedBeforeAnyCall(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		source string
 		inputs map[string]string
@@ -444,6 +454,7 @@ func TestLaunchRun_AnAgentSourceIsValidatedBeforeAnyCall(t *testing.T) {
 
 // TestLaunchRun_SingleRunRule pins the 409: one live run per recipe, globally.
 func TestLaunchRun_SingleRunRule(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish"}]}`),
@@ -617,6 +628,7 @@ func TestRetry_AReloadedHostRunTakesItsRecipeFromItsState(t *testing.T) {
 
 // TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused pins that the lease granted before the verb goes back on refusal.
 func TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{}
@@ -793,6 +805,7 @@ func TestRunDispatch_TerminalCompletionClosesTheRunsHostSession(t *testing.T) {
 
 // TestLaunchRun_ReportsTheReplysOwnError pins that KAS refuses a launch in band, and the reply's error carries the reason.
 func TestLaunchRun_ReportsTheReplysOwnError(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish","builtIn":true}]}`),
@@ -886,6 +899,7 @@ func TestStopChatRuns_ReportsARunListItCouldNotRead(t *testing.T) {
 // TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts pins that dropping the whole frame on a type mismatch
 // blinds the heal for every pause; a syntax error's leftovers are not kept.
 func TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts(t *testing.T) {
+	t.Parallel()
 	frame := func(t *testing.T, params string) pauseFrame {
 		t.Helper()
 		return decodePauseFrame(&marotte.RPCResponse{Params: json.RawMessage(params)})
@@ -976,6 +990,7 @@ func TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts(t *testing.T) {
 // TestLaunchRun_SendsTheHostSessionAsParent pins that `parentSessionId` is required on `_kiro/workflow/new` since
 // kiro-cli 2.21.4. It must be the host session: lifecycle frames name the parent and arrive on its lane.
 func TestLaunchRun_SendsTheHostSessionAsParent(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish","builtIn":true}]}`),
@@ -1009,6 +1024,7 @@ func TestLaunchRun_SendsTheHostSessionAsParent(t *testing.T) {
 // TestLaunchRun_RefusesAHostSessionDoorWithNoSessionID pins that a host door answering no id is refused before the
 // RPC, and nothing is registered for a run that does not exist.
 func TestLaunchRun_RefusesAHostSessionDoorWithNoSessionID(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish","builtIn":true}]}`),
@@ -1086,6 +1102,7 @@ func sentInputs(t *testing.T, br *fakeBridge) map[string]any {
 }
 
 func TestScheduledLaunchDropsUndeclaredInputs(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	declaringRecipe(br)
 	rec := capture.Default(t)
@@ -1106,6 +1123,7 @@ func TestScheduledLaunchDropsUndeclaredInputs(t *testing.T) {
 }
 
 func TestScheduledLaunchSendsDeclaredInputs(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	declaringRecipe(br)
 	rec := capture.Default(t)
@@ -1123,6 +1141,7 @@ func TestScheduledLaunchSendsDeclaredInputs(t *testing.T) {
 
 // An agent:// source has no listed recipe, so no declared inputs: its prompt must still reach workflow/new.
 func TestAgentLaunchKeepsPrompt(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList:   json.RawMessage(`{"runs":[]}`),
@@ -1139,6 +1158,7 @@ func TestAgentLaunchKeepsPrompt(t *testing.T) {
 }
 
 func TestManualLaunchInputsUnfiltered(t *testing.T) {
+	t.Parallel()
 	_, br, mux := runDefaultsHub(t)
 	declaringRecipe(br)
 	rec := postRoute(t, mux, "/api/runs", `{"source":"bundled://publish","inputs":{"lane":"fast","stray":"x"}}`)
@@ -1237,6 +1257,7 @@ func TestConcurrentLaunchesOneRecipeOneRun(t *testing.T) {
 // A triggered invoke that fails returns the run's id with the error and keeps its lease and host session: a lost
 // reply can follow a run_start that already confirmed the event.
 func TestTriggeredInvokeErrorReturnsWorkflowID(t *testing.T) {
+	t.Parallel()
 	h, br, st, entry := scheduledHub(t)
 	h.runs.confirmer = &fakeConfirmer{}
 	launchableRecipe(br, "wf_1")
@@ -1349,6 +1370,7 @@ func TestReleaseTriggeredReleasesLeaseAndHost(t *testing.T) {
 // A triggered lease that is not persisted, or not granted at all, stops the launch before the run is routed or
 // invoked: after a restart nothing would name it. The cancel is the attempt table's, not the launch's.
 func TestTriggeredLeaseGrantFailureWritesNoInvoke(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		workflowID string
 		durable    bool
@@ -1389,6 +1411,7 @@ func TestTriggeredLeaseGrantFailureWritesNoInvoke(t *testing.T) {
 // A scheduled launch whose invoke KAS refuses keeps dev's arm: the row records the failure, the lease is released and
 // the host session closed.
 func TestScheduledInvokeErrorKeepsDevArm(t *testing.T) {
+	t.Parallel()
 	h, br, st, entry := nightlyLaunch(t)
 	delete(br.callResults, methodKiroWorkflowInvoke)
 	br.callRPCErrs = map[string]*marotte.RPCError{methodKiroWorkflowInvoke: {Code: -32603, Message: "invoke refused"}}
@@ -1421,6 +1444,7 @@ type cancelUninvokedFixture struct {
 // An abandoned run that was created and never invoked is cancelled on the engine lane with no initiator, leaves the
 // list's active set, and the recipe's next launch is not refused as busy.
 func TestCancelAbandonedEndsUninvokedRun(t *testing.T) {
+	t.Parallel()
 	var fx cancelUninvokedFixture
 	readKASProbe(t, "cancel-uninvoked.json", &fx)
 	var before struct {
@@ -1581,6 +1605,7 @@ func lostInvokeHub(t *testing.T) (*Runtime, *fakeBridge, *fakeConfirmer, error) 
 // A run_start consumed while invoke blocks confirms the event; the invoke's error then cancels nothing and launches
 // nothing again, and the run keeps its lease.
 func TestLostInvokeRunStartIsKept(t *testing.T) {
+	t.Parallel()
 	h, br, fc, err := lostInvokeHub(t)
 
 	if !errors.Is(err, errHoldFault) {
@@ -1603,6 +1628,7 @@ func TestLostInvokeRunStartIsKept(t *testing.T) {
 // After a confirmed run's invoke error marotte leaves the run to end by itself: a resume confirms nothing more, no
 // cancel is sent, and its own terminal frame releases its lease.
 func TestInvokeErrorAfterConfirmKeepsRun(t *testing.T) {
+	t.Parallel()
 	h, br, fc, _ := lostInvokeHub(t)
 
 	h.runs.observeStart(t.Context(), runChatID("wf_1"), runNotif(methodWFRunStart, map[string]any{
@@ -1896,6 +1922,7 @@ func wireCount(br *fakeBridge, method string) int {
 // Once workflow/new created a run, LaunchTriggered returns its id with whatever error followed, so the attempt table
 // can name, keep or cancel that run; it never creates a second one.
 func TestLaunchTriggeredReturnsWorkflowIDAfterNew(t *testing.T) {
+	t.Parallel()
 	t.Run("an invoke error", func(t *testing.T) {
 		h, _, br := newTestHub()
 		h.runs.confirmer = &fakeConfirmer{}
@@ -1928,6 +1955,7 @@ func TestLaunchTriggeredReturnsWorkflowIDAfterNew(t *testing.T) {
 
 // A pick the model list refuses stops the launch before any run exists, so there is no id to name.
 func TestLaunchTriggeredRefusesBadDefaults(t *testing.T) {
+	t.Parallel()
 	h, br, _ := runDefaultsHub(t)
 	fc := &fakeConfirmer{}
 	h.runs.confirmer = fc
@@ -1994,6 +2022,7 @@ func TestLaunchTriggeredTakesDrainHold(t *testing.T) {
 
 // A triggered launch sends only the inputs the recipe declares, and labels the run with its event.
 func TestTriggeredLaunchDropsUndeclaredInputs(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	h.runs.confirmer = &fakeConfirmer{}
 	declaringRecipe(br)

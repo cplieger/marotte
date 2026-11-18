@@ -153,6 +153,7 @@ func transientDetail() pauseDetail {
 // TestRestartPaused_AcceptsOnlyKASsOwnRestartLiteral pins that many KAS sites set a pause reason and only one means
 // the owner died; cancelling any other `paused` run destroys work.
 func TestRestartPaused_AcceptsOnlyKASsOwnRestartLiteral(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		reason string
 		want   bool
@@ -241,6 +242,7 @@ func TestRestartPaused_AcceptsOnlyKASsOwnRestartLiteral(t *testing.T) {
 // TestSweepOrphanedRuns_NeverTouchesARunItDoesNotOwn pins that each case is live or not marotte's, and each would be
 // cancelled by one plausible widening. Bridge presence is unused: after a restart no run has one.
 func TestSweepOrphanedRuns_NeverTouchesARunItDoesNotOwn(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		lease  *runlease.Lease
 		status marotte.RunStatus
@@ -307,6 +309,7 @@ func TestSweepOrphanedRuns_NeverTouchesARunItDoesNotOwn(t *testing.T) {
 
 // TestSweepOrphanedRuns_ClearsTheRunARestartOrphaned pins that otherwise the `paused` orphan blocks every later slot.
 func TestSweepOrphanedRuns_ClearsTheRunARestartOrphaned(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: kasRuns(t, map[string]any{
@@ -349,6 +352,7 @@ func TestSweepOrphanedRuns_ClearsTheRunARestartOrphaned(t *testing.T) {
 
 // TestSweepOrphanedRuns_RecordsTheSweepOnTheSchedulesRow pins that the schedule must stop reading "started".
 func TestSweepOrphanedRuns_RecordsTheSweepOnTheSchedulesRow(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: kasRuns(t, map[string]any{
@@ -389,6 +393,7 @@ func TestSweepOrphanedRuns_RecordsTheSweepOnTheSchedulesRow(t *testing.T) {
 // TestSweepOrphanedRuns_ReleasesTerminalLeasesImmediately pins that bookkeeping for both origins; an agent lease
 // outliving its run keeps its chat exempt from eviction.
 func TestSweepOrphanedRuns_ReleasesTerminalLeasesImmediately(t *testing.T) {
+	t.Parallel()
 	for name, origin := range map[string]runlease.Origin{
 		"manual": runlease.OriginManual,
 		"agent":  runlease.OriginAgent,
@@ -423,6 +428,7 @@ func TestSweepOrphanedRuns_ReleasesTerminalLeasesImmediately(t *testing.T) {
 
 // TestSweepOrphanedRuns_AbsenceStartsAClockWithoutReleasing pins the first miss.
 func TestSweepOrphanedRuns_AbsenceStartsAClockWithoutReleasing(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
 	br.callErrs = map[string]error{methodKiroWorkflowInspect: errHoldFault}
@@ -448,6 +454,7 @@ func TestSweepOrphanedRuns_AbsenceStartsAClockWithoutReleasing(t *testing.T) {
 
 // TestRecipeIdle_ReappearanceClearsTheAbsenceClock pins continuity.
 func TestRecipeIdle_ReappearanceClearsTheAbsenceClock(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: kasRuns(t, map[string]any{
@@ -523,6 +530,7 @@ func TestSweepOrphanedRuns_ContinuousAbsenceBackstopReleasesAndRecordsOutcome(t 
 // TestSweepOrphanedRuns_InspectUnknownReleasesImmediately pins the definitive
 // per-run answer KAS gives after its stale-run reconciliation.
 func TestSweepOrphanedRuns_InspectUnknownReleasesImmediately(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
 	br.callRPCErrs = map[string]*marotte.RPCError{
@@ -618,6 +626,7 @@ func TestSweepOrphanedRuns_AnAbsentRunInspectReadsOverRecordsItsSlot(t *testing.
 
 // TestSweepOrphanedRuns_InspectFailureStartsTheClock pins the fail-safe branch.
 func TestSweepOrphanedRuns_InspectFailureStartsTheClock(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
 	br.callErrs = map[string]error{methodKiroWorkflowInspect: errHoldFault}
@@ -637,6 +646,7 @@ func TestSweepOrphanedRuns_InspectFailureStartsTheClock(t *testing.T) {
 
 // TestSweepOrphanedRuns_EmptySuccessfulListReleasesNothing pins that one short reply must not drop every lease.
 func TestSweepOrphanedRuns_EmptySuccessfulListReleasesNothing(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
 	br.callErrs = map[string]error{methodKiroWorkflowInspect: errHoldFault}
@@ -657,6 +667,7 @@ func TestSweepOrphanedRuns_EmptySuccessfulListReleasesNothing(t *testing.T) {
 
 // TestSweepOrphanedRuns_LeavesEveryLeaseAloneWhenTheListFails pins that at boot kiro-cli may still be installing.
 func TestSweepOrphanedRuns_LeavesEveryLeaseAloneWhenTheListFails(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callErrs = map[string]error{methodKiroWorkflowList: errHoldFault}
 	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
@@ -680,6 +691,7 @@ func TestSweepOrphanedRuns_LeavesEveryLeaseAloneWhenTheListFails(t *testing.T) {
 // TestSweepOrphanedRuns_KeepsTheLeaseWhenTheCancelFails pins that the kept lease lets the next launch retry, and the
 // row must not announce an ending that did not happen.
 func TestSweepOrphanedRuns_KeepsTheLeaseWhenTheCancelFails(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: kasRuns(t, map[string]any{
@@ -714,6 +726,7 @@ func TestSweepOrphanedRuns_KeepsTheLeaseWhenTheCancelFails(t *testing.T) {
 // TestClearOrphanedRun_RefusesWhenTheRunNoLongerReadsAsAnOrphan pins that re-asking just before the cancel narrows
 // the window to one round trip (KAS has no compare-and-cancel); nothing marotte owns can resume such a run.
 func TestClearOrphanedRun_RefusesWhenTheRunNoLongerReadsAsAnOrphan(t *testing.T) {
+	t.Parallel()
 	for name, reply := range map[string]json.RawMessage{
 		"it is executing again":       inspectReply(t, "wf_1", "running", stalePauseReason),
 		"it was paused on purpose":    inspectPaused(t, "wf_1", "Paused by user request"),
@@ -753,6 +766,7 @@ func TestClearOrphanedRun_RefusesWhenTheRunNoLongerReadsAsAnOrphan(t *testing.T)
 
 // TestRecipeIdle_ClearsABlockingOrphanAndProceeds pins that a run can be orphaned without a restart.
 func TestRecipeIdle_ClearsABlockingOrphanAndProceeds(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: kasRuns(t, map[string]any{
@@ -781,6 +795,7 @@ func TestRecipeIdle_ClearsABlockingOrphanAndProceeds(t *testing.T) {
 
 // TestRecipeIdle_RefusesALabelledRunOfTheSameRecipe pins that `name` is `runLabel ?? workflowName`, so matching on it failed open.
 func TestRecipeIdle_RefusesALabelledRunOfTheSameRecipe(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: kasRuns(t, map[string]any{
@@ -797,6 +812,7 @@ func TestRecipeIdle_RefusesALabelledRunOfTheSameRecipe(t *testing.T) {
 
 // TestRecipeIdle_StillRefusesEveryBlockingRowItCannotExplain pins that only KAS's list sees agent and TUI runs.
 func TestRecipeIdle_StillRefusesEveryBlockingRowItCannotExplain(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		lease  *runlease.Lease
 		status marotte.RunStatus
@@ -861,6 +877,7 @@ func TestOrphanSweepBudget_ExceedsThePerCallTimeout(t *testing.T) {
 // TestResumablePause_CoversEveryInvoluntaryPauseAndNothingElse pins that of KAS's pause causes (involuntary, waiting
 // on a human, policy) only the first may resume unasked; the negatives include what a loose prefix swallows.
 func TestResumablePause_CoversEveryInvoluntaryPauseAndNothingElse(t *testing.T) {
+	t.Parallel()
 	transient := transientDetail()
 
 	for name, tc := range map[string]struct {
@@ -937,6 +954,7 @@ func TestResumablePause_CoversEveryInvoluntaryPauseAndNothingElse(t *testing.T) 
 // TestResumablePause_IsStrictlyWiderThanTheCancelPredicate pins that the cancel predicate fires only for a dead owner,
 // the resume one for any involuntary stop. Widening cancel destroys work; narrowing resume stranded runs.
 func TestResumablePause_IsStrictlyWiderThanTheCancelPredicate(t *testing.T) {
+	t.Parallel()
 	// Both predicates over the same fixture.
 	both := func(t *testing.T, reply json.RawMessage) (cancel, resume bool) {
 		t.Helper()
@@ -1001,6 +1019,7 @@ func TestResumablePause_IsStrictlyWiderThanTheCancelPredicate(t *testing.T) {
 // TestAutomaticResume_KeepsItsSiblingsThreeConditions pins that only the reason predicate is wider; status is
 // re-read since a reason outlives its pause.
 func TestAutomaticResume_KeepsItsSiblingsThreeConditions(t *testing.T) {
+	t.Parallel()
 	transient := "Transient connection error (EAI_AGAIN); the run is paused and can be resumed."
 
 	t.Run("an involuntary pause on this paused run is resumable", func(t *testing.T) {
@@ -1054,6 +1073,7 @@ func TestAutomaticResume_KeepsItsSiblingsThreeConditions(t *testing.T) {
 // TestReleaseIfOver_ReleasesTheLeaseOfARunThatStoppedWithoutAFrame pins that a cancel of a run with no in-flight node
 // sends no `run_complete`; a real run stayed on /api/runs/live 27 hours after reaching `aborted`.
 func TestReleaseIfOver_ReleasesTheLeaseOfARunThatStoppedWithoutAFrame(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "aborted", ""),
@@ -1071,6 +1091,7 @@ func TestReleaseIfOver_ReleasesTheLeaseOfARunThatStoppedWithoutAFrame(t *testing
 // TestReleaseIfOver_RefusesEveryReplyThatDoesNotSayTheRunIsOver pins that releasing a live run's lease unbounds it,
 // silences the unattended floor and strands its blocking row.
 func TestReleaseIfOver_RefusesEveryReplyThatDoesNotSayTheRunIsOver(t *testing.T) {
+	t.Parallel()
 	for name, reply := range map[string]json.RawMessage{
 		"a reply naming a DIFFERENT run": inspectReply(t, "wf_other", "aborted", ""),
 		"a run KAS says is running":      inspectReply(t, "wf_1", "running", ""),
@@ -1094,6 +1115,7 @@ func TestReleaseIfOver_RefusesEveryReplyThatDoesNotSayTheRunIsOver(t *testing.T)
 // TestReleaseIfOver_LeavesARunItCouldNotReadAlone pins that inspect reports an unknown run as an error like a dead
 // bridge's, so it keeps the lease, the cheaper mistake.
 func TestReleaseIfOver_LeavesARunItCouldNotReadAlone(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callErrs = map[string]error{methodKiroWorkflowInspect: errHoldFault}
 	leased(t, h.runs, "wf_1")
@@ -1108,6 +1130,7 @@ func TestReleaseIfOver_LeavesARunItCouldNotReadAlone(t *testing.T) {
 
 // TestReleaseIfOver_AsksNothingWhenThereIsNoLeaseToRelease pins that the early return before the RPC.
 func TestReleaseIfOver_AsksNothingWhenThereIsNoLeaseToRelease(t *testing.T) {
+	t.Parallel()
 	for name, id := range map[string]string{
 		"a run whose lease is already gone": "wf_1",
 		"an empty workflow id":              "",
@@ -1131,6 +1154,7 @@ func TestReleaseIfOver_AsksNothingWhenThereIsNoLeaseToRelease(t *testing.T) {
 // TestSweepOrphaned_ReportsWhetherItReachedKAS so the composition root can retry when kiro-cli was still
 // installing. An empty store reports reached: a retry finds the same.
 func TestSweepOrphaned_ReportsWhetherItReachedKAS(t *testing.T) {
+	t.Parallel()
 	t.Run("a run list that answered", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{
@@ -1305,6 +1329,7 @@ func TestOrphanSweepCancelsTriggeredRunWithTriggerReason(t *testing.T) {
 // An attempt the rule abandoned at its bound whose cancel was refused leaves its run restart-paused under the
 // triggered lease; once the confirmer drops it from the boot-held set, the next launch of the recipe clears it.
 func TestBootHeldReleasedOnAbandonClearedByBackstop(t *testing.T) {
+	t.Parallel()
 	fc := &fakeConfirmer{bootHeld: map[string]bool{"wf_old": true}}
 	h, _, cancelled := orphanHub(t, fc, "wf_old")
 	if err := h.runs.recipeIdle(t.Context(), "triage", ""); !errors.As(err, new(*schedule.BusyError)) {

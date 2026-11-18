@@ -119,6 +119,7 @@ func TestSpecProducers_MarkTheSpecDirectory(t *testing.T) {
 
 // A refused write (a path escaping the workspace) marks nothing; the later good write is the one mark.
 func TestSpecProducers_ARefusedWriteMarksNothing(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	h, _ := hubForFSTest(t, work)
 	dirs := specRecorder(h)

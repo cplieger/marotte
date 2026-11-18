@@ -82,6 +82,7 @@ func awaitPassClosed(t *testing.T, b *fakeBridge) {
 
 // A refresh opens an observer pass, adopts the menu KAS sends at its door and announces it once, then closes the pass.
 func TestRefreshSlashCommands_OpensAPassAndAdoptsItsList(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	opened := heldPasses(t, h)
 	before := h.bus.fanout.Position().Head
@@ -103,6 +104,7 @@ func TestRefreshSlashCommands_OpensAPassAndAdoptsItsList(t *testing.T) {
 
 // Calls made while a pass is open queue one more pass, not one each, and the queued pass runs after the first closes.
 func TestRefreshSlashCommands_CoalescesCallsDuringAPass(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	opened := heldPasses(t, h)
 

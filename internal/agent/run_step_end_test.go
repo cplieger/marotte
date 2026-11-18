@@ -229,6 +229,7 @@ func TestEndStep_WaitsOnTheRunsOwnSends(t *testing.T) {
 // A resume that reaches the run while a person's end of its step is between its read and its write reads the run
 // after the end: the two never interleave under the run's resume lock.
 func TestEndStep_AResumeWaitsForTheEnd(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, br := endHub(t, stepEndTree(t, &stepEndCase{Run: "paused", Node: "paused", Type: stepNodeType}))
 		br.setCallResult(methodKiroWorkflowResume, json.RawMessage(`{}`))

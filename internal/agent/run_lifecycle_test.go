@@ -363,6 +363,7 @@ func TestDeleteRoute_GradesADeleteTheRunCannotSettleYet(t *testing.T) {
 // Background work asked for while a Delete holds the run is admitted only once the Delete settles,
 // so a flush scheduled during a refused delete still runs instead of being dropped.
 func TestRunLifecycle_BackgroundWorkWaitsOutADelete(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		var l runLifecycle
 		d, err := l.beginDelete(t.Context(), "wf_1")

@@ -106,6 +106,7 @@ func withCompactionReturnHook(t *testing.T, h *Runtime, fn func(marotte.ChatID))
 // A message queued during the compaction that ends a turn the model refused for the context's size waits under it and
 // goes when it ends.
 func TestRunOrder_ARowSentDuringAContextLimitTurnsCompactionGoesAtItsEnd(t *testing.T) {
+	t.Parallel()
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	h.coord.autoCompact.policy = func(context.Context) (bool, int) { return true, 90 }
 	release := holdCall(t, br, marotte.MethodSessionCompact)
@@ -128,6 +129,7 @@ func TestRunOrder_ARowSentDuringAContextLimitTurnsCompactionGoesAtItsEnd(t *test
 // A message past the draft cap stands for the prompt it would have been while only a compaction runs, so it queues;
 // behind a running turn the draft cap still applies.
 func TestRunOrder_AMessagePastTheDraftCapQueuesBehindACompactionOnly(t *testing.T) {
+	t.Parallel()
 	long := strings.Repeat("x", marotte.MaxDraftBytes+1)
 	t.Run("behind a compaction", func(t *testing.T) {
 		h, cs, release := compactingHub(t)
@@ -149,6 +151,7 @@ func TestRunOrder_AMessagePastTheDraftCapQueuesBehindACompactionOnly(t *testing.
 // A /compact that starts in a clean close's tail, before that close takes its queued row, is waited out: the row goes
 // after it.
 func TestRunOrder_ACompactionStartedBeforeAClosesDrainIsWaitedOut(t *testing.T) {
+	t.Parallel()
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	open := promptGates(t, br)
 	release := holdCall(t, br, marotte.MethodSessionCompact)
@@ -187,6 +190,7 @@ func TestRunOrder_ACompactionStartedBeforeAClosesDrainIsWaitedOut(t *testing.T) 
 // A context reference sent while a compaction runs is queued behind it, though Steer cannot carry it, and its own
 // turn resolves it.
 func TestRunOrder_AContextReferenceQueuedBehindACompactionResolvesInItsTurn(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("remember the milk\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -218,6 +222,7 @@ func TestRunOrder_AContextReferenceQueuedBehindACompactionResolvesInItsTurn(t *t
 // Sent as a queue, a saved prompt or context reference sent mid-turn waits behind the turn and goes as a
 // session/prompt of its own when the turn ends, never as a steer, so its context reference resolves.
 func TestRunOrder_APromptOnlyMessageQueuedBehindARunningTurnGoesAsItsOwnPrompt(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("remember the milk\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -257,6 +262,7 @@ func TestRunOrder_APromptOnlyMessageQueuedBehindARunningTurnGoesAsItsOwnPrompt(t
 
 // Where a send would steer, a saved prompt is refused 409 prompt_only and nothing reaches _session/steer.
 func TestRunOrder_APromptOnlyMessageThatWouldSteerIsRefused(t *testing.T) {
+	t.Parallel()
 	h, _, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	h.stagePromptTurn(t, "c1")
 
@@ -275,6 +281,7 @@ func TestRunOrder_APromptOnlyMessageThatWouldSteerIsRefused(t *testing.T) {
 // After a stopped turn, a message sent during its compaction goes first when the compaction ends; the row the stop
 // left waits for the next clean turn end.
 func TestRunOrder_AfterAStoppedTurnTheMessageSentDuringItsCompactionGoesFirst(t *testing.T) {
+	t.Parallel()
 	h, cs, br, release := stoppedTurnCompaction(t, nil)
 
 	if got := ackAs(t, postCmd(t, h, promptCmd("m-new", "sent during the compaction"))); got != "queued" {
@@ -351,6 +358,7 @@ func TestRunOrder_APromptOrSendNowAsACompactionStartsOpensNoTurnUnderIt(t *testi
 // The up arrow on the row a stopped turn left waiting does not stop that turn's compaction: the compaction completes
 // and the row goes first after it.
 func TestRunOrder_SendNowDuringAStoppedTurnsCompactionLetsItFinish(t *testing.T) {
+	t.Parallel()
 	h, cs, br, release := stoppedTurnCompaction(t, nil)
 
 	rec := postCmd(t, h, marotte.ClientCommand{
@@ -368,6 +376,7 @@ func TestRunOrder_SendNowDuringAStoppedTurnsCompactionLetsItFinish(t *testing.T)
 
 // A Cancel during a compaction, naming the turn that closed or nothing, stops nothing and says so.
 func TestRunOrder_ACancelDuringACompactionSendsNoSessionCancel(t *testing.T) {
+	t.Parallel()
 	h, _, br, _ := compactingHubIn(t, "/tmp/work")
 
 	wantStoppedNothing(t, postCmd(t, h, cancelCmd(`{"target":"m-first"}`)))
@@ -380,6 +389,7 @@ func TestRunOrder_ACancelDuringACompactionSendsNoSessionCancel(t *testing.T) {
 // A message queued under a stopped turn's KAS hold reads as waiting for that turn's compaction; the row the stop
 // left reads as waiting for a turn.
 func TestRunOrder_ARowQueuedUnderTheHoldReadsAfterTheCompaction(t *testing.T) {
+	t.Parallel()
 	_, cs, _, _ := stoppedTurnCompaction(t, func(h *Runtime) {
 		queueTextDuring(t, h, "m-q1", "sent after the stop")
 	})
@@ -395,6 +405,7 @@ func TestRunOrder_ARowQueuedUnderTheHoldReadsAfterTheCompaction(t *testing.T) {
 // A prompt sent under a stop's KAS hold, and one sent during the hold's compaction, are each answered at once as
 // queued, and go after the compaction one per turn in the order sent.
 func TestRunOrder_APromptUnderAStopsHoldIsQueuedAtOnce(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		defer shutdownHub(t, h)
@@ -482,6 +493,7 @@ func hookWaitFor(t *testing.T, cond func() bool, what string) {
 
 // A message sent during the compaction a stop's hold release runs goes behind the row queued under the hold.
 func TestRunOrder_ARowSentDuringTheHoldReleasesCompactionGoesBehindTheHoldsRow(t *testing.T) {
+	t.Parallel()
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	release := holdCall(t, br, marotte.MethodSessionCompact)
 	stopUnderHold(t, h)
@@ -506,6 +518,7 @@ func TestRunOrder_ARowSentDuringTheHoldReleasesCompactionGoesBehindTheHoldsRow(t
 
 // A Cancel from a page that has not drawn the turn's close, landing during a compaction, changes nothing.
 func TestRunOrder_AStaleCancelDuringACompactionChangesNothing(t *testing.T) {
+	t.Parallel()
 	h, cs, br, _ := compactingHubIn(t, "/tmp/work")
 	queueDuring(t, h, "m-q1")
 	before := runIDs(t, cs, "c1")
@@ -552,6 +565,7 @@ func TestRunOrder_ARowQueuedAsATurnEndsCompactionEndsIsQueued(t *testing.T) {
 // A stop whose session/cancel is still being written when a turn end's compaction is taken reaches kiro-cli first:
 // kiro-cli aborts a compaction on session/cancel.
 func TestRunOrder_AStopHeldAcrossACompactionsStartIsWrittenFirst(t *testing.T) {
+	t.Parallel()
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	open := promptGates(t, br)
 	atThePoint(t, h, cs)
@@ -594,6 +608,7 @@ func stopHeld(h *Runtime, chatID marotte.ChatID) bool {
 // A row's up arrow pressed after the turn it would stop has closed stops nothing: the row the close started runs on.
 // A press with no target keeps the older contract and stops the running turn.
 func TestRunOrder_ASendNowPressedAfterItsTurnClosedStopsNothing(t *testing.T) {
+	t.Parallel()
 	t.Run("named turn closed", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		open := promptGates(t, br)
@@ -651,6 +666,7 @@ func TestRunOrder_ASendNowPressedAfterItsTurnClosedStopsNothing(t *testing.T) {
 // A prompt sent while kiro-cli reports a run marotte has no turn for is answered at once as queued, and goes when
 // kiro-cli reports idle.
 func TestRunOrder_APromptBehindKiroCLIsRunAnswersQueuedAtOnce(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 		defer shutdownHub(t, h)
@@ -719,6 +735,7 @@ func emptyTurnHub(t *testing.T) (h *Runtime, cs *testChatStore, minted func() []
 // The re-send of a prompt whose turn produced nothing goes after the messages queued during that turn, never ahead of
 // them: they run first, in order, then the retry on a fresh session.
 func TestRunOrder_AnEmptyTurnsRetryNeverOvertakesQueuedRows(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, minted, answerFirst := emptyTurnHub(t)
 		if code := postPrompt(t, h, "tidy"); code != http.StatusOK {
@@ -743,6 +760,7 @@ func TestRunOrder_AnEmptyTurnsRetryNeverOvertakesQueuedRows(t *testing.T) {
 // A chat closed while a granted take's turn has not opened yet answers that POST chat_closed and leaves no entry for
 // its message, whatever stood beside or behind it.
 func TestRunOrder_AChatClosedDuringAGrantedTakeLeavesNoEntry(t *testing.T) {
+	t.Parallel()
 	for _, shape := range []string{"beside a fold-opened turn", "with a compaction pending behind it"} {
 		inBubble(t, shape, func(t *testing.T) {
 			h, cs, br, tab := closeTabHub(t)
@@ -916,6 +934,7 @@ func takenRowHub(t *testing.T) (h *Runtime, cs *testChatStore, br *fakeBridge, o
 // A Cancel of a taken row whose turn has not opened withdraws it: it goes back paused with the row behind it, opens
 // no turn, writes nothing, and both wait for the next clean turn end.
 func TestRunOrder_ACancelBeforeATakenRowsTurnOpensPutsItBackPaused(t *testing.T) {
+	t.Parallel()
 	h, cs, br, open, held, releaseOpen := takenRowHub(t)
 	open(0)
 	<-held
@@ -947,6 +966,7 @@ func TestRunOrder_ACancelBeforeATakenRowsTurnOpensPutsItBackPaused(t *testing.T)
 // A Cancel of a taken row whose turn opened but was not sent closes that one turn cancelled and sends nothing; the
 // row behind it waits paused for the next clean turn end.
 func TestRunOrder_ACancelAfterATakenRowsTurnOpenedLeavesOneCancelledTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	open := promptGates(t, br)
 	// The hooks are set before m-a's turn, whose send gate reads them; they arm at the next open, m-q1's.
@@ -1016,6 +1036,7 @@ func reopenOnFreshSession(t *testing.T, h *Runtime) {
 // A row queued when its chat closed is carried into the next life paused, and is sent after that life's first clean
 // turn end.
 func TestRunOrder_ARowCarriedIntoALaterLifeIsSentAfterItsFirstCleanTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
@@ -1042,6 +1063,7 @@ func TestRunOrder_ARowCarriedIntoALaterLifeIsSentAfterItsFirstCleanTurn(t *testi
 // A compaction behind a fold-opened turn (frames kiro-cli sent with no turn_start) closes that turn and waits for its
 // tail before the call; a prompt sent meanwhile waits behind the compaction.
 func TestRunOrder_ACompactionBehindAFoldOpenedTurnClosesItThenRuns(t *testing.T) {
+	t.Parallel()
 	for _, path := range []string{"/compact", "a reading at the point"} {
 		t.Run(path, func(t *testing.T) {
 			h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
@@ -1149,6 +1171,7 @@ func liveRunCancel(t *testing.T, cs *testChatStore) string {
 // A turn kiro-cli starts while marotte's sent prompt is not bound yet is listed ahead of it; Cancel names it and stops
 // both; the prompt's own turn_start then closes it and the prompt is the head.
 func TestRunOrder_AWireTurnBesideASentUnboundPromptIsOnTheList(t *testing.T) {
+	t.Parallel()
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	open := promptGates(t, br)
 	if got := ackAs(t, postCmd(t, h, promptCmd("m-1", "sent, not bound"))); got != "started" {
@@ -1186,6 +1209,7 @@ func TestRunOrder_AWireTurnBesideASentUnboundPromptIsOnTheList(t *testing.T) {
 // A Cancel naming the sent prompt beside kiro-cli's turn (a page that has not seen the wire turn's header yet) stops
 // both turns as the wire turn's id does, and the message queued behind them waits for the next turn.
 func TestRunOrder_ACancelNamingThePromptBesideAWireTurnPausesTheRows(t *testing.T) {
+	t.Parallel()
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	open := promptGates(t, br)
 	if got := ackAs(t, postCmd(t, h, promptCmd("m-1", "sent, not bound"))); got != "started" {
@@ -1275,6 +1299,7 @@ func TestRunOrder_AWireTurnBeforeACompactionIsWrittenRequeuesIt(t *testing.T) {
 // Cancel with kiro-cli running a turn marotte has none for stops that run with one session/cancel and pauses the
 // message queued behind it, as any Stop pauses the queue: kiro-cli's idle sends nothing, and Resume sends it.
 func TestRunOrder_CancelStopsKiroCLIsRunWithNoTurnHere(t *testing.T) {
+	t.Parallel()
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	h.coord.WireTurnActivity("c1", true)
 	waitFor(t, func() bool { return slices.Contains(runStates(t, cs, "c1"), "run running") })
@@ -1308,6 +1333,7 @@ func TestRunOrder_CancelStopsKiroCLIsRunWithNoTurnHere(t *testing.T) {
 // A prompt whose intent began before a close that committed is refused as closed and leaves no row behind, in that
 // life or the next.
 func TestRunOrder_APromptRefusedByACloseCommittedAfterItsStampLeavesNoRow(t *testing.T) {
+	t.Parallel()
 	h, cs, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
@@ -1338,6 +1364,7 @@ func TestRunOrder_APromptRefusedByACloseCommittedAfterItsStampLeavesNoRow(t *tes
 // A compaction kiro-cli refuses with no turn beside it runs once: a /compact answers refused with no toast, a
 // threshold one is toasted once; neither is listed again, and a row behind the threshold one goes next.
 func TestRunOrder_ACompactionKiroCLIRefusesWithNoTurnBesideItRunsOnce(t *testing.T) {
+	t.Parallel()
 	t.Run("/compact", func(t *testing.T) {
 		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 		calls := onCompactor(h, 90, true, 10)
@@ -1383,6 +1410,7 @@ func TestRunOrder_ACompactionKiroCLIRefusesWithNoTurnBesideItRunsOnce(t *testing
 // Stopping kiro-cli's own turn while a compaction runs aborts the call; the compaction goes back behind that turn
 // and is written again only after the turn's close, with no toast.
 func TestRunOrder_StoppingKiroCLIsTurnUnderACompactionRequeuesItBehindThatTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	calls := onCompactor(h, 90, true, 10)
 	release := holdCall(t, br, marotte.MethodSessionCompact)

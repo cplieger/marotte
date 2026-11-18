@@ -53,6 +53,7 @@ func TestControlHandler_AnAnswerThatCouldNotBeReadIsNotARefusal(t *testing.T) {
 // An inspect answer that arrived unread says nothing about whether the run exists: 502, never the 404 a client
 // treats as final. Only KAS's own refusal is the engine saying it has no such run.
 func TestWriteInspectErr_AnAnswerThatCouldNotBeReadIsNotRunNotFound(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		err  error
 		want int

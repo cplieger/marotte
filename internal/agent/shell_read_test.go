@@ -27,6 +27,7 @@ func terminalReference(t *testing.T, ws command.Workspace, token string) string 
 
 // The engine's reader writes the screen while a reference resolves (-race on a real PTY).
 func TestReadShell_ResolvesWhileThePTYWrites(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	sm := &shellManager{workDir: dir}
 	sm.handler = terminal.NewHandler(
@@ -90,6 +91,7 @@ func TestReadShell_RacesARestartSafely(t *testing.T) {
 
 // A spent shell's final output stays readable until the next socket swaps it.
 func TestReadShell_KeepsTheFinalOutputOfAnExitedShell(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	sm := &shellManager{workDir: dir}
 	sm.handler = terminal.NewHandler(

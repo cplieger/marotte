@@ -25,6 +25,7 @@ import (
 
 // TestHandleRun_RejectsNonGET pins that the surface is read-only.
 func TestHandleRun_RejectsNonGET(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	rec := httptest.NewRecorder()
 	h.runRoutes.handleRun(rec, httptest.NewRequest(http.MethodPost, "/api/runs/wf_1", nil))
@@ -34,6 +35,7 @@ func TestHandleRun_RejectsNonGET(t *testing.T) {
 }
 
 func TestHandleRun_RejectsAMissingID(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	rec := httptest.NewRecorder()
 	// A hand-built request can reach this: 400 before calling KAS.
@@ -74,6 +76,7 @@ func getRun(t *testing.T, h *Runtime, id string) (runReply, string) {
 // TestHandleRun_CarriesTheRunsStepEnds pins `step_ends`: KAS grades a step its iteration limit stopped `completed`
 // with no signal, so only the run log's close can tell the reader the step did not finish.
 func TestHandleRun_CarriesTheRunsStepEnds(t *testing.T) {
+	t.Parallel()
 	t.Run("a step kiro-cli stopped is named with its reason", func(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
 		br.setCallResult(methodKiroWorkflowInspect, inspectWithStep(t, "wf_1", "build", "completed", ""))
@@ -120,6 +123,7 @@ func TestHandleRun_CarriesTheRunsStepEnds(t *testing.T) {
 // TestHandleRun_CarriesTheRunsStepStarts pins `step_starts`: KAS restamps a resumed node's startedAt, so only the
 // run log's turn_open can tell the reader when the step began.
 func TestHandleRun_CarriesTheRunsStepStarts(t *testing.T) {
+	t.Parallel()
 	t.Run("an open step is named with its turn_open's time", func(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
 		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
@@ -233,6 +237,7 @@ func TestHandleRun_CarriesTheRunsOpenAsks(t *testing.T) {
 
 // TestHandleRun_GradesAFailedReadTwoWays pins that the client stops on 404 and retries otherwise, so each misgrade has a cost.
 func TestHandleRun_GradesAFailedReadTwoWays(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		arm  func(br *fakeBridge)
@@ -290,6 +295,7 @@ func getLiveRuns(t *testing.T, rr *runRoutes) marotte.LiveRunsResponse {
 }
 
 func TestHandleLiveRuns_RejectsNonGET(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	rec := httptest.NewRecorder()
 	h.runRoutes.handleLiveRuns(rec, httptest.NewRequest(http.MethodPost, "/api/runs/live", nil))
@@ -300,6 +306,7 @@ func TestHandleLiveRuns_RejectsNonGET(t *testing.T) {
 
 // TestHandleLiveRuns_ProjectsEveryLiveLeaseWithItsChat pins that chat-parented runs carry their chat, parentless none, served without KAS.
 func TestHandleLiveRuns_ProjectsEveryLiveLeaseWithItsChat(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	h.runs.observeStart(t.Context(), "c-live", runNotif(methodWFRunStart, map[string]any{
 		"workflowId": "wf_agent", "workflowName": "publish",
@@ -336,6 +343,7 @@ func TestHandleLiveRuns_ProjectsEveryLiveLeaseWithItsChat(t *testing.T) {
 
 // TestHandleLiveRuns_ATerminalRunLeavesTheProjection pins that the terminal frame releases the lease.
 func TestHandleLiveRuns_ATerminalRunLeavesTheProjection(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	h.runs.observeStart(t.Context(), "c-live", runNotif(methodWFRunStart, map[string]any{
 		"workflowId": "wf_agent", "workflowName": "publish",
@@ -356,6 +364,7 @@ func TestHandleLiveRuns_ATerminalRunLeavesTheProjection(t *testing.T) {
 
 // /api/runs/live projects the run for the chat's eviction exemption; History attributes it so the row nests the run's tab.
 func TestHandleLiveRuns_AndHistoryBothCarryAChatParentedRun(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	h.runs.observeStart(t.Context(), "c-live", runNotif(methodWFRunStart, map[string]any{
 		"workflowId": "wf_agent", "workflowName": "publish",
@@ -424,6 +433,7 @@ func TestHandleLiveRuns_ServesPersistedLeasesAcrossARestart(t *testing.T) {
 // TestHandleLiveRuns_ExecutingFollowsTheLeasesOwnClock pins that armed on start and resume, parked on pause, so a
 // parked run's eviction exemption lapses while its row survives.
 func TestHandleLiveRuns_ExecutingFollowsTheLeasesOwnClock(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	h.runs.observeStart(t.Context(), "c-live", runNotif(methodWFRunStart, map[string]any{
 		"workflowId": "wf_agent", "workflowName": "publish",
@@ -477,6 +487,7 @@ func TestHandleLiveRuns_APreUpgradeLeaseRowProjectsWithNoChat(t *testing.T) {
 
 // TestHandleControls pins the affordance route's envelope: the client cannot answer this from SSE state alone.
 func TestHandleControls(t *testing.T) {
+	t.Parallel()
 	controlsReq := func(id string) *http.Request {
 		req := httptest.NewRequest(http.MethodGet, "/api/runs/"+id+"/controls", nil)
 		req.SetPathValue("id", id)

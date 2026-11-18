@@ -286,6 +286,7 @@ func TestRuns_TheTripwireReadsInspectsAndFrames(t *testing.T) {
 }
 
 func TestRuns_ARunCompleteFramePausingTheRunClearsTheWatch(t *testing.T) {
+	t.Parallel()
 	rs := &Runs{translate: &recordingRunTranslator{}}
 	rs.signals.observe("wf_1", laneState(t, marotte.RunStatusRunning, "paused", "success", "running"))
 	rs.observeComplete(t.Context(), "c-1", runNotif(methodWFRunComplete, map[string]any{"workflowId": "wf_1", "status": "paused"}))

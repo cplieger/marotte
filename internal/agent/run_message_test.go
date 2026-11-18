@@ -35,6 +35,7 @@ type stepVerbCase struct {
 }
 
 func TestStepMessageVerb_PicksTheVerbFromTheLiveState(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile("testdata/step_message_verbs.json")
 	if err != nil {
 		t.Fatalf("Setup: reading testdata/step_message_verbs.json: %v", err)
@@ -361,6 +362,7 @@ func TestMessageStep_AFinishedSiblingLeavesTheLiveExecutionAddressable(t *testin
 }
 
 func TestStepsAt_SiblingsRunningCountsOnlyOtherExecutions(t *testing.T) {
+	t.Parallel()
 	steps := []workflow.StepSession{
 		{NodeID: "review", SessionID: "sess_a", Status: "running", Path: reviewSegments},
 		{NodeID: "review", SessionID: "sess_b", Status: "paused", Path: reviewSegments},
@@ -544,6 +546,7 @@ func TestRemoveStepSteer_DeletesARowKASHolds(t *testing.T) {
 }
 
 func TestRemoveStepSteer_AStepWithNoRowsIsNotWaiting(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	err := h.runs.removeStepSteer(t.Context(), "wf_1", reviewPath, "steer-x")
 	rec := httptest.NewRecorder()

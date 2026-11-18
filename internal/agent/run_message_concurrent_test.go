@@ -119,6 +119,7 @@ func refusalCode(t *testing.T, h *Runtime, err error) string {
 // waiting behind it: the first one's send holds the run's message gate for as long as KAS takes, and
 // a send queued there would hold every stop behind it too. Once the first lands, a message decides again.
 func TestMessageStep_ASecondSendToAPausedStepIsRefusedWhileTheFirstIsInFlight(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -149,6 +150,7 @@ func TestMessageStep_ASecondSendToAPausedStepIsRefusedWhileTheFirstIsInFlight(t 
 // A step that completes while its steer is in flight waits for the send: the end then finds the row in
 // KAS and records it "not read", and no send follows the end.
 func TestMessageStep_ACompletionWaitsForAnInFlightSteer(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, br := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
 		t.Cleanup(func() { shutdownHub(t, h) })

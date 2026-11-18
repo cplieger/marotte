@@ -609,6 +609,7 @@ var (
 // transition's actions, fails here, as does a hold of the gate's added or dropped outside it. The verbs' own
 // declarations and the run-work set name them too.
 func TestRunTransitions_EveryPauseAndResumeGoesThroughTheTransition(t *testing.T) {
+	t.Parallel()
 	fset, files := parseAgentSources(t)
 	for _, f := range files {
 		for _, decl := range f.Decls {

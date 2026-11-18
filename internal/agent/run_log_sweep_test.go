@@ -119,6 +119,7 @@ func (s *sweepRig) logs(t *testing.T) []string {
 const twentyDays = 20 * 24 * time.Hour
 
 func TestSweepOrphanRunLogs_RemovesAnOrphanOlderThanRetention(t *testing.T) {
+	t.Parallel()
 	s := newSweepRig(t)
 	s.orphanLog(t, "wf_orphan", twentyDays)
 
@@ -133,6 +134,7 @@ func TestSweepOrphanRunLogs_RemovesAnOrphanOlderThanRetention(t *testing.T) {
 }
 
 func TestSweepOrphanRunLogs_KeepsALogWhoseRunIsListedOrOnDisk(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		setup func(t *testing.T, s *sweepRig)
 		name  string
@@ -175,6 +177,7 @@ func TestSweepOrphanRunLogs_KeepsALogWhoseRunIsListedOrOnDisk(t *testing.T) {
 }
 
 func TestSweepOrphanRunLogs_AFailedOrPartialListRemovesNothing(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		err   error
 		name  string
@@ -211,6 +214,7 @@ func TestSweepOrphanRunLogs_AFailedOrPartialListRemovesNothing(t *testing.T) {
 }
 
 func TestSweepOrphanRunLogs_AnUnreadableKASStoreRemovesNothing(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		runsDir func(s *sweepRig) string
 		name    string
@@ -247,6 +251,7 @@ func TestSweepOrphanRunLogs_AnUnreadableKASStoreRemovesNothing(t *testing.T) {
 }
 
 func TestSweepOrphanRunLogs_AnUnreadableLeaseFileRemovesNothing(t *testing.T) {
+	t.Parallel()
 	s := newSweepRig(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, runlease.FileName), []byte("{not json"), 0o600); err != nil {
@@ -267,6 +272,7 @@ func TestSweepOrphanRunLogs_AnUnreadableLeaseFileRemovesNothing(t *testing.T) {
 
 // Whatever wakes the sweep sooner, a pass that removed logs holds the next removal runPurgePace off.
 func TestSweepOrphanRunLogs_APassWithinThePaceRemovesNothing(t *testing.T) {
+	t.Parallel()
 	s := newSweepRig(t)
 	s.orphanLog(t, "wf_first", twentyDays)
 	s.h.SweepOrphanRunLogs(t.Context(), fourteenDays)
@@ -293,6 +299,7 @@ func TestSweepOrphanRunLogs_APassWithinThePaceRemovesNothing(t *testing.T) {
 }
 
 func TestSweepOrphanRunLogs_KeepsAYoungOrphan(t *testing.T) {
+	t.Parallel()
 	t.Run("inside the window", func(t *testing.T) {
 		s := newSweepRig(t)
 		s.orphanLog(t, "wf_young", 2*24*time.Hour)
@@ -318,6 +325,7 @@ func TestSweepOrphanRunLogs_KeepsAYoungOrphan(t *testing.T) {
 }
 
 func TestSweepOrphanRunLogs_KeepForeverRemovesNothing(t *testing.T) {
+	t.Parallel()
 	s := newSweepRig(t)
 	s.orphanLog(t, "wf_orphan", 400*24*time.Hour)
 
@@ -338,6 +346,7 @@ func TestSweepOrphanRunLogs_KeepForeverRemovesNothing(t *testing.T) {
 }
 
 func TestSweepOrphanRunLogs_CapsAPassAndSkipsAPoisonItem(t *testing.T) {
+	t.Parallel()
 	s := newSweepRig(t)
 	s.orphanLog(t, "wf_poison", 40*24*time.Hour)
 	failLogRemoval(t, s.h, "wf_poison")
@@ -370,6 +379,7 @@ func TestSweepOrphanRunLogs_CapsAPassAndSkipsAPoisonItem(t *testing.T) {
 }
 
 func TestSweepOrphanRunLogs_KeepsALeasedOrOpenRunsLog(t *testing.T) {
+	t.Parallel()
 	s := newSweepRig(t)
 	if err := s.h.runs.leaseStore().Put(t.Context(), &runlease.Lease{WorkflowID: "wf_leased", Origin: runlease.OriginManual}); err != nil {
 		t.Fatalf("Setup: lease wf_leased: %v", err)

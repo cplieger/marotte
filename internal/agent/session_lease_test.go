@@ -662,6 +662,7 @@ func wantCaught(t *testing.T, bad []string, want string) {
 }
 
 func TestSessionLease_TheSessionFieldIsReadOnlyInTheLeaseFile(t *testing.T) {
+	t.Parallel()
 	reportAll(t, newLeaseCensus(t, nil).fieldOwner())
 	t.Run("a read in another file fails", func(t *testing.T) {
 		c := newLeaseCensus(t, map[string]string{
@@ -672,6 +673,7 @@ func TestSessionLease_TheSessionFieldIsReadOnlyInTheLeaseFile(t *testing.T) {
 }
 
 func TestSessionLease_EveryLeaseMethodIsClassified(t *testing.T) {
+	t.Parallel()
 	reportAll(t, newLeaseCensus(t, nil).classified())
 	t.Run("an unclassified method fails", func(t *testing.T) {
 		c := newLeaseCensus(t, map[string]string{
@@ -682,6 +684,7 @@ func TestSessionLease_EveryLeaseMethodIsClassified(t *testing.T) {
 }
 
 func TestSessionLease_OneConstructorBuildsEveryEntry(t *testing.T) {
+	t.Parallel()
 	reportAll(t, newLeaseCensus(t, nil).oneConstructor())
 	t.Run("a literal in the bridge manager fails", func(t *testing.T) {
 		c := newLeaseCensus(t, map[string]string{
@@ -692,6 +695,7 @@ func TestSessionLease_OneConstructorBuildsEveryEntry(t *testing.T) {
 }
 
 func TestSessionLease_TheSessionTypesAreTheListedInterfaces(t *testing.T) {
+	t.Parallel()
 	c := newLeaseCensus(t, nil)
 	got := c.derivedSessionTypes()
 	want := slices.Sorted(slices.Values(append(slices.Clone(sessionTypes), engineLaneTypes...)))
@@ -712,6 +716,7 @@ func TestSessionLease_TheSessionTypesAreTheListedInterfaces(t *testing.T) {
 }
 
 func TestSessionLease_NoSessionIsStoredOutsideTheDecorators(t *testing.T) {
+	t.Parallel()
 	reportAll(t, newLeaseCensus(t, nil).noStore())
 	for name, src := range map[string]string{
 		"a struct field":  "type parked struct{ s engineSession }",
@@ -727,6 +732,7 @@ func TestSessionLease_NoSessionIsStoredOutsideTheDecorators(t *testing.T) {
 }
 
 func TestSessionLease_NoAssertionWidensAResponder(t *testing.T) {
+	t.Parallel()
 	reportAll(t, newLeaseCensus(t, nil).noWidening())
 	for name, src := range map[string]string{
 		"an assertion":  "func f(r acpResponder) { _ = r.(acpCaller) }",
@@ -741,6 +747,7 @@ func TestSessionLease_NoAssertionWidensAResponder(t *testing.T) {
 }
 
 func TestSessionLease_ALeasedSessionDoesNotEscapeItsCall(t *testing.T) {
+	t.Parallel()
 	bad, callbacks := newLeaseCensus(t, nil).noEscape()
 	reportAll(t, bad)
 	if callbacks < leaseCallbackFloor {
@@ -770,6 +777,7 @@ func TestSessionLease_ALeasedSessionDoesNotEscapeItsCall(t *testing.T) {
 const leaseCallbackFloor = 10
 
 func TestSessionLease_EverySessionTakingFunctionIsListed(t *testing.T) {
+	t.Parallel()
 	reportAll(t, newLeaseCensus(t, nil).sessionTaking())
 	for name, param := range map[string]string{
 		"an engineSession":    "engineSession",
@@ -797,6 +805,7 @@ func TestSessionLease_EverySessionTakingFunctionIsListed(t *testing.T) {
 }
 
 func TestSessionLease_OnlyTheListedFunctionsWriteTheSessionID(t *testing.T) {
+	t.Parallel()
 	fset, agentFiles := parseAgentSources(t)
 	reportAll(t, recordWriterViolations("agent", recordSessionCallers(agentFiles)))
 	reportAll(t, recordWriterViolations("command", recordSessionCallers(parseCommandSources(t))))
@@ -811,6 +820,7 @@ func TestSessionLease_OnlyTheListedFunctionsWriteTheSessionID(t *testing.T) {
 }
 
 func TestSessionLease_TheCommandSeamReturnsNoSession(t *testing.T) {
+	t.Parallel()
 	reportAll(t, seamSessions(reflect.TypeFor[command.Bridge]()))
 	reportAll(t, seamSessions(reflect.TypeFor[bridgeRole]()))
 	t.Run("a seam returning a session fails", func(t *testing.T) {

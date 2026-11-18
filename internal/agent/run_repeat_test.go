@@ -14,6 +14,7 @@ import (
 )
 
 func TestAffordance_AMaxIterationsPauseOffersExtendAndFinishNotResume(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		facts runFacts
@@ -59,6 +60,7 @@ func TestAffordance_AMaxIterationsPauseOffersExtendAndFinishNotResume(t *testing
 
 // An offered verb needs a route, or its button 404s.
 func TestMaxIterationsVerbsHaveRoutes(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	mux := http.NewServeMux()
 	(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(mux)

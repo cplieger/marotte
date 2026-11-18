@@ -222,6 +222,7 @@ func contextLimitCompaction(t *testing.T) (h *Runtime, cs *testChatStore, tails 
 }
 
 func TestRun_AQueuedRowOpensItsTurnAfterACleanClose(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
 	unblock := make(chan struct{})
@@ -242,6 +243,7 @@ func TestRun_AQueuedRowOpensItsTurnAfterACleanClose(t *testing.T) {
 
 // Rows a broken close left wait for the next clean turn end; none is sent by the close itself.
 func TestRun_RowsWaitAfterABrokenClose(t *testing.T) {
+	t.Parallel()
 	h, cs, _, tails := idleAfterFirstTurn(t, "/tmp/work")
 	id, _ := h.stagePromptTurn(t, "c1")
 	queueTextDuring(t, h, "m-q1", "after this turn")
@@ -258,6 +260,7 @@ func TestRun_RowsWaitAfterABrokenClose(t *testing.T) {
 
 // Send now on a row a broken close left waiting sends it at once, ahead of the other waiting rows.
 func TestRun_SendNowOnAnIdleChatSendsTheRowAtOnce(t *testing.T) {
+	t.Parallel()
 	h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 	seedQueue(t, cs, "c1",
 		marotte.QueuedPrompt{ID: "m-q1", Text: "first"},
@@ -280,6 +283,7 @@ func TestRun_SendNowOnAnIdleChatSendsTheRowAtOnce(t *testing.T) {
 // Messages queued while the reader's compaction runs on an idle chat open no turn under it, then go after it, one per
 // turn in the order they were queued.
 func TestRun_RowsQueuedDuringAnIdleCompactionGoAfterItOneATurn(t *testing.T) {
+	t.Parallel()
 	h, cs, release := compactingHub(t)
 	queueDuring(t, h, "m-q1", "m-q2")
 	if ids := promptIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-first"}) {
@@ -296,6 +300,7 @@ func TestRun_RowsQueuedDuringAnIdleCompactionGoAfterItOneATurn(t *testing.T) {
 
 // A prompt that reaches the server while a compaction runs joins the list behind it and answers queued.
 func TestRun_APromptDuringACompactionIsQueuedBehindIt(t *testing.T) {
+	t.Parallel()
 	h, cs, release := compactingHub(t)
 
 	rec := postCmd(t, h, promptCmd("m-p1", "what changed?"))
@@ -315,6 +320,7 @@ func TestRun_APromptDuringACompactionIsQueuedBehindIt(t *testing.T) {
 
 // Send now on a row waiting for a compaction opens no turn under it, and the row goes first once it ends.
 func TestRun_SendNowDuringACompactionSendsTheRowFirstAfterIt(t *testing.T) {
+	t.Parallel()
 	h, cs, release := compactingHub(t)
 	queueDuring(t, h, "m-q1", "m-q2")
 
@@ -337,6 +343,7 @@ func TestRun_SendNowDuringACompactionSendsTheRowFirstAfterIt(t *testing.T) {
 
 // A message past the draft cap sent during a compaction is queued behind it and goes when the compaction ends.
 func TestRun_ARowPastTheDraftCapQueuesBehindACompaction(t *testing.T) {
+	t.Parallel()
 	h, cs, release := compactingHub(t)
 	long := strings.Repeat("x", marotte.MaxDraftBytes+1)
 
@@ -353,6 +360,7 @@ func TestRun_ARowPastTheDraftCapQueuesBehindACompaction(t *testing.T) {
 
 // A context reference in a row queued behind a compaction is resolved when its turn opens, as a prompt's is.
 func TestRun_ARowBehindACompactionResolvesAContextReference(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("remember the milk\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -378,6 +386,7 @@ func TestRun_ARowBehindACompactionResolvesAContextReference(t *testing.T) {
 // The compaction after a turn the model refused for the context's size sends no row that turn left waiting: the row
 // reads as waiting for a turn after it, and is still waiting once it ends.
 func TestRun_AfterARefusedTurnItsCompactionSendsNoRowThatTurnLeft(t *testing.T) {
+	t.Parallel()
 	h, cs, tails, release := contextLimitCompaction(t)
 	view := h.coord.RunView(t.Context(), "c1")
 	if len(view.Entries) < 2 || view.Entries[1].ID != "m-old" || view.Entries[1].Wait.After == marotte.WaitCompaction {
@@ -398,6 +407,7 @@ func TestRun_AfterARefusedTurnItsCompactionSendsNoRowThatTurnLeft(t *testing.T) 
 // A message sent during that compaction goes first: the list holds it above the row the refused turn left, it reads
 // as going after the compaction, and the two turns open in that order.
 func TestRun_AfterARefusedTurnTheMessageSentDuringItsCompactionGoesFirst(t *testing.T) {
+	t.Parallel()
 	h, cs, _, release := contextLimitCompaction(t)
 
 	queueTextDuring(t, h, "m-new", "sent during the compaction")

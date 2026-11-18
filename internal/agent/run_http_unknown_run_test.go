@@ -32,6 +32,7 @@ func unknownRunMux(t *testing.T) *http.ServeMux {
 // A client stops on 404 and retries a 5xx, so an id KAS has no run for is 404 on every verb class: the ones the
 // affordance gate reads first, the status-gated ones, the ones KAS answers itself, the step verbs and the reads.
 func TestRunVerbs_AnswerNotFoundForAnUnknownRun(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name, method, target, body string
 	}{
@@ -64,6 +65,7 @@ func TestRunVerbs_AnswerNotFoundForAnUnknownRun(t *testing.T) {
 }
 
 func TestWorkflowNotFound_MatchesOnlyAConfirmedAbsence(t *testing.T) {
+	t.Parallel()
 	incomplete := incompleteNotFoundErr()
 	cases := []struct {
 		err  error

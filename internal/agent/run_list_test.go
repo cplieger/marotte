@@ -9,6 +9,7 @@ import (
 // The empty-turn re-send keeps today's guards: a retry-marked prompt's close inserts one retry entry only when the
 // turn ended on the wire with end_turn and nothing emitted, no later turn opened and no stop was asked for after it.
 func TestRunList_AnEmptyTurnIsResentOnlyWhenEveryClauseHolds(t *testing.T) {
+	t.Parallel()
 	firing := marotte.TurnResult{Stop: marotte.StopReasonEndTurn, EmittedNothing: true, WireEnded: true}
 	cases := []struct {
 		name    string

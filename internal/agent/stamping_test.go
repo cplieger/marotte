@@ -317,6 +317,7 @@ func callsAny(body *ast.BlockStmt, names []string) []string {
 }
 
 func TestStamping_EveryVersionComesFromItsMint(t *testing.T) {
+	t.Parallel()
 	files := parseStampPackages(t)
 	seen := 0
 	for file, fs := range files {
@@ -408,6 +409,7 @@ func stampFromHonestSource(expr ast.Expr, d definitions) (bool, string) {
 }
 
 func TestStamping_OnlyEmitAndTheConnectHookPublish(t *testing.T) {
+	t.Parallel()
 	files := parseStampPackages(t)
 	publishers := map[string][]string{}
 	var emitBody, hookBody *ast.FuncDecl

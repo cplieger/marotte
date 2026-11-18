@@ -65,6 +65,7 @@ func kinds(entries []marotte.Entry) []marotte.EntryKind {
 }
 
 func TestRunLog_ANodeStartOpensOneTurnPerStepInstance(t *testing.T) {
+	t.Parallel()
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
 	turn, opened, err := r.open(ctx, &translate.RunStep{RunID: "wf1", NodePath: "root/step", SessionID: "sess-a"}, "c-1")
@@ -94,6 +95,7 @@ func TestRunLog_ANodeStartOpensOneTurnPerStepInstance(t *testing.T) {
 
 // KAS sends node_start twice per step and only the second names the session; it continues the open turn.
 func TestRunLog_ASecondNodeStartContinuesTheOpenTurn(t *testing.T) {
+	t.Parallel()
 	r := newRunLog(t.TempDir())
 	step := &translate.RunStep{RunID: "wf1", NodePath: workflow.PathKey([]string{"wf1", "a"})}
 	first, _, err := r.open(t.Context(), step, "c-1")
@@ -108,6 +110,7 @@ func TestRunLog_ASecondNodeStartContinuesTheOpenTurn(t *testing.T) {
 }
 
 func TestRunLog_AnEmptyChatIDRecordsTheParentlessHostSessionAsHost(t *testing.T) {
+	t.Parallel()
 	r := newRunLog(t.TempDir())
 	if _, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: "root/step"}, ""); err != nil {
 		t.Fatal(err)
@@ -118,6 +121,7 @@ func TestRunLog_AnEmptyChatIDRecordsTheParentlessHostSessionAsHost(t *testing.T)
 }
 
 func TestRunLog_TheHostIsRecordedByTheFirstOpenAndNeverMoved(t *testing.T) {
+	t.Parallel()
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
 	if _, _, err := r.open(ctx, &translate.RunStep{RunID: "wf1", NodePath: "a"}, "c-1"); err != nil {
@@ -132,6 +136,7 @@ func TestRunLog_TheHostIsRecordedByTheFirstOpenAndNeverMoved(t *testing.T) {
 }
 
 func TestRunLog_NodeCompleteMapsKASStatusOntoTheOutcome(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		status  string
 		outcome marotte.TurnOutcome
@@ -167,6 +172,7 @@ func TestRunLog_NodeCompleteMapsKASStatusOntoTheOutcome(t *testing.T) {
 }
 
 func TestRunLog_ARecordedRefusalOutranksTheNodeCompleteStatus(t *testing.T) {
+	t.Parallel()
 	// The close is the only durable carrier of a refusal's metadata.
 	refused := &marotte.RefusalInfo{
 		Category:         "policy",
@@ -235,6 +241,7 @@ func TestRunLog_ARecordedRefusalOutranksTheNodeCompleteStatus(t *testing.T) {
 // kiro-cli ends a turn on tool_use both at its model-call limit and after a tool that ends the turn, and only KAS's
 // node record, read later, tells the two apart.
 func TestRunLog_ACloseKeepsKASsStatusOverAToolUseStop(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		desc    string
 		status  string
@@ -286,6 +293,7 @@ func closeStep(t *testing.T, r *runLog, path string, raw marotte.StopReason, sta
 }
 
 func TestRunLog_StepEndsGradesEachPathsNewestCloseUnderKAS(t *testing.T) {
+	t.Parallel()
 	var (
 		capped  = workflow.PathKey([]string{"wf1", "capped"})
 		handoff = workflow.PathKey([]string{"wf1", "handoff"})
@@ -365,6 +373,7 @@ func TestRunLog_StepEndsGradesEachPathsNewestCloseUnderKAS(t *testing.T) {
 // TestRunLog_StepEndsReadsAnEngineEndAsInterruptedAndItsResume pins the grade of a step turn an engine end closed:
 // interrupted, never failed, and resumed once the run's log holds a later turn on the step or KAS finished it.
 func TestRunLog_StepEndsReadsAnEngineEndAsInterruptedAndItsResume(t *testing.T) {
+	t.Parallel()
 	step := workflow.PathKey([]string{"wf1", "build"})
 	lost := marotte.DefaultFailureReason(marotte.TurnOutcomeInterrupted)
 	interrupt := func(t *testing.T, r *runLog) {
@@ -476,6 +485,7 @@ func assertScannedStarts(t *testing.T, r *runLog, path string, want marotte.RunS
 // TestRunLog_StepStartsKeepsAnAttemptAcrossAResume pins that a node's attempt starts at its first turn_open: KAS
 // restamps startedAt when it resumes a node, and a reader's clock would restart from that.
 func TestRunLog_StepStartsKeepsAnAttemptAcrossAResume(t *testing.T) {
+	t.Parallel()
 	step := workflow.PathKey([]string{"wf1", "build"})
 	t.Run("a resume's node_start on the open turn keeps its start", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
@@ -557,6 +567,7 @@ func TestRunLog_StepStartsKeepsAnAttemptAcrossAResume(t *testing.T) {
 }
 
 func TestRunLog_ANodeCompleteForAClosedPathClosesNothing(t *testing.T) {
+	t.Parallel()
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
 	if _, _, err := r.open(ctx, &translate.RunStep{RunID: "wf1", NodePath: "s"}, "c-1"); err != nil {
@@ -579,6 +590,7 @@ func TestRunLog_ANodeCompleteForAClosedPathClosesNothing(t *testing.T) {
 }
 
 func TestRunLog_MeteringFoldsIntoTheOpenTurnAndDropsOtherwise(t *testing.T) {
+	t.Parallel()
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
 	if r.meter("wf1", "s", 1, 1) || r.stopReason("wf1", "s", "end_turn") {
@@ -614,6 +626,7 @@ func TestRunLog_MeteringFoldsIntoTheOpenTurnAndDropsOtherwise(t *testing.T) {
 // ended `error` after a transient model error, and nothing has started a new turn since. KAS's node_paused follows
 // the failing turn_end, so it must not erase the fact.
 func TestRunLog_ATurnThatFailsOnAThrottleIsRemembered(t *testing.T) {
+	t.Parallel()
 	throttle := marotte.EngineError{Message: "You're sending requests faster than your rate limit allows", ErrorType: "ClientThrottleError", RetryErrorType: "THROTTLING"}
 	displayError := func(e marotte.EngineError) func(*runLog) {
 		return func(r *runLog) { r.stepError("wf1", "s", e) }
@@ -663,6 +676,7 @@ func TestRunLog_ATurnThatFailsOnAThrottleIsRemembered(t *testing.T) {
 }
 
 func TestRunLog_AnUnmappedStatusKeepsTheStatusAsTheRawStop(t *testing.T) {
+	t.Parallel()
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
 	if _, _, err := r.open(ctx, &translate.RunStep{RunID: "wf1", NodePath: "s"}, "c-1"); err != nil {
@@ -679,6 +693,7 @@ func TestRunLog_AnUnmappedStatusKeepsTheStatusAsTheRawStop(t *testing.T) {
 }
 
 func TestRunLog_ABetweenTurnsAppendLandsAfterThePathsNewestClosedTurn(t *testing.T) {
+	t.Parallel()
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
 	late := &marotte.Entry{ID: "call-1:result", Kind: marotte.EntryKindToolResult, Payload: json.RawMessage(`{"status":"completed"}`)}
@@ -719,6 +734,7 @@ func TestRunLog_ABetweenTurnsAppendLandsAfterThePathsNewestClosedTurn(t *testing
 }
 
 func TestRunLog_CloseRunClosesEveryOpenTurnAndDropsHostWhenTerminal(t *testing.T) {
+	t.Parallel()
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
 	for _, p := range []string{"par/b1", "par/b2"} {
@@ -760,6 +776,7 @@ func TestRunLog_CloseRunClosesEveryOpenTurnAndDropsHostWhenTerminal(t *testing.T
 }
 
 func TestRunLog_TheDeathArmClosesTheDeadHostsRunsOnly(t *testing.T) {
+	t.Parallel()
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
 	if _, _, err := r.open(ctx, &translate.RunStep{RunID: "wf1", NodePath: "s"}, "c-1"); err != nil {
@@ -791,6 +808,7 @@ func TestRunLog_TheDeathArmClosesTheDeadHostsRunsOnly(t *testing.T) {
 }
 
 func TestRunLog_DeleteClosesCancelledTombstonesAndRemovesLast(t *testing.T) {
+	t.Parallel()
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
 	turn, _, err := r.open(ctx, &translate.RunStep{RunID: "wf1", NodePath: "s"}, "c-1")
@@ -836,6 +854,7 @@ func TestRunLog_DeleteClosesCancelledTombstonesAndRemovesLast(t *testing.T) {
 }
 
 func TestRunLog_LogReadsAnExistingDirectoryAndCreatesNone(t *testing.T) {
+	t.Parallel()
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
 	if l, err := r.log(ctx, "wf-none"); l != nil || err != nil {
@@ -866,6 +885,7 @@ func TestRunLog_LogReadsAnExistingDirectoryAndCreatesNone(t *testing.T) {
 }
 
 func TestRunLog_OpenSeqsTracksTheNewestSealedSeq(t *testing.T) {
+	t.Parallel()
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
 	turn, _, err := r.open(ctx, &translate.RunStep{RunID: "wf1", NodePath: "s"}, "c-1")
@@ -897,6 +917,7 @@ func sealedEntries(s []turnlog.Sealed) []marotte.Entry {
 
 // The counter advances outside the lock, so a stamp read from it can run ahead of the served entries.
 func TestRunLog_StepTurnsStampCertifiesTheServedEntries(t *testing.T) {
+	t.Parallel()
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()
 	turn, _, err := r.open(ctx, &translate.RunStep{RunID: "wf1", NodePath: "root/step", SessionID: "sess-a"}, "c-1")
@@ -933,6 +954,7 @@ func TestRunLog_StepTurnsStampCertifiesTheServedEntries(t *testing.T) {
 
 // A non-plain workflow id is refused before any path is built.
 func TestRunLog_RefusesAWorkflowIDThatIsNotAPlainName(t *testing.T) {
+	t.Parallel()
 	r := newRunLog(t.TempDir())
 	for _, id := range []string{"../chats", "wf/1", "wf 1", "."} {
 		if _, err := r.log(t.Context(), id); !errors.Is(err, errRunIDInvalid) {
@@ -953,6 +975,7 @@ func TestRunLog_RefusesAWorkflowIDThatIsNotAPlainName(t *testing.T) {
 // A step's last words with no send_message call are its trailing prose run: KAS continues a refused reply on the
 // fallback model, so an applied fallback sits inside the run, and a decline, a tool call or a delegate's entry ends it.
 func TestLastWords_TakesTheTrailingProseRunAcrossAnAppliedFallback(t *testing.T) {
+	t.Parallel()
 	text := func(s string) entryRow {
 		return entryRow{kind: marotte.EntryKindText, payload: marotte.EntryText{Text: s}}
 	}

@@ -33,6 +33,7 @@ func writeProfileSetting(t *testing.T, dir, value string) {
 
 // TestSecurityPresets_ResolvesEachProfile pins each profile's preset set; Custom resolves to none, withholding the wire key.
 func TestSecurityPresets_ResolvesEachProfile(t *testing.T) {
+	t.Parallel()
 	for _, p := range policyfile.Profiles() {
 		t.Run(p.ID, func(t *testing.T) {
 			dir := t.TempDir()
@@ -47,6 +48,7 @@ func TestSecurityPresets_ResolvesEachProfile(t *testing.T) {
 
 // TestSecurityPresets_FallsBackLoudlyNotSilently pins that an unknown id resolves to the default, never to Custom's empty set.
 func TestSecurityPresets_FallsBackLoudlyNotSilently(t *testing.T) {
+	t.Parallel()
 	fallback, ok := policyfile.ProfileFor(policyfile.DefaultProfile)
 	if !ok {
 		t.Fatal("DefaultProfile does not resolve; the fallback itself is broken")
@@ -68,6 +70,7 @@ func TestSecurityPresets_FallsBackLoudlyNotSilently(t *testing.T) {
 
 // TestSecurityPresets_AbsentConfigResolvesToDefault covers a first boot, a different reader path.
 func TestSecurityPresets_AbsentConfigResolvesToDefault(t *testing.T) {
+	t.Parallel()
 	fallback, _ := policyfile.ProfileFor(policyfile.DefaultProfile)
 	got := securityPresets(securityProfileID(settings.Document{}))
 	if !slices.Equal(got, fallback.Presets) {
@@ -77,6 +80,7 @@ func TestSecurityPresets_AbsentConfigResolvesToDefault(t *testing.T) {
 
 // TestSecurityPresets_CallerCannotMutateTheProfile pins that the returned slice must not alias the profile.
 func TestSecurityPresets_CallerCannotMutateTheProfile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeProfileSetting(t, dir, policyfile.ProfileTrusted)
 	first := securityPresets(securityProfileID(docAt(t, dir)))
@@ -102,6 +106,7 @@ func profilePresets(t *testing.T, id string) []string {
 }
 
 func TestChatDoor_SendsTheChatsOwnProfileOverTheSettingsOne(t *testing.T) {
+	t.Parallel()
 	h, configDir := reopenFixture(t)
 	writeSetting(t, configDir, settings.KeySecurityProfile, policyfile.ProfileUnrestricted)
 	if _, err := h.chatStore.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -124,6 +129,7 @@ func TestChatDoor_SendsTheChatsOwnProfileOverTheSettingsOne(t *testing.T) {
 // A chat with no profile of its own takes the Settings profile at its first door and keeps it: a later Settings
 // change is the default for new chats only.
 func TestChatDoor_PinsAChatWithNoProfileToTheSettingsProfile(t *testing.T) {
+	t.Parallel()
 	h, configDir := reopenFixture(t)
 	writeSetting(t, configDir, settings.KeySecurityProfile, policyfile.ProfileTrusted)
 	h.ReconcileSessionSettings(t.Context())
@@ -154,6 +160,7 @@ func TestChatDoor_PinsAChatWithNoProfileToTheSettingsProfile(t *testing.T) {
 // While config.json has never read, the door sends the default profile, so the header names it: a later readable
 // Settings profile is the default for new chats only.
 func TestChatDoor_PinsTheDefaultProfileWhileConfigHasNeverRead(t *testing.T) {
+	t.Parallel()
 	configDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte("{not json"), 0o600); err != nil {
 		t.Fatalf("Setup: %v", err)
@@ -182,6 +189,7 @@ func TestChatDoor_PinsTheDefaultProfileWhileConfigHasNeverRead(t *testing.T) {
 }
 
 func TestChatDoor_AnUnknownChatProfileFallsBackToTheDefault(t *testing.T) {
+	t.Parallel()
 	h, _ := reopenFixture(t)
 	if _, err := h.chatStore.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.SecurityProfile = "no-such-profile"
@@ -226,6 +234,7 @@ func awaitNextGeneration(t *testing.T, h *Runtime, chatID marotte.ChatID, prev *
 }
 
 func TestReloadChatProfile_LoadsAnIdleChatOnItsNewProfileInTheBackground(t *testing.T) {
+	t.Parallel()
 	h, _ := reopenFixture(t)
 	first, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
@@ -257,6 +266,7 @@ func TestReloadChatProfile_LoadsAnIdleChatOnItsNewProfileInTheBackground(t *test
 }
 
 func TestReloadChatProfile_ARunningTurnHoldsTheReloadUntilItEnds(t *testing.T) {
+	t.Parallel()
 	h, _ := reopenFixture(t)
 	first, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
@@ -279,6 +289,7 @@ func TestReloadChatProfile_ARunningTurnHoldsTheReloadUntilItEnds(t *testing.T) {
 
 // A session that refuses its close keeps the reload owed to the chat's next send: the background reload tries once.
 func TestReloadChatProfile_ARefusedCloseLeavesTheReloadToTheNextSend(t *testing.T) {
+	t.Parallel()
 	h, _ := reopenFixture(t)
 	first, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {

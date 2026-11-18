@@ -48,6 +48,7 @@ func runViewReq(id, view string) *http.Request {
 // The run read serves each step's capture summary, not its whole captured output, which only the
 // step read carries.
 func TestHandleRun_ServesACaptureSummaryPerNode(t *testing.T) {
+	t.Parallel()
 	h, br := seedChatParentedRun(t, true)
 	br.setCallResult(methodKiroWorkflowInspect, inspectWithCaptures(t, "wf_1", 3, 5000))
 
@@ -139,6 +140,7 @@ func TestStepCapture_AnswersTheStepsWholeCapture(t *testing.T) {
 // A summary is what the collapsed row shows: the first three lines (two shown, the third so the
 // clamp marks the cut where the whole capture puts it), cut on a rune at the limit.
 func TestCaptureSummary(t *testing.T) {
+	t.Parallel()
 	long := strings.Repeat("é", 300)
 	cases := []struct {
 		name, in, want string
@@ -162,6 +164,7 @@ func TestCaptureSummary(t *testing.T) {
 // A watch's capture is the structured record its row decodes (its subtitle and facts), so the run
 // read keeps it whole.
 func TestHandleRun_KeepsAWatchsCapture(t *testing.T) {
+	t.Parallel()
 	capture := `{"status":"exited","exitCode":0,"outputTail":"ok 1\nok 2"}`
 	raw, err := json.Marshal(map[string]any{
 		"workflowId": "wf_1",
@@ -198,6 +201,7 @@ func TestHandleRun_KeepsAWatchsCapture(t *testing.T) {
 // The header view is what a tab dot, a chat tab's mark and a steer note's label read: the run's
 // status and name with no node tree, so its size is the same for any run.
 func TestHandleRun_TheHeaderViewCarriesNoTree(t *testing.T) {
+	t.Parallel()
 	header := func(steps int) string {
 		h, br := seedChatParentedRun(t, true)
 		br.setCallResult(methodKiroWorkflowInspect, inspectWithCaptures(t, "wf_1", steps, 200))

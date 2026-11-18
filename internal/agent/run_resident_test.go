@@ -146,6 +146,7 @@ func TestEnsureResident_AResidentRunIsHandedBackWithNoLoad(t *testing.T) {
 // session/load sends `_kiro/terminal/shell_type` first, so the host lane must be registered and forwarded before
 // the load (KAS 2.27.0 otherwise stalls ~2s).
 func TestEnsureResident_AHostRequestDuringTheLoadIsAnswered(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	leaseParentless(t, h, "wf_1")
@@ -191,6 +192,7 @@ func (b *hostRequestingBridge) Respond(ctx context.Context, id int64, result any
 // The lease follows the unknown-outcome rule: armDeadline needs it, so dropping it on a cancellation leaves a taken
 // retry unbounded.
 func TestRetry_ACancelledRetryKeepsTheLeaseItMinted(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		cause     error
 		wantLease bool
@@ -245,6 +247,7 @@ func leasedNonResident(t *testing.T, reply json.RawMessage) (*Runtime, *fakeBrid
 // KAS reroutes a prompt only while the addressed step waits; past that it runs as an ordinary turn,
 // so an ask the fresh read no longer holds is final and nothing is sent.
 func TestAnswerInput_AMovedOnStepIsGone(t *testing.T) {
+	t.Parallel()
 	cases := map[string]json.RawMessage{
 		"a different execution waits now": inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_other")),
 		"the run is over":                 inspectReply(t, "wf_1", "failed", ""),
@@ -267,6 +270,7 @@ func TestAnswerInput_AMovedOnStepIsGone(t *testing.T) {
 // The answering request registers its own pending before its read, which holds every ask of the run;
 // KAS's own refusal conditions still refuse it.
 func TestAnswerInput_ARunningSiblingRefusesTheAnswer(t *testing.T) {
+	t.Parallel()
 	h, br := leasedNonResident(t, inspectAsk(t, "wf_1", marotte.RunStatusRunning,
 		parkedStep("review", "sess_step"), askStepNode{id: "build", status: "running", session: "sess_build"}))
 	askID := markerlessAskID(h, "wf_1", reviewPath, "sess_step")
@@ -284,6 +288,7 @@ func TestAnswerInput_ARunningSiblingRefusesTheAnswer(t *testing.T) {
 
 // Each parked branch is its own ask, so the second one is answered at its own session.
 func TestAnswerInput_AParkedBranchIsAnsweredAtItsOwnSession(t *testing.T) {
+	t.Parallel()
 	h, br := leasedNonResident(t, inspectAsk(t, "wf_1", marotte.RunStatusPaused,
 		parkedStep("branch_a", "sess_a"), parkedStep("branch_b", "sess_b")))
 	askID := markerlessAskID(h, "wf_1", workflow.PathKey([]string{"root", "branch_b"}), "sess_b")
@@ -299,6 +304,7 @@ func TestAnswerInput_AParkedBranchIsAnsweredAtItsOwnSession(t *testing.T) {
 // A read that fails is not "nothing waits": nothing is sent, the refusal is retryable, and the
 // answer's pending registration is gone so the card is sendable again.
 func TestAnswerInput_AnUnreadableRunRefusesRetryably(t *testing.T) {
+	t.Parallel()
 	h, br := leasedNonResident(t, nil)
 	br.setCallErr(methodKiroWorkflowInspect, errors.New("engine ended"))
 
@@ -322,6 +328,7 @@ func TestAnswerInput_AnUnreadableRunRefusesRetryably(t *testing.T) {
 
 // A run marotte holds no lease for has no cell: the answer is refused before any session is made resident.
 func TestAnswerInput_AnUnleasedRunMakesNoSessionResident(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: parentlessRunList("wf_1")}
@@ -337,6 +344,7 @@ func TestAnswerInput_AnUnleasedRunMakesNoSessionResident(t *testing.T) {
 
 // Cancel is an engine call on the run id: it opens no host session.
 func TestCancel_MakesNoSessionResident(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.callResults = map[string]json.RawMessage{
@@ -364,6 +372,7 @@ func TestCancel_MakesNoSessionResident(t *testing.T) {
 // A failed run stays openable with no lease and no host session: the read is an engine call and passes `state` and
 // `nodePlan` through.
 func TestHandleRun_AParkedRunsPageRendersWithNoLeaseAndNoHostSession(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	tree, err := json.Marshal(map[string]any{
@@ -412,6 +421,7 @@ func TestHandleRun_AParkedRunsPageRendersWithNoLeaseAndNoHostSession(t *testing.
 // A parentless run's host session loads its launching session with the presets its lease recorded at launch, never
 // the current profile's: a fresh session would make its steps ask, and today's profile is not the launch's.
 func TestEnsureResident_LoadsAParentlessRunsLaunchingSession(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	leaseParentless(t, h, "wf_1", "preset-at-launch")
@@ -438,6 +448,7 @@ func TestEnsureResident_LoadsAParentlessRunsLaunchingSession(t *testing.T) {
 // A chat-parented run is made resident through its chat's own door, never as a host lane; a refused verb leaves the
 // chat's session open.
 func TestEnsureResident_AChatParentedRunIsMadeResidentThroughItsChat(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.callResults = map[string]json.RawMessage{
@@ -468,6 +479,7 @@ func TestEnsureResident_AChatParentedRunIsMadeResidentThroughItsChat(t *testing.
 // A lease no load can hold refuses the verb as a run state: nothing is registered, the chat's session stays, the
 // ask stays offered.
 func TestEnsureResident_ALaunchingSessionNoLoadCanHoldRefusesTheVerb(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		lease runlease.Lease
 		chain []string
@@ -557,6 +569,7 @@ func TestEnsureResident_ALaunchingSessionNoLoadCanHoldRefusesTheVerb(t *testing.
 
 // Retry is never sent under another session.
 func TestRetry_RefusesARunWhoseLaunchingSegmentTheChatRetired(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.callResults = map[string]json.RawMessage{
@@ -583,6 +596,7 @@ func TestRetry_RefusesARunWhoseLaunchingSegmentTheChatRetired(t *testing.T) {
 
 // A refused load is a server fault, not a run state; nothing is left registered.
 func TestEnsureResident_AFailedLoadIsAFaultOnThisServer(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		loadErr error
 		leased  bool
@@ -625,6 +639,7 @@ func TestEnsureResident_AFailedLoadIsAFaultOnThisServer(t *testing.T) {
 
 // A launch session no load can hold is a 409; a run kiro-cli does not know is a 404; a refused load is a 500.
 func TestControlHandler_SplitsAnUnavailableLaunchSessionFromAFailedLoad(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		inspect func(t *testing.T) json.RawMessage
 		loadErr error
@@ -676,6 +691,7 @@ func TestControlHandler_SplitsAnUnavailableLaunchSessionFromAFailedLoad(t *testi
 
 // A run from a retired segment is refused even with its chat open: that session is another one.
 func TestRetry_RefusesARetiredSegmentRunWhileItsChatIsOpen(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.callResults = map[string]json.RawMessage{
@@ -741,6 +757,7 @@ func TestEnsureResident_AnUnleasedRunsFailedReadSaysWhy(t *testing.T) {
 
 // An incomplete chat scan proves nothing: the unreadable chat may own the session, so the verb is a retryable 503.
 func TestEnsureResident_AnIncompleteChatScanRefusesToLoadAsAHost(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.callResults = map[string]json.RawMessage{
@@ -784,6 +801,7 @@ func nonResidentRunInBubble(t *testing.T) (h *Runtime, host *fakeBridge, gate ch
 }
 
 func TestEnsureResident_ConcurrentVerbsLoadOnce(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, host, gate := nonResidentRunInBubble(t)
 
@@ -812,6 +830,7 @@ func TestEnsureResident_ConcurrentVerbsLoadOnce(t *testing.T) {
 }
 
 func TestEnsureResident_AVerbThatGivesUpWaitingDoesNothing(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, host, gate := nonResidentRunInBubble(t)
 
@@ -1261,6 +1280,7 @@ func TestHealAnswer_WaitsForASlowLoadPastTheRequestBudget(t *testing.T) {
 }
 
 func TestResidentUntil_AReplayTimeoutOfTheLoadIsRunHostSlow(t *testing.T) {
+	t.Parallel()
 	replayTimeout := fmt.Errorf("session resume did not finish within 5m0s. kiro-cli stopped answering: %w",
 		context.DeadlineExceeded)
 	cases := map[string]func(t *testing.T) *Runtime{
@@ -1362,6 +1382,7 @@ func TestControlHandler_AnUnansweredLoadIs503WithTheSentence(t *testing.T) {
 
 // A load kiro-cli still holds past the release report names its remedy; a chat close ending the load does not.
 func TestControlHandler_AHeldLaunchSessionNamesTheAgentRestart(t *testing.T) {
+	t.Parallel()
 	loads := map[string]struct {
 		loadErr     error
 		want        int
@@ -1425,6 +1446,7 @@ func TestControlHandler_AHeldLaunchSessionNamesTheAgentRestart(t *testing.T) {
 }
 
 func TestRetry_ASlowLoadAnswersRunHostSlow(t *testing.T) {
+	t.Parallel()
 	h, host, _ := gatedHostRun(t, nil)
 	ctx, expire := expiringContext(t, t.Context())
 	// The retry's deadline passes once its load has begun and is held.

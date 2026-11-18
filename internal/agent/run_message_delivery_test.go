@@ -91,6 +91,7 @@ func TestMessageStep_AnEngineExitBeforeItsReplyRecordsTheWordsOnceAndARetrySends
 // A Delete arriving while an unconfirmed send holds the run waits for it, then clears its retry record:
 // a retry after the deletion is not answered as delivered.
 func TestDelete_AfterAnUnconfirmedSendClearsItsRetryRecord(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 		t.Cleanup(func() { shutdownHub(t, h) })

@@ -160,6 +160,7 @@ func TestHandleSSE_EachScopeReceivesItsOwnRunsAndEveryBroadcast(t *testing.T) {
 }
 
 func TestHandleSSE_AScopeOutsideTheTopicGrammarIs400(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	for name, topics := range map[string]string{
 		"not JSON":        `["run:wf_a"`,
@@ -257,6 +258,7 @@ func TestScopeRoute_AnswersTheWireContractsRefusals(t *testing.T) {
 // A connection whose owner is not the caller is refused 403, so the scope route can only narrow the caller's
 // own connections.
 func TestScopeRoute_RefusesAConnectionAnotherPrincipalOwns(t *testing.T) {
+	t.Parallel()
 	h, srv := scopeServer(t)
 	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.bus.fanout.Serve(w, r, sse.WithRequestScope("another principal"))

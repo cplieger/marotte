@@ -17,6 +17,7 @@ import (
 )
 
 func TestShutdownCompletesWithoutHanging(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	done := make(chan struct{})
 	go func() {
@@ -113,6 +114,7 @@ func TestInterfaceSatisfaction(_ *testing.T) {
 // TestShutdown_BoundsAWedgedHandler pins that a handler that never decrements inflight must not hold Shutdown, which
 // runs synchronously inside httpserver.Run's pre-drain hook.
 func TestShutdown_BoundsAWedgedHandler(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, _, _ := newTestHub()
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -153,6 +155,7 @@ func stallingStopEngine(release <-chan struct{}) *fakeEngineSource {
 
 // The one engine stop is bounded by ctx.
 func TestShutdown_BoundsAStallingEngineStop(t *testing.T) {
+	t.Parallel()
 	release := make(chan struct{})
 	cs := newTestChatStore()
 	h := newRuntimeOn(context.Background(), t.TempDir(), stallingStopEngine(release), cs)
@@ -202,6 +205,7 @@ func TestShutdown_JoinsTheTickerLoops(t *testing.T) {
 // TestShutdown_WaitsForARunningMCPNotifier holds the notifier inside its callback (the environment.md
 // generator): an unjoined loop here produces no other symptom.
 func TestShutdown_WaitsForARunningMCPNotifier(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h := newHubWithMCPConfig(t, nil)
 
@@ -278,6 +282,7 @@ func TestShutdown_CancelsTheLifetimeAfterStoppingTheEngine(t *testing.T) {
 // A notification about no chat (a pull request's CI flip) reaches the page as well as the push,
 // so a reader with the app open sees it the way they see a turn's.
 func TestNotify_AChatlessNoticeReachesThePageAndThePush(t *testing.T) {
+	t.Parallel()
 	h, fp := newRunPushHub(t)
 	n := marotte.NotificationPayload{
 		Key:  "pr:github:github.com:a/b#7",

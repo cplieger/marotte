@@ -40,6 +40,7 @@ func startTail(t *testing.T, r *runLog, path string) (turn, tail string) {
 // TestRunLog_StepStartsCarryAnInFlightStepsTurnAndLine pins the row a dock line is seeded from: an in-flight step's
 // newest turn and the last line its own lane printed, by the dock line's rule (run-step-tail.ts lastPrintedLine).
 func TestRunLog_StepStartsCarryAnInFlightStepsTurnAndLine(t *testing.T) {
+	t.Parallel()
 	step := workflow.PathKey([]string{"wf1", "build"})
 	t.Run("a sealed text's last prose line, its markdown markers dropped", func(t *testing.T) {
 		r := newRunLog(t.TempDir())
@@ -390,6 +391,7 @@ func reloadedCardTitle(t *testing.T, entries []marotte.Entry, id string) string 
 // A page that attaches while a step's call is in flight is seeded with the call's card title, so the result that
 // settles a different title moves its dock line.
 func TestRunLog_StepStartsCarryTheOpenTurnsUnsettledCalls(t *testing.T) {
+	t.Parallel()
 	step := workflow.PathKey([]string{"wf1", "build"})
 	r := newRunLog(t.TempDir())
 	turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
@@ -418,6 +420,7 @@ func TestRunLog_StepStartsCarryTheOpenTurnsUnsettledCalls(t *testing.T) {
 
 // A card appended settled, as a hook's is, takes no result, so the dock prints its title and holds nothing for it.
 func TestRunLog_ABornSettledCardIsNotHeldForAResult(t *testing.T) {
+	t.Parallel()
 	step := workflow.PathKey([]string{"wf1", "build"})
 	hook := &marotte.EntryToolCall{ID: "hook-1", Title: "Hook fired: lint", Kind: marotte.ToolKindHook, Status: marotte.ToolCompleted}
 	t.Run("the dock prints its title", func(t *testing.T) {
@@ -465,6 +468,7 @@ func TestRunLog_ABornSettledCardIsNotHeldForAResult(t *testing.T) {
 // A page that attaches after an interruption aborted a step's call, before KAS sends the call's late result, is seeded
 // with that call, so the late result moves its dock line as it moves the server's.
 func TestRunLog_AnInterruptedStepsRowCarriesTheCallItsLateResultSettles(t *testing.T) {
+	t.Parallel()
 	step := workflow.PathKey([]string{"wf1", "build"})
 	r := newRunLog(t.TempDir())
 	turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
