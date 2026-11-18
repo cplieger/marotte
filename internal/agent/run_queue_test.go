@@ -41,16 +41,14 @@ func queuedRows(t *testing.T, cs *testChatStore, chatID marotte.ChatID) []marott
 	return out
 }
 
-// queuedIDs is queuedRows' ids, and the ids marked to go next.
-func queuedIDs(t *testing.T, cs *testChatStore, chatID marotte.ChatID) (ids, marked []string) {
+// queuedIDs is queuedRows' ids.
+func queuedIDs(t *testing.T, cs *testChatStore, chatID marotte.ChatID) []string {
 	t.Helper()
+	var ids []string
 	for _, r := range queuedRows(t, cs, chatID) {
 		ids = append(ids, r.ID)
-		if r.Next {
-			marked = append(marked, r.ID)
-		}
 	}
-	return ids, marked
+	return ids
 }
 
 // seedQueue lists rows as waiting for the next clean turn end (paused), as a stopped turn leaves them: on the chat's

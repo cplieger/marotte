@@ -431,7 +431,7 @@ func (l *runList) queuePaused() (by uint64, paused bool) {
 		if e.kind != marotte.RunKindRow || e.state != marotte.RunPaused || e.pausedBy == 0 {
 			continue
 		}
-		if l.stopPaused(e) {
+		if e.stopPaused() {
 			return loadedStop, true
 		}
 		by, paused = e.pausedBy, true
@@ -448,7 +448,7 @@ func (l *runList) resumeQueue() {
 
 // held reports a queue the reader's stop holds: a row it paused waits (stopPaused). Only the reader's Resume or send
 // lifts it (releaseHold); no close, wake, failed launch, kiro-cli turn or reopen does.
-func (l *runList) held() bool { return slices.ContainsFunc(l.entries, l.stopPaused) }
+func (l *runList) held() bool { return slices.ContainsFunc(l.entries, (*runEntry).stopPaused) }
 
 // mayLaunch is the one check a row or retry passes before it is taken or offered as a steer: none while held.
 func (l *runList) mayLaunch(e *runEntry) bool {
@@ -463,7 +463,7 @@ func (l *runList) mayLaunch(e *runEntry) bool {
 func (l *runList) releaseHold(send bool) {
 	for _, e := range l.entries {
 		switch {
-		case l.stopPaused(e):
+		case e.stopPaused():
 			e.pausedBy, e.pausedBefore = 0, false
 			e.failedLaunch = e.failedLaunch && !send
 			l.touch()
@@ -1580,12 +1580,12 @@ func (l *runList) projectOne(e *runEntry) marotte.RunEntry {
 	return marotte.RunEntry{
 		Row: e.row, ID: e.id, Kind: e.kind, State: e.state, Origin: e.origin, Turn: e.turnID, Next: e.next,
 		Steerable: e.steerable, Yields: e.yields, Admits: e.admits, Want: e.want, Unread: e.unread,
-		StopPaused: l.stopPaused(e), FailedLaunch: e.failedLaunch,
+		StopPaused: e.stopPaused(), FailedLaunch: e.failedLaunch,
 	}
 }
 
 // stopPaused reports a row the reader's stop paused, which waits for the reader's send or Resume.
-func (l *runList) stopPaused(e *runEntry) bool {
+func (e *runEntry) stopPaused() bool {
 	return e.state == marotte.RunPaused && e.pausedBy != 0
 }
 

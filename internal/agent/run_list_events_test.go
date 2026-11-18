@@ -700,7 +700,7 @@ func TestRunList_AnEntryWhoseLaunchFailsIsPausedNotTakenAgain(t *testing.T) {
 		w.wantOrder(t, "after the stop", "d:paused")
 		w.door("d2", "2 new")
 		w.wantOrder(t, "the caller's next send", "d:paused")
-		if !w.l.stopPaused(w.entry(t, "d")) {
+		if !w.entry(t, "d").stopPaused() {
 			t.Error("the resend lifted the stop's pause, want it held until the reader's send or Resume")
 		}
 		if got := w.entry(t, "d").row.Text; got != "2 new" {
@@ -849,7 +849,7 @@ func TestRunList_AnEntryWhoseLaunchFailsIsPausedNotTakenAgain(t *testing.T) {
 		w.door("d", "1 new")
 		w.l.takeEffects()
 		w.failLaunch(t, "d")
-		if w.l.stopPaused(w.entry(t, "d")) {
+		if w.entry(t, "d").stopPaused() {
 			t.Error("the failed launch's row waits for Resume, want it to wait for the next turn")
 		}
 		w.user("u", marotte.RunWantPrompt)
