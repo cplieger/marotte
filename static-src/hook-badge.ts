@@ -32,6 +32,7 @@ const TRIGGER_LABELS: ReadonlyMap<string, string> = new Map([
   ["UserPromptSubmit", "at turn start (prompt sent)"],
   ["Stop", "at turn end (agent stops)"],
   ["PreToolUse", "before a tool runs"],
+  ["PermissionRequest", "Runs when a permission rule would ask"],
   ["PostToolUse", "after a tool runs"],
   ["PreTaskExec", "before a spec task"],
   ["PostTaskExec", "after a spec task"],

@@ -92,7 +92,7 @@ import {
 export { refreshGroupHeader };
 import { delegateDetail, iconForSubagent, subagentLabel, subagentName } from "./roles.js";
 import { delegateStopWord } from "./delegate-stop.js";
-import { callRefused } from "./hook-fold.js";
+import { callRefused, hookCallSeat } from "./hook-fold.js";
 import { buildRunCard, type RunCardView, type RunDisclosure } from "./fundamentals/run-card.js";
 import {
   drawRun,
@@ -2995,7 +2995,7 @@ function indexGroups(st: TurnRender): GroupIndex {
     }
   };
   let work = false;
-  // A box owns the PostToolUse hooks right after it, and the PreToolUse hooks right before it in a run of hooks only,
+  // A box owns the after-seat hooks right after it, and the before-seat hooks right before it in a run of hooks only,
   // each set a run of its own so it mounts apart from a neighbour's group (Go `toolRunScan.endRun`, `block-heights.ts`
   // `toolRun`). kiro-cli files a write's guards after the write and no hook names its call (kirodotdev/Kiro#12284),
   // so guards after another call stay that call's.
@@ -3004,12 +3004,12 @@ function indexGroups(st: TurnRender): GroupIndex {
   let prevBox: HookBox | null = null;
   const endRun = (next: HookBox | null): void => {
     let from = 0;
-    while (prevBox !== null && run[from]?.trigger === "PostToolUse") {
+    while (prevBox !== null && hookCallSeat(run[from]?.trigger) === "after") {
       from++;
     }
     let to = run.length;
     const hooksOnly = run.every((m) => m.hook);
-    while (next !== null && hooksOnly && to > from && run[to - 1]?.trigger === "PreToolUse") {
+    while (next !== null && hooksOnly && to > from && hookCallSeat(run[to - 1]?.trigger) === "before") {
       to--;
     }
     for (const [i, m] of run.entries()) {

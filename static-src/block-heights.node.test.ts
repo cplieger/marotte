@@ -13,6 +13,7 @@ import {
   spacerHeight,
 } from "./block-heights.js";
 import { runCardOwners, setRunCardOwners, type EntryRange } from "./block-window.js";
+import { setHookStatusShown } from "./hook-fold.js";
 import type { Turn } from "./turns.js";
 import type { Entry } from "./types.js";
 
@@ -447,5 +448,35 @@ describe("a run of tool calls, priced as the group it mounts as", () => {
   it("charges the spacer the members of an open group that is mounted, with no gap of their own", () => {
     const t = turn("g-joined-open", [text(1), call(2), call(3), call(4)]);
     expect(spacerHeight(t, { from: 1, to: 3 }, "tail", "")).toBe(2 * FINE.toolCard);
+  });
+});
+
+describe("a hook seated after its call's card", () => {
+  afterEach(() => {
+    setHookStatusShown(true);
+  });
+
+  const delegate = (seq: number, status: "completed" | "failed"): Entry =>
+    entry(
+      seq,
+      "tool_call",
+      { id: "inv", title: "invokeSubAgent", kind: "other", status, ts: 1, agent_subtask_id: "sub-1" },
+      { id: "inv" },
+    );
+  const permissionHook = (seq: number, status: "completed" | "failed"): Entry =>
+    entry(
+      seq,
+      "tool_call",
+      { id: "ph", title: "Hook fired: gate", kind: "hook", status, ts: 1, hook_trigger: "PermissionRequest" },
+      { id: "ph" },
+    );
+
+  // kiro-cli runs a PermissionRequest hook inside the call's permission check, after the call's card exists, so a
+  // refused delegate's card owns it and keeps it as a row with hook status off, as it does a hook that failed.
+  it("prices a refused delegate's quiet PermissionRequest hook as its row with hook status off", () => {
+    setHookStatusShown(false);
+    const quiet = stood(turn("seat-quiet", [text(1), delegate(2, "failed"), permissionHook(3, "completed"), text(4)]));
+    const loud = stood(turn("seat-loud", [text(1), delegate(2, "failed"), permissionHook(3, "failed"), text(4)]));
+    expect(quiet).toBe(loud);
   });
 });

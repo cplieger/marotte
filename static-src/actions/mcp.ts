@@ -2,6 +2,7 @@ import { ActionError, apiAction, retryNetwork, RETRY_STANDARD } from "./index.js
 import type { ApiErrorInfo, ApiErrorDecision } from "./index.js";
 
 import {
+  type IdentityProviderConfig,
   type Server,
   updateConfiguredEntry,
   removeConfiguredEntry,
@@ -169,11 +170,43 @@ interface ImportResult {
   outcome: "created" | "unchanged";
 }
 
-/** Per-entry outcomes plus notes on keys marotte recognises but cannot
- *  store. */
+/** What the import says about one pasted key (`internal/mcp.importNote`), in the paste's key order. */
+export interface ImportNote {
+  /** The server the key sits on, absent at the top level. */
+  server?: string;
+  /** The key's path ("oauth.scopes"), or the pasted name a renaming is about. */
+  key: string;
+  text: string;
+}
+
+/** Per-entry outcomes plus a note on each pasted key marotte did not take as written. */
 export interface ImportServersResult {
   results: ImportResult[];
-  notes?: string[];
+  notes: ImportNote[];
+}
+
+/** Narrow the import's 200 body; server-controlled, so each entry is shape-checked. Exported for its test. */
+export function decodeImportResult(body: unknown): ImportServersResult {
+  const o = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+  const results: ImportResult[] = [];
+  for (const r of Array.isArray(o["results"]) ? (o["results"] as unknown[]) : []) {
+    const outcome = typeof r === "object" && r !== null ? (r as { outcome?: unknown }).outcome : undefined;
+    if (outcome === "created" || outcome === "unchanged") {
+      results.push({ outcome });
+    }
+  }
+  const notes: ImportNote[] = [];
+  for (const n of Array.isArray(o["notes"]) ? (o["notes"] as unknown[]) : []) {
+    if (typeof n !== "object" || n === null) {
+      continue;
+    }
+    const { server, key, text } = n as { server?: unknown; key?: unknown; text?: unknown };
+    if (typeof key !== "string" || typeof text !== "string") {
+      continue;
+    }
+    notes.push(typeof server === "string" && server !== "" ? { server, key, text } : { key, text });
+  }
+  return { results, notes };
 }
 
 export const importServers = apiAction<Record<string, unknown>, ImportServersResult>({
@@ -186,13 +219,14 @@ export const importServers = apiAction<Record<string, unknown>, ImportServersRes
     path: `${MCP_API}/import`,
     body: block,
   }),
+  decode: decodeImportResult,
   decodeError: decodeValidationError,
   success: (_args, res) => summariseImport(res),
   // Rendered inline beside the textarea, not as a toast.
   error: false,
 });
 
-/** One sentence naming what landed. Exported for its test. */
+/** One sentence naming what landed; the notes themselves are listed under the paste box. Exported for its test. */
 export function summariseImport(res: ImportServersResult | null): string {
   const results = res?.results ?? [];
   const created = results.filter((r) => r.outcome === "created").length;
@@ -207,12 +241,9 @@ export function summariseImport(res: ImportServersResult | null): string {
   if (parts.length === 0) {
     parts.push("Nothing to connect");
   }
-  const notes = res?.notes ?? [];
-  const onlyNote = notes.length === 1 ? notes[0] : undefined;
-  if (onlyNote !== undefined) {
-    parts.push(onlyNote);
-  } else if (notes.length > 1) {
-    parts.push(`${notes.length} keys marotte does not store were ignored`);
+  const notes = res?.notes.length ?? 0;
+  if (notes > 0) {
+    parts.push(notes === 1 ? "1 key was not taken as pasted" : `${notes} keys were not taken as pasted`);
   }
   return parts.join(". ") + ".";
 }
@@ -312,4 +343,47 @@ export const relayOAuthCallback = apiAction<{ server: string; redirect_url: stri
   }),
   // Shown inline beside the pasted box: every rejection names the wrong part of the address.
   error: false,
+});
+
+// The organization sign-in (internal/agent/mcp_org_sign_in.go). Its state arrives as mcp_identity_provider frames, so
+// none of these draws anything optimistic.
+
+/** Save the organization identity provider: 400 names each refused field. kiro-cli reloads it live. */
+export const saveIdentityProvider = apiAction<IdentityProviderConfig, unknown>({
+  name: "mcp.save_identity_provider",
+  idempotencyKey: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  request: (body) => ({ method: "PUT", path: `${MCP_API}/identity-provider`, body }),
+  decodeError: decodeValidationError,
+  // Shown inline under the card's form.
+  error: false,
+});
+
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
+export const removeIdentityProvider = apiAction<void, unknown>({
+  name: "mcp.remove_identity_provider",
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  request: () => ({ method: "DELETE", path: `${MCP_API}/identity-provider` }),
+  error: "Could not remove the organization sign-in",
+});
+
+// 202 once queued, 409 while one stands, 503 with no engine; kiro-cli's own refusal arrives on the card.
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
+export const orgSignIn = apiAction<void, void>({
+  name: "mcp.org_sign_in",
+  // NO retry: a second sign-in would join or replace the first.
+  scope: () => "mcp-org-sign-in",
+  request: () => ({ method: "POST", path: `${MCP_API}/identity-provider/sign-in` }),
+  error: "Could not start the organization sign-in",
+});
+
+// Also the Cancel of a sign-in in progress: kiro-cli's signOut discards it.
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
+export const orgSignOut = apiAction<void, void>({
+  name: "mcp.org_sign_out",
+  scope: () => "mcp-org-sign-in",
+  request: () => ({ method: "POST", path: `${MCP_API}/identity-provider/sign-out` }),
+  error: "Could not sign out of the organization",
 });

@@ -9,6 +9,10 @@ import {
   standingFor,
   unreadableEntries,
   updateConfiguredEntry,
+  orgSignInStatus,
+  identityProvider,
+  orgProviderName,
+  decodeIdentityProviderBody,
 } from "./mcp-state.js";
 import type { Server } from "./mcp-state.js";
 import { refreshConfigStanding } from "./config-standing.js";
@@ -258,6 +262,27 @@ describe("adaptStatus", () => {
       expected: { name: "aws", origin: "power", originPower: "aws-infra", state: "connected" },
     },
     {
+      name: "a server waiting on the organization sign-in keeps its own state",
+      input: { name: "corp", state: "needs_org_sign_in", origin: "user" },
+      expected: { name: "corp", origin: "user", state: "needs_org_sign_in" },
+    },
+    {
+      name: "the keys kiro-cli ignores ride every state",
+      input: { name: "x", state: "failed", error: "boom", ignored_fields: ["autoApprove", "cwd"] },
+      expected: {
+        name: "x",
+        origin: "user",
+        ignoredFields: ["autoApprove", "cwd"],
+        state: "failed",
+        error: "boom",
+      },
+    },
+    {
+      name: "an empty ignored list is no list",
+      input: { name: "x", state: "connected", ignored_fields: [] },
+      expected: { name: "x", origin: "user", state: "connected" },
+    },
+    {
       name: "a shadowing server says so",
       input: { name: "mine", state: "connected", origin: "workspace", shadows: true },
       expected: { name: "mine", origin: "workspace", shadows: true, state: "connected" },
@@ -435,5 +460,61 @@ describe("disabled by layer", () => {
     });
     expect(seen.at(-1)).toBeUndefined();
     stop();
+  });
+});
+
+describe("the organization sign-in", () => {
+  const stamp = (version: string) => ({ kind: "mcp_status", ref: "", version });
+  const signedIn = { reported: { state: "signed-in", account: "a@acme" } };
+  const signingIn = { reported: { state: "signing-in" }, sign_in_deadline: "2026-11-18T12:00:00Z" };
+
+  it("takes a newer frame and refuses an older or equal one", () => {
+    mcpState.applyOrgFrame(signingIn, stamp("100"));
+    expect(orgSignInStatus.value).toEqual(signingIn);
+    mcpState.applyOrgFrame(signedIn, stamp("101"));
+    expect(orgSignInStatus.value).toEqual(signedIn);
+    mcpState.applyOrgFrame(signingIn, stamp("101"));
+    mcpState.applyOrgFrame(signingIn, stamp("99"));
+    expect(orgSignInStatus.value).toEqual(signedIn);
+  });
+
+  it("takes the status read with the rows, unless a newer frame already landed", async () => {
+    mcpState.applyOrgFrame(signedIn, stamp("200"));
+    wire.body = { subject: stamp("150"), servers: [], identity_provider: signingIn };
+    await mcpState.refetchStatus();
+    expect(orgSignInStatus.value).toEqual(signedIn);
+
+    wire.body = { subject: stamp("300"), servers: [] };
+    await mcpState.refetchStatus();
+    // Absent on the reply: nothing reported and no sign-in stands.
+    expect(orgSignInStatus.value).toBeUndefined();
+  });
+
+  it("reads the saved provider, dropping empty optional fields", () => {
+    expect(
+      decodeIdentityProviderBody({
+        identity_provider: { issuer: "https://idp.example", client_id: "k", name: "", token_endpoint: "https://t" },
+        unreadable: false,
+      }),
+    ).toEqual({ provider: { issuer: "https://idp.example", client_id: "k", token_endpoint: "https://t" }, unreadable: false });
+    expect(decodeIdentityProviderBody({ identity_provider: null, unreadable: true })).toEqual({
+      provider: null,
+      unreadable: true,
+    });
+    expect(() => decodeIdentityProviderBody({ identity_provider: { issuer: "x" } })).toThrow();
+  });
+
+  it("names the provider by its saved name, else kiro-cli's display name, else the issuer", () => {
+    identityProvider.value = { loaded: true, provider: { issuer: "https://idp.example", client_id: "k" }, unreadable: false };
+    mcpState.applyOrgFrame({ reported: { state: "signed-out", display_name: "Acme SSO" } }, stamp("400"));
+    expect(orgProviderName()).toBe("Acme SSO");
+    mcpState.applyOrgFrame({ reported: { state: "signed-out" } }, stamp("401"));
+    expect(orgProviderName()).toBe("https://idp.example");
+    identityProvider.value = {
+      loaded: true,
+      provider: { issuer: "https://idp.example", client_id: "k", name: "Acme" },
+      unreadable: false,
+    };
+    expect(orgProviderName()).toBe("Acme");
   });
 });

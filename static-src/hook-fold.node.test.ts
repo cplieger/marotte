@@ -2,7 +2,7 @@
 // dropped at the entry when Show hook status is off.
 
 import { describe, it, expect } from "vitest";
-import { hookCounted, hookQuiet, hookRenders, isToolTriggerHook } from "./hook-fold.js";
+import { hookCallSeat, hookCounted, hookQuiet, hookRenders, isToolTriggerHook } from "./hook-fold.js";
 import type { ToolCall } from "./types.js";
 
 function hook(over: Partial<ToolCall> = {}): ToolCall {
@@ -28,6 +28,7 @@ describe("hookQuiet", () => {
 describe("isToolTriggerHook", () => {
   it.each<[string | undefined, boolean]>([
     ["PreToolUse", true],
+    ["PermissionRequest", true],
     ["PostToolUse", true],
     ["UserPromptSubmit", false],
     ["Stop", false],
@@ -63,5 +64,20 @@ describe("hookCounted", () => {
     ["printing hook, switch off", { output: "2 warnings" }, false, true],
   ])("%s → %s", (_name, over, shown, want) => {
     expect(hookCounted(hook(over), shown)).toBe(want);
+  });
+});
+
+describe("hookCallSeat", () => {
+  // kiro-cli runs a PermissionRequest hook inside the call's permission check, after the call's card exists.
+  it.each<[string | undefined, string]>([
+    ["PreToolUse", "before"],
+    ["PermissionRequest", "after"],
+    ["PostToolUse", "after"],
+    ["Stop", ""],
+    ["permissionrequest", ""],
+    ["constructor", ""],
+    [undefined, ""],
+  ])("%s → %j", (trigger, want) => {
+    expect(hookCallSeat(trigger)).toBe(want);
   });
 });

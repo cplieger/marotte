@@ -14,7 +14,7 @@ import { onModalClose, openModal } from "./modals.js";
 import { refreshConfigStanding, standingBadge } from "./config-standing.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { showToast } from "./toast.js";
-import { ICON_EDIT_UI, ICON_TRASH_UI, ICON_PLUS_UI, ICON_REFRESH } from "./icons.js";
+import { ICON_EDIT_UI, ICON_TRASH_UI, ICON_PLUS_UI, ICON_REFRESH, ICON_WARN } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { spinnerEl } from "./spinner.js";
 import {
@@ -35,7 +35,11 @@ import {
   discoverySignalFor,
   setPrewarm,
   configuredServers,
+  orgProviderName,
+  orgSignInStatus,
+  ORG_NAME_FALLBACK,
 } from "./mcp-state.js";
+import { mountOrgCard } from "./mcp-org-sign-in.js";
 import { setEditing, initModal, cleanupModal } from "./mcp-panels.js";
 import type { MCPOrigin } from "./wire/types.gen.js";
 import { editModeFor } from "./mcp-panels.js";
@@ -47,6 +51,7 @@ import {
   reconnectServer,
   relayOAuthCallback,
   signInServer,
+  orgSignIn,
 } from "./actions/mcp.js";
 import { bindLoadingState, isPending, registerCleanup } from "./actions/index.js";
 
@@ -110,6 +115,12 @@ function buildSectionScaffold(): void {
   registerCleanup(bindUnreadableNotice(unreadableMsg));
   const registryPanel = el("div", { className: "mcp-registry-panel hidden" }) as HTMLDivElement;
   bindRegistryPanel(registryPanel);
+  const org = mountOrgCard({
+    pill: renderOAuthPill,
+    relay: renderOAuthRelay,
+    locked: () => rowPolicy.value.lockReason !== undefined,
+  });
+  registerCleanup(org.stop);
 
   emptyMsg = el("p", { className: "mcp-empty" }, EMPTY_DEFAULT) as HTMLParagraphElement;
   sectionBody = el("div", { className: "mcp-server-list" }) as HTMLDivElement;
@@ -124,6 +135,7 @@ function buildSectionScaffold(): void {
     govDisabledMsg,
     unreadableMsg,
     registryPanel,
+    org.card,
     emptyMsg,
     sectionBody,
     foreignBody,
@@ -426,11 +438,13 @@ export function mountForeignRow(name: string): HTMLElement {
   const originChip = buildOriginChip();
   const metaText = el("span", { className: "mcp-row-meta-text" });
   const discoveryBox = el("div", { className: "mcp-discovery" }) as HTMLDivElement;
+  const ignored = ignoredLine();
   const body = el(
     "div",
     { className: "mcp-row-body" },
     el("div", { className: "mcp-row-name-line" }, dot, nameEl, standingSlot),
     el("div", { className: "mcp-row-meta" }, originChip, metaText),
+    ignored.line,
     discoveryBox,
   );
   const reconnectBtn = renderReconnectBtn(name, () => name);
@@ -453,6 +467,7 @@ export function mountForeignRow(name: string): HTMLElement {
       applyStatusDotForeign(dot, name, st);
       applyOriginChip(originChip, st);
       metaText.textContent = renderForeignMeta(st);
+      ignored.paint(st);
       applyStanding(standingSlot, name);
       const live = carriesLiveReport(st, false);
       reconnectBtn.hidden = !live;
@@ -473,8 +488,43 @@ function applyStatusDotForeign(dot: HTMLSpanElement, name: string, st: RuntimeSt
     dot.setAttribute("aria-label", `${name} failed. ${st.error}`);
     return;
   }
-  dot.dataset["tooltip"] = meta.title;
-  dot.setAttribute("aria-label", `${name}: ${meta.title.toLowerCase()}`);
+  const title = stateTitle(st);
+  dot.dataset["tooltip"] = title;
+  dot.setAttribute("aria-label", `${name}: ${title.toLowerCase()}`);
+}
+
+/** The dot's title for a state; a server waiting on the organization sign-in names the provider. Reactive inside an
+ *  effect. */
+function stateTitle(st: RuntimeStatus): string {
+  return st.state === "needs_org_sign_in"
+    ? orgSignInPhrase()
+    : (STATUS_META[st.state] ?? STATUS_META.idle).title; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+}
+
+function orgSignInPhrase(): string {
+  const name = orgProviderName();
+  return name === ORG_NAME_FALLBACK ? "Needs your organization sign-in" : `Needs your ${name} sign-in`;
+}
+
+/** The keys kiro-cli ignores for a server, or "" when none. Exported for its test. */
+export function ignoredText(st: RuntimeStatus): string {
+  const keys = st.ignoredFields ?? [];
+  return keys.length === 0 ? "" : `Kiro ignores: ${keys.join(", ")}`;
+}
+
+/** Its own line under the meta line, never in it: the meta line ellipsises, and the user must read every key to fix
+ *  the config. */
+function ignoredLine(): { readonly line: HTMLElement; paint: (st: RuntimeStatus | null) => void } {
+  const text = el("span");
+  const line = el("p", { className: "mcp-mode-hint", hidden: true }, iconEl(ICON_WARN), " ", text);
+  return {
+    line,
+    paint: (st) => {
+      const t = st === null ? "" : ignoredText(st);
+      line.hidden = t === "";
+      text.textContent = t;
+    },
+  };
 }
 
 /** Meta text for a read-only row. Exported for testing. */
@@ -487,6 +537,8 @@ export function renderForeignMeta(st: RuntimeStatus): string {
       return "Connected. Its tools are available to the agent";
     case "needs_auth":
       return signInWaitPhrase(st);
+    case "needs_org_sign_in":
+      return orgSignInPhrase();
     case "signing_in":
       return "Signing in";
     case "disabled":
@@ -546,7 +598,8 @@ export function mountRow(s: Server, id: string): HTMLElement {
   );
   const metaText = el("span", { className: "mcp-row-meta-text" });
   const meta = el("div", { className: "mcp-row-meta" }, metaText);
-  const body = el("div", { className: "mcp-row-body" }, nameLine, meta);
+  const ignored = ignoredLine();
+  const body = el("div", { className: "mcp-row-body" }, nameLine, meta, ignored.line);
 
   const reconnectBtn = renderReconnectBtn(s.name, () => (servers.signalFor(id)?.value ?? s).name);
   const editBtn = renderEditBtn(s, cleanups);
@@ -604,6 +657,8 @@ export function mountRow(s: Server, id: string): HTMLElement {
       transportBadge.textContent = cur.transport;
       applyStatusDot(dot, cur, st, notInRegistry);
       metaText.textContent = renderMeta(cur, st, notInRegistry);
+      // A shadowed name's report belongs to the running server's own row.
+      ignored.paint(st.origin === "user" ? st : null);
       applyStanding(standingSlot, cur.name);
 
       const live = carriesLiveReport(st, true);
@@ -647,6 +702,7 @@ function oauthControls(
   nameOf: () => string,
 ): (st: RuntimeStatus, live: boolean) => void {
   let signIn: HTMLButtonElement | null = null;
+  let orgBtn: HTMLButtonElement | null = null;
   let pill: HTMLAnchorElement | null = null;
   let pillUrl: string | null = null;
   let hint: HTMLParagraphElement | null = null;
@@ -657,6 +713,13 @@ function oauthControls(
     } else {
       signIn?.remove();
       signIn = null;
+    }
+    // While the organization sign-in stands, the card holds its page; a second press could only be refused.
+    if (live && st.state === "needs_org_sign_in" && orgSignInStatus.value?.sign_in_deadline === undefined) {
+      orgBtn ??= body.appendChild(renderOrgSignInBtn());
+    } else {
+      orgBtn?.remove();
+      orgBtn = null;
     }
     if (!live || st.state !== "signing_in") {
       pill?.remove();
@@ -695,6 +758,7 @@ const SIGN_IN_TIME_LIMIT =
 const STATUS_META: Readonly<Record<RuntimeState, { css: string; title: string }>> = {
   connected: { css: "connected", title: "Connected" },
   needs_auth: { css: "oauth", title: "Needs authentication" },
+  needs_org_sign_in: { css: "oauth", title: "Needs organization sign-in" },
   signing_in: { css: "oauth", title: "Signing in" },
   idle: { css: "idle", title: "Not connected because no chat is running" },
   failed: { css: "failed", title: "Failed to initialise" },
@@ -798,8 +862,9 @@ function applyStatusDot(
     dot.dataset["tooltip"] = `Failed to initialise: ${st.error}`;
     dot.setAttribute("aria-label", `${s.name} failed. ${st.error}`);
   } else {
-    dot.dataset["tooltip"] = meta.title;
-    dot.setAttribute("aria-label", `${s.name}: ${meta.title.toLowerCase()}`);
+    const title = stateTitle(st);
+    dot.dataset["tooltip"] = title;
+    dot.setAttribute("aria-label", `${s.name}: ${title.toLowerCase()}`);
   }
 }
 
@@ -842,6 +907,9 @@ function statePhrase(st: RuntimeStatus): string {
   }
   if (st.state === "needs_auth") {
     return signInWaitPhrase(st);
+  }
+  if (st.state === "needs_org_sign_in") {
+    return orgSignInPhrase();
   }
   if (st.state === "signing_in") {
     return "Signing in";
@@ -921,6 +989,29 @@ function renderSignInBtn(serverName: () => string): HTMLButtonElement {
     }
     setControlBusy(btn, true);
     void signInServer.dispatch({ server: serverName() }).finally(() => {
+      setControlBusy(btn, false);
+    });
+  });
+  return btn;
+}
+
+/** Starts the organization sign-in, whose page then shows on the card at the top of the tab. */
+function renderOrgSignInBtn(): HTMLButtonElement {
+  const btn = el(
+    "button",
+    {
+      type: "button",
+      className: "btn-small mcp-sign-in-btn",
+      "data-tooltip": "Sign in to your organization. Every server set to use it signs in with it.",
+    },
+    "Sign in",
+  ) as HTMLButtonElement;
+  btn.addEventListener("click", () => {
+    if (btn.disabled) {
+      return;
+    }
+    setControlBusy(btn, true);
+    void orgSignIn.dispatch(undefined).finally(() => {
       setControlBusy(btn, false);
     });
   });
@@ -1177,6 +1268,10 @@ export function initMCP(): void {
   onSSE("mcp_config_changed", () => {
     mcpState.refetchServers();
     void mcpState.refetchStatus();
+    void mcpState.refetchIdentityProvider();
+  });
+  onSSE("mcp_identity_provider", (_chat, p, subject) => {
+    mcpState.applyOrgFrame(p.status, subject);
   });
   onSSE("mcp_status", (_chat, p, subject) => {
     // Toasts fire from the change the mirror applied, so a frame older than the row held raises none.
@@ -1208,6 +1303,7 @@ export function initMCP(): void {
 
   mcpState.refetchServers();
   void mcpState.refetchStatus();
+  void mcpState.refetchIdentityProvider();
   refreshConfigStanding();
 }
 
