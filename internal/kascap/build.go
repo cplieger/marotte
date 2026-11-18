@@ -66,7 +66,8 @@ var ownedEnv = func() map[string]bool {
 
 // OwnsEnv reports whether kv, a KEY=value assignment, names a variable a marotte setting decides.
 // The engine spawn drops such names from the inherited environment before appending ChildEnv, so a
-// withheld arm leaves KAS's own default in force. Every other name stays the operator's to set.
+// withheld arm leaves KAS's own default in force. A sent name that no setting owns wins by being
+// appended last; an unsent one stays the operator's to set.
 func OwnsEnv(kv string) bool {
 	name, _, _ := strings.Cut(kv, "=")
 	return ownedEnv[name]

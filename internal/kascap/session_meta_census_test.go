@@ -46,7 +46,8 @@ func sessionSchemaKeys(src string) ([]string, error) {
 
 // stringBinding returns the string literal assigned to ident in scope at use, failing unless there is exactly
 // one. The minifier reuses a short name across function scopes, and a name declared inside a scope that closes
-// before use is a different variable; a bare assignment there (esbuild's lazy init) binds the outer one.
+// before use is a different variable. A bare assignment there is counted, because esbuild's lazy init assigns
+// the outer var; a local that is redeclared or is a parameter then fails as two bindings.
 func stringBinding(src, ident string, use int) (string, error) {
 	var vals []string
 	for _, at := range literalSites(src, ident+`="`, false) {

@@ -14,7 +14,7 @@ Reported as [kirodotdev/Kiro#11995](https://github.com/kirodotdev/Kiro/issues/11
 
 kiro-cli runs its own ripgrep when the agent searches the workspace. When ripgrep fails, kiro-cli falls back to a slow listing, and every chat and workflow its engine hosts waits while it runs. A text search falls back when ripgrep reports any error, such as one unreadable folder anywhere in the workspace. That fallback has no time limit, so it can run for over an hour.
 
-A file search keeps ripgrep's results and falls back only when ripgrep found nothing. From kiro-cli 3.4.0 it stops its fallback after 30 seconds and returns what it found by then. Both fall back on a tree too large to search in 30 seconds.
+A file search keeps ripgrep's results when ripgrep reports an error after listing files, and otherwise falls back. From kiro-cli 3.4.0 it stops its fallback after 30 seconds and returns what it found by then. Both fall back on a tree too large to search in 30 seconds.
 
 Reported as [kirodotdev/Kiro#12489](https://github.com/kirodotdev/Kiro/issues/12489), open, for the text search. The file search part, [kirodotdev/Kiro#11957](https://github.com/kirodotdev/Kiro/issues/11957), is fixed in kiro-cli 3.4.0.
 
