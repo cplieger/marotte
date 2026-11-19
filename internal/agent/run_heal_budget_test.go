@@ -298,7 +298,10 @@ func TestHealPaused_AThrottleReportedAsAQuestionIsResumed(t *testing.T) {
 	})
 	t.Run("after a throttled turn whose question nobody answered", func(t *testing.T) {
 		g := newThrottleRig(t, nil)
+		before := g.inspects.Load()
 		g.throttledAsk(t, askTurn{failed: true})
+		// joinInflight may run only once the heal timer, which Adds to inflight, has fired: its re-read of the run.
+		waitUntil(t, "the heal's re-read of the run", func() bool { return g.inspects.Load() > before })
 		joinInflight(g.h)
 		awaitStepAnswers(t, g, 0)
 		awaitResumes(t, &g.resumes, 0)
