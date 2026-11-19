@@ -26,6 +26,7 @@ type runPushSent struct {
 	title   string
 	body    string
 	ask     string
+	chat    marotte.ChatID
 	kind    marotte.PushKind
 	subject marotte.PushSubject
 }
@@ -50,7 +51,7 @@ func (p *runOutcomePush) Raise(_ context.Context, chatID marotte.ChatID, n *maro
 		p.ctxs = append(p.ctxs, ctx)
 		p.mu.Unlock()
 		select {
-		case p.sent <- runPushSent{title: n.Title, body: n.Body, ask: n.Ask, kind: n.Kind, subject: n.PushSubject}:
+		case p.sent <- runPushSent{title: n.Title, body: n.Body, ask: n.Ask, chat: chatID, kind: n.Kind, subject: n.PushSubject}:
 		default:
 		}
 	}
@@ -244,7 +245,7 @@ func TestRunAsks_NotifiesTheStepsQuestion(t *testing.T) {
 	got := awaitRunPush(t, fp)
 	want := runPushSent{
 		title: "code-review", body: "Input required · reviewer: Merge it?",
-		ask: askPosition("wf_1", &ask), kind: marotte.PushKindPermission,
+		ask: askPosition("wf_1", &ask), chat: runChatID("wf_1"), kind: marotte.PushKindPermission,
 		subject: marotte.RunAskSubject(askPosition("wf_1", &ask)),
 	}
 	if got != want {

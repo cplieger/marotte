@@ -59,6 +59,7 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     notify_pr_status: false,
     notify_run_outcome: true,
     notify_sign_in: true,
+    notify_bot_rule: false,
     supervised_default: false,
     scheduled_auto_approve: false,
     bot_auto_approve: false,

@@ -85,6 +85,7 @@ beforeEach(() => {
   for (const kind of ["agent_finished", "run_outcome", "pr_status"]) {
     notify.setKindEnabled(kind, true);
   }
+  notify.setKindEnabled("bot_rule", false);
 });
 
 afterEach(() => {
@@ -123,6 +124,27 @@ describe("initPushMessages", () => {
     ]);
     expect(onSubscriptionChanged).not.toHaveBeenCalled();
     expect(opened).not.toHaveBeenCalled();
+  });
+
+  it("notifies an arrived automatic Bot turn once its switch is on", () => {
+    onScreen(chatTarget("c2"));
+    notify.setKindEnabled("bot_rule", true);
+    postFromWorker({
+      type: "push",
+      reason: "arrived",
+      chatId: "c1",
+      subject: "",
+      kind: "bot_rule",
+      title: "Triage bot",
+      body: "Response complete · Rule: Weekly questions",
+    });
+    expect(shown).toEqual([
+      {
+        title: "Triage bot",
+        body: "Response complete · Rule: Weekly questions",
+        tag: "marotte:c1",
+      },
+    ]);
   });
 
   it("says nothing about an arrived push for the chat on screen", () => {

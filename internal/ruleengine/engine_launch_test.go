@@ -1,6 +1,7 @@
 package ruleengine
 
 import (
+	"errors"
 	"log/slog"
 	"slices"
 	"testing"
@@ -61,8 +62,8 @@ func TestEngine_APromptWhoseTurnFailedToOpenIsSentAgainAfterTheRetryWait(t *test
 	})
 }
 
-// A prompt whose turn fails to open on every try is dropped on the tenth with the rule's failure, and no row of it
-// stays on the run list.
+// A prompt whose turn fails to open on every try is dropped on the tenth with the rule's failure and one push, and
+// no row of it stays on the run list.
 func TestEngine_APromptWhoseTurnNeverOpensFailsAfterTenTries(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := newHarness(t)
@@ -75,6 +76,9 @@ func TestEngine_APromptWhoseTurnNeverOpensFailsAfterTenTries(t *testing.T) {
 		h.wantSent("the first try", 1)
 		h.advance(167 * time.Minute)
 		h.wantSent("before the tenth try", 9)
+		if got := h.undelivered(); len(got) != 0 {
+			t.Errorf("after 9 tries the engine pushed %+v, want nothing before the last try", got)
+		}
 		h.advance(time.Minute + 30*time.Second)
 		h.wantSent("the tenth try", 10)
 		r := h.rule("b1", "r1")
@@ -87,6 +91,9 @@ func TestEngine_APromptWhoseTurnNeverOpensFailsAfterTenTries(t *testing.T) {
 		}
 		if rows := h.runRows("b1"); len(rows) != 0 {
 			t.Errorf("run rows %+v, want none left", rows)
+		}
+		if got := h.undelivered(); len(got) != 1 || got[0].chat != "b1" || got[0].rule != "Tidy" || !errors.Is(got[0].err, errLaunchFailed) {
+			t.Errorf("pushes %+v, want one for b1's rule Tidy saying the reply did not start", got)
 		}
 		if n := h.logs.lines(slog.LevelWarn, "rule delivery retry"); n != 9 {
 			t.Errorf("%d retry lines, want 9", n)

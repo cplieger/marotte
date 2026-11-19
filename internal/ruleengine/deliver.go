@@ -253,7 +253,16 @@ func (e *Engine) refused(ctx context.Context, chatID marotte.ChatID, r *rule.Rul
 	if tries >= maxTries {
 		e.log.Warn("rule delivery failed", logArgs...)
 		obs.RuleDelivery(obs.RuleDeliveryFailed)
-		_, werr := e.write(ctx, chatID, dropWith(r.ID, ev.EventID, failedTriesPrefix+err.Error(), now))
+		dropped := false
+		drop := dropWith(r.ID, ev.EventID, failedTriesPrefix+err.Error(), now)
+		_, werr := e.write(ctx, chatID, func(c *marotte.Chat) bool {
+			dropped = drop(c)
+			return dropped
+		})
+		// After the write: a write that failed leaves the event to be tried again, so the push is never sent twice.
+		if werr == nil && dropped && e.deps.NotDelivered != nil {
+			e.deps.NotDelivered(ctx, chatID, r.Spec.Name, err)
+		}
 		return werr
 	}
 	e.log.Warn("rule delivery retry", append(logArgs, "tries", tries)...)

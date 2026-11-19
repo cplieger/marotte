@@ -51,6 +51,14 @@ Six vitest projects, and the DEFAULT is the browser (the sixth, `e2e-sse`, runs 
   is what lets a suite that checks source text stay in the browser project.
 - Property-based tests use `fast-check` with strict setup (`fc-strict-setup.ts`)
 - All mocks auto-reset between tests (`restoreMocks: true`)
+- A `--run` fails, printing `Stall watchdog`, when a running file sends no
+  test or hook event for the longer of 150 s and what its running test may
+  take (its timeout times its attempts, plus 30 s), or the run sends none for
+  150 s while no file runs (`__test-helpers__/stall-watchdog.ts`): a page
+  stopped answering, which would otherwise hold the run until the CI job's
+  timeout. A hook gets no allowance of its own, so a hook given a timeout
+  above `SILENCE_FLOOR_MS` in that file needs the constant raised above that
+  timeout.
 
 The browser is installed once with `npx --no-install playwright install chromium`;
 CI installs it from the `@vitest/browser-playwright` devDependency.

@@ -41,7 +41,7 @@ const PLAN_STATUSS = ["pending", "in_progress", "completed"] as const;
 const PRESS_OUTCOMES = ["fired", "queued", "skipped", "failed"] as const;
 const PREVIEW_HINT_SOURCES = ["meta", "viewport"] as const;
 const PREVIEW_PRESETS = ["phone", "tablet", "desktop"] as const;
-const PUSH_KINDS = ["agent_finished", "permission", "pr_status", "run_outcome", "sign_in"] as const;
+const PUSH_KINDS = ["agent_finished", "permission", "pr_status", "run_outcome", "sign_in", "bot_rule"] as const;
 const READ_STATES = ["ready", "unavailable"] as const;
 const REFUSAL_CODES = ["changed", "too_large", "binary", "invalid_file_id"] as const;
 const REGISTRY_FAILURE_REASONS = ["rate_limited", "rejected", "unavailable"] as const;
@@ -1098,6 +1098,7 @@ export const decodeEffectiveSettings: Decoder<EffectiveSettings> = (v) => {
     notify_pr_status: reqBool(o, "notify_pr_status", "$.effective_settings"),
     notify_run_outcome: reqBool(o, "notify_run_outcome", "$.effective_settings"),
     notify_sign_in: reqBool(o, "notify_sign_in", "$.effective_settings"),
+    notify_bot_rule: reqBool(o, "notify_bot_rule", "$.effective_settings"),
     spec_planning_ask_first: reqBool(o, "spec_planning_ask_first", "$.effective_settings"),
     steering_reminders_enabled: reqBool(o, "steering_reminders_enabled", "$.effective_settings"),
     code_analysis_enabled: reqBool(o, "code_analysis_enabled", "$.effective_settings"),

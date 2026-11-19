@@ -102,7 +102,7 @@ func TestSilentStep_AnHourFlagsAChatLaunchedRunAndKeepsItRunning(t *testing.T) {
 	}
 	pushes := runOutcomePushes(fp)
 	want := runPushSent{
-		title: "publish", body: silencePushBody,
+		title: "publish", body: silencePushBody, chat: "c1",
 		kind: marotte.PushKindRunOutcome, subject: marotte.RunSubject(silentRunID),
 	}
 	if len(pushes) != 1 || pushes[0] != want {

@@ -67,7 +67,7 @@ func TestHealStop_PushesUnderWorkflowRuns(t *testing.T) {
 	pushes := runOutcomePushes(fp)
 	want := runPushSent{
 		title: "publish", body: "Workflow paused · marotte stopped resuming it after repeated model throttling",
-		kind: marotte.PushKindRunOutcome, subject: marotte.RunSubject(gateRunID),
+		chat: "c1", kind: marotte.PushKindRunOutcome, subject: marotte.RunSubject(gateRunID),
 	}
 	if len(pushes) != 1 || pushes[0] != want {
 		t.Errorf("the stop pushed %+v, want exactly %+v", pushes, want)
