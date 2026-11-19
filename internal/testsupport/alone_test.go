@@ -77,6 +77,7 @@ func TestAlone_ReportsTheChildsVerdict(t *testing.T) {
 	}{
 		{name: "a pass", mode: "pass", run: "^TestAloneFixture$", wantPass: true, wantSubs: " a b"},
 		{name: "a subtest filter", mode: "pass", run: "^TestAloneFixture$/^b$", wantPass: true, wantSubs: " b"},
+		{name: "a subtest filter in an alternation", mode: "pass", run: "^TestAloneFixture$/^b$|^TestNone$", wantPass: true, wantSubs: " b"},
 		{name: "a failure", mode: "fail", run: "^TestAloneFixture$", wantSubs: " a b"},
 		{name: "a child that runs nothing", mode: "skip", run: "^TestAloneFixture$"},
 		{name: "a child beside the serial tests", mode: "early", run: "^TestAloneFixture(Serial)?$", wantPass: true, wantSubs: " a b"},
@@ -110,28 +111,32 @@ func TestAlone_ReportsTheChildsVerdict(t *testing.T) {
 	}
 }
 
-func TestSubtestPattern_SplitsAsTheTestingPackageDoes(t *testing.T) {
+// The oracle is testing's splitRegexp and matcher (src/testing/match.go): alternatives split at a top-level '|',
+// elements at a top-level '/', and an alternative applies to a test when its first element matches the test's name.
+func TestChildRun_RunsWhatTheParentsFilterRunsUnderTheTest(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		run    string
-		want   string
-		wantOK bool
+		name string
+		run  string
+		want string
 	}{
-		{"no subtest element", "^TestX$", "", false},
-		{"one subtest element", "^TestX$/^row$", "^row$", true},
-		{"two subtest elements", "TestX/row/cell", "row/cell", true},
-		{"a slash in brackets", "Test[/]X/row", "row", true},
-		{"a slash in parentheses", "Test(a/b)/row", "row", true},
-		{"an escaped slash", `Test\/X/row`, "row", true},
-		{"an unmatched bracket", "Test]X/row", "row", true},
-		{"an alternation after the slash", "TestX/a|TestY/b", "", false},
-		{"an alternation before the slash", "TestX|TestY/b", "", false},
-		{"an alternation in parentheses", "TestX/(a|b)", "(a|b)", true},
-		{"empty", "", "", false},
+		{"no subtest element", "^TestX$", "^TestX$"},
+		{"one subtest element", "^TestX$/^row$", "^TestX$/^row$"},
+		{"two subtest elements", "TestX/row/cell", "^TestX$/row/cell"},
+		{"a slash in brackets", "Test[X/]/row", "^TestX$/row"},
+		{"a slash and an alternation in parentheses", "Test(X|a/b)/row", "^TestX$/row"},
+		{"an escaped slash", `TestX\/?/row`, "^TestX$/row"},
+		{"an unmatched bracket", "TestX]?/row", "^TestX$/row"},
+		{"an alternation naming another test", "TestX/a|TestY/b", "^TestX$/a"},
+		{"an alternation after the slash", "TestX/a|b", "^TestX$/a"},
+		{"two alternatives naming the test", "TestX/a/c|TestX/b", "^TestX$/a/c|^TestX$/b"},
+		{"an alternative with no subtest element", "TestX/a|TestX", "^TestX$"},
+		{"an alternation before the slash", "TestX|TestY/b", "^TestX$"},
+		{"an alternation in parentheses", "TestX/(a|b)", "^TestX$/(a|b)"},
+		{"empty", "", "^TestX$"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got, ok := subtestPattern(tc.run); got != tc.want || ok != tc.wantOK {
-				t.Errorf("subtestPattern(%q) = %q, %v; want %q, %v", tc.run, got, ok, tc.want, tc.wantOK)
+			if got := childRun("TestX", tc.run); got != tc.want {
+				t.Errorf("childRun(%q, %q) = %q, want %q", "TestX", tc.run, got, tc.want)
 			}
 		})
 	}

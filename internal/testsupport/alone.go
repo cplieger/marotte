@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/testsupport/testchild"
@@ -25,10 +26,7 @@ func Alone(t *testing.T) bool {
 	if os.Getenv(aloneEnv) == t.Name() {
 		return true
 	}
-	run := "^" + regexp.QuoteMeta(t.Name()) + "$"
-	if sub, ok := subtestPattern(flagValue("test.run")); ok {
-		run += "/" + sub
-	}
+	run := childRun(t.Name(), flagValue("test.run"))
 	args := []string{"-test.run=" + run, "-test.count=1", "-test.v=true", "-test.short=" + flagValue("test.short")}
 	for _, name := range []string{"test.skip", "test.timeout"} {
 		if v := flagValue(name); v != "" {
@@ -65,33 +63,58 @@ func flagValue(name string) string {
 	return ""
 }
 
-// subtestPattern is what follows the top-level element of a -run pattern, split as testing's splitRegexp splits it:
-// at the first slash outside brackets and parentheses. A top-level alternation forwards nothing, so the child runs
-// every subtest rather than another test or a wrong subset.
-func subtestPattern(run string) (string, bool) {
-	brackets, parens, slash := 0, 0, -1
-	for i := 0; i < len(run); i++ {
-		top := brackets == 0 && parens == 0
-		switch c := run[i]; {
-		case c == '\\':
-			i++
-		case c == '[':
+// childRun is the -run pattern that runs test name and the subtests run would run under it. It keeps each
+// alternative of run whose first element matches name, with that element replaced by name anchored; one with no
+// further element runs every subtest.
+func childRun(name, run string) string {
+	top := "^" + regexp.QuoteMeta(name) + "$"
+	var kept []string
+	for _, elems := range splitRun(run) {
+		if ok, err := regexp.MatchString(elems[0], name); err != nil || !ok {
+			continue
+		}
+		if len(elems) == 1 {
+			return top
+		}
+		kept = append(kept, top+"/"+strings.Join(elems[1:], "/"))
+	}
+	if len(kept) == 0 {
+		return top
+	}
+	return strings.Join(kept, "|")
+}
+
+// splitRun splits a -run pattern into alternatives of slash-separated elements, as testing's splitRegexp does
+// (src/testing/match.go): at a '|' or '/' outside brackets and parentheses.
+func splitRun(s string) [][]string {
+	var alts [][]string
+	var elems []string
+	brackets, parens, start := 0, 0, 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '[':
 			brackets++
-		case c == ']':
+		case ']':
 			brackets = max(brackets-1, 0)
-		case brackets > 0:
-		case c == '(':
-			parens++
-		case c == ')':
-			parens--
-		case c == '|' && top:
-			return "", false
-		case c == '/' && top && slash < 0:
-			slash = i
+		case '(':
+			if brackets == 0 {
+				parens++
+			}
+		case ')':
+			if brackets == 0 {
+				parens--
+			}
+		case '\\':
+			i++
+		case '/', '|':
+			if brackets == 0 && parens == 0 {
+				elems = append(elems, s[start:i])
+				start = i + 1
+				if s[i] == '|' {
+					alts, elems = append(alts, elems), nil
+				}
+			}
 		}
 	}
-	if slash < 0 {
-		return "", false
-	}
-	return run[slash+1:], true
+	return append(alts, append(elems, s[start:]))
 }

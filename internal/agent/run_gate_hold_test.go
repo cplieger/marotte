@@ -1686,31 +1686,23 @@ func callStack() []string {
 	pcs := make([]uintptr, 128)
 	var out []string
 	for _, pc := range pcs[:runtime.Callers(3, pcs)] {
-		out = append(out, framesAt(pc)...)
+		out = append(out, funcAt(pc))
 	}
 	return out
 }
 
-// pcFrames caches framesAt: the fakes ask for the stack on every engine call, and resolving a PC costs more than the
+// pcFuncs caches funcAt: the fakes ask for the stack on every engine call, and resolving a PC costs more than the
 // rest of the call.
-var pcFrames sync.Map
+var pcFuncs sync.Map
 
-// framesAt is the function names at return address pc, innermost first, the functions inlined there included.
-func framesAt(pc uintptr) []string {
-	if v, ok := pcFrames.Load(pc); ok {
-		return v.([]string)
+// funcAt is the function name at pc, one of runtime.Callers' PCs, which lists a PC for each inlined frame.
+func funcAt(pc uintptr) string {
+	if v, ok := pcFuncs.Load(pc); ok {
+		return v.(string)
 	}
-	var names []string
-	frames := runtime.CallersFrames([]uintptr{pc})
-	for {
-		f, more := frames.Next()
-		names = append(names, f.Function)
-		if !more {
-			break
-		}
-	}
-	pcFrames.Store(pc, names)
-	return names
+	f, _ := runtime.CallersFrames([]uintptr{pc}).Next()
+	pcFuncs.Store(pc, f.Function)
+	return f.Function
 }
 
 // innermostOf is the first of suffixes that ends a function name on the calling goroutine's stack, innermost frame

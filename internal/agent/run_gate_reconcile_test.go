@@ -870,8 +870,6 @@ func TestSignInGate_TheClosingPauseLandsAfterAnInFlightResume(t *testing.T) {
 	}
 }
 
-// A closing sweep that cannot read the run list or pause a run tries again until the run is paused, and says so
-// at ERROR when it gives up.
 // A sign-in that commits while the closing sweep's pause is sent but not yet taken finds the run still running, so
 // no opening edge resumes it then: the pause, once taken with the gate open, is resumed.
 func TestSignInGate_APauseTakenAfterTheGateOpenedIsResumed(t *testing.T) {
@@ -909,6 +907,8 @@ func TestSignInGate_APauseTakenAfterTheGateOpenedIsResumed(t *testing.T) {
 	awaitResumes(t, &verbs.resumes, 1)
 }
 
+// A closing sweep that cannot read the run list or pause a run tries again until the run is paused, and says so
+// at ERROR when it gives up.
 func TestSignInGate_TheClosingSweepRetriesUntilTheRunIsPaused(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
