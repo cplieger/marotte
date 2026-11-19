@@ -70,6 +70,8 @@ func (r *jobRegistry) update(chatID marotte.ChatID, session string, p *marotte.B
 	if session != "" && c.session != session {
 		c.session = session
 		clear(c.running)
+		clear(c.described)
+		clear(c.cards)
 	}
 	if p.Description != "" {
 		c.described[p.ID] = p.Description
@@ -107,6 +109,20 @@ func (r *jobRegistry) claimEnd(chatID marotte.ChatID, jobID string) bool {
 	}
 	c.ended = append(c.ended, jobID)
 	return true
+}
+
+// settleEnd closes jobID's claim: a filed end drops what the chat held for the job's row, and an unfiled one
+// releases the claim so the job's other end source can file it.
+func (r *jobRegistry) settleEnd(chatID marotte.ChatID, jobID string, filed bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c := r.chatLocked(chatID)
+	if filed {
+		delete(c.described, jobID)
+		delete(c.cards, jobID)
+		return
+	}
+	c.ended = slices.DeleteFunc(c.ended, func(id string) bool { return id == jobID })
 }
 
 func (r *jobRegistry) noteCard(chatID marotte.ChatID, jobID, toolCallID string) {
@@ -218,7 +234,8 @@ func (t *Translator) noteUnattended(ctx context.Context, chatID marotte.ChatID, 
 	}
 }
 
-// fileJobEnd files a job's end once, in the chat's open turn when one is open, else after its newest turn.
+// fileJobEnd files a job's end once, in the chat's open turn when one is open, else after its newest turn. A failed
+// write leaves the end to the job's other source.
 func (t *Translator) fileJobEnd(ctx context.Context, chatID marotte.ChatID, e *marotte.EntryJobEnded) {
 	if !t.jobs.claimEnd(chatID, e.JobID) {
 		return
@@ -226,8 +243,9 @@ func (t *Translator) fileJobEnd(ctx context.Context, chatID marotte.ChatID, e *m
 	desc, card := t.jobs.known(chatID, e.JobID)
 	e.Description = cmp.Or(e.Description, desc)
 	e.ToolCallID = cmp.Or(e.ToolCallID, card)
-	t.appendLaneless(durable.Context(ctx), chatID, marotte.EntryKindJobEnded, marotte.JobEndedID(e.JobID), *e,
+	filed := t.appendLaneless(durable.Context(ctx), chatID, marotte.EntryKindJobEnded, marotte.JobEndedID(e.JobID), *e,
 		func(ctx context.Context, turn *turnlog.Turn) ([]turnlog.Sealed, error) { return turn.JobEnded(ctx, e) })
+	t.jobs.settleEnd(chatID, e.JobID, filed)
 }
 
 // jobEndOfCall files the end a settled call's fold carries.

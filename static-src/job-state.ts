@@ -26,56 +26,70 @@ export const runningJobs: Signal<ReadonlyMap<string, readonly BackgroundJobPaylo
   new Map(),
 );
 
-/** Counts job_updates, so a list read can tell which chats moved while it was in flight. */
+/** Counts job_updates; a list read's mark is the count when it was sent. */
 let updateSeq = 0;
-const updatedAt = new Map<string, number>();
+/** The marks of the list reads in flight. */
+const openMarks: number[] = [];
+/** The job_updates newer than the oldest open mark, oldest first, replayed onto the list that read missed them. */
+let missed: { seq: number; chatID: string; job: BackgroundJobPayload }[] = [];
 
-/** Apply one job_update: a running job joins or replaces its row, any other state removes it. */
-export function applyJobUpdate(chatID: string, job: BackgroundJobPayload): void {
-  updatedAt.set(chatID, ++updateSeq);
-  const rows = (runningJobs.peek().get(chatID) ?? []).filter((j) => j.id !== job.id);
+/** A running job joins or replaces its row in `jobs`, any other state removes it. */
+function placeJob(
+  jobs: Map<string, readonly BackgroundJobPayload[]>,
+  chatID: string,
+  job: BackgroundJobPayload,
+): void {
+  const rows = (jobs.get(chatID) ?? []).filter((j) => j.id !== job.id);
   if (job.status === "running") {
     rows.push(job);
     rows.sort(
       (a, b) => (a.started_at ?? "").localeCompare(b.started_at ?? "") || a.id.localeCompare(b.id),
     );
   }
-  const next = new Map(runningJobs.peek());
   if (rows.length === 0) {
-    next.delete(chatID);
+    jobs.delete(chatID);
   } else {
-    next.set(chatID, rows);
+    jobs.set(chatID, rows);
   }
+}
+
+/** Apply one job_update. */
+export function applyJobUpdate(chatID: string, job: BackgroundJobPayload): void {
+  updateSeq++;
+  if (openMarks.length > 0) {
+    missed.push({ seq: updateSeq, chatID, job });
+  }
+  const next = new Map(runningJobs.peek());
+  placeJob(next, chatID, job);
   runningJobs.value = next;
 }
 
-/** The mark a list read takes before it is sent (`setRunningJobs`). */
-export function jobsReadMark(): number {
-  return updateSeq;
-}
-
-/** Replace every chat's rows with the server's list (GET /api/jobs, at connect), except a chat a job_update moved
- *  after `mark`: its rows are newer than the list. */
-export function setRunningJobs(jobs: readonly BackgroundJobPayload[], mark: number): void {
-  const next = new Map<string, readonly BackgroundJobPayload[]>();
-  for (const j of jobs) {
-    const chatID = j.chat_id ?? "";
-    if (chatID === "") {
-      continue;
+/** Start a list read (GET /api/jobs): call it before the request is sent, and call what it returns once, with the
+ *  server's list or null when the read failed. The list replaces every chat's rows, and the job_updates that arrived
+ *  while it was in flight are replayed onto it. */
+export function beginJobsRead(): (jobs: readonly BackgroundJobPayload[] | null) => void {
+  const mark = updateSeq;
+  openMarks.push(mark);
+  return (jobs) => {
+    openMarks.splice(openMarks.indexOf(mark), 1);
+    if (jobs !== null) {
+      const next = new Map<string, readonly BackgroundJobPayload[]>();
+      for (const j of jobs) {
+        const chatID = j.chat_id ?? "";
+        if (chatID !== "") {
+          next.set(chatID, [...(next.get(chatID) ?? []), j]);
+        }
+      }
+      for (const u of missed) {
+        if (u.seq > mark) {
+          placeJob(next, u.chatID, u.job);
+        }
+      }
+      runningJobs.value = next;
     }
-    next.set(chatID, [...(next.get(chatID) ?? []), j]);
-  }
-  for (const [chatID, at] of updatedAt) {
-    if (at <= mark) {
-      continue;
-    }
-    next.delete(chatID);
-    const held = runningJobs.peek().get(chatID);
-    if (held !== undefined) {
-      next.set(chatID, held);
-    }
-  }
-  runningJobs.value = next;
+    const oldest = Math.min(...openMarks);
+    missed = missed.filter((u) => u.seq > oldest);
+  };
 }
 
 /** Whether the chat has a running background job; tracked. */

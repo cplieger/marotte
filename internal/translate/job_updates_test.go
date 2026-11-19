@@ -167,6 +167,46 @@ func TestJobEnd_FiledOnceFromTheCardOrTheNotice(t *testing.T) {
 	}
 }
 
+// A write that fails leaves the job's end unfiled, so the other source, arriving later, files it.
+func TestJobEnd_FailedWriteLeavesTheEndToTheOtherSource(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		noticeFirst bool
+	}{
+		{name: "card end fails"},
+		{name: "notice fails", noticeFirst: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deps, _ := newEventCaptureDeps()
+			tr := New(rolesOf(deps))
+			tr.HandleToolCall(t.Context(), "c1", jobCreate(t), FrameAttribution{})
+			tr.HandleToolCallUpdate(t.Context(), "c1", jobMoved(t), FrameAttribution{})
+			closeChatTurn(t, deps, "c1")
+			card := func() {
+				tr.HandleToolCallUpdate(t.Context(), "c1", jobEndedCard(t, "failed", "timed_out"), FrameAttribution{})
+			}
+			notice := func() { tr.HandleJobNotice(t.Context(), "c1", jobNotice(t, "timed_out"), FrameAttribution{}) }
+			first, second := card, notice
+			if tc.noticeFirst {
+				first, second = notice, card
+			}
+
+			deps.turns.appendErr = errRefused
+			first()
+			deps.turns.appendErr = nil
+			second()
+
+			ends := jobEndedEntries(deps.between["c1"])
+			if len(ends) != 1 {
+				t.Fatalf("between-turns entries = %+v, want the second source's job_ended", deps.between["c1"])
+			}
+			if got := decodePayload[marotte.EntryJobEnded](t, &ends[0]); got.End.Status != marotte.BackgroundJobTimedOut {
+				t.Errorf("job_ended = %+v, want timed_out", got)
+			}
+		})
+	}
+}
+
 // A job/update announces job_update and keeps the chat's running list; an end leaves it, and a replay from a new
 // session (KAS replays the running jobs on attach) replaces the old session's rows.
 func TestJobUpdateBroadcastsAndReplays(t *testing.T) {

@@ -291,15 +291,17 @@ var table = []decl{
 		send:        true,
 	},
 	{
-		// KAS's sessionToolsMessaging and sessionToolsAwareness switches, read as settings.sessionTools.<switch>.enabled
-		// (record fields sessionMessagingEnabled, sessionAwarenessEnabled). Both always present: on load a stated value
-		// replaces the persisted field, so an explicit false is what turns a resumed chat's switch off. awareness.mode
-		// is fixed at session/new: on load KAS keeps the session record's mode and reads the member only with no record.
+		// KAS's sessionToolsMessaging, sessionToolsAwareness and sessionToolsCloud switches, read as
+		// settings.sessionTools.<switch>.enabled (record fields sessionMessagingEnabled, sessionAwarenessEnabled,
+		// cloudSessionsEnabled). All always present: on load a stated value replaces the persisted field, so an explicit
+		// false is what turns a resumed chat's switch off. cloud is always false: it overrides every other settings
+		// layer (~/.kiro, Kiro's synced and organization config) that could turn create_session on. awareness.mode is
+		// fixed at session/new: on load KAS keeps the record's mode and reads the member only with no record.
 		key:      "sessionTools",
 		door:     doorSession,
 		resolver: resolverSettingObject,
 		sessionGate: func(s *SessionSpawn) (any, bool) {
-			return map[string]any{"messaging": enabledIf(s.Messaging), "awareness": awarenessValue(s)}, true
+			return map[string]any{"messaging": enabledIf(s.Messaging), "awareness": awarenessValue(s), "cloud": enabledIf(false)}, true
 		},
 		send: true,
 	},

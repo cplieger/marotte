@@ -50,7 +50,7 @@ describe("codeIndexLine", () => {
       [
         "a build waiting behind another",
         status({
-          build: { build_id: "b2", state: "pending", message: "Waiting for another build" },
+          build: { build_id: "b2", state: "queued", message: "Waiting for another build" },
         }),
         "Build queued",
         "Waiting for another build",

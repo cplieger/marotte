@@ -530,6 +530,7 @@ func TestSessionDoor_WithholdsSteeringSupervisor(t *testing.T) {
 // TestSessionDoor_SessionToolsFollowTheSettings pins settings.sessionTools.messaging and .awareness in every state,
 // the shape KAS's session-tools reader takes (`keys:["sessionTools"]`, then `.<switch>.enabled` as a boolean): on
 // load a stated false clears the persisted sessionMessagingEnabled or sessionAwarenessEnabled, so off is sent too.
+// cloud is false in every state, which clears a persisted cloudSessionsEnabled whatever layer set it.
 // awareness.mode rides only a stated mode with awareness on; KAS reads its absence as direct.
 func TestSessionDoor_SessionToolsFollowTheSettings(t *testing.T) {
 	for _, messaging := range []bool{false, true} {
@@ -538,6 +539,7 @@ func TestSessionDoor_SessionToolsFollowTheSettings(t *testing.T) {
 			want := map[string]any{
 				"messaging": map[string]any{"enabled": messaging},
 				"awareness": map[string]any{"enabled": awareness},
+				"cloud":     map[string]any{"enabled": false},
 			}
 			if got := settings["sessionTools"]; !reflect.DeepEqual(got, want) {
 				t.Errorf("SessionMeta(Messaging=%v, Awareness=%v) sessionTools = %#v, want %#v", messaging, awareness, got, want)

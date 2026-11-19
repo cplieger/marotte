@@ -230,7 +230,7 @@ object without the member records no effort, so unset leaves the planning step
 of a run started from a prose request (wf-workflow-creator) at that agent's own
 effortLevel, and a stated value replaces the record on load.`,
 	"setting-object.sessionTools": `SENT on both session doors as {"messaging": {"enabled": bool},
-"awareness": {"enabled": bool, "mode"?: string}}. messaging is the Messages between chats
+"awareness": {"enabled": bool, "mode"?: string}, "cloud": {"enabled": false}}. messaging is the Messages between chats
 setting (chat_messaging_enabled, default off, kiro-cli's own
 sessionToolsMessaging default); awareness is Search other chats
 (chat_awareness_enabled, default off, kiro-cli's own sessionToolsAwareness
@@ -252,6 +252,14 @@ stated value replaces the persisted sessionMessagingEnabled
 (saveSessionMessaging) while an absent one leaves it in force, so withholding
 off would leave a chat once opened with it on still reachable; awareness
 persists the same way (saveSessionAwareness).
+
+cloud is sessionToolsCloud, the cloud-session switch marotte declines (it gives
+the agent create_session once a relay is configured, cloudToolsPlaced). It is an
+ordinary layered setting, so ~/.kiro, Kiro's synced settings or an organization
+can resolve it on at session/new, which KAS persists as cloudSessionsEnabled;
+on load an absent member leaves that in force. marotte therefore states it false
+on every session/new and session/load: the session layer overrides every other
+one, and a stated false clears the persisted field. There is no setting for it.
 
 With awareness on, "Search method" (chat_awareness_mode, unset by default)
 adds awareness.mode, one of KAS's direct or consult (sessionToolsAwarenessMode).

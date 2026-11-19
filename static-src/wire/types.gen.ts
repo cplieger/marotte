@@ -658,7 +658,7 @@ export interface CloseImpact {
 }
 
 /**
- * CodeIndexBuild is one index build. State is kiro-cli's pending, running, succeeded, failed or canceled;
+ * CodeIndexBuild is one index build. State is kiro-cli's queued, running, succeeded, failed or canceled;
  * Phase is scan, parse, graph or save, "" when kiro-cli names none. Both are kept as sent. Message is
  * kiro-cli's progress line; Reason and Detail say why a build failed or was canceled.
  */

@@ -18,7 +18,7 @@ import (
 // The registry rows and wire entries the Agent capabilities rows stand on, each a shape the 3.2.0 agent server
 // declares: the setting's name, its kiro-cli default and the member marotte writes.
 var (
-	sessionToolSwitchRe = regexp.MustCompile(`new (` + jsIdent + `)\("(messaging|awareness)","(sessionTools[A-Za-z]+)","([A-Za-z]+)"\)`)
+	sessionToolSwitchRe = regexp.MustCompile(`new (` + jsIdent + `)\("(messaging|awareness|cloud)","(sessionTools[A-Za-z]+)","([A-Za-z]+)"\)`)
 	toolSwitchClassRe   = regexp.MustCompile(`(` + jsIdent + `)=class\{constructor\((` + jsIdent + `),(` + jsIdent + `),(` +
 		jsIdent + `)\)\{[^{}]*this\.setting=` + jsIdent + `\((` + jsIdent + `),"([a-z]+)"`)
 	deliveryLimitRowRe = regexp.MustCompile(`sendMessageDeliveryLimit:` + jsIdent + `\("sendMessageDeliveryLimit",` + jsIdent +
@@ -66,11 +66,11 @@ var (
 	languageLabelRe = regexp.MustCompile(`(?m)^  \["([a-z-]+)", "[^"]+"\],$`)
 )
 
-// TestSessionToolSwitchesMatchTheBundle pins sessionTools' two members: KAS's SessionToolSwitch rows named messaging
-// and awareness, settings sessionToolsMessaging and sessionToolsAwareness, both default off, as the Messages between
-// chats and Search other chats defaults are.
+// TestSessionToolSwitchesMatchTheBundle pins sessionTools' three members: KAS's SessionToolSwitch rows named
+// messaging, awareness and cloud, settings sessionToolsMessaging, sessionToolsAwareness and sessionToolsCloud, all
+// default off, as the Messages between chats and Search other chats defaults are.
 func TestSessionToolSwitchesMatchTheBundle(t *testing.T) {
-	want := map[string]string{"messaging": "sessionToolsMessaging", "awareness": "sessionToolsAwareness"}
+	want := map[string]string{"messaging": "sessionToolsMessaging", "awareness": "sessionToolsAwareness", "cloud": "sessionToolsCloud"}
 	defaults := map[string]bool{
 		"messaging": settings.EffectiveDefaults().ChatMessaging,
 		"awareness": settings.EffectiveDefaults().ChatAwareness,

@@ -9,7 +9,7 @@ import { apiGetTyped, apiGetTypedOrError } from "./api-client.js";
 import { BUS_RECONCILE, onBus, onSSE } from "./bus.js";
 import { jobsOpen, setJobsOpen } from "./device-view.js";
 import { byId } from "./dom.js";
-import { applyJobUpdate, jobsReadMark, runningJobs, setRunningJobs } from "./job-state.js";
+import { applyJobUpdate, beginJobsRead, runningJobs } from "./job-state.js";
 import { reconcile } from "./reconcile.js";
 import { watchActiveId } from "./store.js";
 import { formatElapsed } from "./strings.js";
@@ -166,11 +166,9 @@ export function mountJobsTracker(): void {
     }
   });
   const read = (signal?: AbortSignal): void => {
-    const mark = jobsReadMark();
+    const finish = beginJobsRead();
     void apiGetTyped("/api/jobs", decodeBackgroundJobsView, signal).then((v) => {
-      if (v !== null) {
-        setRunningJobs(v.jobs, mark);
-      }
+      finish(v?.jobs ?? null);
     });
   };
   onBus(BUS_RECONCILE, ({ signal }) => {

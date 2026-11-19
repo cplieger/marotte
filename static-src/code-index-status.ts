@@ -27,7 +27,7 @@ interface CodeIndexLine {
 }
 
 function buildRunning(b: CodeIndexBuild | undefined): boolean {
-  return b?.state === "running" || b?.state === "pending";
+  return b?.state === "running" || b?.state === "queued";
 }
 
 function count(n: number): string {
@@ -38,7 +38,7 @@ function count(n: number): string {
 export function codeIndexLine(st: CodeIndexStatusPayload | undefined): CodeIndexLine {
   const b = st?.build;
   if (b !== undefined && buildRunning(b)) {
-    if (b.state === "pending") {
+    if (b.state === "queued") {
       return { text: "Build queued", detail: b.message ?? "", action: "cancel" };
     }
     const step = PHASES.findIndex(([phase]) => phase === b.phase);

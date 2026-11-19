@@ -219,4 +219,66 @@ describe("mountJobsTracker", () => {
     });
     expect(runningJobs.value.get("c1")?.map((j) => j.id)).toEqual(["7"]);
   });
+
+  /** Holds GET /api/jobs until the returned function answers it with `jobs`. */
+  const holdJobsRead = (): ((jobs: BackgroundJobPayload[]) => void) => {
+    let answerRead: (jobs: BackgroundJobPayload[]) => void = () => undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            answerRead = (jobs) => {
+              resolve(Response.json({ jobs }));
+            };
+          }),
+      ),
+    );
+    return (jobs) => {
+      answerRead(jobs);
+    };
+  };
+
+  it("keeps the list's other jobs of a chat a job_update moved while the read was in flight", async () => {
+    const answerRead = holdJobsRead();
+    mountJobsTracker();
+    applyJobUpdate("c1", job("7", { description: "newer" }));
+
+    answerRead([
+      { ...job("7"), chat_id: "c1" },
+      { ...job("8"), chat_id: "c1" },
+    ]);
+
+    await vi.waitFor(() => {
+      expect(runningJobs.value.get("c1")?.map((j) => j.id)).toEqual(["7", "8"]);
+    });
+    expect(runningJobs.value.get("c1")?.[0]?.description).toBe("newer");
+  });
+
+  it("drops a held job the list no longer runs when no job_update moved it during the read", async () => {
+    applyJobUpdate("c1", job("7"));
+    const answerRead = holdJobsRead();
+    mountJobsTracker();
+
+    answerRead([{ ...job("8"), chat_id: "c1" }]);
+
+    await vi.waitFor(() => {
+      expect(runningJobs.value.get("c1")?.map((j) => j.id)).toEqual(["8"]);
+    });
+  });
+
+  it("removes a job whose end arrived while the read was in flight", async () => {
+    const answerRead = holdJobsRead();
+    mountJobsTracker();
+    applyJobUpdate("c1", job("7", { status: "completed" }));
+
+    answerRead([
+      { ...job("7"), chat_id: "c1" },
+      { ...job("8"), chat_id: "c1" },
+    ]);
+
+    await vi.waitFor(() => {
+      expect(runningJobs.value.get("c1")?.map((j) => j.id)).toEqual(["8"]);
+    });
+  });
 });

@@ -28,7 +28,7 @@ import (
 // jobCallBudget bounds one job verb; KAS answers both from memory or a 128 KiB log tail.
 const jobCallBudget = 15 * time.Second
 
-// jobOutputLines is KAS's default and ceiling for _kiro/job/output's line count.
+// KAS's default and ceiling for _kiro/job/output's line count.
 const (
 	jobOutputDefaultLines = 100
 	jobOutputMaxLines     = 1000
