@@ -39,6 +39,8 @@ class Summarize(unittest.TestCase):
     def run_units(self, *units):
         for u in units:
             (self.raw / f'{summarize.stem(u)}.seconds').write_text('81.25')
+            if u.get('profile'):
+                (self.raw / f'{summarize.stem(u)}.profile.seconds').write_text('27.04')
         return summarize.results(list(units), self.raw)
 
     def cell(self, doc, window, metric):
@@ -115,6 +117,15 @@ class Summarize(unittest.TestCase):
         )
         self.assertEqual(self.cell(doc, 'live', 'decode_share:markdown')['kind'], 'report')
         self.assertEqual(self.cell(doc, 'live', 'layouts')['reps'], [12])
+
+    def test_a_profiled_rep_is_timed_apart_from_the_unit_s_reps(self):
+        self.put(f'{STEM}.r1.json', rep(live=window()))
+        self.put(f'{STEM}.rp.json', rep(live={'layouts': 12}))
+        doc = self.run_units({**UNIT, 'profile': True})
+        self.assertEqual(doc['seconds'], [{**UNIT, 'seconds': 81.2, 'profile_seconds': 27.0}])
+        (self.raw / f'{STEM}.profile.seconds').unlink()
+        with self.assertRaisesRegex(summarize.SummaryError, r'\.profile\.seconds'):
+            summarize.results([{**UNIT, 'profile': True}], self.raw)
 
     def test_a_unit_with_no_seconds_fails(self):
         self.put(f'{STEM}.r1.json', rep(rest=window()))
