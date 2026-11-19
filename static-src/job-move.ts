@@ -78,7 +78,7 @@ export function syncMoveAction(card: HTMLElement, tc: ToolCall, chatID: string):
   );
 }
 
-// deadset:ignore DS1004 -- test seam: clears the answered calls
+// deadset:ignore DS1102 -- test seam: clears the answered calls
 export function _resetForTest(): void {
   answered.clear();
 }

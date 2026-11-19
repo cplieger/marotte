@@ -254,7 +254,7 @@ func TestJobsAPI_MoveSendsTheCallAndAnswersKiroCLIsOutcome(t *testing.T) {
 	})
 	for name, id := range map[string]string{
 		"empty":             "",
-		"control character": "tc1",
+		"control character": "tc\a1",
 		"untrimmed":         " tc-1",
 		"257 bytes":         strings.Repeat("a", 257),
 	} {

@@ -98,7 +98,7 @@ func (rt *Runtime) handleJobMove(w http.ResponseWriter, r *http.Request) {
 	var out kasJobMoveResult
 	err := jobCall(r.Context(), sb, methodKiroJobMove, map[string]any{"toolCallId": body.ToolCallID}, &out)
 	if err != nil {
-		writeJobCallError(w, r, err, jobMoveFailed, "chat_id", chatID, "tool_call_id", body.ToolCallID)
+		_ = writeJobCallError(w, r, err, jobMoveFailed, "chat_id", chatID, "tool_call_id", body.ToolCallID) // a refused move drops no job row
 		return
 	}
 	switch outcome := marotte.BackgroundJobMoveOutcome(out.Outcome); outcome {
