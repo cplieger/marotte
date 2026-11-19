@@ -1216,12 +1216,14 @@
   align-items: center;
   gap: 0.125rem;
 
-  /* The glyph goes down with the fraction its row lowers (15-input.css); outside a row
-     `--row-cap` is 0 and so is the margin. */
+  /* The glyph goes down with the fraction its row lowers (15-input.css); the margins cancel,
+     so the pass keeps its height. Outside a row `--row-cap` is 0 and so are the margins. */
   & > svg {
+    --ev-pass-drop: max(0px, calc((var(--row-cap) - 1cap) / 2));
+
     inline-size: 1em;
     block-size: 1em;
-    margin-block-start: max(0px, calc(var(--row-cap) - 1cap));
+    margin-block: var(--ev-pass-drop) calc(-1 * var(--ev-pass-drop));
   }
 }
 

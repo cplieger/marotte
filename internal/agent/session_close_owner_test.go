@@ -1467,7 +1467,7 @@ var ownerHolds = map[holdKind]struct {
 		return func() { o.r.endStep("c1", "step-owner") }
 	}},
 	holdWake: {name: "wake", take: func(_ *testing.T, o *ownerLife) func() {
-		o.r.holdWake("c1", "wf-owner")
+		o.r.holdWake("c1", "wf-owner", nil)
 		return func() {
 			o.lc.mu.Lock()
 			tr := o.lc.openLocked("c1", &marotte.Entry{ID: "w-wake"}, marotte.TurnSourceWireTurnStart, "", turnlog.Open("w-wake", nil), nil)
@@ -1815,7 +1815,7 @@ func TestCloseOwner_OnlyAWireTurnTakesAWake(t *testing.T) {
 		t.Run(row.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				o := newOwnerLife(t)
-				o.r.holdWake("c1", "wf-owner")
+				o.r.holdWake("c1", "wf-owner", nil)
 				o.lc.askClose(o.sb, closeRelease, 0, false)
 				o.lc.mu.Lock()
 				own := o.lc.openLocked("c1", &marotte.Entry{ID: "p-wake"}, row.source, "", turnlog.Open("p-wake", nil), nil)
@@ -1872,7 +1872,7 @@ func TestCloseOwner_AWakeHoldEndsAtItsBoundOrATurn(t *testing.T) {
 	t.Run("the bound", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			o := newOwnerLife(t)
-			o.r.holdWake("c1", "wf-owner")
+			o.r.holdWake("c1", "wf-owner", nil)
 			o.lc.askClose(o.sb, closeRelease, 0, false)
 			time.Sleep(wakeHoldBound - time.Millisecond)
 			if o.state().closing != nil {
@@ -1888,8 +1888,8 @@ func TestCloseOwner_AWakeHoldEndsAtItsBoundOrATurn(t *testing.T) {
 	t.Run("a turn opens", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			o := newOwnerLife(t)
-			o.r.holdWake("c1", "wf-owner")
-			o.r.holdWake("c1", "wf-second")
+			o.r.holdWake("c1", "wf-owner", nil)
+			o.r.holdWake("c1", "wf-second", nil)
 			o.lc.mu.Lock()
 			o.lc.openLocked("c1", &marotte.Entry{ID: "w-wake"}, marotte.TurnSourceWireTurnStart, "", turnlog.Open("w-wake", nil), nil)
 			wakes := len(o.lc.wakes)
@@ -1902,7 +1902,7 @@ func TestCloseOwner_AWakeHoldEndsAtItsBoundOrATurn(t *testing.T) {
 	t.Run("KAS's activity", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			o := newOwnerLife(t)
-			o.r.holdWake("c1", "wf-owner")
+			o.r.holdWake("c1", "wf-owner", nil)
 			o.r.noteKASActivity("c1", true)
 			o.lc.mu.Lock()
 			wakes := len(o.lc.wakes)
@@ -1915,7 +1915,7 @@ func TestCloseOwner_AWakeHoldEndsAtItsBoundOrATurn(t *testing.T) {
 	t.Run("the life ends", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			o := newOwnerLife(t)
-			o.r.holdWake("c1", "wf-owner")
+			o.r.holdWake("c1", "wf-owner", nil)
 			o.r.forget("c1")
 			o.lc.mu.Lock()
 			wakes := len(o.lc.wakes)

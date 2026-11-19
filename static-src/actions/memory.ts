@@ -75,7 +75,7 @@ function localDate(d: Date): string {
   return `${String(d.getFullYear())}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-/** Downloads kiro-cli's memory document (`GET /api/memory/export`) through a blob, so a failure is a toast. */
+/** Downloads kiro-cli's JSON Lines memory export (`GET /api/memory/export`) through a blob, so a failure is a toast. */
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for an action with no result
 export const downloadMemoryExport = defineAction<Record<string, never>, void>({
   name: "memory.export",
@@ -93,7 +93,7 @@ export const downloadMemoryExport = defineAction<Record<string, never>, void>({
     try {
       const a = document.createElement("a");
       a.href = url;
-      a.download = `kiro-memories-${localDate(new Date())}.json`;
+      a.download = `kiro-memories-${localDate(new Date())}.jsonl`;
       document.body.appendChild(a);
       a.click();
       a.remove();

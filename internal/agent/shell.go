@@ -47,8 +47,8 @@ func newShellManager(_ context.Context, workDir string) *shellManager {
 }
 
 // bash --login sources Debian's /etc/profile, which assigns PATH over any inherited or passed one,
-// so the /config entries reach this shell only through entrypoint.sh's root-only drop-in
-// (offer_login_path).
+// so the /config entries reach this shell only through the image's profile.d drop-in, which
+// restores the MAROTTE_LOGIN_PATH this process inherited (login-path.sh).
 func (sm *shellManager) newHandler() *terminal.Handler {
 	return terminal.NewHandler([]string{"bash", "--login"},
 		terminal.WithWorkDir(sm.workDir),

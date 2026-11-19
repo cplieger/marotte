@@ -10,7 +10,7 @@
    one: the indicator belongs to the thing being written, not to a page-wide slot,
    so the slot sits next to whichever label names that setting — a section
    heading, a toggle's label, or the global-instructions label. */
-/* Its font is its labels', which the row's runs are lowered against (15-input.css). */
+/* Its font is its largest run's, which the row's runs are lowered against (15-input.css). */
 .section-title-status-row {
   display: flex;
   align-items: center;
@@ -21,13 +21,12 @@
 /* .section-title pads var(--sp-4) above ITSELF. Left there, that padding is
    inside the box `align-items: center` measures, so the status would land half of
    it below the heading's ink — the same defect that put the old page-wide slot
-   5.5px below the settings title. Move the padding to the row. */
+   5.5px below the settings title. Move the padding to the row; 18-pages.css leaves
+   a title here without it, so a label title keeps the row trim's (15-input.css).
+   The title is the row's largest run, so the row takes its font. */
 .section-title-status-row:has(> .section-title) {
   padding-block-start: var(--sp-4);
-}
-
-.section-title-status-row > .section-title {
-  padding-block-start: 0;
+  font-size: var(--fs-md);
 }
 
 .settings-save-status {
@@ -78,20 +77,6 @@
   color: var(--c-text-secondary);
   line-height: 1.55;
   margin: 0;
-}
-
-/* Section with an inline action bar on the right (e.g. Installed tools + buttons). */
-.section-header-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-3);
-  padding-block-start: var(--sp-2);
-}
-
-:where(.section-header-row) .section-title,
-:where(.section-header-row) .section-title {
-  padding-block-start: 0;
 }
 
 /* --- Settings → Git & forges --- */

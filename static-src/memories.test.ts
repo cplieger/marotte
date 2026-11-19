@@ -743,11 +743,11 @@ describe("Import and Export", () => {
     expect(vi.mocked(announce)).toHaveBeenCalledWith(sentence);
   });
 
-  it("Export downloads the document", async () => {
+  it("Export downloads the JSON Lines file", async () => {
     answer = () =>
-      new Response('{\n  "format": "kiro-memory"\n}', {
+      new Response('{"id":"a","title":"t"}\n{"id":"b","title":"u"}\n', {
         status: 200,
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/jsonl" },
       });
     const names: string[] = [];
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
@@ -762,6 +762,6 @@ describe("Import and Export", () => {
     const get = sent.find((s) => s.url.endsWith("/api/memory/export"));
     expect(get?.init?.method).toBe("GET");
     expect(names).toHaveLength(1);
-    expect(names[0]).toMatch(/^kiro-memories-\d{4}-\d{2}-\d{2}\.json$/);
+    expect(names[0]).toMatch(/^kiro-memories-\d{4}-\d{2}-\d{2}\.jsonl$/);
   });
 });

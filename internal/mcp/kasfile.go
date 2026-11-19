@@ -62,8 +62,8 @@ type kasServer struct {
 	Disabled bool `json:"disabled,omitempty"`
 }
 
-// kasOAuth mirrors KAS's closed oauth schema {clientId, redirectUri,
-// clientMetadataUrl}.
+// kasOAuth is the part of KAS's oauth schema {clientId, redirectUri,
+// clientMetadataUrl, mode} that marotte writes; mode is not written.
 type kasOAuth struct {
 	ClientID          string `json:"clientId,omitempty"`
 	RedirectURI       string `json:"redirectUri,omitempty"`

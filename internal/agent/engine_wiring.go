@@ -44,6 +44,7 @@ func (rt *Runtime) engineHooks() engineHooks {
 			return src == fromDocument
 		},
 		configHeld: rt.configDoc.held,
+		passClosed: func(id marotte.SessionID) { rt.reapSessions([]string{string(id)}) },
 	}
 }
 

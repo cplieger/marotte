@@ -4,14 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 )
 
-var (
-	lookupEnv = os.LookupEnv
-	geteuid   = os.Geteuid
-)
+var lookupEnv = os.LookupEnv
 
 func writeIntro(b *strings.Builder, workDir string) {
 	b.WriteString("# Environment\n\n")
@@ -112,31 +108,27 @@ func writePath(b *strings.Builder, toolsDir string) bool {
 	return onPath
 }
 
-// dropInEnv is set to "1" by entrypoint.sh's offer_login_path only once the drop-in holds this
-// start's PATH, which it tries only as root; any other value or none promises nothing about a login shell's PATH.
-const dropInEnv = "MAROTTE_PATH_DROPIN"
+// loginPathEnv is the PATH entrypoint.sh's load_boot_paths hands the server's tree, which the image's
+// profile.d drop-in (login-path.sh) restores in a login shell after Debian's /etc/profile assigns PATH.
+const loginPathEnv = "MAROTTE_LOGIN_PATH"
 
 func writeShellHint(b *strings.Builder, toolsDir string, onPath bool) {
-	const fromProfile = "- A login shell, the browser Shell panel's `bash --login` included, takes its PATH from " +
-		"`/etc/profile`, which leaves out `"
-	dropIn, _ := lookupEnv(dropInEnv)
-	switch uid := geteuid(); {
+	loginPath, _ := lookupEnv(loginPathEnv)
+	path, _ := lookupEnv("PATH")
+	switch {
 	case !onPath:
 		b.WriteString("- `" + toolsDir + "/bin` is on no shell's PATH, a login shell's included, so a user ")
 		b.WriteString("runs an installed tool by its absolute ")
-	case uid != 0:
-		b.WriteString(fromProfile + toolsDir + "/bin`: marotte runs as uid " + strconv.Itoa(uid))
-		b.WriteString(", not root, so the entrypoint writes no drop-in restoring it. There a user runs an ")
-		b.WriteString("installed tool by its absolute ")
-	case dropIn != "1":
+	case loginPath != path:
 		b.WriteString("- A login shell, the browser Shell panel's `bash --login` included, may not search `" + toolsDir + "/bin`: ")
-		b.WriteString("the entrypoint could not give `/etc/profile.d/10-marotte-path.sh` this start's PATH (the boot log's ")
-		b.WriteString("WARNING says why, or the server started without the entrypoint). There a user runs an installed tool ")
-		b.WriteString("by its absolute ")
+		b.WriteString("`/etc/profile.d/10-marotte-path.sh` restores PATH after Debian's `/etc/profile` assigns it from `")
+		b.WriteString(loginPathEnv + "`, which does not hold this server's PATH (the entrypoint sets it, so the server ")
+		b.WriteString("started without it). There a user runs an installed tool by its absolute ")
 	default:
-		b.WriteString("- Every login shell, the browser Shell panel's `bash --login` included, sources ")
-		b.WriteString("`/etc/profile.d/10-marotte-path.sh`, which holds this start's PATH, so an ")
-		b.WriteString("installed tool resolves by bare name there too; any shell also finds it by its absolute ")
+		b.WriteString("- Every login shell this server starts, the browser Shell panel's `bash --login` and agent shells ")
+		b.WriteString("included, sources `/etc/profile.d/10-marotte-path.sh`, which restores this start's PATH, so an ")
+		b.WriteString("installed tool resolves by bare name there too; a login shell started outside it (`docker exec`) ")
+		b.WriteString("gets the image's PATH instead. Any shell also finds an installed tool by its absolute ")
 	}
 	b.WriteString("path (`" + toolsDir + "/bin/<tool>`)")
 }

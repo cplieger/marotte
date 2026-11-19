@@ -32,9 +32,17 @@ type fakeRuleView struct {
 
 func (f *fakeRuleView) Status(id marotte.ChatID) ruleengine.Status { return f.status[id] }
 
-func (*fakeRuleView) TurnOpened(marotte.ChatID, string, *marotte.Caller) {}
+func (*fakeRuleView) TurnOpened(marotte.ChatID, string, marotte.TurnOpenSource, *marotte.Caller, bool) int {
+	return 0
+}
 
 func (*fakeRuleView) TurnClosed(marotte.ChatID, string, *marotte.Caller) {}
+
+func (*fakeRuleView) LaunchDepth(marotte.ChatID) int { return 0 }
+
+func (*fakeRuleView) RunEnded(marotte.ChatID, string, int) {}
+
+func (*fakeRuleView) SessionEnded(marotte.ChatID) {}
 
 func (*fakeRuleView) Reindex(marotte.ChatID) {}
 

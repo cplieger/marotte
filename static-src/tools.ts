@@ -81,7 +81,7 @@ function aptNote(d: ToolSearchResponse): string {
     case "indexing":
       return "Debian packages are not searchable yet: the package index is still loading. Search again in a moment.";
     case "unavailable":
-      return "Debian packages are not searchable here: this host has no usable apt.";
+      return `Debian packages are not searchable here: ${d.apt_reason ?? "this host has no usable apt"}.`;
   }
 }
 

@@ -9,6 +9,8 @@ import {
   type RequestOptions,
 } from "@cplieger/reactive/fetch";
 
+import { flushFrames } from "./frame-dispatch.js";
+
 export type { Decoder } from "./wire/validators.gen.js";
 import type { Decoder } from "./wire/validators.gen.js";
 
@@ -16,6 +18,14 @@ import type { Decoder } from "./wire/validators.gen.js";
 // of a CSRF token (internal/server/security.go). An ISOLATED instance, so nothing else can
 // mutate the module-global default.
 const fx = createFetch({ credentials: "same-origin" });
+
+/** Every read's answer resolves after the frames that arrived before it applied, so its caller
+ *  writes the stores in arrival order. */
+async function answered<T>(p: Promise<T>): Promise<T> {
+  const r = await p;
+  flushFrames();
+  return r;
+}
 
 /** Build fetch RequestOptions, attaching `signal` only when defined —
  *  exactOptionalPropertyTypes forbids an explicit `signal: undefined`. */
@@ -52,7 +62,7 @@ function collapse<T>(r: FetchResult<T>, method: string, path: string): T | null 
 
 /** GET `path` and return parsed JSON, or null on failure. */
 export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T | null> {
-  return collapse(await fx.apiGetRaw<T>(path, reqOpts({}, signal)), "GET", path);
+  return collapse(await answered(fx.apiGetRaw<T>(path, reqOpts({}, signal))), "GET", path);
 }
 
 /** POST `body` as JSON to `path`, return parsed JSON response or null. */
@@ -61,7 +71,7 @@ export async function apiPost<T>(
   body?: unknown,
   signal?: AbortSignal,
 ): Promise<T | null> {
-  return collapse(await fx.apiPostRaw<T>(path, body, reqOpts({}, signal)), "POST", path);
+  return collapse(await answered(fx.apiPostRaw<T>(path, body, reqOpts({}, signal))), "POST", path);
 }
 
 /** A failure a caller has to distinguish rather than collapse. `error` is the
@@ -112,7 +122,7 @@ export async function apiGetTyped<T>(
   timeoutMs?: number,
 ): Promise<T | null> {
   const base: RequestOptions<T> = timeoutMs === undefined ? { decoder } : { decoder, timeoutMs };
-  return collapse(await fx.apiGetRaw<T>(path, reqOpts(base, signal)), "GET", path);
+  return collapse(await answered(fx.apiGetRaw<T>(path, reqOpts(base, signal))), "GET", path);
 }
 
 /**
@@ -125,7 +135,7 @@ export async function apiGetTypedOrError<T>(
   decoder: Decoder<T>,
   signal?: AbortSignal,
 ): Promise<ApiResult<T>> {
-  return toApiResult(await fx.apiGetRaw<T>(path, reqOpts({ decoder }, signal)));
+  return toApiResult(await answered(fx.apiGetRaw<T>(path, reqOpts({ decoder }, signal))));
 }
 
 /** A conditional GET's answer. `status` is 0 on a transport failure or an abort,
@@ -149,7 +159,7 @@ export async function apiGetConditional<T>(
 ): Promise<ConditionalGet<T>> {
   const base: RequestOptions<T> =
     etag === "" ? { decoder } : { decoder, headers: { "If-None-Match": etag } };
-  const r = await fx.apiGetRaw<T>(path, reqOpts(base, signal));
+  const r = await answered(fx.apiGetRaw<T>(path, reqOpts(base, signal)));
   const tag = r.headers?.get("ETag") ?? "";
   if (r.ok) {
     return { status: r.status, data: r.data ?? null, etag: tag };
@@ -168,7 +178,11 @@ export async function apiPostTyped<T>(
   decoder: Decoder<T>,
   signal?: AbortSignal,
 ): Promise<T | null> {
-  return collapse(await fx.apiPostRaw<T>(path, body, reqOpts({ decoder }, signal)), "POST", path);
+  return collapse(
+    await answered(fx.apiPostRaw<T>(path, body, reqOpts({ decoder }, signal))),
+    "POST",
+    path,
+  );
 }
 
 /** POST twin of `apiGetTypedOrError`, for a caller that shows the server's refusal sentence itself. Unlogged. */
@@ -178,14 +192,14 @@ export async function apiPostTypedOrError<T>(
   decoder: Decoder<T>,
   signal?: AbortSignal,
 ): Promise<ApiResult<T>> {
-  return toApiResult(await fx.apiPostRaw<T>(path, body, reqOpts({ decoder }, signal)));
+  return toApiResult(await answered(fx.apiPostRaw<T>(path, body, reqOpts({ decoder }, signal))));
 }
 
 /** GET variant for a caller to whom a non-2xx body is itself meaningful —
  *  /healthz's 503 `reasons` is the canonical consumer. */
 export async function apiGetOrError<T>(path: string, signal?: AbortSignal): Promise<ApiResult<T>> {
   // Unlogged: that consumer polls health, where a 503 is an expected state.
-  return toApiResult(await fx.apiGetRaw<T>(path, reqOpts({}, signal)));
+  return toApiResult(await answered(fx.apiGetRaw<T>(path, reqOpts({}, signal))));
 }
 
 /** A binary read: the 2xx body whole as a `Blob`, or fetch's failure envelope. Unlogged: the caller reports the failure. */
@@ -196,7 +210,7 @@ export async function apiBlobOrError(
   signal: AbortSignal,
   timeoutMs: number,
 ): Promise<FetchResult<Blob>> {
-  return fx.requestRaw(method, path, { as: "blob", body, signal, timeoutMs });
+  return answered(fx.requestRaw(method, path, { as: "blob", body, signal, timeoutMs }));
 }
 
 /** One AbortController slot: `start()` aborts the previous in-flight request

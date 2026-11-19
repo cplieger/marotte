@@ -18,7 +18,7 @@ func interactionResolvedFrame(t *testing.T, toolCallID, outcome string) json.Raw
 	}}})
 }
 
-// An ask KAS withdrew is retired on every attribution, a step's included, because the ask is
+// An ask KAS closed unanswered is retired on every attribution, a step's included, because the ask is
 // filed under the chat whoever raised it.
 func TestHandleSessionInfoUpdate_InteractionResolvedCancelledWithdrawsTheAsk(t *testing.T) {
 	tests := []struct {
@@ -29,6 +29,8 @@ func TestHandleSessionInfoUpdate_InteractionResolvedCancelledWithdrawsTheAsk(t *
 	}{
 		{name: "the chat's own ask, cancelled", outcome: "cancelled", want: []string{"c1/tc-1"}},
 		{name: "a step's ask, cancelled", attr: FrameAttribution{Step: true, RunID: "wf"}, outcome: "cancelled", want: []string{"c1/tc-1"}},
+		{name: "the chat's own ask, rule-decided", outcome: "rule_decided", want: []string{"c1/tc-1"}},
+		{name: "a step's ask, rule-decided", attr: FrameAttribution{Step: true, RunID: "wf"}, outcome: "rule_decided", want: []string{"c1/tc-1"}},
 		{name: "an answer marotte sent", outcome: "selected", want: nil},
 		{name: "a dismissed question", outcome: "dismissed", want: nil},
 	}

@@ -18,12 +18,15 @@ type sharedBridge struct {
 	// settled is the generation's readiness from the session open's first instant: openBridge hands sb to
 	// no caller before it settles.
 	settled *sessionSettle
-	state   bridgeState
-	mu      sync.Mutex
+	// openedPresets are the presets the session door sent, once presetsKnown (recordOpenedPresets).
+	openedPresets []string
+	state         bridgeState
+	mu            sync.Mutex
 	// effortHealed latches the one reactive effort repair (bridgeCoordinator.healEffort).
 	effortHealed bool
 	// roleMissing is KAS reporting a Bot's role absent from its session since setBotRole's last send (noteBotRoleMissing).
-	roleMissing bool
+	roleMissing  bool
+	presetsKnown bool
 }
 
 // The manager registers the record before the door, so map presence is not liveness.

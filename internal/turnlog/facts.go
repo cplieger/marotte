@@ -98,9 +98,9 @@ func (f *Facts) Asked(callID string) bool {
 }
 
 // NoteAnswer records how a tool call's ask was answered: an approval as the option's kind,
-// a question as its label (text answers stay text). A cancelled ask records nothing.
+// a question as its label (text answers stay text). A cancelled or rule-decided ask records nothing.
 func (f *Facts) NoteAnswer(callID, outcome, selected string) {
-	if callID == "" || outcome == "" || outcome == "cancelled" {
+	if callID == "" || outcome == "" || outcome == "cancelled" || outcome == "rule_decided" {
 		return
 	}
 	// KAS announces every ask before resolving it; an unseen ask has no options to read against.
