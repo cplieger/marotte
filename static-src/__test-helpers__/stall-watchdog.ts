@@ -11,8 +11,9 @@ import type {
   Vite,
 } from "vitest/node";
 
-/** The longest a running file, or a run with no file running, may send no event. Above the suite's
- *  longest hook timeout (120 s, in `frame-dispatch.test.ts`) and a cold module import: a hook given a longer timeout trips the watchdog until this is raised. */
+/** The longest a running file, or a run with no file running, may send no event. 30 s above the suite's
+ *  longest hook timeout (120 s, in `frame-dispatch.test.ts`) and a cold module import; a hook gets no
+ *  allowance of its own, so a hook timeout above this needs it raised. */
 export const SILENCE_FLOOR_MS = 150_000;
 
 /** Time for a timed-out test's result to reach Node: its afterEach hooks and the runner's batched update. */
@@ -20,7 +21,8 @@ export const RESULT_SLACK_MS = 30_000;
 
 export const CHECK_EVERY_MS = 5_000;
 
-/** Marks an instance across module copies: vitest evaluates the config, and so this module, once per project. */
+/** Marks an instance across module copies: each project with its own Vite server (every browser project)
+ *  evaluates the config, and so this module, again. */
 const BRAND = Symbol.for("marotte.stall-watchdog");
 
 interface Running {
@@ -53,7 +55,7 @@ export class StallWatchdog implements Reporter {
   private readonly snapshot: () => string;
 
   constructor({
-    now = Date.now,
+    now = () => performance.now(),
     snapshot = processSnapshot,
   }: { now?: () => number; snapshot?: () => string } = {}) {
     this.now = now;

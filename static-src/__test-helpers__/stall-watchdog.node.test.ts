@@ -122,6 +122,16 @@ describe("StallWatchdog.check", () => {
     );
   });
 
+  it("starts the run's silence when the run starts", () => {
+    vi.useFakeTimers();
+    const { dog, at } = watchdog();
+    at(1_000_000);
+    dog.onTestRunStart();
+
+    expect(dog.check(1_000_000 + SILENCE_FLOOR_MS)).toBeUndefined();
+    expect(dog.check(1_000_001 + SILENCE_FLOOR_MS)).toContain("since the run started");
+  });
+
   it("never reports a closed run", () => {
     vi.useFakeTimers();
     const { dog } = watchdog();
@@ -163,7 +173,7 @@ describe("StallWatchdog run", () => {
       dog.onTestRunStart();
       dog.onTestModuleQueued(module("rail-position-css.test.ts"));
       at(SILENCE_FLOOR_MS + 1);
-      vi.advanceTimersByTime(CHECK_EVERY_MS);
+      vi.advanceTimersByTime(2 * CHECK_EVERY_MS);
 
       expect(process.exitCode).toBe(1);
       expect(exit).toHaveBeenCalledExactlyOnceWith(1);
