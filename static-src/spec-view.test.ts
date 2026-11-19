@@ -1136,6 +1136,16 @@ describe("the page's scroll position", () => {
     return el;
   }
 
+  /** The offset is recorded on `scroll`, which fires in a frame, after any number of tasks. */
+  async function readAt(top: number): Promise<void> {
+    const box = scroller();
+    const scrolled = new Promise((r) => {
+      box.addEventListener("scroll", r, { once: true });
+    });
+    box.scrollTop = top;
+    await scrolled;
+  }
+
   beforeEach(() => {
     document.body.replaceChildren();
     const viewEl = document.createElement("div");
@@ -1160,13 +1170,11 @@ describe("the page's scroll position", () => {
     view.showSpec(DIR);
     await settle();
     expect(scroller().scrollHeight).toBeGreaterThan(scroller().clientHeight);
-    scroller().scrollTop = 900;
-    await settle();
+    await readAt(900);
     view.showSpec(OTHER);
     await settle();
     expect(scroller().scrollTop).toBe(0);
-    scroller().scrollTop = 400;
-    await settle();
+    await readAt(400);
     view.showSpec(DIR);
     expect(scroller().scrollTop).toBe(900);
     await settle();
@@ -1193,12 +1201,10 @@ describe("the page's scroll position", () => {
       await settle();
     };
     await pick("requirements.md");
-    scroller().scrollTop = 900;
-    await settle();
+    await readAt(900);
     await pick("design.md");
     expect(scroller().scrollTop, "the design was never read").toBe(0);
-    scroller().scrollTop = 400;
-    await settle();
+    await readAt(400);
     await pick("requirements.md");
     expect(scroller().scrollTop, "the requirements come back where they were read").toBe(900);
     await pick("design.md");
