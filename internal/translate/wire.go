@@ -148,7 +148,8 @@ type acpJobEnd struct {
 func JobState(s string) marotte.BackgroundJobState {
 	switch st := marotte.BackgroundJobState(s); st {
 	case marotte.BackgroundJobRunning, marotte.BackgroundJobCompleted, marotte.BackgroundJobFailed,
-		marotte.BackgroundJobCancelled, marotte.BackgroundJobTimedOut, marotte.BackgroundJobOutcomeUnknown:
+		marotte.BackgroundJobCancelled, marotte.BackgroundJobTimedOut, marotte.BackgroundJobOutcomeUnknown,
+		marotte.BackgroundJobDetached:
 		return st
 	}
 	return marotte.BackgroundJobOutcomeUnknown

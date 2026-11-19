@@ -6,7 +6,9 @@ export type AlwaysReach = "chat" | "step" | "run" | "launching_chat" | "user";
 
 export type AtDays = "daily" | "weekdays" | "monthly";
 
-export type BackgroundJobState = "running" | "completed" | "failed" | "cancelled" | "timed_out" | "outcome_unknown";
+export type BackgroundJobMoveOutcome = "moved" | "ended" | "not_movable";
+
+export type BackgroundJobState = "running" | "completed" | "failed" | "cancelled" | "timed_out" | "outcome_unknown" | "detached";
 
 export type BotEngineState = "write_failing";
 
@@ -343,6 +345,17 @@ export interface BackgroundJobEnd {
   started_at?: string;
   ended_at?: string;
   duration_ms: number;
+}
+
+/** BackgroundJobMove answers POST /api/chats/{id}/jobs. JobID is set when Outcome is moved. */
+export interface BackgroundJobMove {
+  outcome: BackgroundJobMoveOutcome;
+  job_id?: string;
+}
+
+/** BackgroundJobMoveRequest is the body of POST /api/chats/{id}/jobs: the running tool call to move into a job. */
+export interface BackgroundJobMoveRequest {
+  tool_call_id: string;
 }
 
 /**

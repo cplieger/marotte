@@ -364,3 +364,25 @@ func TestContentChunkJoinsCardByToolCallID(t *testing.T) {
 	}
 	t.Fatal("the call settled no tool_result")
 }
+
+// Every status kiro-cli 3.5.0 sends keeps its name, detached (a fork's copy of a running job) included; only a value
+// outside the set reads as outcome_unknown.
+func TestJobState_KeepsEveryKiroCLIStatus(t *testing.T) {
+	for in, want := range map[string]marotte.BackgroundJobState{
+		"running":         marotte.BackgroundJobRunning,
+		"completed":       marotte.BackgroundJobCompleted,
+		"failed":          marotte.BackgroundJobFailed,
+		"cancelled":       marotte.BackgroundJobCancelled,
+		"timed_out":       marotte.BackgroundJobTimedOut,
+		"outcome_unknown": marotte.BackgroundJobOutcomeUnknown,
+		"detached":        marotte.BackgroundJobDetached,
+		"exploded":        marotte.BackgroundJobOutcomeUnknown,
+		"":                marotte.BackgroundJobOutcomeUnknown,
+	} {
+		t.Run("status "+in, func(t *testing.T) {
+			if got := JobState(in); got != want {
+				t.Errorf("JobState(%q) = %q, want %q", in, got, want)
+			}
+		})
+	}
+}

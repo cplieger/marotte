@@ -53,10 +53,11 @@ const (
 
 // A session's background jobs, live only with kiro-cli's job shell on (settings.universalBackgroundTool).
 const (
-	methodKiroJobUpdate        = "_kiro/job/update"          // A→C notification: {sessionId, id, kind, description, status, startedAt, endedAt?}
-	methodKiroJobCancel        = "_kiro/job/cancel"          // C→A request: {sessionId, jobId} → {jobs: [{jobId, wasRunning, confirmed}]}
-	methodKiroJobOutput        = "_kiro/job/output"          // C→A request: {sessionId, jobId, lines?: 1..1000} → {status, lines[], gap?: {at}}
-	methodKiroToolContentChunk = "_kiro/tools/content_chunk" // A→C notification: {sessionId, toolCallId, content: {type: content, content: {type: text, text}}}; needs streamingShellContent
+	methodKiroJobUpdate        = "_kiro/job/update"           // A→C notification: {sessionId, id, kind, description, status, startedAt, endedAt?}
+	methodKiroJobCancel        = "_kiro/job/cancel"           // C→A request: {sessionId, jobId} → {jobs: [{jobId, wasRunning, confirmed}]}
+	methodKiroJobOutput        = "_kiro/job/output"           // C→A request: {sessionId, jobId, lines?: 1..1000} → {status, lines[], gap?: {at}}
+	methodKiroJobMove          = "_kiro/job/moveToBackground" // C→A request: {sessionId, toolCallId} → {outcome: moved|ended|not_movable|move_failed, jobId?}
+	methodKiroToolContentChunk = "_kiro/tools/content_chunk"  // A→C notification: {sessionId, toolCallId, content: {type: content, content: {type: text, text}}}; needs streamingShellContent
 )
 
 // methodKiroSessionNotify is the notification KAS's `send_message` builtin raises:

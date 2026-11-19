@@ -19,6 +19,7 @@ export const JOB_OUTCOME_WORDS: Readonly<Record<BackgroundJobState, string>> = {
   cancelled: "Cancelled",
   timed_out: "Timed out",
   outcome_unknown: "Outcome unknown",
+  detached: "Left running",
 };
 
 /** Every chat's running jobs, oldest first; a chat with none has no key. */
@@ -140,6 +141,7 @@ export function jobPaintStatus(state: BackgroundJobState | undefined): ToolCall[
       return "failed";
     case "cancelled":
     case "outcome_unknown":
+    case "detached":
       return "aborted";
   }
 }

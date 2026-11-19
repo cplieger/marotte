@@ -225,6 +225,8 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.BackgroundJobPayload](),
 	wiregen.TypeRef[marotte.BackgroundJobsView](),
 	wiregen.TypeRef[marotte.BackgroundJobOutput](),
+	wiregen.TypeRef[marotte.BackgroundJobMoveRequest](),
+	wiregen.TypeRef[marotte.BackgroundJobMove](),
 	wiregen.TypeRef[marotte.SafetyPropertiesPayload](),
 	wiregen.TypeRef[marotte.GovernanceFeatures](),
 	wiregen.TypeRef[marotte.GovernanceStatePayload](),
@@ -433,6 +435,7 @@ var wireEnums = []wiregen.EnumRef{
 	wiregen.StringEnum[marotte.ContextResetCause](),
 	// The job card's end line and the job_ended row word each state.
 	wiregen.StringEnum[marotte.BackgroundJobState](),
+	wiregen.StringEnum[marotte.BackgroundJobMoveOutcome](),
 	// The turn header words each wake reason and note, so both tables must be total.
 	wiregen.StringEnum[marotte.WakeReason](),
 	wiregen.StringEnum[marotte.WakeNote](),

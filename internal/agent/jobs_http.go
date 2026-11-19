@@ -1,7 +1,8 @@
 package agent
 
-// The background jobs' routes: the running list the jobs tracker and the chat list read, and a job's Stop and Show
-// output, each sent on the chat's own session (KAS keys jobs by session).
+// The background jobs' routes: the running list the jobs tracker and the chat list read, Move to background on a
+// running command's card, and a job's Stop and Show output, each sent on the chat's own session (KAS keys jobs by
+// session).
 
 import (
 	"cmp"
@@ -25,7 +26,7 @@ import (
 	"github.com/cplieger/marotte/internal/translate"
 )
 
-// jobCallBudget bounds one job verb; KAS answers both from memory or a 128 KiB log tail.
+// jobCallBudget bounds one job verb; KAS answers each from memory or a 128 KiB log tail.
 const jobCallBudget = 15 * time.Second
 
 // KAS's default and ceiling for _kiro/job/output's line count.
@@ -37,11 +38,15 @@ const (
 // rpcInvalidParams is JSON-RPC's invalid-params code, KAS's answer for a job id its session does not hold.
 const rpcInvalidParams = -32602
 
-// maxJobIDBytes bounds a job id in a path; KAS's ids are short.
-const maxJobIDBytes = 256
+// maxJobRefBytes bounds a job or tool call id; KAS's ids are short.
+const maxJobRefBytes = 256
+
+// jobMoveFailed is the answer when kiro-cli could not move the call or answered outside its outcomes.
+const jobMoveFailed = "kiro-cli could not move the command to the background."
 
 func (rt *Runtime) registerJobRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/jobs", rt.handleJobs)
+	mux.HandleFunc("POST /api/chats/{id}/jobs", rt.handleJobMove)
 	mux.HandleFunc("POST /api/chats/{id}/jobs/{job}/cancel", rt.handleJobCancel)
 	mux.HandleFunc("GET /api/chats/{id}/jobs/{job}/output", rt.handleJobOutput)
 }
@@ -70,8 +75,48 @@ type kasJobCancelResult struct {
 	} `json:"jobs"`
 }
 
+type kasJobMoveResult struct {
+	Outcome string `json:"outcome"`
+	JobID   string `json:"jobId"`
+}
+
+// handleJobMove asks kiro-cli to move a running tool call into a job now. moved, ended and not_movable are kiro-cli's
+// answers and answer 200; the moved card repaints through the frames kiro-cli sends for the move.
+func (rt *Runtime) handleJobMove(w http.ResponseWriter, r *http.Request) {
+	chatID, sb, ok := rt.chatSession(w, r)
+	if !ok {
+		return
+	}
+	var body marotte.BackgroundJobMoveRequest
+	if !httpreply.DecodeJSON(w, r, &body) {
+		return
+	}
+	if !validJobRef(body.ToolCallID) {
+		httpreply.BadRequest(w, "The tool call id is not valid.")
+		return
+	}
+	var out kasJobMoveResult
+	err := jobCall(r.Context(), sb, methodKiroJobMove, map[string]any{"toolCallId": body.ToolCallID}, &out)
+	if err != nil {
+		writeJobCallError(w, r, err, jobMoveFailed, "chat_id", chatID, "tool_call_id", body.ToolCallID)
+		return
+	}
+	switch outcome := marotte.BackgroundJobMoveOutcome(out.Outcome); outcome {
+	case marotte.BackgroundJobMoved:
+		if out.JobID != "" {
+			httpserver.WriteJSON(w, marotte.BackgroundJobMove{Outcome: outcome, JobID: out.JobID})
+			return
+		}
+	case marotte.BackgroundJobMoveEnded, marotte.BackgroundJobNotMovable:
+		httpserver.WriteJSON(w, marotte.BackgroundJobMove{Outcome: outcome})
+		return
+	}
+	slog.Warn("background job: "+jobMoveFailed, "chat_id", chatID, "tool_call_id", body.ToolCallID, "outcome", out.Outcome)
+	httpserver.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON(jobMoveFailed))
+}
+
 // handleJobCancel asks kiro-cli to stop a job and answers 202: the end arrives as job_update. A job kiro-cli no longer
-// holds is dropped from the list.
+// runs or holds is dropped from the list.
 func (rt *Runtime) handleJobCancel(w http.ResponseWriter, r *http.Request) {
 	chatID, jobID, sb, ok := rt.jobTarget(w, r)
 	if !ok {
@@ -85,6 +130,7 @@ func (rt *Runtime) handleJobCancel(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, j := range out.Jobs {
 		if j.JobID == jobID && !j.WasRunning {
+			rt.translator.DropJob(r.Context(), chatID, jobID)
 			httpreply.Conflict(w, "The job had already ended.")
 			return
 		}
@@ -137,25 +183,37 @@ func jobOutputLineCount(raw string) (int, bool) {
 	return min(max(n, 1), jobOutputMaxLines), true
 }
 
-// jobTarget validates the path and finds the chat's session; false once it answered.
+// jobTarget validates the path's chat and job and finds the chat's session; false once it answered.
 func (rt *Runtime) jobTarget(w http.ResponseWriter, r *http.Request) (marotte.ChatID, string, *sharedBridge, bool) {
+	jobID := r.PathValue("job")
+	if !validJobRef(jobID) {
+		httpreply.BadRequest(w, "The job id is not valid.")
+		return "", "", nil, false
+	}
+	chatID, sb, ok := rt.chatSession(w, r)
+	return chatID, jobID, sb, ok
+}
+
+// chatSession validates the path's chat and finds its open session; false once it answered.
+func (rt *Runtime) chatSession(w http.ResponseWriter, r *http.Request) (marotte.ChatID, *sharedBridge, bool) {
 	id := r.PathValue("id")
 	if !ids.ValidChatID(id) {
 		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
-		return "", "", nil, false
-	}
-	jobID := r.PathValue("job")
-	if jobID == "" || len(jobID) > maxJobIDBytes || strings.ContainsFunc(jobID, unicode.IsControl) || strings.TrimSpace(jobID) != jobID {
-		httpreply.BadRequest(w, "The job id is not valid.")
-		return "", "", nil, false
+		return "", nil, false
 	}
 	chatID := marotte.ChatID(id)
 	sb := rt.coord.bridgeFor(chatID)
 	if sb == nil || !sb.hasSession() {
 		httpreply.Conflict(w, "The chat has no open session, so its jobs have ended.")
-		return "", "", nil, false
+		return "", nil, false
 	}
-	return chatID, jobID, sb, true
+	return chatID, sb, true
+}
+
+// validJobRef is a job or tool call id marotte passes to kiro-cli: non-empty, bounded, trimmed, no control characters.
+func validJobRef(ref string) bool {
+	return ref != "" && len(ref) <= maxJobRefBytes && !strings.ContainsFunc(ref, unicode.IsControl) &&
+		strings.TrimSpace(ref) == ref
 }
 
 func jobCall(ctx context.Context, sb *sharedBridge, method string, extra map[string]any, out any) error {
@@ -170,18 +228,26 @@ func jobCall(ctx context.Context, sb *sharedBridge, method string, extra map[str
 	})
 }
 
-// answerJobCallError shows kiro-cli's own refusal; one naming a job the session does not hold also drops its row.
+// answerJobCallError answers a job verb's failed call; a refusal naming a job the session does not hold also drops
+// its row.
 func (rt *Runtime) answerJobCallError(w http.ResponseWriter, r *http.Request, chatID marotte.ChatID, jobID string, err error, failed string) {
+	rpc := writeJobCallError(w, r, err, failed, "chat_id", chatID, "job_id", jobID)
+	if rpc != nil && rpc.Code == rpcInvalidParams {
+		rt.translator.DropJob(r.Context(), chatID, jobID)
+	}
+}
+
+// writeJobCallError answers a failed job call: kiro-cli's own refusal as a 409, else 502 with failed, logged with
+// logAttrs. It returns the refusal, nil for any other failure.
+func writeJobCallError(w http.ResponseWriter, r *http.Request, err error, failed string, logAttrs ...any) *marotte.RPCError {
 	if rpc, ok := errors.AsType[*marotte.RPCError](err); ok {
-		if rpc.Code == rpcInvalidParams {
-			rt.translator.DropJob(r.Context(), chatID, jobID)
-		}
 		httpreply.Conflict(w, rpcerr.Text(rpc))
-		return
+		return rpc
 	}
 	if r.Context().Err() != nil {
-		return
+		return nil
 	}
-	slog.Warn("background job: "+failed, "chat_id", chatID, "job_id", jobID, "error", err)
+	slog.Warn("background job: "+failed, append(logAttrs, "error", err)...)
 	httpserver.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON(failed))
+	return nil
 }
