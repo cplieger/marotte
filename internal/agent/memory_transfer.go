@@ -159,7 +159,6 @@ func (st *Settings) handleMemoryExport(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
 	h.Set("Content-Disposition", `attachment; filename="kiro-memories-`+time.Now().Format(time.DateOnly)+`.jsonl"`)
 	h.Set("Content-Type", mimeTypeJSONL)
-	h.Set("X-Content-Type-Options", "nosniff")
 	if _, err := w.Write([]byte(*res.Content)); err != nil {
 		slog.Debug("memory export: write failed", "error", err)
 	}

@@ -192,9 +192,6 @@ func TestMemoryExport_DownloadsKASContentVerbatim(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); ct != "application/jsonl" {
 		t.Errorf("Content-Type = %q, want application/jsonl", ct)
 	}
-	if nosniff := rec.Header().Get("X-Content-Type-Options"); nosniff != "nosniff" {
-		t.Errorf("X-Content-Type-Options = %q, want nosniff", nosniff)
-	}
 	disposition := regexp.MustCompile(`^attachment; filename="kiro-memories-\d{4}-\d{2}-\d{2}\.jsonl"$`)
 	if cd := rec.Header().Get("Content-Disposition"); !disposition.MatchString(cd) {
 		t.Errorf("Content-Disposition = %q, want an attachment kiro-memories-<date>.jsonl", cd)

@@ -106,13 +106,7 @@ func toolIDMetaSet(src string) (members []string, ok bool) {
 		if len(m) != 1 {
 			return nil
 		}
-		groups := make([]string, len(m[0])/2)
-		for i := range groups {
-			if m[0][2*i] >= 0 {
-				groups[i] = src[m[0][2*i]:m[0][2*i+1]]
-			}
-		}
-		return groups
+		return submatches(src, m)
 	}
 	fn := only(toolIDRoutedNameRe, `,"isToolIdRoutedActionType")`)
 	if fn == nil {
