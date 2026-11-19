@@ -1062,8 +1062,8 @@ func TestLaunchRun_RefusesAHostSessionDoorWithNoSessionID(t *testing.T) {
 // within the browser's budget is reported as still applying, and that the browser walking away does not abandon a
 // run KAS may already have created.
 func TestHandleLaunch_AStalledEngineAnswersStillApplyingAndTheLaunchLands(t *testing.T) {
-	answerBudgetOf(t, 50*time.Millisecond)
-	h, _, br := newTestHub()
+	t.Parallel()
+	h, _, br := newTestHub(withAnswerBudget(50 * time.Millisecond))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish","builtIn":true}]}`),

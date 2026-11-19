@@ -16,9 +16,9 @@ import (
 )
 
 // scheduledHub is a hub with one daily schedule in a real store and a run bridge whose cancel lands.
-func scheduledHub(t *testing.T) (*Runtime, *fakeBridge, *launchrule.Store, launchrule.Rule) {
+func scheduledHub(t *testing.T, opts ...Option) (*Runtime, *fakeBridge, *launchrule.Store, launchrule.Rule) {
 	t.Helper()
-	h, _, br := newTestHub()
+	h, _, br := newTestHub(opts...)
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {

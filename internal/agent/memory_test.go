@@ -191,6 +191,7 @@ func TestWriteMemoryErr_ClassifiesTheFailure(t *testing.T) {
 // TestHandleMemoryOne_AStalledEngineAnswersStillApplying pins that an edit or delete the engine has not answered within
 // the browser's budget is reported as still applying, never as failed, and that the late answer refreshes the list.
 func TestHandleMemoryOne_AStalledEngineAnswersStillApplying(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		method, kasMethod, body, reply string
 	}{
@@ -198,8 +199,7 @@ func TestHandleMemoryOne_AStalledEngineAnswersStillApplying(t *testing.T) {
 		{http.MethodDelete, methodKiroMemoryDelete, ``, `{"id":"m1","title":"x"}`},
 	} {
 		t.Run(tc.method, func(t *testing.T) {
-			answerBudgetOf(t, 50*time.Millisecond)
-			h, _, br := newTestHub()
+			h, _, br := newTestHub(withAnswerBudget(50 * time.Millisecond))
 			t.Cleanup(func() { shutdownHub(t, h) })
 			br.setCallResult(tc.kasMethod, json.RawMessage(tc.reply))
 			release := holdCall(t, br, tc.kasMethod)

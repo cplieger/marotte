@@ -18,9 +18,9 @@ import (
 
 // runDefaultsHub is a hub whose live catalog offers model-a (low, medium, high), model-c (low) and
 // auto (none), with one launchable recipe and a launch-rule store behind the run routes.
-func runDefaultsHub(t *testing.T) (*Runtime, *fakeBridge, *http.ServeMux) {
+func runDefaultsHub(t *testing.T, opts ...Option) (*Runtime, *fakeBridge, *http.ServeMux) {
 	t.Helper()
-	h, _, br := newTestHub()
+	h, _, br := newTestHub(opts...)
 	launchableRecipe(br, "wf_pick")
 	h.catalog.SetModels([]marotte.SessionModel{
 		{ID: "model-a", Name: "Model A", EffortTiers: []string{"low", "medium", "high"}},

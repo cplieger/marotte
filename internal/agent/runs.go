@@ -113,6 +113,13 @@ type Runs struct {
 	sweepRetryBase    time.Duration
 	releaseRetryBase  time.Duration
 	orphanResumeDelay time.Duration
+	// healBaseDelay is the heal ladder's first delay (defaultHealBaseDelay), unattendedAskBudget the floor's wait on
+	// one ask, and unattendedPauseBudget how long a scheduled run may sit paused with no resume before it is ended
+	// (endUnattended), which also outlasts the three heals' backoff; both waits are unattendedApprovalBudget. Per
+	// runtime as the gaps above.
+	healBaseDelay         time.Duration
+	unattendedAskBudget   time.Duration
+	unattendedPauseBudget time.Duration
 	// revs mints every run read's revision (run_rev.go).
 	revs revMint
 	mu   sync.Mutex

@@ -113,6 +113,7 @@ func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
 // TestUnattendedFloor_DelegatedLeaseRefusesAnUnclearedAsk pins that the floor reads the delegation from the presets the
 // run's lease recorded, and that a lease which recorded none fails closed.
 func TestUnattendedFloor_DelegatedLeaseRefusesAnUnclearedAsk(t *testing.T) {
+	t.Parallel()
 	delegated, ok := policyfile.ProfileFor(policyfile.ProfileDelegated)
 	if !ok {
 		t.Fatal("no Delegated profile")
@@ -121,9 +122,6 @@ func TestUnattendedFloor_DelegatedLeaseRefusesAnUnclearedAsk(t *testing.T) {
 	if !ok {
 		t.Fatal("no Trusted profile")
 	}
-	prev := unattendedAskBudget
-	unattendedAskBudget = 10 * time.Millisecond
-	t.Cleanup(func() { unattendedAskBudget = prev })
 	for _, tc := range []struct {
 		name       string
 		host       *runlease.HostSecurity
@@ -142,7 +140,7 @@ func TestUnattendedFloor_DelegatedLeaseRefusesAnUnclearedAsk(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, "config.json"), body, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir))
+			h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir), withUnattendedAskBudget(10*time.Millisecond))
 			chatID := runChatID("wf_floor")
 			h.insertBridgeNow(chatID, testBridge(br, bridgeReady))
 			h.runs.grantLease(t.Context(), "wf_floor", "nightly", scheduledLaunch(launchrule.Row{ID: "sched-1"}, time.Time{}), tc.host)
@@ -950,8 +948,7 @@ func TestTriggeredDenyNoteNamesNoSchedule(t *testing.T) {
 // rule it was.
 func TestTriggeredPauseEndsUnattended(t *testing.T) {
 	logs := captureLogs(t)
-	fastUnattendedPause(t)
-	h, _, br := newTestHub()
+	h, _, br := newTestHub(fastUnattendedPause())
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
 		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", stepQuestionReason),

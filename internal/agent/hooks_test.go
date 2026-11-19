@@ -223,8 +223,8 @@ func TestToHookInfo_MatcherWarning(t *testing.T) {
 // TestHookSetEnabled_AStalledEngineAnswersStillApplying pins that a toggle the engine has not answered within the
 // browser's budget is reported as still applying, never as failed, and that the late answer refreshes the list.
 func TestHookSetEnabled_AStalledEngineAnswersStillApplying(t *testing.T) {
-	answerBudgetOf(t, 50*time.Millisecond)
-	h, _, br := newTestHub()
+	t.Parallel()
+	h, _, br := newTestHub(withAnswerBudget(50 * time.Millisecond))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.setCallResult(methodKiroHooksSetEnabled, json.RawMessage(`{"success":true}`))
 	release := holdCall(t, br, methodKiroHooksSetEnabled)

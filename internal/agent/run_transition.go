@@ -246,7 +246,7 @@ func (rs *Runs) lockRun(ctx context.Context, workflowID string, req *runRequest)
 	if req.want.actor != byPerson {
 		return rs.resumes.Lock(ctx, workflowID)
 	}
-	req.answerBy = answerDeadline()
+	req.answerBy = rs.lifecycle.answerDeadline()
 	lctx, cancel := context.WithDeadline(ctx, req.answerBy)
 	defer cancel()
 	release, err := rs.resumes.Lock(lctx, workflowID)

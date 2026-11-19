@@ -417,11 +417,9 @@ func TestRetryResumeLater_AStoppedRuntimeTriesNothing(t *testing.T) {
 // After a restart the chat's return (the rehydrate sweep) and the restart pause's own heal both reach the run; the
 // transition's read under the run's resume lock (Runs.transition) lets only the first write a resume.
 func TestEngineRestart_ChatParentedRunGetsExactlyOneResume(t *testing.T) {
-	prev := healBaseDelay
-	healBaseDelay = time.Millisecond
-	t.Cleanup(func() { healBaseDelay = prev })
+	t.Parallel()
 	const id = "wf_1"
-	h, br := agentRunOnChat(t, id)
+	h, br := agentRunOnChat(t, id, withHealBaseDelay(time.Millisecond))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	h.runs.grantLease(t.Context(), id, "publish", agentLaunch(), hostSec())
 	h.runs.recordParentSession(t.Context(), id, parkSession)

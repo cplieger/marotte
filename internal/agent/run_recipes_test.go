@@ -69,8 +69,8 @@ func TestLaunch_ReadsTheRenamedRecipeLiveAfterACatalogChange(t *testing.T) {
 // A launch whose recipe the held catalog names sends workflow/new without waiting on a listing: KAS's own launch
 // check resolves the one recipe, while a whole-catalog walk can queue behind KAS's other catalog work.
 func TestLaunch_SendsWorkflowNewFromTheHeldCatalogWhileAListingIsHeld(t *testing.T) {
-	answerBudgetOf(t, time.Second)
-	h, br, mux := runDefaultsHub(t)
+	t.Parallel()
+	h, br, mux := runDefaultsHub(t, withAnswerBudget(time.Second))
 	holdCatalog(t, h)
 	holdCall(t, br, methodKiroWorkflowListRecipes)
 
@@ -118,8 +118,8 @@ func TestRecipeRoutes_RefuseASourceGoneSinceTheHold(t *testing.T) {
 // A launch rule save waits on a fresh listing no longer than the answer budget: an unanswered one is 503 with a
 // Retry-After, which the browser reads before its own request budget aborts the save.
 func TestLaunchRuleSave_AnUnansweredListingAnswersWithinTheAnswerBudget(t *testing.T) {
-	answerBudgetOf(t, 50*time.Millisecond)
-	_, br, mux := runDefaultsHub(t)
+	t.Parallel()
+	_, br, mux := runDefaultsHub(t, withAnswerBudget(50*time.Millisecond))
 	holdCall(t, br, methodKiroWorkflowListRecipes)
 	const rule = `{"source":"bundled://publish","when":{"clock":{"freq":"daily","hour":2,"minute":0}},"enabled":true}`
 
@@ -158,10 +158,10 @@ func TestLaunch_AHeldRecipeMissingANamedInputIsReadLive(t *testing.T) {
 // A launch whose engine does not answer before workflow/new (the recipe listing, the run list for the one-live-run
 // rule) has created nothing: 503 engine_slow with a Retry-After at the answer budget, never 504 still_applying.
 func TestLaunch_AnUnansweredPrepareAnswers503NotStillApplying(t *testing.T) {
+	t.Parallel()
 	for _, held := range []string{methodKiroWorkflowListRecipes, methodKiroWorkflowList} {
 		t.Run(held, func(t *testing.T) {
-			answerBudgetOf(t, 50*time.Millisecond)
-			_, br, mux := runDefaultsHub(t)
+			_, br, mux := runDefaultsHub(t, withAnswerBudget(50*time.Millisecond))
 			holdCall(t, br, held)
 			rec := answeredWithin(t, func(w http.ResponseWriter) {
 				mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/runs",
@@ -179,8 +179,8 @@ func TestLaunch_AnUnansweredPrepareAnswers503NotStillApplying(t *testing.T) {
 
 // A launch whose workflow/new KAS has not answered may have created a run: 504 still_applying at the answer budget.
 func TestLaunch_AnUnansweredWorkflowNewIsStillApplying(t *testing.T) {
-	answerBudgetOf(t, 50*time.Millisecond)
-	_, br, mux := runDefaultsHub(t)
+	t.Parallel()
+	_, br, mux := runDefaultsHub(t, withAnswerBudget(50*time.Millisecond))
 	holdCall(t, br, methodKiroWorkflowNew)
 	rec := answeredWithin(t, func(w http.ResponseWriter) {
 		mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(`{"source":"bundled://publish"}`)))

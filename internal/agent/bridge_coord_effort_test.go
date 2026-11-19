@@ -165,8 +165,10 @@ func modelEffortFrame(t *testing.T, model, running string) *marotte.RPCResponse 
 // effortDrift is a chat on fake-model opened while another chat's pick moves the seed under it:
 // the seed is high at the chat's first session and medium afterwards.
 type effortDrift struct {
-	cs        *testChatStore
-	dir       string
+	cs  *testChatStore
+	dir string
+	// opts are the runtime's own, after the drift's config dir.
+	opts      []Option
 	mu        sync.Mutex
 	failLoads bool
 }
@@ -201,7 +203,7 @@ func (d *effortDrift) bootOver(t *testing.T, store chatRecords) *Runtime {
 		}
 		d.mu.Unlock()
 		return b
-	}, nil), store, WithConfigDir(d.dir))
+	}, nil), store, append([]Option{WithConfigDir(d.dir)}, d.opts...)...)
 	d.cs.wire(h)
 	return h
 }

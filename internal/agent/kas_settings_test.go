@@ -93,7 +93,7 @@ func TestEngineSpawn_TelemetryReachesTheEngineProcess(t *testing.T) {
 			t.Setenv(toolkitVar, "ambient")
 			engine := newEngineProcessFake(t)
 			cs := newTestChatStore()
-			h := New(context.Background(), t.TempDir(), engine, cs, WithConfigDir(t.TempDir()))
+			h := New(context.Background(), t.TempDir(), engine, cs, parkedHeals(), WithConfigDir(t.TempDir()))
 			cs.wire(h)
 			t.Cleanup(func() { shutdownHub(t, h) })
 			if tc.org != nil {

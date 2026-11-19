@@ -420,10 +420,8 @@ func unreachableProviderPausesThenResumes(t *testing.T) {
 // the run under its resume lock, after the resume an earlier one wrote. KAS reads the run paused until the resume's
 // reply, so a read outside the lock would resume it again.
 func TestResume_EveryAutomaticResumerAtOnceResumesOnce(t *testing.T) {
-	prev := healBaseDelay
-	healBaseDelay = time.Millisecond
-	t.Cleanup(func() { healBaseDelay = prev })
-	g := newGateRun(t, filemodetest.NewDisk())
+	t.Parallel()
+	g := newGateRun(t, filemodetest.NewDisk(), withHealBaseDelay(time.Millisecond))
 	var resumes atomic.Int32
 	running := inspectReply(t, gateRunID, marotte.RunStatusRunning, "")
 	g.br.mu.Lock()

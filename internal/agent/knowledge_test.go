@@ -614,6 +614,7 @@ func TestHandleKnowledgeAdd_RefusesAnUnaddressableName(t *testing.T) {
 // within the browser's budget is reported as still applying, never as failed, and that the late answer refreshes the
 // list. Only the change's own subcommand is held: the show a reindex or cancel resolves its target with answers.
 func TestKnowledgeMutations_AStalledEngineAnswersStillApplying(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, subcommand string
 		serve            func(h *Runtime, w http.ResponseWriter)
@@ -641,8 +642,7 @@ func TestKnowledgeMutations_AStalledEngineAnswersStillApplying(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			answerBudgetOf(t, 50*time.Millisecond)
-			h, _, br := newTestHub()
+			h, _, br := newTestHub(withAnswerBudget(50 * time.Millisecond))
 			t.Cleanup(func() { shutdownHub(t, h) })
 			seedKnowledge(br, `{"success":true,"message":"done","entries":[`+
 				`{"name":"docs","id":"a1","item_count":7,"path":"/w/docs"},`+

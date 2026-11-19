@@ -47,24 +47,16 @@ func floorHub(t *testing.T, keys map[string]any) (*Runtime, *respondingBridge) {
 // floorHubConfig is floorHub with config.json holding body, or absent when body is nil.
 func floorHubConfig(t *testing.T, body []byte) (*Runtime, *respondingBridge) {
 	t.Helper()
-	shortAskBudget(t, 20*time.Millisecond)
 	dir := t.TempDir()
 	if body != nil {
 		if err := os.WriteFile(filepath.Join(dir, "config.json"), body, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir))
+	h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir), withUnattendedAskBudget(floorAskBudget))
 	br.callResults = map[string]json.RawMessage{marotte.MethodSessionSteer: json.RawMessage(`{"queued":true}`)}
 	h.SetRuleEngine(ruleengine.New(&ruleengine.Deps{WakeHold: wakeHoldBound}))
 	return h, br
-}
-
-func shortAskBudget(t *testing.T, d time.Duration) {
-	t.Helper()
-	prev := unattendedAskBudget
-	unattendedAskBudget = d
-	t.Cleanup(func() { unattendedAskBudget = prev })
 }
 
 // openedWith records the presets c1's session opened with, as its door does.
@@ -110,13 +102,16 @@ func floorAnswer(t *testing.T, br *respondingBridge) *marotte.PermissionOutcome 
 	return outcome
 }
 
-// noFloorAnswer fails when anything answers the ask within many budgets.
+// floorAskBudget is floorHub's ask budget.
+const floorAskBudget = 20 * time.Millisecond
+
+// noFloorAnswer fails when anything answers the ask within many of floorHub's budgets.
 func noFloorAnswer(t *testing.T, br *respondingBridge) {
 	t.Helper()
 	select {
 	case <-br.done:
 		t.Fatal("the floor answered an ask a person is there to answer")
-	case <-time.After(15 * unattendedAskBudget):
+	case <-time.After(15 * floorAskBudget):
 	}
 }
 
@@ -164,6 +159,7 @@ func TestBotFloor_ARuleTurnsAskIsRefusedByDefault(t *testing.T) {
 
 // A config.json that is absent or not one JSON object reads the switch as off.
 func TestBotFloor_AnAbsentOrUnreadableSettingRefuses(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		body []byte
@@ -200,6 +196,7 @@ func TestBotFloor_TheSwitchApprovesOnceNeverAlways(t *testing.T) {
 
 // The run floor's switch approves no Bot turn.
 func TestBotFloor_TheScheduledSwitchApprovesNoBotTurn(t *testing.T) {
+	t.Parallel()
 	h, br := floorHub(t, map[string]any{settings.KeyScheduledAutoApprove: true})
 	openedWith(t, h, policyfile.ProfileTrusted)
 	openRuleTurn(t, h, 1)
@@ -210,6 +207,7 @@ func TestBotFloor_TheScheduledSwitchApprovesNoBotTurn(t *testing.T) {
 }
 
 func TestBotFloor_TheSwitchStillRefusesWhatNeedsAPerson(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		profile string
@@ -238,6 +236,7 @@ func TestBotFloor_TheSwitchStillRefusesWhatNeedsAPerson(t *testing.T) {
 }
 
 func TestBotFloor_APersonsAnswerFirstWins(t *testing.T) {
+	t.Parallel()
 	h, br := floorHub(t, map[string]any{settings.KeyBotAutoApprove: true})
 	openedWith(t, h, policyfile.ProfileTrusted)
 	openRuleTurn(t, h, 1)
@@ -253,6 +252,7 @@ func TestBotFloor_APersonsAnswerFirstWins(t *testing.T) {
 }
 
 func TestBotFloor_AUserSteerClearsTheMark(t *testing.T) {
+	t.Parallel()
 	h, br := floorHub(t, map[string]any{})
 	openedWith(t, h, policyfile.ProfileTrusted)
 	openRuleTurn(t, h, 1)
@@ -265,6 +265,7 @@ func TestBotFloor_AUserSteerClearsTheMark(t *testing.T) {
 
 // A steer kiro-cli refuses never reached the turn, so nobody watches it still and its row waits on the list.
 func TestBotFloor_ARefusedUserSteerKeepsTheMark(t *testing.T) {
+	t.Parallel()
 	h, br := floorHub(t, map[string]any{})
 	openedWith(t, h, policyfile.ProfileTrusted)
 	openRuleTurn(t, h, 1)
@@ -290,6 +291,7 @@ func TestBotFloor_ARefusedUserSteerKeepsTheMark(t *testing.T) {
 
 // A person's steer kiro-cli did not queue reached nobody: one it dropped, and one whose call failed.
 func TestBotFloor_AnUnqueuedUserSteerKeepsTheMark(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		arm  func(br *respondingBridge)
@@ -354,8 +356,9 @@ func TestBotFloor_ASteerAcceptedAfterItsTurnEndedKeepsTheNextTurnsMark(t *testin
 
 // The mark is read when the floor answers, so a person who steers in after the ask keeps it.
 func TestBotFloor_AUserSteerAfterTheAskKeepsItForThem(t *testing.T) {
+	t.Parallel()
 	h, br := floorHub(t, map[string]any{settings.KeyBotAutoApprove: true})
-	shortAskBudget(t, time.Hour)
+	h.runs.unattendedAskBudget = time.Hour
 	openedWith(t, h, policyfile.ProfileTrusted)
 	openRuleTurn(t, h, 1)
 	sendFloorAsk(t, h, 7014, floorPolicyAsk)
@@ -381,7 +384,7 @@ func TestBotFloor_AUserSteerAfterTheAskKeepsItForThem(t *testing.T) {
 // A person who steers in while the floor reads its settings keeps the ask: the mark is read right before the claim.
 func TestBotFloor_AUserSteerDuringTheSettingsReadKeepsItForThem(t *testing.T) {
 	h, br := floorHub(t, map[string]any{settings.KeyBotAutoApprove: true})
-	shortAskBudget(t, time.Hour)
+	h.runs.unattendedAskBudget = time.Hour
 	openedWith(t, h, policyfile.ProfileTrusted)
 	openRuleTurn(t, h, 1)
 	sendFloorAsk(t, h, 7019, floorPolicyAsk)
@@ -411,6 +414,7 @@ func TestBotFloor_AUserSteerDuringTheSettingsReadKeepsItForThem(t *testing.T) {
 
 // A program's prompt is not a rule's: the person who reads its chat answers its asks.
 func TestBotFloor_AProgramsPromptOpensNoFlooredTurn(t *testing.T) {
+	t.Parallel()
 	h, br := floorHub(t, map[string]any{settings.KeyBotAutoApprove: true})
 	openedWith(t, h, policyfile.ProfileTrusted)
 	id, _ := h.stagePromptTurnFrom(t, "c1", &marotte.Caller{Label: "grelot"}, nil)
@@ -421,6 +425,7 @@ func TestBotFloor_AProgramsPromptOpensNoFlooredTurn(t *testing.T) {
 
 // A program's message into the turn is not a person watching it.
 func TestBotFloor_AProgramsSteerKeepsTheMark(t *testing.T) {
+	t.Parallel()
 	h, br := floorHub(t, map[string]any{})
 	openedWith(t, h, policyfile.ProfileTrusted)
 	openRuleTurn(t, h, 1)
@@ -435,6 +440,7 @@ func TestBotFloor_AProgramsSteerKeepsTheMark(t *testing.T) {
 }
 
 func TestBotFloor_AUserTurnInABotIsNeverFloored(t *testing.T) {
+	t.Parallel()
 	h, br := floorHub(t, map[string]any{settings.KeyBotAutoApprove: true})
 	if _, err := h.chatStore.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Bot = &marotte.Bot{Goal: "keep the docs tidy"}
@@ -460,6 +466,7 @@ func endRunAndWake(t *testing.T, h *Runtime, workflowID string) {
 }
 
 func TestBotFloor_TheWakeTurnAfterAnAutomaticRunIsFloored(t *testing.T) {
+	t.Parallel()
 	h, br := floorHub(t, map[string]any{})
 	openedWith(t, h, policyfile.ProfileTrusted)
 	closeDepthTurn(t, h, openRuleTurn(t, h, 1))
@@ -472,6 +479,7 @@ func TestBotFloor_TheWakeTurnAfterAnAutomaticRunIsFloored(t *testing.T) {
 }
 
 func TestBotFloor_TheWakeTurnAfterAUsersRunIsNotFloored(t *testing.T) {
+	t.Parallel()
 	h, br := floorHub(t, map[string]any{})
 	openedWith(t, h, policyfile.ProfileTrusted)
 	id, _ := h.stagePromptTurn(t, "c1")
@@ -484,6 +492,7 @@ func TestBotFloor_TheWakeTurnAfterAUsersRunIsNotFloored(t *testing.T) {
 }
 
 func TestBotFloor_AUserSteerIntoAWakeTurnClearsTheMark(t *testing.T) {
+	t.Parallel()
 	h, br := floorHub(t, map[string]any{})
 	openedWith(t, h, policyfile.ProfileTrusted)
 	closeDepthTurn(t, h, openRuleTurn(t, h, 1))
@@ -498,6 +507,7 @@ func TestBotFloor_AUserSteerIntoAWakeTurnClearsTheMark(t *testing.T) {
 
 // Until E5 deletes the run floor, both floors give one answer to one ask under their own switch.
 func TestUnattendedFloors_AnswerOneAskAlike(t *testing.T) {
+	t.Parallel()
 	keys := map[string]any{settings.KeyBotAutoApprove: true, settings.KeyScheduledAutoApprove: true}
 	trusted, _ := policyfile.ProfileFor(policyfile.ProfileTrusted)
 	for _, tc := range []struct {

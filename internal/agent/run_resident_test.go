@@ -238,9 +238,9 @@ func TestRetry_ACancelledRetryKeepsTheLeaseItMinted(t *testing.T) {
 }
 
 // leasedNonResident is a leased parentless run whose host session is not resident, answering inspect with reply.
-func leasedNonResident(t *testing.T, reply json.RawMessage) (*Runtime, *fakeBridge) {
+func leasedNonResident(t *testing.T, reply json.RawMessage, opts ...Option) (*Runtime, *fakeBridge) {
 	t.Helper()
-	h, _, br := newTestHub()
+	h, _, br := newTestHub(opts...)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	leaseParentless(t, h, "wf_1")
 	br.setCallResult(methodKiroWorkflowInspect, reply)
@@ -930,9 +930,9 @@ func answersWithin[T any](t *testing.T, call func() T) T {
 }
 
 // gatedHostRun is a leased parentless run answering inspect with reply, whose host load waits until release.
-func gatedHostRun(t *testing.T, reply json.RawMessage) (h *Runtime, host *fakeBridge, release func()) {
+func gatedHostRun(t *testing.T, reply json.RawMessage, opts ...Option) (h *Runtime, host *fakeBridge, release func()) {
 	t.Helper()
-	h, br := leasedNonResident(t, reply)
+	h, br := leasedNonResident(t, reply, opts...)
 	br.setCallResult(methodKiroWorkflowList, parentlessRunList("wf_1"))
 	h.runs.log = newRunLog(t.TempDir())
 	host = newFakeBridge()
@@ -947,9 +947,9 @@ func gatedHostRun(t *testing.T, reply json.RawMessage) (h *Runtime, host *fakeBr
 
 // gatedChatRun is wf_1 launched from chat c1's session sess_owned, its review step paused, with c1's load held until
 // release.
-func gatedChatRun(t *testing.T) (h *Runtime, br *fakeBridge, release func()) {
+func gatedChatRun(t *testing.T, opts ...Option) (h *Runtime, br *fakeBridge, release func()) {
 	t.Helper()
-	h, cs, br := newTestHub()
+	h, cs, br := newTestHub(opts...)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	h.runs.log = newRunLog(t.TempDir())
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -990,12 +990,12 @@ func runLogLen(t *testing.T, h *Runtime) int {
 // kiro-cli can leave a session/load unanswered after an engine restart; the person's send answers inside the
 // browser's budget instead of waiting on the load, and places nothing.
 func TestMessageStep_AnUnansweredLoadOfTheLaunchingSessionAnswersWithinTheBudget(t *testing.T) {
-	answerBudgetOf(t, 200*time.Millisecond)
-	h, br, _ := gatedChatRun(t)
+	t.Parallel()
+	h, br, _ := gatedChatRun(t, withAnswerBudget(200*time.Millisecond))
 	before := runLogLen(t, h)
 
 	err := answersWithin(t, func() error {
-		_, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, "carry on", "m-1", "", nil)
+		_, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(h.lifecycle.answerDeadline()), "wf_1", reviewPath, "carry on", "m-1", "", nil)
 		return err
 	})
 
@@ -1011,6 +1011,7 @@ func TestMessageStep_AnUnansweredLoadOfTheLaunchingSessionAnswersWithinTheBudget
 }
 
 func TestRunRequestVerbs_AnUnansweredLoadAnswersRunHostSlow(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		reply func(t *testing.T) json.RawMessage
@@ -1050,8 +1051,7 @@ func TestRunRequestVerbs_AnUnansweredLoadAnswersRunHostSlow(t *testing.T) {
 			// The bubble's clock moves only while every goroutine waits, so the budget runs out on the held load
 			// and never on a stalled scheduler before the load starts.
 			synctest.Test(t, func(t *testing.T) {
-				answerBudgetOf(t, 200*time.Millisecond)
-				h, host, release := gatedHostRun(t, tc.reply(t))
+				h, host, release := gatedHostRun(t, tc.reply(t), withAnswerBudget(200*time.Millisecond))
 
 				err := answersWithin(t, func() error { return tc.call(t.Context(), h) })
 				if !errors.Is(err, errRunHostSlow) {
@@ -1091,10 +1091,10 @@ func personRunVerbs() map[string]func(ctx context.Context, h *Runtime) error {
 // After an engine restart marotte's own heal holds the run while it waits on the load; a person's verb queued behind
 // it answers inside the browser's budget too.
 func TestRunRequestVerbs_BehindAHealOnAnUnansweredLoadAnswersRunHostSlow(t *testing.T) {
+	t.Parallel()
 	for name, call := range personRunVerbs() {
 		t.Run(name, func(t *testing.T) {
-			answerBudgetOf(t, 200*time.Millisecond)
-			h, host, release := gatedHostRun(t, inspectPaused(t, "wf_1", stalePauseReason))
+			h, host, release := gatedHostRun(t, inspectPaused(t, "wf_1", stalePauseReason), withAnswerBudget(200*time.Millisecond))
 			parked := make(chan struct{})
 			host.onStart = sync.OnceFunc(func() { close(parked) })
 			healed := make(chan resumeOutcome, 1)
@@ -1121,6 +1121,7 @@ func TestRunRequestVerbs_BehindAHealOnAnUnansweredLoadAnswersRunHostSlow(t *test
 // A person's verb queued behind another person's verb parked on the load answers within its own budget, counted from
 // when it was asked, not from when it got the run.
 func TestRunRequestVerbs_QueuedBehindAParkedVerbAnswerWithinTheirOwnBudget(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		reply func(t *testing.T) json.RawMessage
@@ -1167,7 +1168,7 @@ func TestRunRequestVerbs_QueuedBehindAParkedVerbAnswerWithinTheirOwnBudget(t *te
 			// The first verb's budget outlasts the test, so it holds the run until its caller leaves.
 			var taken atomic.Int32
 			deadlines := make(chan time.Time, 4)
-			answerDeadlineOf(t, func() time.Time {
+			answerDeadlineOf(h, func() time.Time {
 				if taken.Add(1) == 1 {
 					return time.Now().Add(time.Minute)
 				}
@@ -1225,24 +1226,19 @@ func TestRunRequestVerbs_QueuedBehindAParkedVerbAnswerWithinTheirOwnBudget(t *te
 	}
 }
 
-// answerDeadlineOf replaces answerDeadline for one test, which must not run in parallel.
-func answerDeadlineOf(t *testing.T, f func() time.Time) {
-	t.Helper()
-	prev := answerDeadline
-	answerDeadline = f
-	t.Cleanup(func() { answerDeadline = prev })
-}
+// answerDeadlineOf replaces h's answer deadline (lifetime.answerDeadline) with f.
+func answerDeadlineOf(h *Runtime, f func() time.Time) { h.lifecycle.answerBy = f }
 
 // kiro-cli can leave `_kiro/workflow/inspect` unanswered too; a person's verb answers inside the browser's budget
 // that it changed nothing.
 func TestRunRequestVerbs_AnUnansweredInspectAnswersRunStateUnread(t *testing.T) {
+	t.Parallel()
 	for name, call := range personRunVerbs() {
 		t.Run(name, func(t *testing.T) {
 			// The bubble's clock moves only while every goroutine waits, so the budget runs out on the held inspect
 			// and never on a stalled scheduler while the verb takes the run's lock.
 			synctest.Test(t, func(t *testing.T) {
-				answerBudgetOf(t, 200*time.Millisecond)
-				h, br := leasedNonResident(t, inspectPaused(t, "wf_1", ""))
+				h, br := leasedNonResident(t, inspectPaused(t, "wf_1", ""), withAnswerBudget(200*time.Millisecond))
 				gate := make(chan struct{})
 				br.setBlockOn(methodKiroWorkflowInspect, gate)
 				t.Cleanup(func() { close(gate) })
@@ -1264,8 +1260,9 @@ func TestRunRequestVerbs_AnUnansweredInspectAnswersRunStateUnread(t *testing.T) 
 
 // The heal has nobody waiting on it: a load slower than the browser's budget still lets its answer land.
 func TestHealAnswer_WaitsForASlowLoadPastTheRequestBudget(t *testing.T) {
-	answerBudgetOf(t, 200*time.Millisecond)
-	h, host, release := gatedHostRun(t, oneStepInspect(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused, "sess_step"))
+	t.Parallel()
+	h, host, release := gatedHostRun(t, oneStepInspect(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused, "sess_step"),
+		withAnswerBudget(200*time.Millisecond))
 	h.runs.RunNodeStart(t.Context(), reviewStep("sess_step"), "")
 	a, err := h.runs.admitRunWork(holdClosed, "wf_1", "")
 	if err != nil {
@@ -1308,7 +1305,7 @@ func TestResidentUntil_AReplayTimeoutOfTheLoadIsRunHostSlow(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := setup(t)
 
-			_, release, err := h.runs.residentUntil(answerDeadline())(t.Context(), "wf_1")
+			_, release, err := h.runs.residentUntil(h.lifecycle.answerDeadline())(t.Context(), "wf_1")
 			release()
 
 			if !errors.Is(err, errRunHostSlow) {
@@ -1322,6 +1319,7 @@ func TestResidentUntil_AReplayTimeoutOfTheLoadIsRunHostSlow(t *testing.T) {
 }
 
 func TestControlHandler_AnUnansweredLoadIs503WithTheSentence(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		reply  func(t *testing.T) json.RawMessage
@@ -1369,8 +1367,7 @@ func TestControlHandler_AnUnansweredLoadIs503WithTheSentence(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			answerBudgetOf(t, 200*time.Millisecond)
-			h, _, _ := gatedHostRun(t, tc.reply(t))
+			h, _, _ := gatedHostRun(t, tc.reply(t), withAnswerBudget(200*time.Millisecond))
 			mux := http.NewServeMux()
 			h.runRoutes.register(mux)
 

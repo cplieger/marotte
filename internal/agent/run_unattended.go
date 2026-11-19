@@ -30,9 +30,6 @@ import (
 // `_BACKGROUND_APPROVAL_TIMEOUT_SECS`. Nonzero: the user may be watching.
 const unattendedApprovalBudget = 180 * time.Second
 
-// unattendedAskBudget is the floor's wait on one ask: unattendedApprovalBudget, a var for tests.
-var unattendedAskBudget = unattendedApprovalBudget
-
 // maxToolNameBytes bounds the tool name in the log attribute and the schedule row, both one-line and persisted on every fire.
 const maxToolNameBytes = 128
 
@@ -81,10 +78,6 @@ var reasonSilent = "had a step that sent nothing for " +
 var reasonCancelRefused = "reached a limit that stops it, but kiro-cli refused the cancel " +
 	strconv.Itoa(1+maxCancelRetries) + " times, so it may still be running. Cancel it from its run page"
 
-// unattendedPauseBudget is how long a scheduled run may sit paused with no resume before it is ended
-// (endUnattended): an unattended ask's budget, which also outlasts the three heals' backoff. A var for tests.
-var unattendedPauseBudget = unattendedApprovalBudget
-
 const logMsgRunPausedUnattended = "scheduled run paused with nobody to resume it; cancelling"
 
 // The row's text for endUnattended, by the pause it found and what it waited out.
@@ -124,7 +117,7 @@ func (rs *Runs) permissionWithUnattendedFloor(inner askHandler) askHandler {
 		name := permissionAskName(msg.Params)
 		// A timer parks no goroutine and is a no-op once answered: both paths claim from the tracker.
 		params := msg.Params
-		rs.lifecycle.afterUnlessDraining(unattendedAskBudget, func() {
+		rs.lifecycle.afterUnlessDraining(rs.unattendedAskBudget, func() {
 			rs.answerUnattended(chatID, origin, acpID, &l, delegated, name, params)
 		})
 	}
@@ -243,14 +236,15 @@ func unattendedRefusalReason(label string, asker refusedAsk) string {
 	}
 }
 
-// watchUnattendedPause ends a scheduled run unattendedPauseBudget after this pause, unless an arm since resumed it.
+// watchUnattendedPause ends a scheduled run Runs.unattendedPauseBudget after this pause, unless an arm since resumed
+// it.
 func (rs *Runs) watchUnattendedPause(workflowID string) {
 	l, held := rs.lease(workflowID)
 	if !held || !l.Unattended {
 		return
 	}
 	seq := rs.lastArmSeq(workflowID)
-	rs.lifecycle.afterUnlessDraining(unattendedPauseBudget, func() {
+	rs.lifecycle.afterUnlessDraining(rs.unattendedPauseBudget, func() {
 		if rs.lastArmSeq(workflowID) != seq {
 			return
 		}
@@ -280,7 +274,7 @@ func (rs *Runs) endUnattended(ctx context.Context, workflowID string, req *runRe
 	if !rs.claimTermination(workflowID) {
 		return nil
 	}
-	reason, waitedKey, waited := reasonPausedFault, "budget", any(unattendedPauseBudget)
+	reason, waitedKey, waited := reasonPausedFault, "budget", any(rs.unattendedPauseBudget)
 	switch {
 	case req.want == healResume:
 		reason, waitedKey, waited = reasonHealsSpent, "heals", maxAutoHeals

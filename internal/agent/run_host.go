@@ -78,12 +78,12 @@ var errLaunchNewUnconfirmed = errors.New("the engine's answer to the launch was 
 var launchTimeout = 120 * time.Second
 
 // launch starts one parentless attended run of the recipe for POST /api/runs and returns its workflow id, its name and
-// KAS's launch warnings. Every step before workflow/new answers within clientAnswerBudget; sent, when set, runs just
+// KAS's launch warnings. Every step before workflow/new answers within lifetime.answerBudget; sent, when set, runs just
 // before workflow/new is written.
 func (rs *Runs) launch(
 	ctx context.Context, source string, inputs map[string]string, defaults marotte.RunDefaults, sent func(),
 ) (id, name string, warnings []string, err error) {
-	return rs.launchAs(ctx, source, inputs, defaults, manualLaunch(), &launchRequest{sent: sent, prepareBy: clientAnswerBudget})
+	return rs.launchAs(ctx, source, inputs, defaults, manualLaunch(), &launchRequest{sent: sent, prepareBy: rs.lifecycle.answerBudget})
 }
 
 // LaunchScheduled launches an unattended run for a schedule. slotAt is its next slot; zero leaves the idle window.
@@ -909,7 +909,7 @@ func (rs *Runs) answerInput(ctx context.Context, workflowID, askID, text string,
 	if c == nil {
 		return errAskGone
 	}
-	host, releaseHost, err := rs.residentUntil(answerDeadline())(ctx, workflowID)
+	host, releaseHost, err := rs.residentUntil(rs.lifecycle.answerDeadline())(ctx, workflowID)
 	defer releaseHost()
 	if err != nil {
 		return err
@@ -1482,9 +1482,9 @@ func (rs *Runs) resumeChainRuns(ctx context.Context, chatID marotte.ChatID, ende
 // maxAutoHeals bounds automatic resumes between two pieces of progress; a fourth try against a dead network says nothing.
 const maxAutoHeals = 3
 
-// healBaseDelay is the first automatic resume's delay, doubling (5s, 10s, 20s), so a deliberate cancel
-// can land first. A var for tests.
-var healBaseDelay = 5 * time.Second
+// defaultHealBaseDelay is the first automatic resume's delay, doubling (5s, 10s, 20s), so a deliberate cancel
+// can land first. Runs.healBaseDelay carries it.
+const defaultHealBaseDelay = 5 * time.Second
 
 // healRecheckWait bounds how long a question pause's heal waits for its step's turn end, which KAS streams on the
 // step's session and so can land after the pause frame. A var for tests.
@@ -1554,7 +1554,7 @@ func (rs *Runs) scheduleHeal(ctx context.Context, chatID marotte.ChatID, f *paus
 		})
 		return
 	}
-	delay := healBaseDelay * time.Duration(1<<spent)
+	delay := rs.healBaseDelay * time.Duration(1<<spent)
 	level, what := slog.LevelInfo, "scheduling the automatic resume of an involuntarily paused run"
 	if plan == healRecheck {
 		level, what = slog.LevelDebug, "scheduling a re-read of a step's question pause, which a throttle may have caused"

@@ -40,7 +40,7 @@ func TestMessageStep_AReaderLeavingAfterTheWriteKeepsTheWordsKASTook(t *testing.
 			ctx, cancel := context.WithCancel(t.Context())
 			done := make(chan error, 1)
 			go func() {
-				_, err := h.runs.messageStep(ctx, h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, "carry on", "m-20", "", nil)
+				_, err := h.runs.messageStep(ctx, h.runs.residentUntil(h.lifecycle.answerDeadline()), "wf_1", reviewPath, "carry on", "m-20", "", nil)
 				done <- err
 			}()
 			waitForCall(t, br, marotte.MethodPrompt)
@@ -72,11 +72,11 @@ func TestMessageStep_AnEngineExitBeforeItsReplyRecordsTheWordsOnceAndARetrySends
 	h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	br.setCallErr(marotte.MethodPrompt, &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true})
 
-	_, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, "carry on", "m-21", "", nil)
+	_, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(h.lifecycle.answerDeadline()), "wf_1", reviewPath, "carry on", "m-21", "", nil)
 	if err == nil {
 		t.Fatal("MessageStep whose host session died before replying = nil, want an error the composer keeps the id for")
 	}
-	out, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, "carry on", "m-21", "", nil)
+	out, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(h.lifecycle.answerDeadline()), "wf_1", reviewPath, "carry on", "m-21", "", nil)
 	if err != nil || out.Verb != marotte.RunStepMessagePrompt {
 		t.Fatalf("retried MessageStep = (%+v, %v), want verb prompt from the first send", out, err)
 	}
@@ -124,7 +124,7 @@ func TestDelete_AfterAnUnconfirmedSendClearsItsRetryRecord(t *testing.T) {
 		<-deleted
 		s.set("deleted")
 
-		out, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, "carry on", "m-30", "", nil)
+		out, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(h.lifecycle.answerDeadline()), "wf_1", reviewPath, "carry on", "m-30", "", nil)
 		if err == nil {
 			t.Errorf("retried MessageStep after Delete = (%+v, nil), want an error: the run is gone", out)
 		}
@@ -143,10 +143,10 @@ func TestMessageStep_AnUndecodedAnswerRecordsTheWordsAsSent(t *testing.T) {
 	br.setCallErr(marotte.MethodPrompt, fmt.Errorf("%w: %w", marotte.ErrReplyUndecoded,
 		&marotte.RPCError{Code: marotte.RPCCodeParseError, Message: "marotte could not decode kiro-cli's answer"}))
 
-	if _, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, "carry on", "m-51", "", nil); !errors.Is(err, errStepUnconfirmed) {
+	if _, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(h.lifecycle.answerDeadline()), "wf_1", reviewPath, "carry on", "m-51", "", nil); !errors.Is(err, errStepUnconfirmed) {
 		t.Fatalf("MessageStep whose answer could not be decoded = %v, want errStepUnconfirmed", err)
 	}
-	if _, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, "carry on", "m-51", "", nil); err != nil {
+	if _, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(h.lifecycle.answerDeadline()), "wf_1", reviewPath, "carry on", "m-51", "", nil); err != nil {
 		t.Errorf("the same message sent again = %v, want it answered from the record", err)
 	}
 	if n := promptCount(br); n != 1 {
@@ -161,7 +161,7 @@ func TestMessageStep_ARetryAfterDeleteIsNotAnsweredFromTheDeletedRun(t *testing.
 	h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	s := newStepScript(t, br, "paused")
 	br.setCallErr(marotte.MethodPrompt, &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true})
-	if _, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, "carry on", "m-31", "", nil); !errors.Is(err, errStepUnconfirmed) {
+	if _, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(h.lifecycle.answerDeadline()), "wf_1", reviewPath, "carry on", "m-31", "", nil); !errors.Is(err, errStepUnconfirmed) {
 		t.Fatalf("Setup: MessageStep whose host session died before replying = %v, want errStepUnconfirmed", err)
 	}
 
@@ -170,7 +170,7 @@ func TestMessageStep_ARetryAfterDeleteIsNotAnsweredFromTheDeletedRun(t *testing.
 	}
 	s.set("deleted")
 
-	out, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, "carry on", "m-31", "", nil)
+	out, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(h.lifecycle.answerDeadline()), "wf_1", reviewPath, "carry on", "m-31", "", nil)
 	if err == nil {
 		t.Errorf("retried MessageStep after Delete = (%+v, nil), want an error: the run is gone", out)
 	}
@@ -211,7 +211,7 @@ func TestMessageStep_ARetryDuringADeleteIsNotAnsweredFromTheRecord(t *testing.T)
 	t.Parallel()
 	h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	br.setCallErr(marotte.MethodPrompt, &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true})
-	if _, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, "carry on", "m-42", "", nil); !errors.Is(err, errStepUnconfirmed) {
+	if _, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(h.lifecycle.answerDeadline()), "wf_1", reviewPath, "carry on", "m-42", "", nil); !errors.Is(err, errStepUnconfirmed) {
 		t.Fatalf("Setup: MessageStep whose host session died before replying = %v, want errStepUnconfirmed", err)
 	}
 	held := make(chan struct{})
@@ -222,7 +222,7 @@ func TestMessageStep_ARetryDuringADeleteIsNotAnsweredFromTheRecord(t *testing.T)
 	go func() { deleted <- h.runs.delete(t.Context(), "wf_1") }()
 	waitForCall(t, br, methodKiroWorkflowDelete)
 
-	out, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, "carry on", "m-42", "", nil)
+	out, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(h.lifecycle.answerDeadline()), "wf_1", reviewPath, "carry on", "m-42", "", nil)
 	close(held)
 	if dErr := <-deleted; dErr != nil {
 		t.Fatalf("Delete = %v, want nil", dErr)

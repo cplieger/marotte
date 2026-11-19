@@ -17,15 +17,16 @@ const fiveTiersMeta = `{"kiro":{"hasEffort":true,"defaultEffortLevel":"medium","
 // switchFixture is a started chat on fake-model at medium with a live idle bridge, whose catalog
 // offers fake-model and model-a the five tiers, and whose seed for model-a is medium: another chat's
 // pick, which a switch must not read over the level this chat picked.
-func switchFixture(t *testing.T) (*effortDrift, *Runtime) {
+func switchFixture(t *testing.T, opts ...Option) (*effortDrift, *Runtime) {
 	t.Helper()
-	return switchFixtureOver(t, func(cs *testChatStore) chatRecords { return cs })
+	return switchFixtureOver(t, func(cs *testChatStore) chatRecords { return cs }, opts...)
 }
 
 // switchFixtureOver is switchFixture with the runtime reading the chat through over's store.
-func switchFixtureOver(t *testing.T, over func(*testChatStore) chatRecords) (*effortDrift, *Runtime) {
+func switchFixtureOver(t *testing.T, over func(*testChatStore) chatRecords, opts ...Option) (*effortDrift, *Runtime) {
 	t.Helper()
 	d := newEffortDrift(t)
+	d.opts = opts
 	writeEffortSeed(t, d.dir, map[string]string{"fake-model": "medium", "model-a": "medium"})
 	h := d.bootOver(t, over(d.cs))
 	t.Cleanup(func() { shutdownHub(t, h) })
