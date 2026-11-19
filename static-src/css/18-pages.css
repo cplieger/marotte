@@ -39,7 +39,8 @@
   margin: 0;
 }
 
-.section-title {
+/* A status row pads above its title instead (17-settings.css). */
+.section-title:where(:not(.section-title-status-row > *)) {
   padding-block-start: var(--sp-4);
 }
 
@@ -917,12 +918,17 @@ label.toggle-inline:has(> .toggle) {
   max-inline-size: 100%;
 }
 
+/* Alone on its line under the name, it has no baseline to meet, so it keeps its untrimmed
+   line box (15-input.css trims a row's runs) and the hit its height. */
 .tool-hit-desc {
+  min-block-size: auto;
+  padding-block: 0;
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-box: normal;
 }
 
 /* Chips sit on their OWN line under the name, so every row's chips start at
@@ -945,6 +951,9 @@ label.toggle-inline:has(> .toggle) {
   border-radius: var(--r);
   padding-inline: var(--sp-1);
   line-height: 1.4;
+
+  /* Its untrimmed height (15-input.css trims it): its line box and the 1px borders. */
+  min-block-size: calc(1lh + 2px);
 }
 
 /* The modal's FOOTER rather than a row appended to the result set: inside the

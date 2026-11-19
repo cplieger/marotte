@@ -6,6 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { flushFrames } from "./frame-dispatch.js";
 import { init, markHydrated, _resetForTest } from "./sse-adapter.js";
 import { createScriptedFetch, type ScriptedFetch } from "./__test-helpers__/sse-fetch.js";
 import { until } from "./__test-helpers__/until.js";
@@ -128,8 +129,9 @@ describe("the adapter holds frames until the chat store is hydrated", () => {
     expect(seen).toEqual([]);
 
     markHydrated();
-    // Order is preserved, and order is load-bearing: an entry_delta released before the
-    // entry_opened it extends is a hole, which costs a range read to repair.
+    // The release applies as one frame batch. Order is preserved, and order is load-bearing: an
+    // entry_delta released before the entry_opened it extends is a hole, which costs a range read.
+    await until(() => seen.length === 3, "the held frames to apply");
     expect(seen).toEqual(["connected", "pending_snapshot", "permission_needed"]);
   });
 
@@ -154,6 +156,8 @@ describe("the adapter holds frames until the chat store is hydrated", () => {
     markHydrated();
     markHydrated();
     markHydrated();
+    flushFrames();
+    flushFrames();
     expect(seen).toEqual(["pending_snapshot"]);
   });
 

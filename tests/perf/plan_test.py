@@ -45,6 +45,34 @@ BROWSER_WINDOWS = ['cold', 'rest', 'live', 'away', 'back']
 STREAM_WINDOWS = {'live', 'away'}
 SERVER_UNIT = {'engine': 'server', 'width': 'none'}
 UNIT_FIELDS = ('scenario', 'scale', 'engine', 'width')
+# The pull request's performance job finishes in about 25 minutes. Besides its slowest shard's
+# cells it runs plan and build (104 s in cplieger/ci run 43683563629) and the shard's own setup
+# (at most 93 s there: checkout, Node, Playwright, the build artifact).
+PR_JOB_SECONDS = 25 * 60
+PR_SETUP_SECONDS = 104 + 93
+
+
+def longest_first(seconds: list[float], shards: int) -> list[float]:
+    """The shard loads perf_gate.py's plan gives: each cell, longest first, onto the
+    least-loaded shard."""
+    load = [0.0] * min(shards, len(seconds))
+    for s in sorted(seconds, reverse=True):
+        load[load.index(min(load))] += s
+    return load
+
+
+def pr_shard_problem(seconds: list[float], shards: int) -> str | None:
+    """Why a pr set of these cell seconds in this many shards does not fit the pull request's
+    job, or None when its slowest shard fits and one shard fewer would be slower."""
+    loads = longest_first(seconds, shards)
+    if max(loads) + PR_SETUP_SECONDS > PR_JOB_SECONDS:
+        return (
+            f'the slowest shard, {max(loads):g} s plus {PR_SETUP_SECONDS} s of setup, is over '
+            f"the pull request job's {PR_JOB_SECONDS} s: {loads}"
+        )
+    if shards > 1 and max(longest_first(seconds, shards - 1)) <= max(loads):
+        return f'{shards - 1} shards are as fast as {shards}: {loads}'
+    return None
 
 
 def load_plan() -> dict:
@@ -133,6 +161,52 @@ class Plan(unittest.TestCase):
                     key = tuple(cell[f] for f in UNIT_FIELDS)
                     self.assertNotIn(key, seen)
                     seen.add(key)
+
+    def test_a_cell_s_runs_is_a_whole_number_from_one_to_three(self):
+        for set_name, spec in self.plan['sets'].items():
+            for cell in spec['cells']:
+                with self.subTest(set=set_name, cell=cell):
+                    runs = cell.get('runs', 1)
+                    self.assertIsInstance(runs, int)
+                    self.assertNotIsInstance(runs, bool)
+                    self.assertIn(runs, (1, 2, 3))
+
+    def test_the_trend_measures_twice_the_units_noisy_at_one_run(self):
+        # Each holds a cell over its threshold in more than 1 % of one-run points.
+        want = {
+            ('shell', 'x1', 'chromium', 'desktop'),
+            ('shell', 'x1', 'webkit', 'phone'),
+            ('git-prs', 'x10', 'chromium', 'phone'),
+            ('files', 'x10', 'webkit', 'desktop'),
+        }
+        cells = self.plan['sets']['full']['cells']
+        twice = {tuple(c[f] for f in UNIT_FIELDS) for c in cells if c.get('runs', 1) == 2}
+        self.assertEqual(twice, want)
+        self.assertFalse([c for c in cells if c.get('runs', 1) > 2])
+        self.assertFalse([c for c in self.plan['sets']['pr']['cells'] if 'runs' in c])
+
+    def test_the_pr_sets_slowest_shard_fits_the_pull_requests_job(self):
+        s = self.plan['sets']['pr']
+        self.assertIsNone(pr_shard_problem([c['seconds'] for c in s['cells']], s['shards']))
+
+    def test_a_pr_cell_takes_less_than_its_full_set_twin_that_adds_a_profiled_rep(self):
+        full = {
+            tuple(c[f] for f in UNIT_FIELDS): c
+            for c in self.plan['sets']['full']['cells']
+            if c.get('profile')
+        }
+        for c in self.plan['sets']['pr']['cells']:
+            twin = full.get(tuple(c[f] for f in UNIT_FIELDS))
+            if twin and 'windows' not in c:
+                with self.subTest(cell=c):
+                    self.assertLess(c['seconds'], twin['seconds'])
+
+    def test_a_pr_set_over_the_job_or_with_a_shard_too_many_is_named(self):
+        over = pr_shard_problem([PR_JOB_SECONDS - PR_SETUP_SECONDS + 1, 60], 2)
+        self.assertRegex(over, r'slowest shard, .* is over the pull request')
+        spare = pr_shard_problem([100, 10, 10], 3)
+        self.assertRegex(spare, r'2 shards are as fast as 3')
+        self.assertIsNone(pr_shard_problem([600, 300, 300], 2))
 
     def test_every_scenario_is_in_both_sets(self):
         for set_name in ('pr', 'full'):

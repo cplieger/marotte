@@ -463,10 +463,12 @@
 
 /* In each of these rows every single-line text run is trimmed, since a trimmed run and an
  * untrimmed one beside it do not share a baseline. A run is a span or label holding text and no
- * icon or classed element, a time, a bdi or an output. Padded to 1lh, each centres its cap band; lowered by
- * the row's cap height less its own, a smaller run's baseline meets the row font's, so a row's
- * font is its largest run's. text-alignment.test.ts holds each row to one trim state and one
- * baseline. */
+ * icon or classed element, a time, a bdi or an output. Padded to 1lh, each centres its cap band;
+ * moving half the row's cap height less its own from its end padding to its start lowers a
+ * smaller run's baseline onto the row font's, so a row's font is its largest run's. The box stays
+ * 1lh in any layout (a margin grows a column and shrinks a stretched grid item), its floor
+ * making up the layout unit two rounded paddings can lose. text-alignment.test.ts holds each row
+ * to one trim state and one baseline. */
 :where(
   .list-row,
   .fb-row,
@@ -483,15 +485,15 @@
   /* stylelint-disable-next-line selector-max-pseudo-class -- the :where() wrappers that hold this at zero specificity count too */
   & :where(:where(span, label):not(:empty, :has(> svg, > [class])), time, bdi, output) {
     text-box: trim-both cap alphabetic;
-    padding-block: calc((1lh - 1cap) / 2);
-    margin-block-start: calc(var(--row-cap) - 1cap);
+    padding-block: calc((1lh + var(--row-cap)) / 2 - 1cap) calc((1lh - var(--row-cap)) / 2);
+    min-block-size: 1lh;
   }
 }
 
 /* The labels a box or a leading control centres on, and a field row's labels beside its status
- * row's, trimmed and padded as the rows' runs above. Only the chip in a tool name's wrap is
- * lowered (14-tools.css): the rest sit beside runs of their own size or none. A diff row's marker
- * and code go with its line number. */
+ * row's, trimmed and padded evenly to 1lh, which replaces the lowering a listed row gives its runs.
+ * Only the chip in a tool name's wrap is lowered (14-tools.css): the rest sit beside runs of their
+ * own size or none. A diff row's marker and code go with its line number. */
 :where(
   .section-field > .section-option-label,
   .mcp-result-name,
@@ -508,7 +510,7 @@
 ) {
   text-box: trim-both cap alphabetic;
   padding-block: calc((1lh - 1cap) / 2);
-  margin-block-start: 0;
+  min-block-size: 1lh;
 }
 
 /* Context pill: its share as text, inked along the compaction ramp (`context-indicator.ts` `contextInk`). */

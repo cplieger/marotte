@@ -643,13 +643,14 @@ false} on an observer pass (SessionSpawn.MemoryFromDevice is false). KAS reads i
 through U$ (data.memory), not isSettingEnabled, so a sent value is {mode,
 reflection}, never the {enabled} object.
 
-Withheld so kiro-cli 3.4.0's chooseSessionMemory takes the device Memory choice: a
+Withheld so KAS's chooseSessionMemory takes the device Memory choice: a
 session/new with no memory field and no userMemoryOptIn opt-out reads the
-memoryMode and memoryReflection rows KAS keeps at user-local for the signed-in
-account (deviceMemorySettings), the same rows kiro-cli's terminal UI and marotte's
-Memory dropdown write (PUT /api/memory/mode), and falls back to {disabled,
-reflection: false} when neither is stated. So marotte keeps no memory store and a
-choice made in either client applies to the other's new chats. A loaded session
+memoryMode and memoryReflection rows as composed for the signed-in account
+(deviceMemorySettings), user-local where kiro-cli's terminal UI and marotte's
+Memory dropdown write them (PUT /api/memory/mode), and falls back to {disabled,
+reflection: false} for a row no layer states. So marotte keeps no memory store, a
+choice made in either client applies to the other's new chats, and the dropdown
+shows the same composed value the session takes. A loaded session
 keeps the memory config its record holds, so the choice applies to new chats only.
 
 An observer pass sends disabled so a read-only pass never injects memories or

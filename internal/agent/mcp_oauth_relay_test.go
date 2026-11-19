@@ -61,8 +61,9 @@ func postRelay(t *testing.T, h *Runtime, server, pasted string) *httptest.Respon
 // callbackListener stands in for KAS's redirect listener, recording the query so a test proves the code arrived verbatim.
 type callbackListener struct {
 	srv     *httptest.Server
-	status  int
 	gotCode string
+	gotPath string
+	status  int
 	gotHits int
 }
 
@@ -72,6 +73,7 @@ func newCallbackListener(t *testing.T, status int) *callbackListener {
 	l.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		l.gotHits++
 		l.gotCode = r.URL.Query().Get("code")
+		l.gotPath = r.URL.Path
 		w.WriteHeader(l.status)
 		_, _ = w.Write([]byte("you can close this window"))
 	}))
@@ -83,11 +85,17 @@ func newCallbackListener(t *testing.T, status int) *callbackListener {
 // staging another server leaves it standing), the user presses Sign in, and KAS opens the consent URL.
 func stageFlow(t *testing.T, h *Runtime, server, listenerURL, state string) {
 	t.Helper()
+	stageConsent(t, h, server, authURLFor(t, listenerURL, state))
+}
+
+// stageConsent is stageFlow with the consent URL KAS opens given whole.
+func stageConsent(t *testing.T, h *Runtime, server, authURL string) {
+	t.Helper()
 	reportMCP(t, h, marotte.SessionID("sess-"+server), oauthMCP(server, "https://provider.example/passive"))
 	if _, err := h.mcpRegistry.claimSignIn(t.Context(), server); err != nil {
 		t.Fatalf("claimSignIn(%s) = %v", server, err)
 	}
-	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: authURLFor(t, listenerURL, state), Server: server}, false); shown.how != consentOnRow || shown.server != server {
+	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: authURL, Server: server}, false); shown.how != consentOnRow || shown.server != server {
 		t.Fatalf("anchorConsentURL = %+v, want on %s's row", shown, server)
 	}
 }
@@ -113,6 +121,39 @@ func TestOAuthRelay_DeliversAStrandedCallback(t *testing.T) {
 		t.Errorf("listener hits = %d, want exactly 1", l.gotHits)
 	}
 	// Verbatim, or the token exchange fails.
+	if l.gotCode != "the-code" {
+		t.Errorf("listener saw code %q, want %q", l.gotCode, "the-code")
+	}
+}
+
+// kiro-cli 3.5 advertises /kiro-mcp/oauth/callback for a server config naming none of clientId, clientMetadataUrl
+// and redirectUri (acp-server.js callbackUrlFor), and its listener answers only that path.
+func TestOAuthRelay_DeliversOnTheKiroMCPCallbackPath(t *testing.T) {
+	l := newCallbackListener(t, http.StatusOK)
+	h := newHubWithMCPConfig(t, nil)
+	lu, err := url.Parse(l.srv.URL)
+	if err != nil {
+		t.Fatalf("parse listener URL %q: %v", l.srv.URL, err)
+	}
+	callback := "http://127.0.0.1:" + lu.Port() + "/kiro-mcp/oauth/callback"
+	stageConsent(t, h, "linear", "https://provider.example/authorize?"+url.Values{
+		"client_id":     {"marotte-test"},
+		"response_type": {"code"},
+		"redirect_uri":  {callback},
+		"state":         {"st-abc"},
+	}.Encode())
+
+	rec := postRelay(t, h, "linear", callback+"?code=the-code&state=st-abc")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	if l.gotHits != 1 {
+		t.Errorf("listener hits = %d, want exactly 1", l.gotHits)
+	}
+	if l.gotPath != "/kiro-mcp/oauth/callback" {
+		t.Errorf("listener saw path %q, want /kiro-mcp/oauth/callback", l.gotPath)
+	}
 	if l.gotCode != "the-code" {
 		t.Errorf("listener saw code %q, want %q", l.gotCode, "the-code")
 	}
@@ -762,6 +803,26 @@ func TestValidateRelayAddress(t *testing.T) {
 		},
 		"a loopback port KAS never advertised is refused": {
 			pasted: "http://127.0.0.1:9999/oauth/callback?code=abc&state=" + state,
+			want:   errRelayTargetDrift,
+		},
+		"kiro-cli 3.5's default-client callback path": {
+			pasted: "http://" + host + "/kiro-mcp/oauth/callback?code=abc&state=" + state,
+			auth: "https://provider.example/authorize?" + url.Values{
+				"redirect_uri": {"http://" + host + "/kiro-mcp/oauth/callback"},
+				"state":        {state},
+			}.Encode(),
+			want: nil,
+		},
+		"an /oauth/callback paste against a /kiro-mcp/ advertisement is refused": {
+			pasted: "http://" + host + "/oauth/callback?code=abc&state=" + state,
+			auth: "https://provider.example/authorize?" + url.Values{
+				"redirect_uri": {"http://" + host + "/kiro-mcp/oauth/callback"},
+				"state":        {state},
+			}.Encode(),
+			want: errRelayTargetDrift,
+		},
+		"a /kiro-mcp/ paste against an /oauth/callback advertisement is refused": {
+			pasted: "http://" + host + "/kiro-mcp/oauth/callback?code=abc&state=" + state,
 			want:   errRelayTargetDrift,
 		},
 		"a path KAS never advertised is refused": {

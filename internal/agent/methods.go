@@ -106,7 +106,7 @@ const (
 const (
 	methodKiroMemoryGetImportPrompt = "_kiro/memory/getImportPrompt" // {} → {prompt}
 	methodKiroMemoryImport          = "_kiro/memory/import"          // {content: JSONL} → {totalLines, added[], duplicates[], skipped[], failed[]}
-	methodKiroMemoryExport          = "_kiro/memory/export"          // {} → {format, content: a kiro-memory document, recordCount}
+	methodKiroMemoryExport          = "_kiro/memory/export"          // {} → {format: "jsonl", content: JSONL, recordCount}
 )
 
 // keyContent is the text key of fs/read_text_file's answer and of the memory update and import params.

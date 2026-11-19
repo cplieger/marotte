@@ -1048,6 +1048,71 @@ describe("fillViewport", () => {
   });
 });
 
+describe("a resume or a fill asked for inside a held change", () => {
+  beforeEach(resetBetween);
+  afterEach(async () => {
+    scroll.resetScrollState();
+    await drained();
+  });
+
+  it("lands a resume once the change is complete, Following at the new end", async () => {
+    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
+    scroll.pressHold();
+    let inside: string | null = null;
+    scroll.heldMutation(() => {
+      scroll.scrollToBottom();
+      inside = scroll.readingState();
+      s.scrollHeight = 3000;
+    });
+    const after = { state: scroll.readingState(), reader: scroll.readerAt() };
+    await settle();
+
+    expect({ inside, ...after, top: s.scrollTop }).toEqual({
+      inside: "reading",
+      state: "following",
+      reader: null,
+      top: 2500,
+    });
+  });
+
+  it.each([
+    ["does not overflow", 500, 1],
+    ["overflows", 2000, 0],
+  ])("fills once after the change when the changed content %s", (_, height, loads) => {
+    const load = vi.fn();
+    const s = fakeScroller({ scrollHeight: 400, clientHeight: 500, scrollTop: 0 });
+    scroll.setLoadMore(load, true);
+    let inside = -1;
+    scroll.heldMutation(() => {
+      scroll.fillViewport();
+      inside = load.mock.calls.length;
+      s.scrollHeight = height;
+    });
+
+    expect({ inside, after: load.mock.calls.length }).toEqual({ inside: 0, after: loads });
+  });
+
+  it("drops the resume and the fill a change that threw asked for", () => {
+    const load = vi.fn();
+    fakeScroller({ scrollHeight: 400, clientHeight: 500, scrollTop: 0 });
+    scroll.setLoadMore(load, true);
+    scroll.pressHold();
+    expect(() => {
+      scroll.heldMutation(() => {
+        scroll.scrollToBottom();
+        scroll.fillViewport();
+        throw new Error("the change failed");
+      });
+    }).toThrow("the change failed");
+    scroll.heldMutation(() => undefined);
+
+    expect({ state: scroll.readingState(), loads: load.mock.calls.length }).toEqual({
+      state: "reading",
+      loads: 0,
+    });
+  });
+});
+
 // REAL LAYOUT. This section is the one that must not use `fakeScroller`, and the reason is
 // mechanical rather than stylistic: the fake shadows `scrollTo` with a plain assignment to its own
 // `scrollTop` number, which fires no `scroll` event.
@@ -3828,6 +3893,40 @@ describe("a fresh Following view's restore", () => {
       inTask: 2600,
       later: [],
       state: "following",
+    });
+  });
+});
+
+describe("a resume asked for inside a hold before the view's restore", () => {
+  beforeEach(realLayoutReset);
+  afterEach(() => {
+    scroll.attach({ el: messagesEl, scrollTop: 0, readingState: "following" });
+    scroll.applyPendingRestore();
+  });
+
+  it("lands the view Following at its end once the restore runs", async () => {
+    const wrap = realScroller();
+    const view = document.createElement("div");
+    for (let i = 0; i < 30; i++) {
+      const row = document.createElement("div");
+      row.style.cssText = "height:100px;";
+      view.appendChild(row);
+    }
+    messagesEl.replaceChildren(view);
+
+    scroll.attach({ el: view, scrollTop: 0, readingState: "reading" });
+    scroll.heldMutation(() => {
+      scroll.scrollToBottom();
+    });
+    const state = scroll.readingState();
+    scroll.applyPendingRestore();
+    await land();
+
+    // 30 rows of 100px in a 400px scrollport: the end is 2600.
+    expect({ state, top: wrap.scrollTop, after: scroll.readingState() }).toEqual({
+      state: "following",
+      top: 2600,
+      after: "following",
     });
   });
 });

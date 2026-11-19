@@ -160,7 +160,7 @@ func TestMemoryImport_UnreadableReportStillRefetches(t *testing.T) {
 func TestMemoryExport_NoContentIs502(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
-	br.setCallResult(methodKiroMemoryExport, json.RawMessage(`{"format":"json"}`))
+	br.setCallResult(methodKiroMemoryExport, json.RawMessage(`{"format":"jsonl"}`))
 
 	rec := serveMemoryRoute(h, httptest.NewRequest(http.MethodGet, "/api/memory/export", nil))
 	if rec.Code != http.StatusBadGateway {
@@ -174,8 +174,9 @@ func TestMemoryExport_NoContentIs502(t *testing.T) {
 func TestMemoryExport_DownloadsKASContentVerbatim(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
-	doc := "{\n  \"format\": \"kiro-memory\",\n  \"version\": 1,\n  \"recordCount\": 0,\n  \"records\": []\n}"
-	answer, err := json.Marshal(map[string]any{"format": "json", "content": doc, "recordCount": 0})
+	doc := `{"id":"a","memoryType":"fact","scope":"global","title":"t","summary":"s","content":"c"}` + "\n" +
+		`{"id":"b","memoryType":"fact","scope":"global","title":"u","summary":"s","content":"d"}` + "\n"
+	answer, err := json.Marshal(map[string]any{"format": "jsonl", "content": doc, "recordCount": 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,11 +189,11 @@ func TestMemoryExport_DownloadsKASContentVerbatim(t *testing.T) {
 	if rec.Body.String() != doc {
 		t.Errorf("body = %q, want KAS's document verbatim", rec.Body.String())
 	}
-	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		t.Errorf("Content-Type = %q, want application/json", ct)
+	if ct := rec.Header().Get("Content-Type"); ct != "application/jsonl" {
+		t.Errorf("Content-Type = %q, want application/jsonl", ct)
 	}
-	disposition := regexp.MustCompile(`^attachment; filename="kiro-memories-\d{4}-\d{2}-\d{2}\.json"$`)
+	disposition := regexp.MustCompile(`^attachment; filename="kiro-memories-\d{4}-\d{2}-\d{2}\.jsonl"$`)
 	if cd := rec.Header().Get("Content-Disposition"); !disposition.MatchString(cd) {
-		t.Errorf("Content-Disposition = %q, want an attachment kiro-memories-<date>.json", cd)
+		t.Errorf("Content-Disposition = %q, want an attachment kiro-memories-<date>.jsonl", cd)
 	}
 }

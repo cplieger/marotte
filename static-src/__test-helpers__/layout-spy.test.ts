@@ -38,6 +38,19 @@ describe("layout spy", () => {
     ]);
   });
 
+  it("numbers each logged access by its index in the window's log", () => {
+    const el = box();
+    spy = installLayoutSpy();
+    spy.begin();
+    void el.scrollTop;
+    const at = spy.logged();
+    el.style.height = "140px";
+    void el.clientHeight;
+    const { log } = spy.end();
+    expect(at).toBe(1);
+    expect(log[at]?.what).toBe("clientHeight");
+  });
+
   it("discards the writes made before begin", () => {
     const el = box();
     spy = installLayoutSpy();

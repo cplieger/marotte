@@ -129,7 +129,7 @@ func (f *fakeNotifier) openTurn(ctx context.Context, chatID marotte.ChatID, prom
 	}
 	f.turns.setLive(chatID, true)
 	if f.eng != nil {
-		f.eng.TurnOpened(chatID, opened.ID, prompt.Caller)
+		f.eng.TurnOpened(chatID, opened.ID, marotte.TurnSourcePrompt, prompt.Caller, false)
 	}
 	return nil
 }
@@ -316,7 +316,7 @@ func (h *harness) scan() { h.store.List(h.t.Context()) }
 // start builds the engine and runs it until the test ends.
 func (h *harness) start() {
 	h.t.Helper()
-	h.eng = New(Deps{
+	h.eng = New(&Deps{
 		Store:    h.fs,
 		Notifier: h.notes,
 		Enter: func() (func(), bool) {
@@ -396,7 +396,7 @@ func (h *harness) takeQueuedRow(chatID marotte.ChatID, tap bool) {
 	}
 	h.turns.setLive(chatID, true)
 	if tap {
-		h.eng.TurnOpened(chatID, opened.ID, row.Caller)
+		h.eng.TurnOpened(chatID, opened.ID, marotte.TurnSourcePrompt, row.Caller, false)
 	}
 	synctest.Wait()
 }

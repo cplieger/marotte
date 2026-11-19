@@ -111,7 +111,8 @@ type PermissionNeededPayload struct {
 	// RejectionNote names the note the card offers with reject_once; empty means none.
 	RejectionNote RejectionNote `json:"rejection_note,omitempty"`
 	// ClassifierNote is _meta.kiro.trustClassifier's reason: Kiro's safety check did not clear the
-	// call and handed it to a person. Unattended runs refuse such an ask.
+	// call and handed it to a person. Both unattended floors, a scheduled or triggered run's and an
+	// automatic Bot turn's, refuse such an ask.
 	ClassifierNote string             `json:"classifier_note,omitempty"`
 	Options        []PermissionOption `json:"options"`
 	// Locations are the workspace-relative paths the tool call touches.

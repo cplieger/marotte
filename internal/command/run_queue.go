@@ -142,15 +142,16 @@ type runQueue interface {
 	// names.
 	SummaryLaunched(chatID marotte.ChatID, entryID string, res Reservation, turnID string, err error)
 	// SendNow moves the row to the front and stops the turn stop names while it is the lone live turn (hasStop false
-	// names RunView.Cancel's target).
-	SendNow(ctx context.Context, chatID marotte.ChatID, id, stop string, hasStop bool) (RunStop, error)
+	// names RunView.Cancel's target). stamp is where the press's intent began: a close since refuses it.
+	SendNow(ctx context.Context, chatID marotte.ChatID, stamp uint64, id, stop string, hasStop bool) (RunStop, error)
 	// ClearNext undoes a send-now whose stop was not delivered.
 	ClearNext(chatID marotte.ChatID, id string)
 	// Unqueue removes a waiting row; a row whose turn starts or runs, or whose steer is being sent, answers
 	// ErrRowSending, a steer kiro-cli holds ErrRowInKAS, an unknown id nil.
 	Unqueue(ctx context.Context, chatID marotte.ChatID, id string) error
-	// Resume lets the rows a stop paused go in order, and a row sent from now on joins the queue unpaused.
-	Resume(ctx context.Context, chatID marotte.ChatID) error
+	// Resume lets the rows a stop paused go in order, and a row sent from now on joins the queue unpaused. stamp is
+	// where the press's intent began: a close since refuses it.
+	Resume(ctx context.Context, chatID marotte.ChatID, stamp uint64) error
 	// Stop stops the live entry target names, or RunView.Cancel's with target "".
 	Stop(ctx context.Context, chatID marotte.ChatID, target string) RunStop
 	// StopUndone restores what a stop whose session/cancel was not delivered marked.
@@ -169,33 +170,35 @@ func (d *Dispatcher) LaunchEntry(ctx context.Context, chatID marotte.ChatID, l *
 }
 
 // SteerEntry routes a run-list entry the chat's list offered into its running turn and sends it, under the chat's
-// steer lock. A refusal class answers that nothing was sent; kiro-cli's answer is the record's to report.
-func (d *Dispatcher) SteerEntry(ctx context.Context, chatID marotte.ChatID, s *EntrySteer) (refuse string) {
+// steer lock. A refusal class answers that nothing was sent; kiro-cli's answer is the record's to report. accepted
+// is kiro-cli's queued reply to the send carrying the entry: false for no send, a drop or a failed call.
+func (d *Dispatcher) SteerEntry(ctx context.Context, chatID marotte.ChatID, s *EntrySteer) (refuse string, accepted bool) {
 	if d == nil || d.prompts == nil {
-		return SteerRefuseNoTurn
+		return SteerRefuseNoTurn, false
 	}
 	return steerEntry(ctx, d.prompts, chatID, s)
 }
 
-func steerEntry(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, s *EntrySteer) (refuse string) {
+func steerEntry(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, s *EntrySteer) (refuse string, accepted bool) {
 	unlock, err := roles.queue.LockSteerOps(ctx, chatID)
 	if err != nil {
-		return SteerRefuseNoTurn
+		return SteerRefuseNoTurn, false
 	}
 	defer unlock()
 	t := roles.steerTarget(chatID)
 	sends, refuse := t.Queue.RouteEntry(chatID, s, steerHolder(roles, chatID))
 	if refuse != "" {
-		return refuse
+		return refuse, false
 	}
 	key := marotte.SteerIDFor(s.Entry)
 	_ = issueSteers(ctx, t, sends, "", func(snd SteerSend, queued bool, err error) {
 		t.Queue.SteerSent(t.Key, snd, queued, err)
 		if queued && err == nil && (snd.ID == key || slices.Contains(snd.Keys, key)) {
+			accepted = true
 			slog.Info("queued message steered", "chat_id", chatID, "message_id", s.Entry)
 		}
 	})
-	return ""
+	return "", accepted
 }
 
 func launchEntry(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, l *EntryLaunch) (string, error) {

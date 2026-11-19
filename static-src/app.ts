@@ -243,9 +243,7 @@ function init(): void {
   });
   installMirrors();
 
-  sse.init((evt: ServerEvent) => {
-    dispatch(evt);
-  }, onTransportStatus);
+  sse.init((evt: ServerEvent) => dispatch(evt), onTransportStatus);
 
   installStoreSubscribers();
 

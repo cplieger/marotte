@@ -72,7 +72,7 @@ func cmdMergeTangent(ctx context.Context, tangents TangentAccess, merges *tangen
 		}
 		return mergeReply(mergeStatusOf(&rec)), nil
 	}
-	parent, messageID, err := admitMerge(ctx, tangents, merges, key)
+	parent, messageID, err := admitMerge(ctx, tangents, merges, key, cmd.From)
 	if err != nil {
 		merges.release(key)
 		return nil, err
@@ -93,10 +93,14 @@ func mergeReply(s mergeStatus) map[string]any {
 	return responseWith(extra)
 }
 
-// admitMerge hands key's claim to the background half once the summary turn is admitted.
-func admitMerge(ctx context.Context, tangents TangentAccess, merges *tangentMerges, key mergeKey) (marotte.ChatID, string, error) {
+// admitMerge hands key's claim to the background half once the summary turn is admitted. A merge from an outside
+// caller, from, is a message into both chats: a tangent or a parent the user closed refuses it (Membership.BeginMessage).
+func admitMerge(ctx context.Context, tangents TangentAccess, merges *tangentMerges, key mergeKey, from *marotte.Caller) (marotte.ChatID, string, error) {
 	roles := merges.roles
-	stamp := roles.admission.LifeStamp()
+	stamp, err := roles.door.BeginMessage(ctx, key.tangent, from, roles.admission.LifeStamp)
+	if err != nil {
+		return "", "", err
+	}
 	tangent, ok := roles.chats.Get(ctx, key.tangent)
 	if !ok {
 		return "", "", StatusError(http.StatusNotFound, ErrChatNotFound)
@@ -111,6 +115,11 @@ func admitMerge(ctx context.Context, tangents TangentAccess, merges *tangentMerg
 		slog.Warn("tangent merge: the parent could not be resolved", "chat_id", key.tangent, keyError, err)
 		return "", "", StatusError(http.StatusServiceUnavailable, errMergeParentUnread)
 	}
+	if from != nil {
+		if _, err = roles.door.BeginMessage(ctx, parent, from, roles.admission.LifeStamp); err != nil {
+			return "", "", err
+		}
+	}
 	// Like the TUI, a busy tangent is refused rather than queued: the summary must be the
 	// next answer.
 	out, res, entryID := roles.runq.TakeIdle(ctx, key.tangent, IdleSummary, stamp, AdmissionWait)
@@ -118,7 +127,7 @@ func admitMerge(ctx context.Context, tangents TangentAccess, merges *tangentMerg
 		return "", "", StatusErrorReason(http.StatusConflict, reasonBusy, errMergeTangentBusy)
 	}
 	deliveryID := ids.NewMessageID()
-	if admitErr := merges.admit(ctx, key, parent, deliveryID); admitErr != nil {
+	if admitErr := merges.admit(ctx, key, parent, deliveryID, from); admitErr != nil {
 		roles.admission.ReleaseTurnReservation(res)
 		roles.runq.SummaryLaunched(key.tangent, entryID, res, "", admitErr)
 		slog.Error("tangent merge: the merge could not be recorded", "chat_id", key.tangent, keyError, admitErr)
@@ -137,7 +146,9 @@ func admitMerge(ctx context.Context, tangents TangentAccess, merges *tangentMerg
 		}
 		return "", "", err
 	}
-	m := &tangentMerge{merges: merges, tangents: tangents, key: key, parent: parent, deliveryID: deliveryID, title: tangent.Name}
+	m := &tangentMerge{
+		merges: merges, tangents: tangents, from: from, key: key, parent: parent, deliveryID: deliveryID, title: tangent.Name,
+	}
 	mergeCtx, cancel := roles.lifecycle.TurnContext(ctx)
 	go func() {
 		defer roles.lifecycle.InflightDone()
@@ -160,6 +171,7 @@ var errMergeInProgress = errors.New("this merge is still starting")
 type tangentMerge struct {
 	merges     *tangentMerges
 	tangents   TangentAccess
+	from       *marotte.Caller
 	key        mergeKey
 	parent     marotte.ChatID
 	deliveryID string
@@ -179,7 +191,7 @@ func (m *tangentMerge) finish(ctx context.Context, turnID string) {
 			return
 		}
 	}
-	m.merges.conclude(durable.Context(ctx), m.key, m.parent, failure)
+	m.merges.conclude(durable.Context(ctx), m.key, m.parent, m.from, failure)
 }
 
 // merge hands the summary of turnID to the parent under the recorded delivery id.
@@ -189,7 +201,7 @@ func (m *tangentMerge) merge(ctx context.Context, turnID string) (failure string
 		slog.Warn("tangent merge: the summary could not be read", "chat_id", m.key.tangent, "turn", turnID, keyError, err)
 		return "The tangent's summary could not be read, so nothing was merged.", true
 	}
-	return m.merges.deliver(ctx, m.parent, &marotte.PromptCommand{
+	return m.merges.deliver(ctx, m.parent, m.from, &marotte.PromptCommand{
 		Text:        mergedFindingsText(m.title, summary),
 		MessageID:   m.deliveryID,
 		DisplayText: displayLabel(`Merging findings from tangent "` + m.title + `"`),

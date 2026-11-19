@@ -265,7 +265,7 @@ func TestDecodeModelFallbackSetting(t *testing.T) {
 	}
 }
 
-// TestDeviceMemoryView_Choice pins the reduction kiro-cli 3.4.0's terminal UI applies to the two device rows
+// TestDeviceMemoryView_Choice pins the reduction kiro-cli's terminal UI applies to the two device rows
 // (mode ?? disabled, reflection ?? off, read_write plus reflection on reads as learn) and the lock naming.
 func TestDeviceMemoryView_Choice(t *testing.T) {
 	row := func(setting, value, compose, assertion string) string {

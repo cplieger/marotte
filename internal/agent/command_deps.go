@@ -223,8 +223,8 @@ func (rt *Runtime) SummaryLaunched(chatID marotte.ChatID, entryID string, res co
 }
 
 // SendNow moves a queued row to the front and stops the turn the press was drawn against.
-func (rt *Runtime) SendNow(ctx context.Context, chatID marotte.ChatID, id, stop string, hasStop bool) (command.RunStop, error) {
-	return rt.coord.SendNow(ctx, chatID, id, stop, hasStop)
+func (rt *Runtime) SendNow(ctx context.Context, chatID marotte.ChatID, stamp uint64, id, stop string, hasStop bool) (command.RunStop, error) {
+	return rt.coord.SendNow(ctx, chatID, stamp, id, stop, hasStop)
 }
 
 // ClearNext undoes a send-now whose stop was not delivered.
@@ -236,8 +236,8 @@ func (rt *Runtime) Unqueue(ctx context.Context, chatID marotte.ChatID, id string
 }
 
 // Resume lets the rows a stop paused go in order.
-func (rt *Runtime) Resume(ctx context.Context, chatID marotte.ChatID) error {
-	return rt.coord.Resume(ctx, chatID)
+func (rt *Runtime) Resume(ctx context.Context, chatID marotte.ChatID, stamp uint64) error {
+	return rt.coord.Resume(ctx, chatID, stamp)
 }
 
 // Stop stops the live entry target names.

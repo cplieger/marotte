@@ -1808,9 +1808,9 @@ a.subagent-header {
 }
 
 /* A chip's label is a run of its row, lowered as the row's runs are (15-input.css) so
-   its baseline meets the name's. */
+   its baseline meets the name's. The margins cancel, so the wrap's line keeps its height. */
 .tool-name-wrap .tool-source-chip {
-  margin-block-start: calc(var(--row-cap) - 1cap);
+  margin-block: calc((var(--row-cap) - 1cap) / 2) calc((1cap - var(--row-cap)) / 2);
 }
 
 /* The wrap owns the flex slot, so the name inside it needs no share of the

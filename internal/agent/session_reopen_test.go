@@ -302,6 +302,8 @@ var configWrites = []struct {
 	{key: settings.KeyLastModel, value: "model-b-4", reach: reachNewChat},
 	{key: settings.KeyLastEffortByModel, value: map[string]string{"model-b-4": "high"}, reach: reachNewChat},
 	{key: settings.KeyScheduledAutoApprove, value: true, reach: reachNoChat},
+	// The Bot floor reads it at each answer it gives.
+	{key: settings.KeyBotAutoApprove, value: true, reach: reachNoChat},
 	// The trigger launcher reads both at each launch.
 	{key: "trigger_max_live_runs", value: 4, reach: reachNoChat},
 	{key: "trigger_max_launches_per_hour", value: 4, reach: reachNoChat},

@@ -17,7 +17,7 @@ var (
 	leaseDirRe        = regexp.MustCompile(`\.dirname\(this\.sessionsPath\),"([^"]+)"\)`)
 	leaseClientNameRe = regexp.MustCompile(`leaseClientName\(\)\{return [\w$]+\(this\.clientInfo\?\.title\)\?\?`)
 	leaseSchemaRe     = regexp.MustCompile(`\{v:[\w$]+\.literal\(1\),pid:[\w$]+,parentPid:[\w$]+,instanceId:[\w$]+,` +
-		`hostId:[^,{}]+,acquiredAt:[^,{}]+,token:[\w$]+,clientName:`)
+		`hostId:[^,{}]+,sandboxId:[^,{}]+,acquiredAt:[^,{}]+,token:[\w$]+,clientName:`)
 	leaseParseStampRe = regexp.MustCompile(`function [\w$]+\(\w+\)\{if\(!\(\w+\.length>([\w$]+)\)\)try\{let \w+=[\w$]+\.safeParse\(JSON\.parse\(\w+\)\)`)
 )
 
@@ -71,7 +71,7 @@ func TestSessionLeaseStampExtractors(t *testing.T) {
 	const src = `this.sessionLeases=new Sen({dir:op.join(op.dirname(this.sessionsPath),"session-leases"),fs:{}});` +
 		`leaseClientName(){return $I(this.clientInfo?.title)??$I(this.clientInfo?.name)}` +
 		`var ffd=1,q=2;var ffd=4096,hfd=100,bfd=x.object({v:x.literal(1),pid:yfd,parentPid:wfd,instanceId:M3s,` +
-		`hostId:x.string().min(1).max(255),acquiredAt:x.string().min(1).max(40),token:M3s,clientName:x.string().optional()});` +
+		`hostId:x.string().min(1).max(255),sandboxId:x.string().min(1).max(255).optional(),acquiredAt:x.string().min(1).max(40),token:M3s,clientName:x.string().optional()});` +
 		`function qwe(t){if(!(t.length>ffd))try{let e=bfd.safeParse(JSON.parse(t));return e.success?e.data:void 0}catch{return}}`
 	if m := leaseDirRe.FindStringSubmatch(src); m == nil || m[1] != "session-leases" {
 		t.Errorf("leaseDirRe = %v, want the planted session-leases", m)

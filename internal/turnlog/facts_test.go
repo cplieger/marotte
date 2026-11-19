@@ -56,6 +56,10 @@ func TestToolResultCarriesHowTheAskWasAnswered(t *testing.T) {
 			options: approvalOptions, asked: true, outcome: "cancelled",
 		},
 		{
+			name: "a rule-decided ask records nothing", kind: "tool_approval",
+			options: approvalOptions, asked: true, outcome: "rule_decided",
+		},
+		{
 			name:    "an answer to an ask the turn never saw records nothing",
 			outcome: "selected", selected: "always",
 		},

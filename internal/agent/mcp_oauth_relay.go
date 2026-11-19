@@ -1,12 +1,13 @@
 package agent
 
-// The MCP OAuth loopback relay. KAS runs the flow and binds its redirect listener on
-// `http://localhost:<port>/oauth/callback` in the container, which a remote browser cannot reach. The user
-// pastes the dead page's address and marotte replays the GET from inside, which completes only while that listener
-// waits: a Sign in (resetServer startOAuth) keeps one waiting, and so do a mid-session re-auth and the organization
-// sign-in, for 300 s each; KAS sends each consent URL over _kiro/openExternalUrl. The pasted address is untrusted; that URL is the anchor: the dial
-// target comes from its `redirect_uri` and `state` must match, or this unauthenticated route injects authorization
-// codes. Rewriting redirect_uri fails RFC 6749 §4.1.3.
+// The MCP OAuth loopback relay. KAS binds each sign-in's redirect listener on localhost in the container, out of a
+// remote browser's reach: a server's on an ephemeral port (`/kiro-mcp/oauth/callback` when its config names none of
+// clientId, clientMetadataUrl and redirectUri, a declared redirectUri's path, else `/oauth/callback`), the
+// organization sign-in's on `/oauth/callback` at the first free port of a fixed list. The user pastes the dead page's
+// address and marotte replays the GET from inside while that listener waits: a Sign in (resetServer startOAuth) keeps
+// one waiting, as do a mid-session re-auth and the organization sign-in for 300 s each, each consent URL sent over
+// _kiro/openExternalUrl. That URL anchors the untrusted paste: the dial target comes from its `redirect_uri` and
+// `state` must match, or this unauthenticated route injects codes. Rewriting redirect_uri fails RFC 6749 §4.1.3.
 
 import (
 	"context"

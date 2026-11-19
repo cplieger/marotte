@@ -37,6 +37,9 @@ const mergeInterrupted = "The merge stopped before its findings reached the chat
 
 const mergeParentGone = "The chat this tangent came from no longer exists, so nothing was merged."
 
+// mergeParentClosed is deliveryFailure's reason for an outside caller's merge into a parent the user closed.
+const mergeParentClosed = "That chat was closed by the user."
+
 type mergeKey struct {
 	tangent marotte.ChatID
 	op      string
@@ -118,9 +121,11 @@ func (m *tangentMerges) write(ctx context.Context, k mergeKey, fn func(recs []ma
 	return err
 }
 
-func (m *tangentMerges) admit(ctx context.Context, k mergeKey, parent marotte.ChatID, deliveryID string) error {
+func (m *tangentMerges) admit(ctx context.Context, k mergeKey, parent marotte.ChatID, deliveryID string, from *marotte.Caller) error {
 	return m.write(ctx, k, func(recs []marotte.TangentMerge) ([]marotte.TangentMerge, bool) {
-		return append(recs, marotte.TangentMerge{OpID: k.op, Parent: parent, DeliveryID: deliveryID, State: marotte.TangentMergeRunning}), true
+		return append(recs, marotte.TangentMerge{
+			OpID: k.op, Parent: parent, DeliveryID: deliveryID, State: marotte.TangentMergeRunning, From: from,
+		}), true
 	})
 }
 
@@ -161,15 +166,15 @@ func (m *tangentMerges) status(ctx context.Context, k mergeKey) mergeStatus {
 // resume settles a running record an ended process left, holding k's claim (the caller's) until it
 // has; its terminal frame reports the outcome.
 func (m *tangentMerges) resume(ctx context.Context, k mergeKey, rec *marotte.TangentMerge) {
-	parent, deliveryID := rec.Parent, rec.DeliveryID
+	parent, deliveryID, from := rec.Parent, rec.DeliveryID, rec.From
 	m.roles.lifecycle.InflightAdd(1)
 	rctx, cancel := m.roles.lifecycle.TurnContext(ctx)
 	go func() {
 		defer m.roles.lifecycle.InflightDone()
 		defer cancel()
 		defer m.release(k)
-		if failure, settled := m.reconcile(rctx, parent, deliveryID); settled {
-			m.conclude(durable.Context(rctx), k, parent, failure)
+		if failure, settled := m.reconcile(rctx, parent, deliveryID, from); settled {
+			m.conclude(durable.Context(rctx), k, parent, from, failure)
 		}
 	}()
 }
@@ -178,7 +183,7 @@ func (m *tangentMerges) resume(ctx context.Context, k mergeKey, rec *marotte.Tan
 // leaves the record running while that is retryable; a deleted parent fails it. A queued row or a
 // bound prompt was accepted; an unbound prompt is sent again under the same id; nothing under the id
 // means the merge ended before delivering.
-func (m *tangentMerges) reconcile(ctx context.Context, parent marotte.ChatID, deliveryID string) (failure string, settled bool) {
+func (m *tangentMerges) reconcile(ctx context.Context, parent marotte.ChatID, deliveryID string, from *marotte.Caller) (failure string, settled bool) {
 	if err := m.loader.LoadSession(ctx, parent); err != nil {
 		switch {
 		case parentGone(err):
@@ -206,7 +211,7 @@ func (m *tangentMerges) reconcile(ctx context.Context, parent marotte.ChatID, de
 	case receipt.Bound:
 		return "", true
 	case receipt.Opened:
-		return m.deliver(ctx, parent, &marotte.PromptCommand{Text: receipt.Text, MessageID: deliveryID, DisplayText: receipt.Label})
+		return m.deliver(ctx, parent, from, &marotte.PromptCommand{Text: receipt.Text, MessageID: deliveryID, DisplayText: receipt.Label})
 	}
 	return mergeInterrupted, true
 }
@@ -214,13 +219,19 @@ func (m *tangentMerges) reconcile(ctx context.Context, parent marotte.ChatID, de
 // deliver sends the findings under p.MessageID and answers "" once KAS holds them or the parent's run order lists
 // them, or the failure the user reads; settled is false when ctx ended before either was known. The findings are the
 // parent record's across its lives, so a close of the parent is waited out and the delivery lands in its next life;
-// a try that waited out no close counts.
-func (m *tangentMerges) deliver(ctx context.Context, parent marotte.ChatID, p *marotte.PromptCommand) (failure string, settled bool) {
+// a try that waited out no close counts. An outside caller's findings, from, go through the parent's message door, so a
+// parent the user closed fails the merge with mergeParentClosed.
+func (m *tangentMerges) deliver(ctx context.Context, parent marotte.ChatID, from *marotte.Caller, p *marotte.PromptCommand) (failure string, settled bool) {
 	for tries := 0; tries < 2; {
 		if _, err := m.roles.admission.AwaitNoClose(ctx, parent); err != nil {
 			return "", false
 		}
-		ans, err := m.roles.runq.Submit(ctx, parent, m.roles.admission.LifeStamp(), &Submission{
+		stamp, err := m.deliveryStamp(ctx, parent, from)
+		if err != nil {
+			slog.Info("tangent merge: an outside caller's findings were refused by the parent", "parent", parent, keyError, err)
+			return deliveryFailure(mergeParentClosed), true
+		}
+		ans, err := m.roles.runq.Submit(ctx, parent, stamp, &Submission{
 			Row:    marotte.QueuedPrompt{ID: p.MessageID, Text: p.Text, Label: p.DisplayText},
 			Origin: marotte.RunFromTangent, Kind: marotte.SendLabelled, NoSteer: true, Wait: true, Awaited: true,
 		})
@@ -241,6 +252,14 @@ func (m *tangentMerges) deliver(ctx context.Context, parent marotte.ChatID, p *m
 		return "", true
 	}
 	return deliveryFailure(""), true
+}
+
+// deliveryStamp is the findings' life stamp on parent: the message door's for an outside caller's merge, from.
+func (m *tangentMerges) deliveryStamp(ctx context.Context, parent marotte.ChatID, from *marotte.Caller) (uint64, error) {
+	if from == nil {
+		return m.roles.admission.LifeStamp(), nil
+	}
+	return m.roles.door.BeginMessage(ctx, parent, from, m.roles.admission.LifeStamp)
 }
 
 // closeMet reports whether a try met a close of the parent, which it then waits out; such a try does not count.
@@ -292,8 +311,8 @@ func deliveryFailure(reason string) string {
 
 // conclude publishes only an outcome this call committed, so a device never retires a merge whose
 // record still answers running; a failed write leaves it running for the next reader to resume. The
-// parent's tab reopens only for a merge that landed.
-func (m *tangentMerges) conclude(ctx context.Context, k mergeKey, parent marotte.ChatID, failure string) {
+// parent's tab reopens only for the page's merge (from nil) that landed: an outside caller reopens no chat.
+func (m *tangentMerges) conclude(ctx context.Context, k mergeKey, parent marotte.ChatID, from *marotte.Caller, failure string) {
 	state := marotte.TangentMergeSucceeded
 	if failure != "" {
 		state = marotte.TangentMergeFailed
@@ -305,7 +324,7 @@ func (m *tangentMerges) conclude(ctx context.Context, k mergeKey, parent marotte
 	if !settled {
 		return
 	}
-	if failure == "" {
+	if failure == "" && from == nil {
 		if _, err := m.mem.OpenTab(ctx, marotte.OpenTab{Kind: marotte.TabKindChat, Ref: string(parent)}, ""); err != nil {
 			slog.Warn("tangent merge: the parent's tab could not be reopened", "parent", parent, keyError, err)
 		}

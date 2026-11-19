@@ -254,9 +254,8 @@ describe("tools.ensure", () => {
 });
 
 describe("tools.search", () => {
-  // The pinned engine states neither additive field, so ABSENT must read as unstated, not as
-  // `matched: 0` or `apt_state: "unavailable"`.
-  it("leaves both additive fields absent when the engine states neither", async () => {
+  // ABSENT must read as unstated, not as `matched: 0` or `apt_state: "unavailable"`.
+  it("leaves the optional fields absent when the engine states none", async () => {
     mockFetch.mockResolvedValue(
       new Response(JSON.stringify({ results: [], apt_available: true, truncated: false }), {
         status: 200,
@@ -266,9 +265,27 @@ describe("tools.search", () => {
     expect(d).not.toBeNull();
     expect(d).not.toHaveProperty("apt_state");
     expect(d).not.toHaveProperty("matched");
-    // Everything the pinned engine DOES state still arrives.
+    expect(d).not.toHaveProperty("apt_reason");
     expect(d?.apt_available).toBe(true);
     expect(d?.truncated).toBe(false);
+  });
+
+  it("reads the apt reason the engine states with an unavailable apt", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          results: [],
+          apt_available: false,
+          apt_state: "unavailable",
+          apt_reason: "apt packages need the container to run as root",
+          truncated: false,
+        }),
+        { status: 200 },
+      ),
+    );
+    const d = await searchTools.dispatch({ q: "sl" });
+    expect(d?.apt_state).toBe("unavailable");
+    expect(d?.apt_reason).toBe("apt packages need the container to run as root");
   });
 
   it("reads both additive fields when the engine states them", async () => {
@@ -289,14 +306,15 @@ describe("tools.search", () => {
     expect(d?.matched).toBe(6627);
   });
 
-  // Not in the generated wire type yet, so a wrong-shaped value is unstated, never rendered.
-  it("treats a wrong-shaped additive field as unstated", async () => {
+  // The body is cast, not decoded, so a wrong-shaped value is unstated, never rendered.
+  it("treats a wrong-shaped optional field as unstated", async () => {
     mockFetch.mockResolvedValue(
       new Response(
         JSON.stringify({
           results: [],
           apt_available: true,
           apt_state: "warming",
+          apt_reason: { text: "root" },
           matched: "many",
           truncated: false,
         }),
@@ -305,6 +323,7 @@ describe("tools.search", () => {
     );
     const d = await searchTools.dispatch({ q: "rg" });
     expect(d).not.toHaveProperty("apt_state");
+    expect(d).not.toHaveProperty("apt_reason");
     expect(d).not.toHaveProperty("matched");
   });
 

@@ -92,8 +92,9 @@ type bridgeCoordinator struct {
 	resolveEnds func(context.Context, marotte.ChatID, command.TurnFence) `wiring:"optional"`
 	// launchEntry opens the turn of a run list entry the list's taker took (command.Dispatcher.LaunchEntry).
 	launchEntry func(context.Context, marotte.ChatID, *command.EntryLaunch) (string, error) `wiring:"optional"`
-	// sendEntrySteer routes and sends a row the run list offered as a steer (command.Dispatcher.SteerEntry).
-	sendEntrySteer func(context.Context, marotte.ChatID, *command.EntrySteer) string `wiring:"optional"`
+	// sendEntrySteer routes and sends a row the run list offered as a steer, answering the refusal and kiro-cli's
+	// acceptance (command.Dispatcher.SteerEntry).
+	sendEntrySteer func(context.Context, marotte.ChatID, *command.EntrySteer) (string, bool) `wiring:"optional"`
 	// takeEntryFates takes the steer record's fates of the run list's offered rows (steerRecords.takeEntryFates).
 	takeEntryFates func(marotte.ChatID) []entryFate `wiring:"optional"`
 	// steerFacts reads the steer queue's pending ends and change sequence for the run list (steerRecords.runFacts).
@@ -207,7 +208,7 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		launchEntry: func(ctx context.Context, chatID marotte.ChatID, l *command.EntryLaunch) (string, error) {
 			return h.dispatcher.LaunchEntry(ctx, chatID, l)
 		},
-		sendEntrySteer: func(ctx context.Context, chatID marotte.ChatID, s *command.EntrySteer) string {
+		sendEntrySteer: func(ctx context.Context, chatID marotte.ChatID, s *command.EntrySteer) (string, bool) {
 			return h.dispatcher.SteerEntry(ctx, chatID, s)
 		},
 		settleNotices:    h.runs.clearStaleNotices,
@@ -608,6 +609,7 @@ func (bc *bridgeCoordinator) openGeneration(
 		loaded, err := bc.tryLoadSession(ctx, chatID, sb, rec, so, held, stamp)
 		switch {
 		case loaded:
+			sb.recordOpenedPresets(so.Presets)
 			bc.settleResumed(ctx, lc, chatID, sb)
 			return
 		case err != nil:
@@ -649,6 +651,7 @@ func (bc *bridgeCoordinator) openGeneration(
 		return
 	}
 	bc.commitUnservedModel(ctx, chatID, held, session.ModelID())
+	sb.recordOpenedPresets(so.Presets)
 	// The session door's half of the supervised fail-open (the door's own assert is best-effort).
 	bc.reportSupervisedNotApplied(ctx, chatID, rec.SupervisedMode, session.SupervisedApplied())
 	sb.setReady()

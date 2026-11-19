@@ -9,7 +9,7 @@ import (
 
 // infoKindQueued is KAS's report that the chat's prompt waits for the engine's one execution slot, which another
 // session holds (AgentExecutionWaitingForActiveSlot, and getActiveSessionBlockingQueued on session/load). KAS alone
-// decides which executions wait (waitsForActiveSlot; on kiro-cli 3.4.0 only spec generation: Spec, Quick Spec, Bug
+// decides which executions wait (waitsForActiveSlot; from kiro-cli 3.4.0 only spec generation: Spec, Quick Spec, Bug
 // Fix), so marotte infers nothing from the chat's mode.
 const infoKindQueued = "queued"
 

@@ -652,3 +652,55 @@ tests:
       - eval_time: 40m
         alertname: MarotteRuleDeliveryFailing
         exp_alerts: []
+
+  - name: MarotteBotTurnNeedsApproval fires for a refused answer in the last 24 hours
+    interval: 1m
+    input_series:
+      - series: 'marotte_bot_unattended_answers_total{job="marotte",instance="a:9847",answer="refused"}'
+        values: "0x5 1x1500"
+      - series: 'marotte_bot_unattended_answers_total{job="marotte",instance="a:9847",answer="approved"}'
+        values: "0x5 1x1500"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: MarotteBotTurnNeedsApproval
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: MarotteBotTurnNeedsApproval
+        exp_alerts:
+          - exp_labels: {severity: warning, job: marotte, instance: "a:9847", answer: refused}
+            exp_annotations:
+              summary: "marotte refused a tool for a Bot turn nobody watched"
+              description: >
+                A Bot's rule started a turn, the agent asked to approve a tool
+                with nobody watching, and marotte refused it. Add a permission
+                rule for that tool, or set bot_auto_approve to true in
+                config.json to approve such requests.
+      - eval_time: 25h
+        alertname: MarotteBotTurnNeedsApproval
+        exp_alerts: []
+
+  - name: MarotteBotTurnSelfApproved fires for an approved answer in the last 24 hours
+    interval: 1m
+    input_series:
+      - series: 'marotte_bot_unattended_answers_total{job="marotte",instance="a:9847",answer="approved"}'
+        values: "0x5 2x1500"
+      - series: 'marotte_bot_unattended_answers_total{job="marotte",instance="a:9847",answer="refused"}'
+        values: "0x1505"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: MarotteBotTurnSelfApproved
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: MarotteBotTurnSelfApproved
+        exp_alerts:
+          - exp_labels: {severity: warning, job: marotte, instance: "a:9847", answer: approved}
+            exp_annotations:
+              summary: "marotte approved a tool for a Bot turn nobody watched"
+              description: >
+                A Bot's rule started a turn and marotte approved its tool
+                request with nobody watching, because bot_auto_approve is true
+                in config.json. A rule's prompt can carry text other people
+                wrote. Set it to false to refuse instead.
+      - eval_time: 25h
+        alertname: MarotteBotTurnSelfApproved
+        exp_alerts: []

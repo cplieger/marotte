@@ -14,7 +14,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// Frames in the shape KAS 3.4.0's CodeIndexStatusReporter sends (notification, storeStatus, buildStatus).
+// Frames in the shape KAS's CodeIndexStatusReporter sends (notification, storeStatus, buildStatus).
 const (
 	indexBuildingParse = `{"sessionId":"sess_a","workspaceRoot":"/tmp/work","store":{"state":"none"},` +
 		`"build":{"buildId":"b1","analysisScope":"structural-only","state":"running","phase":"parse","message":"Parsing 40 of 120 files"}}`

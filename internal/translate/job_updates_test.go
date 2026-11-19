@@ -8,7 +8,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// Frames in the shapes KAS 3.4.0 sends with the job shell on: LiveJobCards' jobCardUpdate (the move, then the end
+// Frames in the shapes KAS sends with the job shell on: LiveJobCards' jobCardUpdate (the move, then the end
 // with jobEndOf's record), JobUpdatePublisher's _kiro/job/update, the notice row JobEndNotifications broadcasts, and
 // sendContentChunk's _kiro/tools/content_chunk.
 

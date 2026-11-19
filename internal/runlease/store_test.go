@@ -679,6 +679,31 @@ func TestStore_SetParentSessionIDIsDurable(t *testing.T) {
 	}
 }
 
+func TestStore_SetDepthIsDurable(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	s, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := s.Put(t.Context(), &Lease{WorkflowID: "wf_1", Origin: OriginAgent, Depth: 2}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := s.SetDepth(t.Context(), "wf_1", 0); err != nil {
+		t.Fatalf("SetDepth: %v", err)
+	}
+	reopened, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if got, _ := reopened.Get("wf_1"); got.Depth != 0 {
+		t.Errorf("after a restart Depth = %d, want 0", got.Depth)
+	}
+	if err := s.SetDepth(t.Context(), "wf_gone", 0); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SetDepth on no lease = %v, want ErrNotFound", err)
+	}
+}
+
 // TestStore_HostSecuritySurvivesAReopenAndIsNeverShared pins the parentless run's launch presets across a full
 // restart, an empty Custom profile included, and that no caller can edit the stored copy.
 func TestStore_HostSecuritySurvivesAReopenAndIsNeverShared(t *testing.T) {

@@ -51,7 +51,7 @@ var (
 	memoryChoiceOrderRe = regexp.MustCompile(`function ` + jsIdent + `\((` + jsIdent + `),(` + jsIdent + `)\)\{if\((` + jsIdent +
 		`)\.source==="explicit"\)return\{[^;]*origin:"request"\};if\((` + jsIdent + `)\.optsOut\)return\{choice:\{config:` + jsIdent +
 		`\(\{\.\.\.(` + jsIdent + `)\.config,mode:"disabled"\}\),source:"explicit"\},origin:"optOut"\};let (` + jsIdent + `)=` +
-		jsIdent + `\(await (` + jsIdent + `)\.read\(\)\);return\{choice:(` + jsIdent + `),origin:`)
+		`await (` + jsIdent + `)\.read\(\);return\{choice:(` + jsIdent + `),origin:`)
 	memoryOptInVetoRe = regexp.MustCompile(`userOptIn:(` + jsIdent + `)\}=` + jsIdent + `;return ` + jsIdent + `\(\{treatment:` +
 		jsIdent + `,` + jsIdent + `:` + jsIdent + `\}\)\?(` + jsIdent + `)===!1\?\(` + jsIdent + `\("disabledByOptOut"\),!1\):\(` +
 		jsIdent + `\("enabled"\),!0\)`)

@@ -122,13 +122,14 @@ func (b *sessionInfoKiroBlock) UnmarshalJSON(data []byte) error {
 	// flat `_meta` (its workflowPlan) is declined unread; a live bracket's timestamp and
 	// boundarySource add nothing, the boundary being observed at the frame's own time. A
 	// context_usage's summarizationThreshold and breakdown are declined: the chat shows the
-	// percentage alone, and turn_completion's contextBreakdown is the finer measure.
+	// percentage alone, and turn_completion's contextBreakdown is the finer measure. A rule-decided
+	// close's rule and an ask copy's copy flag change nothing marotte does with the frame.
 	censusMeta("session_info_update._meta.kiro", data, reflect.TypeFor[sessionInfoKiroShadow](),
 		"errorType", "retryErrorType", "toolCallId", "outcome", "selectedOption",
 		"interactionType", "question", "options", "agentSubtaskId", "status", "_meta",
 		"stopReason", "stopDetails", "timestamp", "boundarySource",
 		"title", "conversationSummary", "truncated", "summarizationThreshold", "breakdown",
-		"consentRound")
+		"consentRound", "rule", "copy")
 	return nil
 }
 
