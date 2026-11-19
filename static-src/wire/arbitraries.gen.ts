@@ -3055,6 +3055,7 @@ const arbModel = fc.letrec<{
   SearchResponse: fc.record(
     {
       apt_state: fc.string(),
+      apt_reason: fc.string(),
       results: fc.array(tie("SearchHit"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       matched: fc.double({ noNaN: true, noDefaultInfinity: true }),
       apt_available: fc.boolean(),

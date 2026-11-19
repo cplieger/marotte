@@ -5004,6 +5004,10 @@ export const decodeSearchResponse: Decoder<SearchResponse> = (v) => {
     if ($v !== undefined && $v !== null) out.apt_state = reqStr(o, "apt_state", "$.search_response");
   }
   {
+    const $v = own(o, "apt_reason");
+    if ($v !== undefined && $v !== null) out.apt_reason = reqStr(o, "apt_reason", "$.search_response");
+  }
+  {
     const $v = own(o, "matched");
     if ($v !== undefined && $v !== null) out.matched = reqNum(o, "matched", "$.search_response");
   }

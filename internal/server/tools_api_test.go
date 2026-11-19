@@ -5,13 +5,17 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/toolbelt/v3"
+	"golang.org/x/sys/unix"
 )
 
 type switchableTools struct {
@@ -122,5 +126,72 @@ func TestToolsAPI_AnErrorBodyServedThroughTheMiddlewareStackCarriesTheRequestID(
 	}
 	if body.RequestID != logged {
 		t.Errorf("error body request_id = %q, want the access log's %q (body %s)", body.RequestID, logged, strings.TrimSpace(rec.Body.String()))
+	}
+}
+
+// aptRefusalHere is the reason toolbelt's docs give an apt install on this host: not root, or a
+// root filesystem dpkg cannot write. It skips where apt can install, or where there is no apt-get.
+func aptRefusalHere(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("apt-get"); err != nil {
+		t.Skip("no apt-get here, so this is not a Debian-derived host")
+	}
+	if os.Geteuid() != 0 {
+		return "apt packages need the container to run as root"
+	}
+	for _, dir := range []string{"/usr", "/var/lib/dpkg"} {
+		if unix.Access(dir, unix.W_OK) != nil {
+			return "apt packages need a writable root filesystem"
+		}
+	}
+	t.Skip("root on a writable root filesystem, where apt can install")
+	return ""
+}
+
+func TestToolsAPI_AnAptRowWhereAptCannotInstallSaysWhy(t *testing.T) {
+	want := aptRefusalHere(t)
+	dir := t.TempDir()
+	engine, err := toolbelt.New(&toolbelt.Config{ConfigDir: dir, ToolsDir: filepath.Join(dir, "tools")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(engine.Close)
+	api := &toolsAPI{src: &switchableTools{engine: engine}}
+	send := func(method, path, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		api.ServeHTTP(rec, req)
+		return rec
+	}
+	// A recorded version, as a row an earlier install left in tools.json carries, so the enable
+	// goes straight to the install rather than to resolving a latest version.
+	if rec := send(http.MethodPost, toolsAPIPrefix, `{"name":"sl","source":"apt:sl","version":"5.02-1","disabled":true}`); rec.Code != http.StatusAccepted {
+		t.Fatalf("Setup: POST the apt:sl template = %d %s, want 202", rec.Code, rec.Body.String())
+	}
+
+	rec := send(http.MethodPatch, toolsAPIPrefix+"/sl", `{"disabled":false}`)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("PATCH sl enabled = %d %s, want 202", rec.Code, rec.Body.String())
+	}
+	var reply struct {
+		Job *toolbelt.Job `json:"job"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &reply); err != nil || reply.Job == nil {
+		t.Fatalf("PATCH sl reply %q carries no job (decode error %v)", rec.Body.String(), err)
+	}
+	if _, err := engine.Wait(t.Context(), reply.Job.ID); err != nil {
+		t.Fatalf("wait for the install job: %v", err)
+	}
+	var inv toolbelt.Inventory
+	if err := json.Unmarshal(serveTools(t, api, toolsAPIPrefix).Body.Bytes(), &inv); err != nil {
+		t.Fatalf("decode the inventory: %v", err)
+	}
+	i := slices.IndexFunc(inv.Tools, func(r toolbelt.ToolInfo) bool { return r.Name == "sl" })
+	if i < 0 {
+		t.Fatalf("the inventory has no sl row: %+v", inv.Tools)
+	}
+	if got := inv.Tools[i].LastError; got != want {
+		t.Errorf("sl row last_error = %q, want %q", got, want)
 	}
 }
