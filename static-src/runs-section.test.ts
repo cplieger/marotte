@@ -65,7 +65,14 @@ vi.mock("./api-client.js", async (importOriginal) => {
 import { applyLiveRunFrame, registerRunStateDemand, reviseRun } from "./run-store.js";
 import { applyRunAsks } from "./run-asks.js";
 import { setSectionFolded } from "./device-view.js";
-import { openTab, closeTab, setTabPinned, tabIdFor, _resetForTest } from "./tabs.js";
+import {
+  openTab,
+  closeTab,
+  getActiveTabId,
+  setTabPinned,
+  tabIdFor,
+  _resetForTest,
+} from "./tabs.js";
 import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.js";
 import { ingestTabsChanged, listTabs, _resetTabsSyncForTest } from "./tabs-sync.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
@@ -780,6 +787,43 @@ describe("where focus goes", () => {
     expect(tabIdFor("run", "wf_seat_b")).toBe("");
     expect(names()).toEqual(["seat-b", "seat-a"]);
     expect(document.activeElement).toBe(link("seat-b"));
+  });
+
+  it("moves focus to the remaining row when a run ends while its open is refused", async () => {
+    launched("wf_gone_a", "gone-a", { started: 2 });
+    launched("wf_gone_b", "gone-b", { started: 1 });
+    await settle();
+    link("gone-b").focus();
+    tabServer.failNext("open_tab", 409, "too many tabs", "tabs_full");
+
+    link("gone-b").click();
+    frame("wf_gone_b", null);
+    await settleTabs();
+    await settle();
+
+    expect(tabIdFor("run", "wf_gone_b")).toBe("");
+    expect(names()).toEqual(["gone-a"]);
+    expect(document.activeElement).toBe(link("gone-a"));
+  });
+
+  it("lets the later of two clicks in flight decide where focus goes", async () => {
+    launched("wf_two_a", "two-a", { started: 2 });
+    launched("wf_two_b", "two-b", { started: 1 });
+    await settle();
+    tabServer.holdResponses();
+
+    link("two-a").focus();
+    link("two-a").click();
+    link("two-b").focus();
+    link("two-b").click();
+    tabServer.releaseResponses();
+    await settleTabs();
+    await settle();
+
+    const tab = tabIdFor("run", "wf_two_b");
+    expect(tab).not.toBe("");
+    expect(getActiveTabId()).toBe(tab);
+    expect(focusedTab()).toBe(tab);
   });
 });
 

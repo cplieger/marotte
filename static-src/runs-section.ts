@@ -16,7 +16,7 @@ import {
 } from "./run-store.js";
 import { focusRunPage, openRunView } from "./run-view.js";
 import type { SectionHeaderView } from "./section-header.js";
-import { sideSection } from "./side-section.js";
+import { type SideSection, sideSection } from "./side-section.js";
 import type { TabDotState } from "./store.js";
 import {
   dotPhrase,
@@ -108,20 +108,30 @@ function foldDot(): SectionHeaderView["dot"] {
   return { status: first.status, phrase: dotPhrase("run", first.status) };
 }
 
-async function open(row: Row): Promise<void> {
+/** Counts clicks, so only the latest one's open clears `opening` and moves focus. */
+let openGen = 0;
+
+async function open(row: Row, side: SideSection): Promise<void> {
+  const gen = ++openGen;
   opening = row.id;
+  const mark = side.markRow(row.id);
   try {
     await openRunView(row.id, row.label);
   } finally {
-    opening = "";
+    if (gen === openGen) {
+      opening = "";
+    }
+  }
+  if (gen !== openGen) {
+    return;
   }
   const tabID = tabIdFor("run", row.id);
   const focus = document.activeElement;
   const ours = focus === document.body || focus === row.link;
   if (tabID === "" || getActiveTabId() !== tabID) {
-    // A refused open painted nothing, so the row is still there; a re-seat meanwhile can have blurred it.
-    if (ours && focus === document.body && row.link.isConnected) {
-      row.link.focus();
+    // A refused open painted nothing; put focus back on the row, or the nearest stop if the row left meanwhile.
+    if (ours) {
+      side.restoreFocus(mark);
     }
     return;
   }
@@ -134,7 +144,7 @@ async function open(row: Row): Promise<void> {
   }
 }
 
-function makeRow(id: string): Row {
+function makeRow(id: string, side: SideSection): Row {
   const dot = statusDotEl();
   const name = el("bdi", { className: "runs-row-name" });
   const said = el("span", { className: "sr-only" });
@@ -153,7 +163,7 @@ function makeRow(id: string): Row {
       return;
     }
     e.preventDefault();
-    void open(row);
+    void open(row, side);
   });
   return row;
 }
@@ -190,7 +200,7 @@ export function initRunsSection(): void {
     for (const r of want) {
       let row = rows.get(r.id);
       if (row === undefined) {
-        row = makeRow(r.id);
+        row = makeRow(r.id, side);
         rows.set(r.id, row);
       }
       if (runState(r.id) === undefined) {
