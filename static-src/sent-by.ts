@@ -14,7 +14,7 @@ export function sentBy(caller: Caller): string {
 }
 
 /** The sender field a prompt and a search hit carry: an API caller's. */
-export interface Sender {
+interface Sender {
   readonly caller?: Caller | undefined;
 }
 
