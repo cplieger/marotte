@@ -1,0 +1,11 @@
+{
+ "last": {
+  "commit": "16f32141cff2b41ad8c0e8c15fa1ffce4e4d5ea8",
+  "date": "2026-11-19T14:46:11Z",
+  "run_url": "https://github.com/cplieger/marotte/actions/runs/44547162539",
+  "runner": "ubuntu-26.04"
+ },
+ "scenarios": {},
+ "schema": 1,
+ "series": "planted"
+}
