@@ -124,7 +124,7 @@ Docker checks `/healthz` every 30 seconds. The container shows healthy once maro
 - A banner says "Kiro refused the KIRO_API_KEY marotte signs in with". The key is wrong, revoked or expired. Replace it in marotte's environment, then restart marotte.
 - The page answers `403`. The address you typed is not in `ALLOWED_HOSTS`.
 - The container restarts in a loop with `another marotte instance holds this folder`. Two marotte containers share a volume, a `KIRO_HOME` or a tools folder. The log line names the folder. Give each container its own, or stop the other one.
-- A tool installed from **Settings** answers `command not found` in the **Shell** panel. Either the container runs as a user other than root, as the quick start does, or the log warns that marotte could not write `/etc/profile.d/10-marotte-path.sh`. Then the Shell panel's login shell may not search the tools folder. Run the tool by its full path, `/config/tools/bin/<tool>` (`bin/` under `MAROTTE_TOOLS_DIR` if you moved it), or see [How kiro-cli is installed](docs/how-it-works.md#how-kiro-cli-is-installed).
+- A tool installed from **Settings** answers `command not found` in `docker exec marotte bash -l`. That shell searches the default tools folder, `/config/tools/bin`, so it misses a folder `MAROTTE_TOOLS_DIR` moved. Run the tool by its full path, under `bin/` in that folder, or use the **Shell** panel, which searches it. [How kiro-cli is installed](docs/how-it-works.md#how-kiro-cli-is-installed) has the details.
 
 ## Monitoring
 

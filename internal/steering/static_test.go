@@ -16,13 +16,6 @@ func fakeEnv(t *testing.T, env map[string]string) {
 	t.Cleanup(func() { lookupEnv = prev })
 }
 
-func fakeUID(t *testing.T, uid int) {
-	t.Helper()
-	prev := geteuid
-	geteuid = func() int { return uid }
-	t.Cleanup(func() { geteuid = prev })
-}
-
 func TestWriteRuntime_PrintsTheLiveEnv(t *testing.T) {
 	fakeEnv(t, map[string]string{
 		"HOME":      "/h",
@@ -32,9 +25,8 @@ func TestWriteRuntime_PrintsTheLiveEnv(t *testing.T) {
 		"GOBIN":     "/g/bin",
 		"LANG":      "C.UTF-8",
 
-		"MAROTTE_PATH_DROPIN": "1",
+		"MAROTTE_LOGIN_PATH": "/t/bin:/t/go/bin:/a",
 	})
-	fakeUID(t, 0)
 	var b strings.Builder
 	writeRuntime(&b, "/cfg", "/t")
 	out := b.String()
@@ -50,7 +42,7 @@ func TestWriteRuntime_PrintsTheLiveEnv(t *testing.T) {
 		"`/t/bin` is the tools engine's single bin dir",
 		"`/t/bin/<tool>`",
 		"Pin `HOME=/h` on any command",
-		"sources `/etc/profile.d/10-marotte-path.sh`, which holds this start's PATH, so an installed tool resolves by bare name there too",
+		"sources `/etc/profile.d/10-marotte-path.sh`, which restores this start's PATH, so an installed tool resolves by bare name there too",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("writeRuntime output missing %q:\n%s", want, out)
@@ -86,8 +78,7 @@ func TestWriteRuntime_GoBinIsGopathBinOnlyWhenGopathIsTheToolsGo(t *testing.T) {
 // A server started without the image's entrypoint can run with the tools bin off PATH, so the doc
 // must not promise bare names.
 func TestWriteRuntime_ToolsBinOffPathSendsUsersToTheAbsolutePath(t *testing.T) {
-	fakeEnv(t, map[string]string{"HOME": "/h", "PATH": "/usr/bin:/bin"})
-	fakeUID(t, 1000)
+	fakeEnv(t, map[string]string{"HOME": "/h", "PATH": "/usr/bin:/bin", "MAROTTE_LOGIN_PATH": "/usr/bin:/bin"})
 	var b strings.Builder
 	writeRuntime(&b, "/cfg", "/srv/t")
 	out := b.String()
@@ -106,52 +97,28 @@ func TestWriteRuntime_ToolsBinOffPathSendsUsersToTheAbsolutePath(t *testing.T) {
 	}
 }
 
-// Only root may write /etc/profile.d, so under another uid a login shell's PATH comes from
-// /etc/profile alone and the doc must not promise bare names there.
-func TestWriteRuntime_NonRootLoginShellsGetTheAbsolutePath(t *testing.T) {
-	fakeEnv(t, map[string]string{"HOME": "/h", "PATH": "/t/bin:/usr/bin:/bin", "MAROTTE_PATH_DROPIN": "1"})
-	fakeUID(t, 1000)
-	var b strings.Builder
-	writeRuntime(&b, "/cfg", "/t")
-	out := b.String()
-	for _, want := range []string{
-		"`/t/bin` is the tools engine's single bin dir",
-		"takes its PATH from `/etc/profile`, which leaves out `/t/bin`: marotte runs as uid 1000, not root",
-		"runs an installed tool by its absolute path (`/t/bin/<tool>`). Pin `HOME=/h`",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("writeRuntime output missing %q:\n%s", want, out)
-		}
-	}
-	for _, bad := range []string{"resolves by bare name", "10-marotte-path.sh"} {
-		if strings.Contains(out, bad) {
-			t.Errorf("writeRuntime says %q for a non-root server:\n%s", bad, out)
-		}
-	}
-}
-
-// A root server whose entrypoint did not report a written drop-in (the write failed, or the binary
-// started without the entrypoint) must not promise bare names in a login shell.
-func TestWriteRuntime_RootWithoutAWrittenDropInGetsTheAbsolutePath(t *testing.T) {
-	for name, dropin := range map[string]*string{"unset": nil, "empty": new(""), "not 1": new("yes")} {
+// The drop-in restores MAROTTE_LOGIN_PATH, so a login shell searches the server's PATH only when
+// that variable holds it, which a server started without the entrypoint lacks.
+func TestWriteRuntime_LoginShellsWithoutTheServersPathGetTheAbsolutePath(t *testing.T) {
+	for name, loginPath := range map[string]*string{"unset": nil, "empty": new(""), "another PATH": new("/usr/bin:/bin")} {
 		t.Run(name, func(t *testing.T) {
 			env := map[string]string{"HOME": "/h", "PATH": "/t/bin:/usr/bin:/bin"}
-			if dropin != nil {
-				env["MAROTTE_PATH_DROPIN"] = *dropin
+			if loginPath != nil {
+				env["MAROTTE_LOGIN_PATH"] = *loginPath
 			}
 			fakeEnv(t, env)
-			fakeUID(t, 0)
 			var b strings.Builder
 			writeRuntime(&b, "/cfg", "/t")
 			out := b.String()
-			want := "may not search `/t/bin`: the entrypoint could not give `/etc/profile.d/10-marotte-path.sh` this " +
-				"start's PATH (the boot log's WARNING says why, or the server started without the entrypoint). There a " +
-				"user runs an installed tool by its absolute path (`/t/bin/<tool>`). Pin `HOME=/h`"
+			want := "may not search `/t/bin`: `/etc/profile.d/10-marotte-path.sh` restores PATH after Debian's " +
+				"`/etc/profile` assigns it from `MAROTTE_LOGIN_PATH`, which does not hold this server's PATH (the " +
+				"entrypoint sets it, so the server started without it). There a user runs an installed tool by its " +
+				"absolute path (`/t/bin/<tool>`). Pin `HOME=/h`"
 			if !strings.Contains(out, want) {
 				t.Errorf("writeRuntime output missing %q:\n%s", want, out)
 			}
 			if strings.Contains(out, "resolves by bare name") {
-				t.Errorf("writeRuntime promises bare names with no written drop-in:\n%s", out)
+				t.Errorf("writeRuntime promises bare names without the server's PATH in MAROTTE_LOGIN_PATH:\n%s", out)
 			}
 		})
 	}
