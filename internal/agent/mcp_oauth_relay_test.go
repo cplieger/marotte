@@ -126,8 +126,8 @@ func TestOAuthRelay_DeliversAStrandedCallback(t *testing.T) {
 	}
 }
 
-// kiro-cli 3.5 advertises /kiro-mcp/oauth/callback for a server config that declares no OAuth client
-// (acp-server.js callbackUrlFor), and its listener answers only that path.
+// kiro-cli 3.5 advertises /kiro-mcp/oauth/callback for a server config naming none of clientId, clientMetadataUrl
+// and redirectUri (acp-server.js callbackUrlFor), and its listener answers only that path.
 func TestOAuthRelay_DeliversOnTheKiroMCPCallbackPath(t *testing.T) {
 	l := newCallbackListener(t, http.StatusOK)
 	h := newHubWithMCPConfig(t, nil)
