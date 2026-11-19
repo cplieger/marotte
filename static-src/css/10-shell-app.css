@@ -239,8 +239,8 @@ body.sidebar-resizing {
       )
   );
 
-  /* The Open header, the list's inset and three tab rows, or what the rows that exist need where that
-     is less. Below the tab track's floor the grid holds the floor itself. */
+  /* The Open header, the list's inset and three tab rows, or what the rows shown need where that is
+     less. Below the tab track's floor the grid holds the floor itself. */
   --tabs-keep: min(
     var(--row-tap-dense) + var(--sp-1) + 3 * var(--tab-row-h) + 2 * var(--sp-05),
     var(--tabs-need)
@@ -307,7 +307,6 @@ body.sidebar-resizing {
     --pinned-n: 1;
   }
 
-  /* History's row you are on is More, while its page shows. */
   &:has([id="history-section"]:not([hidden])) {
     --history-on: 1;
   }
@@ -328,6 +327,7 @@ body.sidebar-resizing {
     --history-n: 0;
   }
 
+  /* History's row you are on is More, while its page shows. */
   &:has([id="history-list"][data-folded] > li > .active) {
     --history-n: 1;
   }

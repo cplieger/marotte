@@ -94,8 +94,6 @@ export function initHistorySection(): void {
     retentionOn.value = isRetentionEnabled();
   });
   const rows = new Map<string, Row>();
-  /** The refs as last drawn, newest first. */
-  let order: readonly string[] = [];
   const busy = new Map<string, "reopen" | "delete">();
   // A row says its clock only on its close's day, so each midnight redraws the list.
   const dayTurn = signal(0);
@@ -156,7 +154,7 @@ export function initHistorySection(): void {
     busy.set(ref, "delete");
     row.remove.setAttribute("aria-busy", "true");
     // A click that moves no focus (confirm.ts owns the WebKit case) can leave it outside the section: the row stands for it.
-    const mark = side.noteFocus() ?? { ref, control: 0, order };
+    const mark = side.noteFocus() ?? side.markRow(ref);
     deletePress.set(ref, lastPress());
     try {
       if (await deleteClosedChat(ref, row.label)) {
@@ -284,7 +282,6 @@ export function initHistorySection(): void {
       paintRow(row, entry, today);
       return { ref: entry.ref, li: row.li, controls: [row.button, row.remove] };
     });
-    order = entries.map((e) => e.ref);
     side.seat(seated);
     side.restoreFocus(mark, mark !== null && "ref" in mark ? deletePress.get(mark.ref) : undefined);
   });

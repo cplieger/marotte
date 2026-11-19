@@ -1025,10 +1025,17 @@ describe("on a short screen", () => {
     for (const t of tabServer.subjects()) {
       await setTabPinned(t.id, true);
     }
-    // Each pin is a round trip through the tab server, so under load the last frame can land late.
+    // Each pin is a round trip through the tab server, so under load any frame after the first can land late.
+    const want = tabServer.subjects().length;
     await expect
-      .poll(() => el("pinned-section").hidden, { message: "the Pinned section shows" })
-      .toBe(false);
+      .poll(
+        () =>
+          tabServer.subjects().every((t) => t.pinned) &&
+          el("pinned-list").querySelectorAll(".tab").length === want &&
+          el("tab-list").querySelector(".tab") === null,
+        { message: `all ${String(want)} tabs pinned and drawn under Pinned` },
+      )
+      .toBe(true);
     await rest();
   }
 

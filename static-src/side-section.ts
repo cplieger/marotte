@@ -44,6 +44,8 @@ export interface SideSectionOptions {
 
 export interface SideSection {
   noteFocus(): SectionFocus | null;
+  /** A mark at the first control of the row `ref`, in the rows' order as last seated. */
+  markRow(ref: string): SectionFocus;
   /** Draw `rows` in this order before the tail: drop the others, seat each only when out of place,
    *  then paint the fold and the header. A re-seat blurs the focused row: `restoreFocus` after. */
   seat(rows: readonly SectionRow[]): void;
@@ -98,6 +100,8 @@ export function sideSection(id: string, listId: string, o: SideSectionOptions): 
     }
     return { at: f };
   };
+
+  const markRow = (ref: string): SectionFocus => ({ ref, control: 0, order });
 
   const restoreFocus = (mark: SectionFocus | null, press?: Press | null): void => {
     const now = document.activeElement;
@@ -163,5 +167,5 @@ export function sideSection(id: string, listId: string, o: SideSectionOptions): 
     paintFold(folded);
   });
 
-  return { noteFocus, seat, restoreFocus };
+  return { noteFocus, markRow, seat, restoreFocus };
 }
