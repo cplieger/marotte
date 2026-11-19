@@ -78,9 +78,22 @@ func codeIndexBuildStatus(id, state, phase string) *marotte.CodeIndexStatusPaylo
 	}
 }
 
-// A lagging lane's copy of an earlier phase, or of an older build's frame, is refused; a later phase, a new build
-// and a terminal state are kept.
-func TestCodeIndexStatus_RefusesAnEarlierPhaseAndAnOlderBuild(t *testing.T) {
+// codeIndexStoreStatus is a /tmp/work status carrying no build, which KAS sends while its process has none.
+func codeIndexStoreStatus() *marotte.CodeIndexStatusPayload {
+	return &marotte.CodeIndexStatusPayload{WorkspaceRoot: "/tmp/work", Store: marotte.CodeIndexStore{State: "ready"}}
+}
+
+func codeIndexFrameText(f *marotte.CodeIndexStatusPayload) string {
+	if f.Build == nil {
+		return "no build"
+	}
+	return f.Build.BuildID + " " + f.Build.State + " " + f.Build.Phase
+}
+
+// KAS sends a lane an older build's final frame and then the latest build's, so a lagging lane's copy of an ended
+// build or of an earlier state of the shown one is refused, any other build's frame is kept, and the view converges
+// on the latest build whichever lane's copy marotte saw first.
+func TestCodeIndexStatus_RefusesAnEarlierPhaseAndAnEndedBuild(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		frames []*marotte.CodeIndexStatusPayload
@@ -98,12 +111,22 @@ func TestCodeIndexStatus_RefusesAnEarlierPhaseAndAnOlderBuild(t *testing.T) {
 	}, {
 		name: "late older build",
 		frames: []*marotte.CodeIndexStatusPayload{
-			codeIndexBuildStatus("b1", "running", "parse"), codeIndexBuildStatus("b2", "queued", ""),
+			codeIndexBuildStatus("b1", "running", "parse"), codeIndexBuildStatus("b1", "succeeded", "save"),
+			codeIndexBuildStatus("b2", "queued", ""),
 			codeIndexBuildStatus("b1", "succeeded", "save"), codeIndexBuildStatus("b1", "running", "save"),
 			codeIndexBuildStatus("b2", "running", "scan"),
 		},
-		want:  []bool{true, true, false, false, true},
+		want:  []bool{true, true, true, false, false, true},
 		shown: codeIndexBuildStatus("b2", "running", "scan").Build,
+	}, {
+		name: "newer build seen first",
+		frames: []*marotte.CodeIndexStatusPayload{
+			codeIndexBuildStatus("b2", "queued", ""), codeIndexBuildStatus("b1", "running", "parse"),
+			codeIndexBuildStatus("b1", "failed", "parse"), codeIndexBuildStatus("b2", "running", "scan"),
+			codeIndexBuildStatus("b2", "succeeded", "save"),
+		},
+		want:  []bool{true, true, true, true, true},
+		shown: codeIndexBuildStatus("b2", "succeeded", "save").Build,
 	}, {
 		name: "ended build stays ended",
 		frames: []*marotte.CodeIndexStatusPayload{
@@ -112,16 +135,28 @@ func TestCodeIndexStatus_RefusesAnEarlierPhaseAndAnOlderBuild(t *testing.T) {
 		},
 		want:  []bool{true, true, false},
 		shown: codeIndexBuildStatus("b1", "canceled", "save").Build,
+	}, {
+		name: "build-less frame while a build runs",
+		frames: []*marotte.CodeIndexStatusPayload{
+			codeIndexBuildStatus("b2", "running", "scan"), codeIndexStoreStatus(),
+			codeIndexBuildStatus("b2", "succeeded", "save"), codeIndexStoreStatus(),
+		},
+		want:  []bool{true, false, true, true},
+		shown: nil,
 	}} {
 		t.Run(tc.name, func(t *testing.T) {
 			var c codeIndexStatuses
 			for i, f := range tc.frames {
 				if got := c.set(f); got != tc.want[i] {
-					t.Errorf("set(frame %d: %s %s %s) = %v, want %v", i, f.Build.BuildID, f.Build.State, f.Build.Phase, got, tc.want[i])
+					t.Errorf("set(frame %d: %s) = %v, want %v", i, codeIndexFrameText(f), got, tc.want[i])
 				}
 			}
-			if v := c.view(); len(v) != 1 || v[0].Build == nil || *v[0].Build != *tc.shown {
-				t.Errorf("view = %+v, want %+v shown", v, tc.shown)
+			v := c.view()
+			if len(v) != 1 {
+				t.Fatalf("view = %+v, want one root", v)
+			}
+			if got := v[0].Build; (got == nil) != (tc.shown == nil) || (got != nil && *got != *tc.shown) {
+				t.Errorf("shown build = %+v, want %+v", got, tc.shown)
 			}
 		})
 	}
