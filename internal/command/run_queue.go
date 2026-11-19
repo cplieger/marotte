@@ -20,7 +20,8 @@ type Submission struct {
 	// Mode is what the send does beside a steerable turn; empty takes the interrupt_mode setting.
 	Mode marotte.InterruptMode
 	Row  marotte.QueuedPrompt
-	// AdmitWait is how long a held close of the chat is waited out before ErrSubmitStarting; zero is AdmissionWait.
+	// AdmitWait is how long a held close of the chat is waited out before ErrSubmitStarting; zero is the queue's
+	// admission wait.
 	AdmitWait time.Duration
 	Kind      marotte.SendKind
 	// NoSteer rules steering out: the send is only ever a turn of its own.
@@ -131,13 +132,14 @@ type EntryLaunch struct {
 // runQueue is the chat's run order: the agent's runList and its glue.
 type runQueue interface {
 	// Submit places a sent message: steered into the running turn or taken now (a waiting caller is answered once
-	// kiro-cli holds the steer or the turn opens, up to AdmissionWait, then queued) or queued. A send bound for the
+	// kiro-cli holds the steer or the turn opens, up to the queue's admission wait, then queued) or queued. A send bound for the
 	// running turn past kiro-cli's steer budget is refused ErrSteerFull. A held close is waited out up to s.AdmitWait.
 	// stamp is where the send's intent began.
 	Submit(ctx context.Context, chatID marotte.ChatID, stamp uint64, s *Submission) (SubmitAnswer, error)
 	// TakeIdle takes the chat for a revert or a summary, which run now or not at all: IdleTurnOpen while a turn runs,
-	// IdleHeld past wait, IdleClosed after a close committed since stamp, IdleChatGone for a deleted chat.
-	TakeIdle(ctx context.Context, chatID marotte.ChatID, kind IdleKind, stamp uint64, wait time.Duration) (IdleAdmission, Reservation, string)
+	// IdleHeld past the queue's admission wait, IdleClosed after a close committed since stamp, IdleChatGone for a
+	// deleted chat.
+	TakeIdle(ctx context.Context, chatID marotte.ChatID, kind IdleKind, stamp uint64) (IdleAdmission, Reservation, string)
 	// SummaryLaunched reports a granted summary's open (its turn id), or its refusal before the open, for the take res
 	// names.
 	SummaryLaunched(chatID marotte.ChatID, entryID string, res Reservation, turnID string, err error)

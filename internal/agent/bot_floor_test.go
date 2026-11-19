@@ -35,17 +35,17 @@ const (
 
 // floorHub is c1 over a responding bridge with a rule engine wired, the ask budget shortened and Settings holding
 // keys.
-func floorHub(t *testing.T, keys map[string]any) (*Runtime, *respondingBridge) {
+func floorHub(t *testing.T, keys map[string]any, opts ...Option) (*Runtime, *respondingBridge) {
 	t.Helper()
 	body, err := json.Marshal(keys)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return floorHubConfig(t, body)
+	return floorHubConfig(t, body, opts...)
 }
 
 // floorHubConfig is floorHub with config.json holding body, or absent when body is nil.
-func floorHubConfig(t *testing.T, body []byte) (*Runtime, *respondingBridge) {
+func floorHubConfig(t *testing.T, body []byte, opts ...Option) (*Runtime, *respondingBridge) {
 	t.Helper()
 	dir := t.TempDir()
 	if body != nil {
@@ -53,7 +53,7 @@ func floorHubConfig(t *testing.T, body []byte) (*Runtime, *respondingBridge) {
 			t.Fatal(err)
 		}
 	}
-	h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir), withUnattendedAskBudget(floorAskBudget))
+	h, br := hubForFSTest(t, t.TempDir(), append([]Option{WithConfigDir(dir), withUnattendedAskBudget(floorAskBudget)}, opts...)...)
 	br.callResults = map[string]json.RawMessage{marotte.MethodSessionSteer: json.RawMessage(`{"queued":true}`)}
 	h.SetRuleEngine(ruleengine.New(&ruleengine.Deps{WakeHold: wakeHoldBound}))
 	return h, br
@@ -330,9 +330,9 @@ func TestBotFloor_AnUnqueuedUserSteerKeepsTheMark(t *testing.T) {
 
 // A person's steer accepted after its turn ended reached that turn, not the rule's next one.
 func TestBotFloor_ASteerAcceptedAfterItsTurnEndedKeepsTheNextTurnsMark(t *testing.T) {
+	t.Parallel()
 	// The stubbed send records no hold in kiro-cli, so the POST answers queued only once the admission wait passed.
-	shrinkAdmissionWait(t, 50*time.Millisecond)
-	h, br := floorHub(t, map[string]any{})
+	h, br := floorHub(t, map[string]any{}, withAdmissionWait(50*time.Millisecond))
 	openedWith(t, h, policyfile.ProfileTrusted)
 	first := openRuleTurn(t, h, 1)
 	entered, release := make(chan struct{}), make(chan struct{})

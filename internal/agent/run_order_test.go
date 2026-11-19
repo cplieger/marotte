@@ -379,8 +379,8 @@ func TestRunOrder_ASteerTheAgentDroppedAtACleanCloseIsSentNext(t *testing.T) {
 
 // A rewind refused under a held close gate leaves nothing on the list, and nothing reverts once the gate lifts.
 func TestRunOrder_ARewindUnderAHeldCloseGateIsRefusedAndNeverRuns(t *testing.T) {
-	shrinkAdmissionWait(t, 60*time.Millisecond)
-	h, cs, br := newTestHub()
+	t.Parallel()
+	h, cs, br := newTestHub(withAdmissionWait(60 * time.Millisecond))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	openChat(t, h, "c1")
 	runPrompt(t, h, cs, "c1", "m-1")

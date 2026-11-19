@@ -84,7 +84,9 @@ type lifetime struct {
 	drainGate sync.RWMutex
 	// answerBudget is defaultAnswerBudget: a person's request waits on the engine this long before it is answered.
 	answerBudget time.Duration
-	draining     atomic.Bool
+	// admissionWait is command.AdmissionWait: run-list work waits out a contended chat slot or a held close this long.
+	admissionWait time.Duration
+	draining      atomic.Bool
 }
 
 // answerDeadline is when a person's verb starting now must have answered.
@@ -468,6 +470,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		kiroTelemetry:  newCachedBoolField(kiroSettingsPath(), kiroTelemetryKey, kiroTelemetryDefault),
 		kiroHookStatus: newCachedBoolField(kiroSettingsPath(), marotte.KiroHookStatusKey, true),
 		answerBudget:   defaultAnswerBudget,
+		admissionWait:  command.AdmissionWait,
 	}
 	lc.shutdownCtx, lc.shutdownCancel = context.WithCancel(ctx)
 	// Best-effort: an unopenable workDir fails closed at the handlers, not at construction.

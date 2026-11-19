@@ -20,13 +20,13 @@ import (
 )
 
 // closeTabHub is a runtime with a tab store and chat c1 open in a tab.
-func closeTabHub(t *testing.T) (*Runtime, *testChatStore, *fakeBridge, marotte.TabSubject) {
+func closeTabHub(t *testing.T, opts ...Option) (*Runtime, *testChatStore, *fakeBridge, marotte.TabSubject) {
 	t.Helper()
 	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("Setup: tab store: %v", err)
 	}
-	h, cs, br := newTestHub(WithTabs(st))
+	h, cs, br := newTestHub(append([]Option{WithTabs(st)}, opts...)...)
 	seedChat(t, cs, "c1")
 	opened, err := h.Membership().OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c1"}, "op-open")
 	if err != nil {

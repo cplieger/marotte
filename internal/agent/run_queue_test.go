@@ -116,9 +116,9 @@ func listLive(h *Runtime, chatID marotte.ChatID) bool {
 
 // idleAfterFirstTurn is chat c1 with a live session, idle once its first turn m-first and that close's tail ended;
 // tails counts the close tails that ended. Every compaction call answers accepted.
-func idleAfterFirstTurn(t *testing.T, workDir string) (h *Runtime, cs *testChatStore, br *fakeBridge, tails *atomic.Int32) {
+func idleAfterFirstTurn(t *testing.T, workDir string, opts ...Option) (h *Runtime, cs *testChatStore, br *fakeBridge, tails *atomic.Int32) {
 	t.Helper()
-	h, cs, br = newTestHubIn(workDir)
+	h, cs, br = newTestHubIn(workDir, opts...)
 	// A hub left running carries its prompt goroutines into the next test, which races its package-var seams.
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}

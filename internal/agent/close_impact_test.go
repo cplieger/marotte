@@ -30,6 +30,7 @@ func oneTurn(t *testing.T, got []command.CloseTurn, want command.CloseTurn) {
 
 // Each kind of turn a close stops is named by the ids a page can know it by.
 func TestCloseImpact_NamesEachTurnByItsIds(t *testing.T) {
+	t.Parallel()
 	t.Run("an open prompt turn names its turn, prompt, admission and resends", func(t *testing.T) {
 		rt, cs, _ := newTestHub()
 		seedChat(t, cs, "c1")
@@ -47,7 +48,6 @@ func TestCloseImpact_NamesEachTurnByItsIds(t *testing.T) {
 	})
 	t.Run("a page's prompt taken with no turn yet names its prompt and admission", func(t *testing.T) {
 		rt, cs, _ := newTestHub()
-		// The turn's close tail reads AdmissionWait, which the next subtest writes: shutdown joins it first.
 		t.Cleanup(func() { _ = rt.Shutdown(context.Background()) })
 		seedChat(t, cs, "c1")
 		release := holdOpens(rt)
@@ -61,11 +61,7 @@ func TestCloseImpact_NamesEachTurnByItsIds(t *testing.T) {
 		<-answered
 	})
 	t.Run("a taken row whose submitter was answered queued is named by its row, not as a turn", func(t *testing.T) {
-		wait := command.AdmissionWait
-		command.AdmissionWait = 50 * time.Millisecond
-		t.Cleanup(func() { command.AdmissionWait = wait })
-		rt, cs, _ := newTestHub()
-		// Registered after the restore, so it runs first: the close tail reads AdmissionWait until shutdown joins it.
+		rt, cs, _ := newTestHub(withAdmissionWait(50 * time.Millisecond))
 		t.Cleanup(func() { _ = rt.Shutdown(context.Background()) })
 		seedChat(t, cs, "c1")
 		release := holdOpens(rt)

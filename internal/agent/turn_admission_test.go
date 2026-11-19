@@ -31,12 +31,9 @@ func (r *turnRegistry) tryReserve(chatID marotte.ChatID, source marotte.TurnOpen
 	return a.res, a.res.Token != 0
 }
 
-// Not parallel-safe.
-func shrinkAdmissionWait(t *testing.T, d time.Duration) {
-	t.Helper()
-	prev := command.AdmissionWait
-	command.AdmissionWait = d
-	t.Cleanup(func() { command.AdmissionWait = prev })
+// withAdmissionWait sets how long the runtime's run-list work waits out a contended chat slot (lifetime.admissionWait).
+func withAdmissionWait(d time.Duration) Option {
+	return func(h *Runtime) { h.lifecycle.admissionWait = d }
 }
 
 // setCancelGrace sets the cancel grace short to drive expiry or long to keep it from firing. Not parallel-safe.
@@ -57,8 +54,8 @@ func seedChat(t *testing.T, cs *testChatStore, id marotte.ChatID) {
 // A prompt against a revert-held chat answers within the budget as queued behind it, and writes nothing: the
 // press never waits out the hold.
 func TestPrompt_BehindARevertHeldSlotAnswersQueuedAndWritesNothing(t *testing.T) {
-	shrinkAdmissionWait(t, 60*time.Millisecond)
-	h, cs, _ := newTestHub()
+	t.Parallel()
+	h, cs, _ := newTestHub(withAdmissionWait(60 * time.Millisecond))
 	seedChat(t, cs, "c1")
 	if !h.coord.tryReserveNow("c1", marotte.TurnSourceRevert) {
 		t.Fatal("setup: the admission slot was already held")

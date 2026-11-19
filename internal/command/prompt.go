@@ -296,10 +296,9 @@ func settleComposerOnPrompt(ctx context.Context, chats chatStore, bus broadcaste
 	}
 }
 
-// AdmissionWait is how long a prompt waits for a contended admission slot before answering 409; it
-// must stay below the client's API timeout (TestAdmissionWait_StaysUnderTheClientAPITimeout). A var
-// only so tests can shrink it.
-var AdmissionWait = 20 * time.Second
+// AdmissionWait is how long a prompt waits for a contended admission slot before answering 409, the run queue's
+// default; it must stay below the client's API timeout (TestAdmissionWait_StaysUnderTheClientAPITimeout).
+const AdmissionWait = 20 * time.Second
 
 // reasonStarting is the 409 refusal class for a send whose chat a held close kept from starting.
 const reasonStarting = "starting"

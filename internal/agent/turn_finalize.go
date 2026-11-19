@@ -302,7 +302,7 @@ func (bc *bridgeCoordinator) resolveCloseEnds(ctx context.Context, lc *chatLifec
 		waitForwarder(cf.exit)
 	}
 	// So a holder the resolve sees is another turn, not this close's prompt.
-	lc.awaitReleased(ctx, cf.turnID, command.AdmissionWait)
+	lc.awaitReleased(ctx, cf.turnID, bc.lifecycle.admissionWait)
 	if lc.endedNow() {
 		return
 	}
