@@ -22,14 +22,15 @@ const leaseStampMax = 4096
 
 // leaseStamp is the v:1 stamp KAS writes into every lease, lease lock and break marker (its stampFor).
 type leaseStamp struct {
-	PID        *int   `json:"pid"`
-	ParentPID  *int   `json:"parentPid"`
-	InstanceID string `json:"instanceId"`
-	HostID     string `json:"hostId"`
-	AcquiredAt string `json:"acquiredAt"`
-	Token      string `json:"token"`
-	ClientName string `json:"clientName"`
-	V          int    `json:"v"`
+	PID        *int    `json:"pid"`
+	ParentPID  *int    `json:"parentPid"`
+	SandboxID  *string `json:"sandboxId"`
+	InstanceID string  `json:"instanceId"`
+	HostID     string  `json:"hostId"`
+	AcquiredAt string  `json:"acquiredAt"`
+	Token      string  `json:"token"`
+	ClientName string  `json:"clientName"`
+	V          int     `json:"v"`
 }
 
 // leaseIDRe is KAS's instanceId and token schema.
@@ -42,7 +43,8 @@ func (s *leaseStamp) valid() bool {
 	return s.V == 1 && s.PID != nil && *s.PID >= 1 && *s.PID <= maxInt31 &&
 		s.ParentPID != nil && *s.ParentPID >= 0 && *s.ParentPID <= maxInt31 &&
 		leaseIDRe.MatchString(s.InstanceID) && leaseIDRe.MatchString(s.Token) &&
-		inRuneRange(s.HostID, 255) && inRuneRange(s.AcquiredAt, 40)
+		inRuneRange(s.HostID, 255) && (s.SandboxID == nil || inRuneRange(*s.SandboxID, 255)) &&
+		inRuneRange(s.AcquiredAt, 40)
 }
 
 func inRuneRange(s string, maxLen int) bool {

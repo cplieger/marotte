@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -132,8 +133,8 @@ func (st *Settings) handleMemoryImport(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleMemoryExport serves GET /api/memory/export: KAS's kiro-memory document as a download. KAS's content is
-// already the document text, so it is written as is.
+// handleMemoryExport serves GET /api/memory/export: KAS's JSON Lines export (one memory per line) as a
+// download. KAS's content is already the file text, so it is written as is.
 func (st *Settings) handleMemoryExport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -155,7 +156,13 @@ func (st *Settings) handleMemoryExport(w http.ResponseWriter, r *http.Request) {
 		writeMemoryErr(w, errors.New("memory export: reply carried no content"))
 		return
 	}
-	w.Header().Set("Content-Disposition",
-		`attachment; filename="kiro-memories-`+time.Now().Format(time.DateOnly)+`.json"`)
-	httpreply.WriteRawJSON(w, []byte(*res.Content))
+	h := w.Header()
+	h.Set("Content-Disposition", `attachment; filename="kiro-memories-`+time.Now().Format(time.DateOnly)+`.jsonl"`)
+	h.Set("Content-Type", mimeTypeJSONL)
+	if _, err := w.Write([]byte(*res.Content)); err != nil {
+		slog.Debug("memory export: write failed", "error", err)
+	}
 }
+
+// mimeTypeJSONL is JSON Lines' media type (https://jsonlines.org/).
+const mimeTypeJSONL = "application/jsonl"

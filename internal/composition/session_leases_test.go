@@ -68,6 +68,8 @@ func TestSweepOwnSessionLeases(t *testing.T) {
 		{"a v2 stamp naming marotte", "0a1b.lease", writeLease(leaseStampJSON(t, map[string]any{"v": 2})), false},
 		{"a marotte stamp KAS's schema refuses", "0a1b.lease", writeLease(leaseStampJSON(t, map[string]any{"pid": 0})), false},
 		{"a marotte stamp with no parent pid", "0a1b.lease", writeLease(leaseStampJSON(t, map[string]any{"parentPid": nil})), false},
+		{"a sandboxed marotte stamp", "0a1b.lease", writeLease(leaseStampJSON(t, map[string]any{"sandboxId": "kiro-sandbox"})), true},
+		{"a marotte stamp with an empty sandbox id", "0a1b.lease", writeLease(leaseStampJSON(t, map[string]any{"sandboxId": ""})), false},
 		{"an unparseable file", "0a1b.lease", writeLease(`{"v":1,"clientName":"Marotte for Kiro"`), false},
 		{"a marotte stamp one byte over the cap", "0a1b.lease", writeLease(paddedTo(t, own, 4097)), false},
 		{"a directory", "0a1b.lease", func(t *testing.T, path string) {

@@ -88,11 +88,41 @@ func declaredToolMap(t *testing.T, name string) map[string]string {
 	return out
 }
 
-// toolIDMetaSetRe matches the set of action types KAS stamps `_meta.kiro.toolId` for, declared
-// beside the disclose_context reader. From 3.1.0 a keep-names call (`a(f,"isToolIdRoutedActionType");`)
-// follows the membership function.
-var toolIDMetaSetRe = regexp.MustCompile(`new Set\(\[((?:"[a-z_]+",?)+)\]\);function [A-Za-z0-9_$]+\(t\)\{return [A-Za-z0-9_$]+\.has\(t\)\}` +
-	`(?:[A-Za-z0-9_$]+\([A-Za-z0-9_$]+,"[A-Za-z]+"\);)?function [A-Za-z0-9_$]+\(t,e\)\{if\(t!=="disclose_context"`)
+// toolIDRoutedNameRe finds KAS's keep-names call for the membership function over the set of action types it
+// stamps `_meta.kiro.toolId` for; the call names the minified function, whose body names the set.
+var toolIDRoutedNameRe = regexp.MustCompile(`[\w$]+\(([\w$]+),"isToolIdRoutedActionType"\)`)
+
+// toolIDMetaSet answers the members of that set, discovered through the keep-names literal and its
+// membership function, each discovery unique; ok is false when any step finds none or several.
+func toolIDMetaSet(src string) (members []string, ok bool) {
+	// The two class-led patterns run through findAround on their literal; the function step opens on one.
+	only := func(re *regexp.Regexp, lit string) []string {
+		var m [][]int
+		if lit == "" {
+			m = re.FindAllStringSubmatchIndex(src, -1)
+		} else {
+			m = findAround(re, lit, src)
+		}
+		if len(m) != 1 {
+			return nil
+		}
+		return submatches(src, m)
+	}
+	fn := only(toolIDRoutedNameRe, `,"isToolIdRoutedActionType")`)
+	if fn == nil {
+		return nil, false
+	}
+	set := only(regexp.MustCompile(`function `+regexp.QuoteMeta(fn[1])+`\(t\)\{return ([\w$]+)\.has\(t\)\}`), "")
+	if set == nil {
+		return nil, false
+	}
+	list := only(regexp.MustCompile(`[,;\s]`+regexp.QuoteMeta(set[1])+`=new Set\(\[((?:"[a-z_]+",?)+)\]\)`),
+		set[1]+`=new Set([`)
+	if list == nil {
+		return nil, false
+	}
+	return strings.Split(strings.ReplaceAll(list[1], `"`, ""), ","), true
+}
 
 // The pinned agent server titles a built-in from its tool class (`static id="x";static title="Y"`)
 // or definition object (`{id:"x",title:"Y"`), else falls back to the bare id when it carries no
@@ -130,14 +160,29 @@ func TestRemoteWrapperIdentityMatchesTheBundle(t *testing.T) {
 // so few tools. When the set grows, key on it and shrink builtinToolByTitle.
 func TestToolIDMetaIsStampedOnTheKnownTools(t *testing.T) {
 	forEachBundle(t, func(t *testing.T, b bundle) {
-		m := toolIDMetaSetRe.FindStringSubmatch(b.src)
-		if m == nil {
-			t.Fatalf("%s: no toolId action-type set beside the disclose_context reader; re-anchor this test", b.name)
+		got, ok := toolIDMetaSet(b.src)
+		if !ok {
+			t.Fatalf("%s: no unique toolId action-type set behind isToolIdRoutedActionType; re-anchor this test", b.name)
 		}
-		got := strings.Split(strings.ReplaceAll(m[1], `"`, ""), ",")
 		want := []string{"disclose_context", "create_diagram"}
 		if !slices.Equal(got, want) {
 			t.Errorf("%s: KAS stamps toolId on %v, want %v", b.name, got, want)
 		}
 	})
+}
+
+func TestToolIDMetaSetExtractor(t *testing.T) {
+	adjacent := `var HWt="...",h1l=new Set(["disclose_context","create_diagram"]);function lOe(t){return h1l.has(t)}` +
+		`a(lOe,"isToolIdRoutedActionType");function zWt(t,e){if(t!=="disclose_context")return}`
+	hoisted := `function Dq(t){return bel.has(t)}function bGt(t,e){if(t!=="disclose_context")return}` +
+		`var wGt,bel,A6=_(()=>{wGt="...",bel=new Set(["disclose_context","create_diagram"]);a(Dq,"isToolIdRoutedActionType");})`
+	want := []string{"disclose_context", "create_diagram"}
+	for name, src := range map[string]string{"set beside its function": adjacent, "set hoisted into a lazy module": hoisted} {
+		if got, ok := toolIDMetaSet(src); !ok || !slices.Equal(got, want) {
+			t.Errorf("%s: toolIDMetaSet = %v, %v; want %v", name, got, ok, want)
+		}
+	}
+	if got, ok := toolIDMetaSet(adjacent + hoisted); ok {
+		t.Errorf("two keep-names calls: toolIDMetaSet = %v, want no unique discovery", got)
+	}
 }
