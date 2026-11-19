@@ -95,22 +95,35 @@ var toolIDRoutedNameRe = regexp.MustCompile(`[\w$]+\(([\w$]+),"isToolIdRoutedAct
 // toolIDMetaSet answers the members of that set, discovered through the keep-names literal and its
 // membership function, each discovery unique; ok is false when any step finds none or several.
 func toolIDMetaSet(src string) (members []string, ok bool) {
-	only := func(re *regexp.Regexp) []string {
-		m := re.FindAllStringSubmatch(src, -1)
+	// The two class-led patterns run through findAround on their literal; the function step opens on one.
+	only := func(re *regexp.Regexp, lit string) []string {
+		var m [][]int
+		if lit == "" {
+			m = re.FindAllStringSubmatchIndex(src, -1)
+		} else {
+			m = findAround(re, lit, src)
+		}
 		if len(m) != 1 {
 			return nil
 		}
-		return m[0]
+		groups := make([]string, len(m[0])/2)
+		for i := range groups {
+			if m[0][2*i] >= 0 {
+				groups[i] = src[m[0][2*i]:m[0][2*i+1]]
+			}
+		}
+		return groups
 	}
-	fn := only(toolIDRoutedNameRe)
+	fn := only(toolIDRoutedNameRe, `,"isToolIdRoutedActionType")`)
 	if fn == nil {
 		return nil, false
 	}
-	set := only(regexp.MustCompile(`function ` + regexp.QuoteMeta(fn[1]) + `\(t\)\{return ([\w$]+)\.has\(t\)\}`))
+	set := only(regexp.MustCompile(`function `+regexp.QuoteMeta(fn[1])+`\(t\)\{return ([\w$]+)\.has\(t\)\}`), "")
 	if set == nil {
 		return nil, false
 	}
-	list := only(regexp.MustCompile(`[,;\s]` + regexp.QuoteMeta(set[1]) + `=new Set\(\[((?:"[a-z_]+",?)+)\]\)`))
+	list := only(regexp.MustCompile(`[,;\s]`+regexp.QuoteMeta(set[1])+`=new Set\(\[((?:"[a-z_]+",?)+)\]\)`),
+		set[1]+`=new Set([`)
 	if list == nil {
 		return nil, false
 	}
