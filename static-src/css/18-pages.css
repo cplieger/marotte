@@ -39,7 +39,8 @@
   margin: 0;
 }
 
-.section-title {
+/* A status row pads above its title instead (17-settings.css). */
+.section-title:where(:not(.section-title-status-row > *)) {
   padding-block-start: var(--sp-4);
 }
 

@@ -317,6 +317,13 @@ const SITES: readonly Site[] = [
     labelTol: BASELINE_PX,
   },
   {
+    id: "the global instructions' title",
+    surface: surface("Settings, Knowledge"),
+    frame: '[data-settings-panel="instructions"] .section-title-status-row',
+    sizes: [1180, 390],
+    must: [/^label: .*section-title-status-row > label\.section-title$/],
+  },
+  {
     id: "a workflow's schedule button",
     surface: surface("the workflow list"),
     frame: ".recipe-sched-btn",
@@ -604,9 +611,10 @@ describe("the stacked file row's meta line", () => {
   }
 });
 
-/** A hit row's height with no row trim on its runs, which the trim must keep: measured on
- *  marotte 768fa985^ in Chromium and WebKit at ratios 1 and 2, in the fonts this suite renders. */
-const UNTRIMMED_HIT_PX = 56.390625;
+/** Turns the row trim (15-input.css) off: every trimmed box gets its untrimmed line box back. */
+const UNTRIM_CSS =
+  "[data-untrim] { text-box: normal !important; padding-block: 0 !important;" +
+  " margin-block: 0 !important; min-block-size: auto !important; }";
 
 const TOOL_SEARCH: Surface = {
   ...surface("Settings, Tools"),
@@ -614,20 +622,37 @@ const TOOL_SEARCH: Surface = {
   setup: plantToolSearch,
 };
 
+const hitHeights = (): number[] =>
+  [...document.querySelectorAll(".tool-hit")].map((h) => h.getBoundingClientRect().height);
+
 describe("the Add-tool search's hit rows", () => {
   for (const vp of VPS) {
     it(`keep their untrimmed height at ${String(vp.w)}x${String(vp.h)}`, async () => {
       await page.viewport(vp.w, vp.h);
       await mountSurface(TOOL_SEARCH, vp.size, vp.tier);
       await frames();
-      const heights = [...document.querySelectorAll(".tool-hit")].map(
-        (h) => h.getBoundingClientRect().height,
+      const got = hitHeights();
+      expect(got.length, "the search's hits").toBe(3);
+      const trimmed = [...document.querySelectorAll(".tool-hit *")].filter(
+        (e) => getComputedStyle(e).getPropertyValue("text-box-trim") !== "none",
       );
-      expect(heights.length, "the search's hits").toBe(3);
+      expect(trimmed.length, "the trim reaches the hits").toBeGreaterThan(0);
+      const untrim = document.createElement("style");
+      untrim.textContent = UNTRIM_CSS;
+      document.head.append(untrim);
+      for (const e of trimmed) {
+        e.setAttribute("data-untrim", "");
+      }
+      await frames();
+      const want = hitHeights();
+      untrim.remove();
+      for (const e of trimmed) {
+        e.removeAttribute("data-untrim");
+      }
       // Exact to a layout unit: a box edge's finest step.
       expect(
-        heights.filter((h) => Math.abs(h - UNTRIMMED_HIT_PX) >= LAYOUT_UNIT_PX),
-        `at DPR ${String(window.devicePixelRatio)}, not ${String(UNTRIMMED_HIT_PX)} px`,
+        got.filter((h, i) => Math.abs(h - want[i]!) >= LAYOUT_UNIT_PX),
+        `at DPR ${String(window.devicePixelRatio)}, untrimmed ${want.join(", ")} px`,
       ).toEqual([]);
     });
   }
