@@ -1441,7 +1441,37 @@ type kasRun struct {
 	chainListedPaused bool
 	// sweepListedPaused: the last list of a chat's sweep listed the run paused.
 	sweepListedPaused bool
+	listReply         kasAnswerCache[kasListKey]
+	inspectReply      kasAnswerCache[kasInspectKey]
 }
+
+// kasAnswerCache keeps one encoded answer by the state it encodes: the runtime reads the run far more often than the
+// run changes, and encoding the answer costs more than the rest of the call.
+type kasAnswerCache[K comparable] struct {
+	key K
+	raw json.RawMessage
+}
+
+func (r *kasAnswerCache[K]) get(key K, encode func() json.RawMessage) json.RawMessage {
+	if r.raw == nil || r.key != key {
+		r.key, r.raw = key, encode()
+	}
+	return slices.Clone(r.raw)
+}
+
+// kasListKey and kasInspectKey are the state a list and an inspect of the run encode.
+type (
+	kasListKey struct {
+		status        marotte.RunStatus
+		parent        string
+		gone, pending bool
+	}
+	kasInspectKey struct {
+		status                  marotte.RunStatus
+		pauseReason, stopReason string
+		pending                 bool
+	}
+)
 
 func (k *kasRun) runningState() {
 	k.status, k.pauseReason, k.stopReason = marotte.RunStatusRunning, "", ""
@@ -1539,18 +1569,19 @@ func (k *kasRun) reads() kasHold {
 
 func (k *kasRun) answer(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool, error) {
 	k.lastCall.Store(time.Now().UnixNano())
-	if k.failsEntryRead(method) {
+	stack := sync.OnceValue(callStack)
+	if k.failsEntryRead(method, stack) {
 		return nil, nil, true, errHoldReadFault
 	}
 	if method == methodKiroWorkflowResume {
 		k.resumeWrites.Add(1)
-		if b := k.takeWriteHold(); b != nil {
+		if b := k.takeWriteHold(stack); b != nil {
 			close(b.reached)
 			<-b.retried
 		}
 	}
 	if method == methodKiroWorkflowList {
-		if b := k.takeListHold(lister()); b != nil {
+		if b := k.takeListHold(listerIn(stack())); b != nil {
 			close(b.reached)
 			<-b.retried
 		}
@@ -1559,13 +1590,13 @@ func (k *kasRun) answer(method string, params map[string]any) (json.RawMessage, 
 	defer k.mu.Unlock()
 	switch method {
 	case methodKiroWorkflowList:
-		switch lister() {
+		switch listerIn(stack()) {
 		case "pausedRuns":
 			k.finderLists.Add(1)
 		case "resumeChainRuns":
 			k.sweepLists.Add(1)
 			k.sweepListedPaused = !k.gone && k.status == marotte.RunStatusPaused
-			if retryOf() == retryChat {
+			if retryIn(stack()) == retryChat {
 				k.chainListedPaused = !k.gone && k.status == marotte.RunStatusPaused
 				k.chainLists.Add(1)
 			}
@@ -1584,7 +1615,7 @@ func (k *kasRun) answer(method string, params map[string]any) (json.RawMessage, 
 		}
 		return json.RawMessage(`{"paused":true}`), nil, true, nil
 	case methodKiroWorkflowResume:
-		if k.flapWrite && innermostOf(".(*Runs).resumeHeld") != "" {
+		if k.flapWrite && innermostIn(stack(), ".(*Runs).resumeHeld") != "" {
 			k.flapWrite = false
 			k.onFlapWrite()
 			return nil, nil, true, errHoldFault
@@ -1605,14 +1636,14 @@ func (k *kasRun) answer(method string, params map[string]any) (json.RawMessage, 
 	return nil, nil, false, nil
 }
 
-// takeWriteHold is the armed write hold when this call is a held release's resume write (resumeHeld), which then
-// disarms it.
-func (k *kasRun) takeWriteHold() *holdBlock {
-	if innermostOf(".(*Runs).resumeHeld") == "" {
-		return nil
-	}
+// takeWriteHold is the armed write hold when this call, on stack, is a held release's resume write (resumeHeld),
+// which then disarms it.
+func (k *kasRun) takeWriteHold(stack func() []string) *holdBlock {
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	if k.writeHold == nil || innermostIn(stack(), ".(*Runs).resumeHeld") == "" {
+		return nil
+	}
 	b := k.writeHold
 	k.writeHold = nil
 	return b
@@ -1653,31 +1684,36 @@ func (k *kasRun) releaseFaultLocked() (takes bool, err error) {
 // failsEntryRead is whether this call is a heal entry's read that its armed fault fails, once: a chat's rehydrate's
 // first list, or resumeParentless's read after the resume it skipped while KAS listed the run running for an ended
 // engine, after which KAS lists the run paused for the restart, as it does once the run's owner is stale.
-func (k *kasRun) failsEntryRead(method string) bool {
-	var fails bool
+func (k *kasRun) failsEntryRead(method string, stack func() []string) bool {
+	if !k.entryReadArmed(method, stack) {
+		return false
+	}
+	k.onEntryRead()
+	return true
+}
+
+// entryReadArmed is failsEntryRead's decision, which disarms the fault it applies; the stack is read only while one
+// is armed.
+func (k *kasRun) entryReadArmed(method string, stack func() []string) bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
 	switch method {
 	case methodKiroWorkflowList:
-		if lister() != "resumeChainRuns" || retryOf() != retryNone {
+		if !k.failEntryList || listerIn(stack()) != "resumeChainRuns" || retryIn(stack()) != retryNone {
 			return false
 		}
-		k.mu.Lock()
-		fails, k.failEntryList = k.failEntryList, false
-		k.mu.Unlock()
+		k.failEntryList = false
 	case methodKiroWorkflowInspect:
-		if innermostOf(".(*Runtime).resumeParentless", ".(*Runtime).resumeParentless.func1") != ".(*Runtime).resumeParentless" {
+		if !k.staleOwner || innermostIn(stack(), ".(*Runtime).resumeParentless",
+			".(*Runtime).resumeParentless.func1") != ".(*Runtime).resumeParentless" {
 			return false
 		}
-		k.mu.Lock()
-		fails, k.staleOwner = k.staleOwner, false
-		if fails {
-			k.restartPausedState()
-		}
-		k.mu.Unlock()
+		k.staleOwner = false
+		k.restartPausedState()
+	default:
+		return false
 	}
-	if fails {
-		k.onEntryRead()
-	}
-	return fails
+	return true
 }
 
 // callStack is the calling goroutine's function names, innermost first.
@@ -1704,10 +1740,13 @@ func funcAt(pc uintptr) string {
 	return f.Function
 }
 
-// innermostOf is the first of suffixes that ends a function name on the calling goroutine's stack, innermost frame
-// first, "" when none does.
-func innermostOf(suffixes ...string) string {
-	for _, fn := range callStack() {
+// innermostOf is innermostIn on the calling goroutine's stack.
+func innermostOf(suffixes ...string) string { return innermostIn(callStack(), suffixes...) }
+
+// innermostIn is the first of suffixes that ends a function name on stack (callStack), innermost frame first, ""
+// when none does.
+func innermostIn(stack []string, suffixes ...string) string {
+	for _, fn := range stack {
 		for _, s := range suffixes {
 			if strings.HasSuffix(fn, s) {
 				return s
@@ -1717,16 +1756,18 @@ func innermostOf(suffixes ...string) string {
 	return ""
 }
 
-// lister names the Runs method whose run list the calling goroutine asks, "" for any other.
-func lister() string {
-	return strings.TrimPrefix(innermostOf(".(*Runs).pausedRuns", ".(*Runs).resumeChainRuns", ".(*Runs).sweepPause"),
+// listerIn names the Runs method on stack whose run list the goroutine asks, "" for any other.
+func listerIn(stack []string) string {
+	return strings.TrimPrefix(innermostIn(stack, ".(*Runs).pausedRuns", ".(*Runs).resumeChainRuns", ".(*Runs).sweepPause"),
 		".(*Runs).")
 }
 
-// retryOf is the retryResumeLater chain whose later try the calling goroutine runs: retryChat a chat's re-sweep,
+// retryOf is retryIn on the calling goroutine's stack.
+func retryOf() retryChain { return retryIn(callStack()) }
+
+// retryIn is the retryResumeLater chain whose later try the goroutine on stack runs: retryChat a chat's re-sweep,
 // retryParentless a parentless run's next try, retryNone a caller's own first try or any other reader.
-func retryOf() retryChain {
-	stack := callStack()
+func retryIn(stack []string) retryChain {
 	on := func(sub string) bool {
 		return slices.ContainsFunc(stack, func(fn string) bool { return strings.Contains(fn, sub) })
 	}
@@ -1754,6 +1795,11 @@ const (
 var retrySpentLogs = [...]string{retryChat: resweepSpentLog, retryParentless: parentlessSpentLog}
 
 func (k *kasRun) listLocked() json.RawMessage {
+	key := kasListKey{status: k.status, parent: k.parent, gone: k.gone, pending: k.pendingReason != ""}
+	return k.listReply.get(key, k.encodeListLocked)
+}
+
+func (k *kasRun) encodeListLocked() json.RawMessage {
 	runs := []map[string]any{}
 	if !k.gone {
 		runs = append(runs, map[string]any{
@@ -1765,6 +1811,13 @@ func (k *kasRun) listLocked() json.RawMessage {
 }
 
 func (k *kasRun) inspectLocked() json.RawMessage {
+	key := kasInspectKey{
+		status: k.status, pauseReason: k.pauseReason, stopReason: k.stopReason, pending: k.pendingReason != "",
+	}
+	return k.inspectReply.get(key, k.encodeInspectLocked)
+}
+
+func (k *kasRun) encodeInspectLocked() json.RawMessage {
 	st := map[string]any{"status": k.status, "pauseReason": k.pauseReason}
 	if k.pendingReason != "" {
 		st["pausePending"] = map[string]any{"initiator": initiatorUser}
