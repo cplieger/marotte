@@ -389,10 +389,7 @@ function salvageUndecodable(data: string, err: unknown): void {
  *  `status` have no read of their own: only the connect hook sends their whole set, so their
  *  action is a fresh hello. They resolve `true` and the caller runs that hello LAST, after every
  *  other refetch has settled, instead of this reconnecting itself. */
-function runStampAction(stamp: SubjectStamp | undefined, signal?: AbortSignal): Promise<boolean> {
-  if (stamp === undefined) {
-    return Promise.resolve(false);
-  }
+function runStampAction(stamp: SubjectStamp, signal?: AbortSignal): Promise<boolean> {
   switch (stamp.kind) {
     case "chats":
       return loadList(signal).then(() => false);
