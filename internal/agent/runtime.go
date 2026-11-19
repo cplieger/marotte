@@ -333,15 +333,15 @@ type Runtime struct {
 	acpArgs     []string
 	sessionSeen sessionBaseline
 	processLive processLive
+	// codeIndex is kiro-cli's latest code-index status per workspace root (code_index.go).
+	codeIndex codeIndexStatuses
 	// configDoc owns whether config.json reads and the values every spawn, restart decision and session door read.
 	configDoc lastReadable
 	// bootPass guards the boot observer pass (onEngineReady).
 	bootPass sync.Once
 	// sessionExportMu serializes session exports: KAS writes each to a fixed file name per process.
 	sessionExportMu sync.Mutex
-	// codeIndex is kiro-cli's latest code-index status per workspace root (code_index.go).
-	codeIndex codeIndexStatuses
-	ciBusy    atomic.Bool
+	ciBusy          atomic.Bool
 }
 
 // Option configures optional Runtime parameters.

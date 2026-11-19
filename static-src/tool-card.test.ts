@@ -2361,7 +2361,10 @@ describe("a background job's card", () => {
     const { toolCardOptsFor } = await import("./tool-card-opts.js");
     const call = (status: "completed" | "failed" | "cancelled" | "timed_out" | "outcome_unknown") =>
       toolCardOptsFor(
-        { ...makeToolCall({ id: "j", status: "completed" }), job: { id: "7", end: { status, duration_ms: 1 } } },
+        {
+          ...makeToolCall({ id: "j", status: "completed" }),
+          job: { id: "7", end: { status, duration_ms: 1 } },
+        },
         true,
       ).status;
 
@@ -2370,8 +2373,9 @@ describe("a background job's card", () => {
     expect(call("timed_out")).toBe("failed");
     expect(call("cancelled")).toBe("aborted");
     expect(call("outcome_unknown")).toBe("aborted");
-    expect(toolCardOptsFor({ ...makeToolCall({ id: "j", status: "completed" }), job: { id: "7" } }, true).status).toBe(
-      "in_progress",
-    );
+    expect(
+      toolCardOptsFor({ ...makeToolCall({ id: "j", status: "completed" }), job: { id: "7" } }, true)
+        .status,
+    ).toBe("in_progress");
   });
 });

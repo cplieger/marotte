@@ -14,7 +14,13 @@ import {
   type RunResults,
 } from "./block-window.js";
 import { toolResultID } from "./entry-ids.js";
-import { callRefused, hookCallSeat, hookQuiet, hookStatusShown, isToolTriggerHook } from "./hook-fold.js";
+import {
+  callRefused,
+  hookCallSeat,
+  hookQuiet,
+  hookStatusShown,
+  isToolTriggerHook,
+} from "./hook-fold.js";
 import { isInternalToolTitle, isSubagentInvocation } from "./tool-schema.js";
 import type { Entry, EntryToolCall, EntryToolResult } from "./types.js";
 import { payloadOf, type Turn } from "./turns.js";

@@ -493,10 +493,18 @@ describe("the organization sign-in", () => {
   it("reads the saved provider, dropping empty optional fields", () => {
     expect(
       decodeIdentityProviderBody({
-        identity_provider: { issuer: "https://idp.example", client_id: "k", name: "", token_endpoint: "https://t" },
+        identity_provider: {
+          issuer: "https://idp.example",
+          client_id: "k",
+          name: "",
+          token_endpoint: "https://t",
+        },
         unreadable: false,
       }),
-    ).toEqual({ provider: { issuer: "https://idp.example", client_id: "k", token_endpoint: "https://t" }, unreadable: false });
+    ).toEqual({
+      provider: { issuer: "https://idp.example", client_id: "k", token_endpoint: "https://t" },
+      unreadable: false,
+    });
     expect(decodeIdentityProviderBody({ identity_provider: null, unreadable: true })).toEqual({
       provider: null,
       unreadable: true,
@@ -505,8 +513,15 @@ describe("the organization sign-in", () => {
   });
 
   it("names the provider by its saved name, else kiro-cli's display name, else the issuer", () => {
-    identityProvider.value = { loaded: true, provider: { issuer: "https://idp.example", client_id: "k" }, unreadable: false };
-    mcpState.applyOrgFrame({ reported: { state: "signed-out", display_name: "Acme SSO" } }, stamp("400"));
+    identityProvider.value = {
+      loaded: true,
+      provider: { issuer: "https://idp.example", client_id: "k" },
+      unreadable: false,
+    };
+    mcpState.applyOrgFrame(
+      { reported: { state: "signed-out", display_name: "Acme SSO" } },
+      stamp("400"),
+    );
     expect(orgProviderName()).toBe("Acme SSO");
     mcpState.applyOrgFrame({ reported: { state: "signed-out" } }, stamp("401"));
     expect(orgProviderName()).toBe("https://idp.example");

@@ -21,7 +21,7 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     guard_payload_links: true,
     interrupt_mode: "steer",
     model_fallback_enabled: true,
-    memory: { mode: "off" },
+    memory: { mode: "off", lock: null },
     auto_compaction_enabled: true,
     auto_compact_pct: 80,
     auto_compact_pct_range: { min: 50, max: 80, step: 5 },

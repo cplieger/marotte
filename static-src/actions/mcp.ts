@@ -190,7 +190,8 @@ export function decodeImportResult(body: unknown): ImportServersResult {
   const o = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
   const results: ImportResult[] = [];
   for (const r of Array.isArray(o["results"]) ? (o["results"] as unknown[]) : []) {
-    const outcome = typeof r === "object" && r !== null ? (r as { outcome?: unknown }).outcome : undefined;
+    const outcome =
+      typeof r === "object" && r !== null ? (r as { outcome?: unknown }).outcome : undefined;
     if (outcome === "created" || outcome === "unchanged") {
       results.push({ outcome });
     }
@@ -243,7 +244,9 @@ export function summariseImport(res: ImportServersResult | null): string {
   }
   const notes = res?.notes.length ?? 0;
   if (notes > 0) {
-    parts.push(notes === 1 ? "1 key was not taken as pasted" : `${notes} keys were not taken as pasted`);
+    parts.push(
+      notes === 1 ? "1 key was not taken as pasted" : `${notes} keys were not taken as pasted`,
+    );
   }
   return parts.join(". ") + ".";
 }
@@ -349,7 +352,7 @@ export const relayOAuthCallback = apiAction<{ server: string; redirect_url: stri
 // none of these draws anything optimistic.
 
 /** Save the organization identity provider: 400 names each refused field. kiro-cli reloads it live. */
-export const saveIdentityProvider = apiAction<IdentityProviderConfig, unknown>({
+export const saveIdentityProvider = apiAction<IdentityProviderConfig>({
   name: "mcp.save_identity_provider",
   idempotencyKey: true,
   retryable: retryNetwork,
@@ -361,7 +364,7 @@ export const saveIdentityProvider = apiAction<IdentityProviderConfig, unknown>({
 });
 
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
-export const removeIdentityProvider = apiAction<void, unknown>({
+export const removeIdentityProvider = apiAction<void>({
   name: "mcp.remove_identity_provider",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,

@@ -760,7 +760,7 @@ func TestWriteKASConfig_IdentityProviderRefusedNamingTheField(t *testing.T) {
 	for _, f := range body.Fields {
 		fields[f.Field] = true
 	}
-	if !fields[fieldIdPIssuer] || !fields[fieldIdPClientID] {
+	if !fields[fieldIDPIssuer] || !fields[fieldIDPClientID] {
 		t.Errorf("fields = %+v, want issuer and client_id named", body.Fields)
 	}
 	if _, ok := readKAS(t, kas)[kasIdentityProviderKey]; ok {

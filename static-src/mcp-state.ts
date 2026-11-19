@@ -187,13 +187,7 @@ export interface ServerDiscovery {
 }
 
 export type RuntimeState =
-  | "connected"
-  | "needs_auth"
-  | "needs_org_sign_in"
-  | "signing_in"
-  | "idle"
-  | "failed"
-  | "disabled";
+  "connected" | "needs_auth" | "needs_org_sign_in" | "signing_in" | "idle" | "failed" | "disabled";
 
 /**
  * `origin` picks the row a live status belongs to, never editability. `shadows`: marotte's config holds the name, so
@@ -283,32 +277,40 @@ export function adaptStatus(w: MCPServerStatus): RuntimeStatus {
   }
 }
 
-/** The organization sign-in as last read, with the `mcp_status` version and epoch it was read at. */
+/** The `mcp_status` version and epoch the organization sign-in was last read at. */
 interface OrgHeld {
-  readonly status: MCPIdentityProviderStatus | undefined;
   readonly version: bigint;
   readonly epoch: string | null;
 }
 
 let orgHeld: OrgHeld | null = null;
 // A fetched read's organization sign-in, taken once the mirror applied the rows read with it.
-let orgFetched: { status: MCPIdentityProviderStatus | undefined; stamp: SubjectStamp } | null = null;
+let orgFetched: { status: MCPIdentityProviderStatus | undefined; stamp: SubjectStamp } | null =
+  null;
 
 /** The organization sign-in's runtime state, absent while kiro-cli reported none and no sign-in stands. */
 export const orgSignInStatus: Signal<MCPIdentityProviderStatus | undefined> = signal(undefined);
 
 /** Take `status` when its stamp is newer than what is held, or the server process changed. Answers whether it was
  *  taken. */
-function takeOrg(status: MCPIdentityProviderStatus | undefined, stamp: SubjectStamp | undefined, atOrAbove: boolean): boolean {
+function takeOrg(
+  status: MCPIdentityProviderStatus | undefined,
+  stamp: SubjectStamp | undefined,
+  atOrAbove: boolean,
+): boolean {
   if (stamp?.kind !== "mcp_status" || !/^\d{1,20}$/u.test(stamp.version)) {
     return false;
   }
   const version = BigInt(stamp.version);
   const epoch = versionMap().epoch();
-  if (orgHeld !== null && orgHeld.epoch === epoch && (atOrAbove ? version < orgHeld.version : version <= orgHeld.version)) {
+  if (
+    orgHeld !== null &&
+    orgHeld.epoch === epoch &&
+    (atOrAbove ? version < orgHeld.version : version <= orgHeld.version)
+  ) {
     return false;
   }
-  orgHeld = { status, version, epoch };
+  orgHeld = { version, epoch };
   orgSignInStatus.value = status;
   return true;
 }

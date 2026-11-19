@@ -34,7 +34,7 @@ interface RowState {
 }
 
 /** One running job's elapsed time, from its start to now. */
-export function jobElapsed(job: BackgroundJobPayload, now: number): string {
+function jobElapsed(job: BackgroundJobPayload, now: number): string {
   const started = Date.parse(job.started_at ?? "");
   return Number.isFinite(started) ? formatElapsed(Math.max(0, now - started)) : "";
 }
@@ -81,7 +81,11 @@ export function mountJobsStrip(): void {
     const desc = el("span", { className: "jobs-strip-desc" });
     const elapsed = el("span", { className: "jobs-strip-elapsed" });
     const message = el("span", { className: "jobs-strip-message", role: "status" });
-    const stop = el("button", { type: "button", className: "btn-small jobs-strip-stop" }, "Stop") as HTMLButtonElement;
+    const stop = el(
+      "button",
+      { type: "button", className: "btn-small jobs-strip-stop" },
+      "Stop",
+    ) as HTMLButtonElement;
     const show = el(
       "button",
       { type: "button", className: "btn-small jobs-strip-show" },
@@ -104,7 +108,15 @@ export function mountJobsStrip(): void {
     show.addEventListener("click", () => {
       output.open(shownChat, job);
     });
-    return el("li", { className: "jobs-strip-row", "data-job-id": job.id }, desc, elapsed, message, stop, show);
+    return el(
+      "li",
+      { className: "jobs-strip-row", "data-job-id": job.id },
+      desc,
+      elapsed,
+      message,
+      stop,
+      show,
+    );
   };
 
   effect(() => {
@@ -171,9 +183,21 @@ function createOutputDialog(): OutputDialog {
   const title = el("h3", { className: "job-output-title", id: "job-output-title" });
   const well = el("pre", { className: "job-output-well", tabIndex: 0 });
   const status = el("p", { className: "job-output-status", role: "status" });
-  const copy = el("button", { type: "button", className: "btn-small" }, "Copy") as HTMLButtonElement;
-  const refresh = el("button", { type: "button", className: "btn-small" }, "Refresh") as HTMLButtonElement;
-  const close = el("button", { type: "button", className: "btn-small" }, "Close") as HTMLButtonElement;
+  const copy = el(
+    "button",
+    { type: "button", className: "btn-small" },
+    "Copy",
+  ) as HTMLButtonElement;
+  const refresh = el(
+    "button",
+    { type: "button", className: "btn-small" },
+    "Refresh",
+  ) as HTMLButtonElement;
+  const close = el(
+    "button",
+    { type: "button", className: "btn-small" },
+    "Close",
+  ) as HTMLButtonElement;
   const dialog = el(
     "dialog",
     { className: "job-output-dialog", "aria-labelledby": "job-output-title" },
@@ -197,7 +221,8 @@ function createOutputDialog(): OutputDialog {
         return;
       }
       well.textContent = r.data.lines.join("\n");
-      status.textContent = r.data.gap === true ? "Some lines could not be read whole and were left out." : "";
+      status.textContent =
+        r.data.gap === true ? "Some lines could not be read whole and were left out." : "";
       well.scrollTop = well.scrollHeight;
     });
   };

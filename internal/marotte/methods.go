@@ -225,6 +225,12 @@ func TextBlock(content string) map[string]any {
 // reference this constant instead of bare "sessionId" literals.
 const KeySessionID = "sessionId"
 
+// KeyMeta is the ACP wire key for a call's `_meta` object, and KeyKiro the key of Kiro's own block inside it.
+const (
+	KeyMeta = "_meta"
+	KeyKiro = "kiro"
+)
+
 // KeyPrompt is the ACP wire key for a `session/prompt` call's content-block
 // array. KeySessionID's sibling, for the same reason: two senders build that
 // call — a chat's prompt and the answer to a parked workflow step — and a bare

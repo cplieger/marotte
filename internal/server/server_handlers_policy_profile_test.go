@@ -116,7 +116,7 @@ func profileFixture(t *testing.T, live []marotte.PolicyRule) (*Server, *fakeRelo
 	}
 	pol.stores = []policyfile.PresetStore{
 		{Scope: policyfile.ScopeUser, File: userPath, Read: policyfile.PresetStoreRead{OK: true}},
-		{Scope: policyfile.ScopeWorkspace, WorkspaceRoot: work, File: wsPath, Read: policyfile.PresetStoreRead{OK: true}},
+		{Scope: policyfile.ScopeWorkspace, File: wsPath, Read: policyfile.PresetStoreRead{OK: true}},
 	}
 	return s, reload, userPath, wsPath
 }
@@ -677,7 +677,7 @@ func TestProfileView_SavedGrants(t *testing.T) {
 		saveAllowRule(t, path)
 		pol := s.policy.(*fakePolicy)
 		pol.stores = append(pol.stores, policyfile.PresetStore{
-			Scope: policyfile.ScopeWorkspace, WorkspaceRoot: extra, File: path, Read: policyfile.PresetStoreRead{OK: true},
+			Scope: policyfile.ScopeWorkspace, File: path, Read: policyfile.PresetStoreRead{OK: true},
 		})
 		if !getProfileView(t, s).SavedGrants {
 			t.Error("saved_grants = false with an allow rule in an additional directory's file")
@@ -686,14 +686,14 @@ func TestProfileView_SavedGrants(t *testing.T) {
 	t.Run("an unknown preset grants nothing", func(t *testing.T) {
 		s, _, _, wsPath := profileFixture(t, nil)
 		writePolicyBytes(t, wsPath, "policies:\n  - dev-shel\n")
-		s.policy.(*fakePolicy).stores[1].Read.Presets = []policyfile.PresetReference{{ID: "dev-shel", Status: "unknown"}}
+		s.policy.(*fakePolicy).stores[1].Read.Presets = []policyfile.PresetReference{{Status: "unknown"}}
 		if getProfileView(t, s).SavedGrants {
 			t.Error("saved_grants = true for a preset id KAS does not know and applies nothing from")
 		}
 	})
 	t.Run("a preset kas applies", func(t *testing.T) {
 		s, _, _, _ := profileFixture(t, nil)
-		s.policy.(*fakePolicy).stores[1].Read.Presets = []policyfile.PresetReference{{ID: "dev-shell", Status: "applies"}}
+		s.policy.(*fakePolicy).stores[1].Read.Presets = []policyfile.PresetReference{{Status: "applies"}}
 		if !getProfileView(t, s).SavedGrants {
 			t.Error("saved_grants = false with a preset KAS applies from the workspace file")
 		}
@@ -701,7 +701,7 @@ func TestProfileView_SavedGrants(t *testing.T) {
 	t.Run("a file kas refused", func(t *testing.T) {
 		s, _, _, wsPath := profileFixture(t, nil)
 		saveAllowRule(t, wsPath)
-		s.policy.(*fakePolicy).stores[1].Read = policyfile.PresetStoreRead{Error: "unknown capability 'teleport'"}
+		s.policy.(*fakePolicy).stores[1].Read = policyfile.PresetStoreRead{}
 		if getProfileView(t, s).SavedGrants {
 			t.Error("saved_grants = true for a file KAS skipped and loads nothing from")
 		}

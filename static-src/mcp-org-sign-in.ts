@@ -28,7 +28,7 @@ import type { MCPIdentityProviderStatus } from "./wire/types.gen.js";
 export const ORG_CARD_ID = "mcp-org-sign-in";
 
 /** What the card shows, one per state. Exported for its test. */
-export type OrgView =
+type OrgView =
   | { kind: "loading" }
   | { kind: "not_set_up" }
   | { kind: "signed_out" }
@@ -40,7 +40,10 @@ export type OrgView =
 
 /** The card's state from the saved provider and the runtime status: a sign-in marotte started outranks a refusal,
  *  which outranks kiro-cli's last report. Exported for its test. */
-export function orgView(cfg: IdentityProviderRead, st: MCPIdentityProviderStatus | undefined): OrgView {
+export function orgView(
+  cfg: IdentityProviderRead,
+  st: MCPIdentityProviderStatus | undefined,
+): OrgView {
   if (!cfg.loaded) {
     return { kind: "loading" };
   }
@@ -84,7 +87,9 @@ export function orgStateText(v: OrgView, provider: string): string {
     case "signing_in":
       return `Signing in to ${provider}`;
     case "signed_in":
-      return v.account === "" ? `Signed in to ${provider}` : `Signed in to ${provider} as ${v.account}`;
+      return v.account === ""
+        ? `Signed in to ${provider}`
+        : `Signed in to ${provider} as ${v.account}`;
     case "expired":
       return `Your ${provider} sign-in expired`;
     case "invalid":
@@ -111,7 +116,7 @@ const DOT_CSS: Readonly<Record<OrgView["kind"], string>> = {
 };
 
 /** What the card borrows from the server rows, injected so the row module can mount the card without a cycle. */
-export interface OrgCardDeps {
+interface OrgCardDeps {
   /** The consent-page link a signing-in row shows. */
   readonly pill: (url: string) => HTMLElement;
   /** The paste box for a callback the browser could not reach. */
@@ -137,12 +142,20 @@ function field(label: string, input: HTMLInputElement, hint?: string): HTMLEleme
 }
 
 function textInput(type: "url" | "text", placeholder: string): HTMLInputElement {
-  return el("input", { type, className: "tool-form-input", autocomplete: "off", placeholder }) as HTMLInputElement;
+  return el("input", {
+    type,
+    className: "tool-form-input",
+    autocomplete: "off",
+    placeholder,
+  }) as HTMLInputElement;
 }
 
 /** Build the card; its one effect repaints it from the provider read and the sign-in status. Returns the card and
  *  the effect's stop. */
-export function mountOrgCard(deps: OrgCardDeps): { readonly card: HTMLElement; readonly stop: () => void } {
+export function mountOrgCard(deps: OrgCardDeps): {
+  readonly card: HTMLElement;
+  readonly stop: () => void;
+} {
   const dot = el("span", { className: "mcp-dot", role: "img" });
   const title = el("span", { className: "mcp-row-name" }, "Organization sign-in");
   const editBtn = el("button", {
@@ -170,10 +183,24 @@ export function mountOrgCard(deps: OrgCardDeps): { readonly card: HTMLElement; r
     authorization_endpoint: textInput("url", "Found from the issuer when empty"),
     token_endpoint: textInput("url", "Found from the issuer when empty"),
   };
-  const formErr = el("p", { className: "section-hint mcp-form-error hidden" }) as HTMLParagraphElement;
-  const saveBtn = el("button", { type: "submit", className: "btn-small btn-primary" }, "Save") as HTMLButtonElement;
-  const cancelEdit = el("button", { type: "button", className: "btn-small" }, "Cancel") as HTMLButtonElement;
-  const removeBtn = el("button", { type: "button", className: "btn-small" }, "Remove") as HTMLButtonElement;
+  const formErr = el("p", {
+    className: "section-hint mcp-form-error hidden",
+  }) as HTMLParagraphElement;
+  const saveBtn = el(
+    "button",
+    { type: "submit", className: "btn-small btn-primary" },
+    "Save",
+  ) as HTMLButtonElement;
+  const cancelEdit = el(
+    "button",
+    { type: "button", className: "btn-small" },
+    "Cancel",
+  ) as HTMLButtonElement;
+  const removeBtn = el(
+    "button",
+    { type: "button", className: "btn-small" },
+    "Remove",
+  ) as HTMLButtonElement;
   const form = el(
     "form",
     { className: "mcp-form-section", autocomplete: "off", novalidate: true },
@@ -188,7 +215,11 @@ export function mountOrgCard(deps: OrgCardDeps): { readonly card: HTMLElement; r
 
   const card = el(
     "section",
-    { className: "mcp-row mcp-row-readonly", id: ORG_CARD_ID, "aria-labelledby": `${ORG_CARD_ID}-title` },
+    {
+      className: "mcp-row mcp-row-readonly",
+      id: ORG_CARD_ID,
+      "aria-labelledby": `${ORG_CARD_ID}-title`,
+    },
     el(
       "div",
       { className: "mcp-row-body" },
@@ -227,7 +258,10 @@ export function mountOrgCard(deps: OrgCardDeps): { readonly card: HTMLElement; r
   });
   form.addEventListener("submit", (ev) => {
     ev.preventDefault();
-    const body: IdentityProviderConfig = { issuer: f.issuer.value.trim(), client_id: f.client_id.value.trim() };
+    const body: IdentityProviderConfig = {
+      issuer: f.issuer.value.trim(),
+      client_id: f.client_id.value.trim(),
+    };
     for (const key of ["name", "authorization_endpoint", "token_endpoint"] as const) {
       const v = f[key].value.trim();
       if (v !== "") {
@@ -244,7 +278,8 @@ export function mountOrgCard(deps: OrgCardDeps): { readonly card: HTMLElement; r
         },
         onError: (err) => {
           const fields = validationFieldsOf(err);
-          formErr.textContent = fields.length > 0 ? fields.map((x) => x.message).join(". ") : err.message;
+          formErr.textContent =
+            fields.length > 0 ? fields.map((x) => x.message).join(". ") : err.message;
           formErr.classList.remove("hidden");
         },
       })
@@ -268,7 +303,11 @@ export function mountOrgCard(deps: OrgCardDeps): { readonly card: HTMLElement; r
   });
 
   const actionBtn = (label: string, run: () => Promise<unknown>): HTMLButtonElement => {
-    const b = el("button", { type: "button", className: "btn-small mcp-sign-in-btn" }, label) as HTMLButtonElement;
+    const b = el(
+      "button",
+      { type: "button", className: "btn-small mcp-sign-in-btn" },
+      label,
+    ) as HTMLButtonElement;
     b.addEventListener("click", () => {
       setControlBusy(b, true);
       void run().finally(() => {

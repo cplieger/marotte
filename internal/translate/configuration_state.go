@@ -11,6 +11,12 @@ import (
 
 const configurationSettingKRN = "krn:::setting/"
 
+// observerConnection is the view observer of the connection-wide rows, as against one session's.
+const observerConnection = "connection"
+
+// composeLocked is the compose mode of a row a configuration layer locks.
+const composeLocked = "locked"
+
 // configurationState is _kiro/configuration/state's params, measured on kiro-cli 2.28.0: the view
 // it composes for, KAS's layer list (ids and display names), and one statement per setting a layer
 // states. An unstated setting has no statement.
@@ -40,7 +46,7 @@ type configurationState struct {
 // its JSON text, and the layer's name comes from the frame's own layer list.
 func DecodeConfigurationState(raw json.RawMessage) (map[string]marotte.KiroDefault, bool) {
 	var s configurationState
-	if json.Unmarshal(raw, &s) != nil || s.View.Observer != "connection" {
+	if json.Unmarshal(raw, &s) != nil || s.View.Observer != observerConnection {
 		return nil, false
 	}
 	names := make(map[string]string, len(s.Layers))
@@ -85,6 +91,7 @@ const (
 	memoryModeDisabled  = "disabled"
 	memoryModeReadOnly  = "read_only"
 	memoryModeReadWrite = "read_write"
+	memoryReflectionOff = "off"
 )
 
 // deviceMemoryRow is one composed setting row, the fields the Memory reduction reads.
@@ -100,7 +107,7 @@ type deviceMemoryRow struct {
 // SettingLock names the layer that locks a composed row: the last assertion's, with its display name from names
 // (the layer id when it has none). nil unless compose is locked.
 func SettingLock(compose string, assertionLayers []string, names map[string]string) *marotte.SettingLock {
-	if compose != "locked" || len(assertionLayers) == 0 {
+	if compose != composeLocked || len(assertionLayers) == 0 {
 		return nil
 	}
 	raw := assertionLayers[len(assertionLayers)-1]
@@ -148,7 +155,7 @@ func DecodeDeviceMemoryView(raw json.RawMessage) (DeviceMemoryView, bool) {
 		} `json:"layers"`
 		Settings []json.RawMessage `json:"settings"`
 	}
-	if json.Unmarshal(raw, &s) != nil || s.View.Observer != "connection" {
+	if json.Unmarshal(raw, &s) != nil || s.View.Observer != observerConnection {
 		return DeviceMemoryView{}, false
 	}
 	v := DeviceMemoryView{Names: make(map[string]string, len(s.Layers))}
@@ -187,7 +194,7 @@ func (v *DeviceMemoryView) Values() (mode, reflection string) {
 	}
 	reflection, ok = decodeRow(v.Reflection).text()
 	if !ok {
-		reflection = "off"
+		reflection = memoryReflectionOff
 	}
 	return mode, reflection
 }
@@ -219,16 +226,6 @@ func (v *DeviceMemoryView) Choice() marotte.DeviceMemory {
 	return out
 }
 
-// DecodeDeviceMemory reads a CONNECTION view's Memory choice (DeviceMemoryView.Choice); ok is false for a session
-// view or an undecodable frame.
-func DecodeDeviceMemory(raw json.RawMessage) (marotte.DeviceMemory, bool) {
-	v, ok := DecodeDeviceMemoryView(raw)
-	if !ok {
-		return marotte.DeviceMemory{}, false
-	}
-	return v.Choice(), true
-}
-
 func decodeRow(raw json.RawMessage) *deviceMemoryRow {
 	var r deviceMemoryRow
 	if len(raw) == 0 || json.Unmarshal(raw, &r) != nil {
@@ -242,11 +239,11 @@ func decodeRow(raw json.RawMessage) *deviceMemoryRow {
 func DeviceMemoryRows(mode string) (modeValue, reflectionValue string, ok bool) {
 	switch mode {
 	case marotte.DeviceMemoryOff:
-		return memoryModeDisabled, "off", true
+		return memoryModeDisabled, memoryReflectionOff, true
 	case marotte.DeviceMemoryReadOnly:
-		return memoryModeReadOnly, "off", true
+		return memoryModeReadOnly, memoryReflectionOff, true
 	case marotte.DeviceMemoryReadWrite:
-		return memoryModeReadWrite, "off", true
+		return memoryModeReadWrite, memoryReflectionOff, true
 	case marotte.DeviceMemoryLearn:
 		return memoryModeReadWrite, "on", true
 	}
@@ -317,7 +314,7 @@ func DecodeModelFallbacks(raw json.RawMessage) ([]marotte.ModelFallback, bool) {
 		} `json:"view"`
 		Settings []json.RawMessage `json:"settings"`
 	}
-	if json.Unmarshal(raw, &s) != nil || s.View.Observer != "connection" {
+	if json.Unmarshal(raw, &s) != nil || s.View.Observer != observerConnection {
 		return nil, false
 	}
 	out := []marotte.ModelFallback{}
@@ -348,7 +345,7 @@ func DecodeModelFallbackSetting(raw json.RawMessage) (marotte.ModelFallback, boo
 		f.Configured = displayText(st.Value[0])
 	}
 	switch {
-	case st.Compose == "locked":
+	case st.Compose == composeLocked:
 		f.ReadOnlyReason = "locked"
 	case configured && len(st.Value) > 1:
 		f.ReadOnlyReason = "multiple-targets"

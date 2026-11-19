@@ -579,7 +579,10 @@ function initRemotePanel(existing: Server | null): void {
 const CLS_SIGN_IN_METHOD = "mcp-sign-in-method";
 
 /** The labels of KAS's `oauth.mode` values; "" is KAS's default, the browser. */
-const SIGN_IN_METHODS: readonly { readonly value: "" | Exclude<OAuthMode, "browser">; readonly label: string }[] = [
+const SIGN_IN_METHODS: readonly {
+  readonly value: "" | Exclude<OAuthMode, "browser">;
+  readonly label: string;
+}[] = [
   { value: "", label: "Browser" },
   { value: "enterprise", label: "Organization sign-in" },
   { value: "auto", label: "Organization, then browser" },
@@ -592,7 +595,10 @@ export function renderSignInMethod(
   orgSetUp: boolean,
   onSetUp: () => void,
 ): { readonly element: HTMLElement; value: () => OAuthMode | undefined } {
-  const select = el("select", { id: SIGN_IN_METHOD_ID, className: "tool-form-input" }) as HTMLSelectElement;
+  const select = el("select", {
+    id: SIGN_IN_METHOD_ID,
+    className: "tool-form-input",
+  }) as HTMLSelectElement;
   for (const m of SIGN_IN_METHODS) {
     const opt = el("option", { value: m.value }, m.label) as HTMLOptionElement;
     // A stored organization mode stays selectable, so opening the form never changes it.
@@ -600,9 +606,18 @@ export function renderSignInMethod(
     select.appendChild(opt);
   }
   select.value = current === "enterprise" || current === "auto" ? current : "";
-  const label = el("label", { className: `tool-form-label ${CLS_SIGN_IN_METHOD}` }, "Sign-in method", select);
+  const label = el(
+    "label",
+    { className: `tool-form-label ${CLS_SIGN_IN_METHOD}` },
+    "Sign-in method",
+    select,
+  );
   if (!orgSetUp) {
-    const link = el("a", { href: `#${ORG_CARD_ID}` }, "Set up organization sign-in first") as HTMLAnchorElement;
+    const link = el(
+      "a",
+      { href: `#${ORG_CARD_ID}` },
+      "Set up organization sign-in first",
+    ) as HTMLAnchorElement;
     link.addEventListener("click", (ev) => {
       ev.preventDefault();
       onSetUp();
@@ -611,7 +626,8 @@ export function renderSignInMethod(
   }
   return {
     element: label,
-    value: () => (select.value === "enterprise" || select.value === "auto" ? select.value : undefined),
+    value: () =>
+      select.value === "enterprise" || select.value === "auto" ? select.value : undefined,
   };
 }
 

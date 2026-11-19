@@ -582,7 +582,14 @@ export function mountToolCallCard(
   const key = toolCallSigKey(chatID, tc.id);
   const slots = toolSlots.get(key) ?? [];
   toolSlots.set(key, slots);
-  const slot: ToolSlot = { chatID, toolID: tc.id, card, applied: tc, appliedEnd: ended, cleanup: null };
+  const slot: ToolSlot = {
+    chatID,
+    toolID: tc.id,
+    card,
+    applied: tc,
+    appliedEnd: ended,
+    cleanup: null,
+  };
   slots.push(slot);
   // After the build and the slot registration: a held chunk is appended to the slots' cards, and whether it
   // flushes depends on the output this build rendered.

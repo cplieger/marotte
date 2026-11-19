@@ -31,14 +31,14 @@ const maxJobEndedOutput = 16 << 10
 const maxJobEndClaims = 256
 
 type chatJobs struct {
-	session string
 	running map[string]marotte.BackgroundJobPayload
-	// ended is the jobs whose end was filed, oldest first.
-	ended []string
 	// described keeps a running job's description for its end's row after the job leaves running.
 	described map[string]string
 	// cards maps a job to the tool call kiro-cli moved into it, so an end from the notice names its card.
-	cards map[string]string
+	cards   map[string]string
+	session string
+	// ended is the jobs whose end was filed, oldest first.
+	ended []string
 }
 
 // jobRegistry is every chat's running jobs and filed ends, safe for concurrent use.
@@ -295,7 +295,7 @@ func outputTail(s string) string {
 		return s
 	}
 	s = s[len(s)-maxJobEndedOutput:]
-	for len(s) > 0 && !utf8.RuneStart(s[0]) {
+	for s != "" && !utf8.RuneStart(s[0]) {
 		s = s[1:]
 	}
 	return s

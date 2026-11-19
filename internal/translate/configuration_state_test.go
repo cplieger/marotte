@@ -265,9 +265,9 @@ func TestDecodeModelFallbackSetting(t *testing.T) {
 	}
 }
 
-// TestDecodeDeviceMemory pins the reduction kiro-cli 3.4.0's terminal UI applies to the two device rows
+// TestDeviceMemoryView_Choice pins the reduction kiro-cli 3.4.0's terminal UI applies to the two device rows
 // (mode ?? disabled, reflection ?? off, read_write plus reflection on reads as learn) and the lock naming.
-func TestDecodeDeviceMemory(t *testing.T) {
+func TestDeviceMemoryView_Choice(t *testing.T) {
 	row := func(setting, value, compose, assertion string) string {
 		assertions := `[]`
 		if assertion != "" {
@@ -302,20 +302,21 @@ func TestDecodeDeviceMemory(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := DecodeDeviceMemory(tc.raw)
+			v, ok := DecodeDeviceMemoryView(tc.raw)
+			got := v.Choice()
 			if !ok {
-				t.Fatal("DecodeDeviceMemory ok = false, want true for a connection view")
+				t.Fatal("DecodeDeviceMemoryView ok = false, want true for a connection view")
 			}
 			if got.Mode != tc.want.Mode || (got.Lock == nil) != (tc.want.Lock == nil) || (got.Lock != nil && *got.Lock != *tc.want.Lock) {
-				t.Errorf("DecodeDeviceMemory = %+v (lock %+v), want %+v (lock %+v)", got, got.Lock, tc.want, tc.want.Lock)
+				t.Errorf("Choice = %+v (lock %+v), want %+v (lock %+v)", got, got.Lock, tc.want, tc.want.Lock)
 			}
 		})
 	}
-	if _, ok := DecodeDeviceMemory(view("session", row("memoryMode", "read_only", "replace", ""))); ok {
-		t.Error("DecodeDeviceMemory(session view) ok = true, want false: only the connection view states the device rows")
+	if _, ok := DecodeDeviceMemoryView(view("session", row("memoryMode", "read_only", "replace", ""))); ok {
+		t.Error("DecodeDeviceMemoryView(session view) ok = true, want false: only the connection view states the device rows")
 	}
-	if _, ok := DecodeDeviceMemory(json.RawMessage(`{`)); ok {
-		t.Error("DecodeDeviceMemory(undecodable) ok = true, want false")
+	if _, ok := DecodeDeviceMemoryView(json.RawMessage(`{`)); ok {
+		t.Error("DecodeDeviceMemoryView(undecodable) ok = true, want false")
 	}
 }
 

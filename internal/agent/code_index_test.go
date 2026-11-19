@@ -105,7 +105,7 @@ func TestCodeIndexStatus_ArrivesFromAnObserverPass(t *testing.T) {
 	}
 }
 
-func postCodeIndex(t *testing.T, h *Runtime, path, body string, handler func(http.ResponseWriter, *http.Request)) *httptest.ResponseRecorder {
+func postCodeIndex(t *testing.T, path, body string, handler func(http.ResponseWriter, *http.Request)) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
@@ -135,7 +135,7 @@ func TestCodeIndexBuild_CallsStartBuildOnAnObserverPass(t *testing.T) {
 			methodKiroCodeIndexStartBuild: json.RawMessage(`{"buildId":"b2","workspaceRoot":"/tmp/work","analysisScope":"structural-only","status":"started"}`),
 		}
 
-		rec := postCodeIndex(t, h, "/api/code-index/build", "", h.handleCodeIndexBuild)
+		rec := postCodeIndex(t, "/api/code-index/build", "", h.handleCodeIndexBuild)
 
 		if rec.Code != http.StatusNoContent {
 			t.Errorf("answer = %d %s, want 204", rec.Code, rec.Body.String())
@@ -160,7 +160,7 @@ func TestCodeIndexBuild_CallsStartBuildOnAnObserverPass(t *testing.T) {
 			Data: json.RawMessage(`{"errorType":"CodeIntelligenceNotEnabledError","retryErrorType":"CLIENT_ERROR"}`),
 		}}
 
-		rec := postCodeIndex(t, h, "/api/code-index/build", "", h.handleCodeIndexBuild)
+		rec := postCodeIndex(t, "/api/code-index/build", "", h.handleCodeIndexBuild)
 
 		if rec.Code != http.StatusConflict || errorOf(t, rec) != "The code index is not enabled." {
 			t.Errorf("answer = %d %s, want 409 with kiro-cli's message", rec.Code, rec.Body.String())
@@ -172,7 +172,7 @@ func TestCodeIndexBuild_CallsStartBuildOnAnObserverPass(t *testing.T) {
 		o := oneObserver(t, h)
 		o.callErrs = map[string]error{methodKiroCodeIndexStartBuild: errors.New("kas gone")}
 
-		rec := postCodeIndex(t, h, "/api/code-index/build", "", h.handleCodeIndexBuild)
+		rec := postCodeIndex(t, "/api/code-index/build", "", h.handleCodeIndexBuild)
 
 		if rec.Code != http.StatusBadGateway || errorOf(t, rec) != "kiro-cli did not start the build." {
 			t.Errorf("answer = %d %s, want 502", rec.Code, rec.Body.String())
@@ -188,8 +188,10 @@ func TestCodeIndexCancel_PassesTheBuildID(t *testing.T) {
 		called          bool
 	}{
 		{name: "canceled", body: `{"build_id":"b2"}`, kas: `{"status":"canceled"}`, want: http.StatusNoContent, called: true},
-		{name: "nothing running", body: `{"build_id":"b2"}`, kas: `{"status":"not-running"}`, want: http.StatusConflict,
-			wantError: "No index build is running.", called: true},
+		{
+			name: "nothing running", body: `{"build_id":"b2"}`, kas: `{"status":"not-running"}`, want: http.StatusConflict,
+			wantError: "No index build is running.", called: true,
+		},
 		{name: "no build named", body: `{}`, want: http.StatusBadRequest, wantError: "build_id names the build to cancel."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -198,7 +200,7 @@ func TestCodeIndexCancel_PassesTheBuildID(t *testing.T) {
 			o := oneObserver(t, h)
 			o.callResults = map[string]json.RawMessage{methodKiroCodeIndexCancelBuild: json.RawMessage(tc.kas)}
 
-			rec := postCodeIndex(t, h, "/api/code-index/cancel", tc.body, h.handleCodeIndexCancel)
+			rec := postCodeIndex(t, "/api/code-index/cancel", tc.body, h.handleCodeIndexCancel)
 
 			if rec.Code != tc.want {
 				t.Errorf("answer = %d %s, want %d", rec.Code, rec.Body.String(), tc.want)

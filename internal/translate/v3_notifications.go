@@ -107,22 +107,22 @@ const credentialsRejectedReason = "the server rejected its credentials (check it
 // for OAuth sign-in, authorizationUrl. KAS reports its internal "unavailable" as failed.
 // Every state may carry ignoredFields, the config keys KAS read and did not use.
 type v3MCPServer struct {
-	Meta             v3MCPServerMeta `json:"_meta"`
-	Name             string          `json:"name"`
-	Status           string          `json:"status"`
-	ErrorMessage     string          `json:"errorMessage"`
-	AuthorizationURL string          `json:"authorizationUrl"`
-	Tools            []struct {
-		Name string `json:"name"`
-	} `json:"tools"`
-	IgnoredFields     []string                `json:"ignoredFields"`
-	Prompts           []v3MCPPrompt           `json:"prompts"`
-	Resources         []v3MCPResource         `json:"resources"`
-	ResourceTemplates []v3MCPResourceTemplate `json:"resourceTemplates"`
 	// EnterpriseAuthorization is set on a server that signs in through the organization: {} once connected
 	// through it, a reason when it could not.
 	EnterpriseAuthorization *v3EnterpriseAuthorization `json:"enterpriseAuthorization"`
-	FailedAuthorization     bool                       `json:"failedAuthorization"`
+	Meta                    v3MCPServerMeta            `json:"_meta"`
+	Name                    string                     `json:"name"`
+	Status                  string                     `json:"status"`
+	ErrorMessage            string                     `json:"errorMessage"`
+	AuthorizationURL        string                     `json:"authorizationUrl"`
+	Tools                   []struct {
+		Name string `json:"name"`
+	} `json:"tools"`
+	IgnoredFields       []string                `json:"ignoredFields"`
+	Prompts             []v3MCPPrompt           `json:"prompts"`
+	Resources           []v3MCPResource         `json:"resources"`
+	ResourceTemplates   []v3MCPResourceTemplate `json:"resourceTemplates"`
+	FailedAuthorization bool                    `json:"failedAuthorization"`
 }
 
 type v3EnterpriseAuthorization struct {

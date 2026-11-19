@@ -503,7 +503,9 @@ function stateTitle(st: RuntimeStatus): string {
 
 function orgSignInPhrase(): string {
   const name = orgProviderName();
-  return name === ORG_NAME_FALLBACK ? "Needs your organization sign-in" : `Needs your ${name} sign-in`;
+  return name === ORG_NAME_FALLBACK
+    ? "Needs your organization sign-in"
+    : `Needs your ${name} sign-in`;
 }
 
 /** The keys kiro-cli ignores for a server, or "" when none. Exported for its test. */
@@ -715,7 +717,11 @@ function oauthControls(
       signIn = null;
     }
     // While the organization sign-in stands, the card holds its page; a second press could only be refused.
-    if (live && st.state === "needs_org_sign_in" && orgSignInStatus.value?.sign_in_deadline === undefined) {
+    if (
+      live &&
+      st.state === "needs_org_sign_in" &&
+      orgSignInStatus.value?.sign_in_deadline === undefined
+    ) {
       orgBtn ??= body.appendChild(renderOrgSignInBtn());
     } else {
       orgBtn?.remove();

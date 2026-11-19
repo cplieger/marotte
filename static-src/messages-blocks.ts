@@ -3010,7 +3010,12 @@ function indexGroups(st: TurnRender): GroupIndex {
     }
     let to = run.length;
     const hooksOnly = run.every((m) => m.hook);
-    while (next !== null && hooksOnly && to > from && hookCallSeat(run[to - 1]?.trigger) === "before") {
+    while (
+      next !== null &&
+      hooksOnly &&
+      to > from &&
+      hookCallSeat(run[to - 1]?.trigger) === "before"
+    ) {
       to--;
     }
     for (const [i, m] of run.entries()) {

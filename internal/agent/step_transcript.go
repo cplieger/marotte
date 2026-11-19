@@ -118,7 +118,7 @@ func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]tran
 	// A `{"result":null}` reply would otherwise wait out the budget.
 	raw, at, err := rs.engine.callRawAt(cctx, "step transcript load", marotte.MethodSessionLoad, map[string]any{
 		marotte.KeySessionID: sessionID,
-		"_meta":              map[string]any{"kiro": map[string]any{"requireExisting": true}},
+		marotte.KeyMeta:      map[string]any{marotte.KeyKiro: map[string]any{"requireExisting": true}},
 	})
 	if marotte.SessionRecordGone(err, sessionID) {
 		slog.Info("step transcript: kiro-cli holds no record of the step's session", "session_id", sessionID)

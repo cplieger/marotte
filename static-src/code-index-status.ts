@@ -20,7 +20,7 @@ const PHASES: readonly (readonly [phase: string, label: string])[] = [
 ];
 
 /** What the row shows for one status: the line, kiro-cli's text under it, and the button. */
-export interface CodeIndexLine {
+interface CodeIndexLine {
   text: string;
   detail: string;
   action: "build" | "cancel";
@@ -44,7 +44,9 @@ export function codeIndexLine(st: CodeIndexStatusPayload | undefined): CodeIndex
     const step = PHASES.findIndex(([phase]) => phase === b.phase);
     const label = PHASES[step]?.[1];
     const text =
-      label === undefined ? "Building" : `Building: ${label} (${String(step + 1)} of ${String(PHASES.length)})`;
+      label === undefined
+        ? "Building"
+        : `Building: ${label} (${String(step + 1)} of ${String(PHASES.length)})`;
     return { text, detail: b.message ?? "", action: "cancel" };
   }
   const why = [b?.reason, b?.detail].filter((s) => s !== undefined && s !== "").join(": ");
@@ -58,7 +60,10 @@ export function codeIndexLine(st: CodeIndexStatusPayload | undefined): CodeIndex
   switch (state) {
     case "ready": {
       const s = st?.store.summary;
-      const text = s === undefined ? "Ready" : `Ready: ${count(s.files)} files, ${count(s.functions)} functions`;
+      const text =
+        s === undefined
+          ? "Ready"
+          : `Ready: ${count(s.files)} files, ${count(s.functions)} functions`;
       return { text, detail: "", action: "build" };
     }
     case "unreadable":
@@ -81,7 +86,11 @@ const startBuild = apiAction<undefined, void>({
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for an action with no result
 const cancelBuild = apiAction<{ buildID: string }, void>({
   name: "codeIndex.cancel",
-  request: ({ buildID }) => ({ method: "POST", path: "/api/code-index/cancel", body: { build_id: buildID } }),
+  request: ({ buildID }) => ({
+    method: "POST",
+    path: "/api/code-index/cancel",
+    body: { build_id: buildID },
+  }),
   error: false,
 });
 
@@ -121,7 +130,9 @@ export function mountCodeIndexStatus(): void {
   button.addEventListener("click", () => {
     const b = shown()?.build;
     const out =
-      b !== undefined && buildRunning(b) ? cancelBuild.dispatch({ buildID: b.build_id }) : startBuild.dispatch(undefined);
+      b !== undefined && buildRunning(b)
+        ? cancelBuild.dispatch({ buildID: b.build_id })
+        : startBuild.dispatch(undefined);
     button.disabled = true;
     void out.outcome.then((o) => {
       button.disabled = false;

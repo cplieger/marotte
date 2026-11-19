@@ -406,7 +406,9 @@ describe("a call kiro-cli moved into a background job", () => {
       "c1",
     );
 
-    expect(card.querySelector(".tool-job")?.textContent).toBe("Timed out, 1m 1s, ended 3 minutes ago");
+    expect(card.querySelector(".tool-job")?.textContent).toBe(
+      "Timed out, 1m 1s, ended 3 minutes ago",
+    );
     expect(card.dataset["outcome"]).toBe("fail");
   });
 
@@ -416,7 +418,11 @@ describe("a call kiro-cli moved into a background job", () => {
     document.body.appendChild(card);
     expect(card.querySelector(".tool-job")?.textContent).toBe("Running in background, job 7");
 
-    noteJobEnded("c-late", { job_id: "7", output: "slept", end: { status: "completed", duration_ms: 2000 } });
+    noteJobEnded("c-late", {
+      job_id: "7",
+      output: "slept",
+      end: { status: "completed", duration_ms: 2000 },
+    });
 
     expect(card.querySelector(".tool-job")?.textContent).toBe("Completed, 2.0s");
     expect(card.dataset["outcome"]).toBe("ok");

@@ -22,48 +22,80 @@ const ready: CodeIndexStatusPayload = status({
 });
 
 describe("codeIndexLine", () => {
-  const cases: [string, CodeIndexStatusPayload | undefined, string, string, "build" | "cancel"][] = [
-    ["no status reported yet", undefined, "No index yet", "", "build"],
-    ["no saved index", status({}), "No index yet", "", "build"],
-    ["a build at its second phase", building, "Building: Parsing (2 of 4)", "Parsing 40 of 120 files", "cancel"],
+  const cases: [string, CodeIndexStatusPayload | undefined, string, string, "build" | "cancel"][] =
     [
-      "a build at its first phase",
-      status({ build: { build_id: "b1", state: "running", phase: "scan", message: "Scanning" } }),
-      "Building: Scanning (1 of 4)",
-      "Scanning",
-      "cancel",
-    ],
-    [
-      "a build kiro-cli names no phase for",
-      status({ build: { build_id: "b1", state: "running", message: "Starting" } }),
-      "Building",
-      "Starting",
-      "cancel",
-    ],
-    [
-      "a build waiting behind another",
-      status({ build: { build_id: "b2", state: "pending", message: "Waiting for another build" } }),
-      "Build queued",
-      "Waiting for another build",
-      "cancel",
-    ],
-    ["a saved index", ready, "Ready: 1,234 files, 5,678 functions", "", "build"],
-    ["an index that cannot be read", status({ store: { state: "unreadable" } }), "The index cannot be read", "", "build"],
-    [
-      "a failed build",
-      status({ build: { build_id: "b1", state: "failed", phase: "parse", message: "", reason: "error", detail: "disk full" } }),
-      "Build failed",
-      "error: disk full",
-      "build",
-    ],
-    [
-      "a cancelled build",
-      status({ build: { build_id: "b1", state: "canceled", phase: "graph", message: "", reason: "client" } }),
-      "Build cancelled",
-      "client",
-      "build",
-    ],
-  ];
+      ["no status reported yet", undefined, "No index yet", "", "build"],
+      ["no saved index", status({}), "No index yet", "", "build"],
+      [
+        "a build at its second phase",
+        building,
+        "Building: Parsing (2 of 4)",
+        "Parsing 40 of 120 files",
+        "cancel",
+      ],
+      [
+        "a build at its first phase",
+        status({ build: { build_id: "b1", state: "running", phase: "scan", message: "Scanning" } }),
+        "Building: Scanning (1 of 4)",
+        "Scanning",
+        "cancel",
+      ],
+      [
+        "a build kiro-cli names no phase for",
+        status({ build: { build_id: "b1", state: "running", message: "Starting" } }),
+        "Building",
+        "Starting",
+        "cancel",
+      ],
+      [
+        "a build waiting behind another",
+        status({
+          build: { build_id: "b2", state: "pending", message: "Waiting for another build" },
+        }),
+        "Build queued",
+        "Waiting for another build",
+        "cancel",
+      ],
+      ["a saved index", ready, "Ready: 1,234 files, 5,678 functions", "", "build"],
+      [
+        "an index that cannot be read",
+        status({ store: { state: "unreadable" } }),
+        "The index cannot be read",
+        "",
+        "build",
+      ],
+      [
+        "a failed build",
+        status({
+          build: {
+            build_id: "b1",
+            state: "failed",
+            phase: "parse",
+            message: "",
+            reason: "error",
+            detail: "disk full",
+          },
+        }),
+        "Build failed",
+        "error: disk full",
+        "build",
+      ],
+      [
+        "a cancelled build",
+        status({
+          build: {
+            build_id: "b1",
+            state: "canceled",
+            phase: "graph",
+            message: "",
+            reason: "client",
+          },
+        }),
+        "Build cancelled",
+        "client",
+        "build",
+      ],
+    ];
   for (const [name, st, text, detail, action] of cases) {
     it(name, () => {
       expect(codeIndexLine(st)).toEqual({ text, detail, action });
@@ -87,11 +119,15 @@ describe("mountCodeIndexStatus", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-        const path = new URL(input instanceof Request ? input.url : String(input), location.href).pathname;
+        const path = new URL(input instanceof Request ? input.url : String(input), location.href)
+          .pathname;
         if (path === "/api/code-index") {
           return Promise.resolve(Response.json({ root: ROOT, statuses: [building] }));
         }
-        posts.push({ path, body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined });
+        posts.push({
+          path,
+          body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+        });
         return Promise.resolve(answer(path));
       }),
     );

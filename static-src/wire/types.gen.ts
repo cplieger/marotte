@@ -2552,7 +2552,7 @@ export interface LoadedResource {
   type: LoadedType;
   /** Name is the tool, skill, document or Power name. */
   name: string;
-  /** Server is a LoadedMCP resource's server, else empty. */
+  /** Server is an mcp resource's server, else empty. */
   server: string;
 }
 

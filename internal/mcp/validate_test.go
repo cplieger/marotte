@@ -739,14 +739,14 @@ func TestValidate_IdentityProvider(t *testing.T) {
 		}},
 		{name: "a loopback issuer over http", edit: func(p *identityProvider) { p.Issuer = "http://localhost:8080/realms/test" }},
 		{name: "an ipv6 loopback issuer over http", edit: func(p *identityProvider) { p.Issuer = "http://[::1]:8080" }},
-		{name: "no issuer", edit: func(p *identityProvider) { p.Issuer = "" }, field: fieldIdPIssuer},
-		{name: "an http issuer off loopback", edit: func(p *identityProvider) { p.Issuer = "http://idp.example" }, field: fieldIdPIssuer},
-		{name: "a relative issuer", edit: func(p *identityProvider) { p.Issuer = "idp.example.com" }, field: fieldIdPIssuer},
-		{name: "an issuer with userinfo", edit: func(p *identityProvider) { p.Issuer = "https://u:p@idp.example.com" }, field: fieldIdPIssuer},
-		{name: "no client id", edit: func(p *identityProvider) { p.ClientID = "" }, field: fieldIdPClientID},
-		{name: "a blank name", edit: func(p *identityProvider) { p.Name = "  " }, field: fieldIdPName},
-		{name: "an http token endpoint off loopback", edit: func(p *identityProvider) { p.TokenEndpoint = "http://idp.example.com/token" }, field: fieldIdPTokenEndpoint},
-		{name: "an http authorization endpoint off loopback", edit: func(p *identityProvider) { p.AuthorizationEndpoint = "http://idp.example.com/a" }, field: fieldIdPAuthorizationEndpoint},
+		{name: "no issuer", edit: func(p *identityProvider) { p.Issuer = "" }, field: fieldIDPIssuer},
+		{name: "an http issuer off loopback", edit: func(p *identityProvider) { p.Issuer = "http://idp.example" }, field: fieldIDPIssuer},
+		{name: "a relative issuer", edit: func(p *identityProvider) { p.Issuer = "idp.example.com" }, field: fieldIDPIssuer},
+		{name: "an issuer with userinfo", edit: func(p *identityProvider) { p.Issuer = "https://u:p@idp.example.com" }, field: fieldIDPIssuer},
+		{name: "no client id", edit: func(p *identityProvider) { p.ClientID = "" }, field: fieldIDPClientID},
+		{name: "a blank name", edit: func(p *identityProvider) { p.Name = "  " }, field: fieldIDPName},
+		{name: "an http token endpoint off loopback", edit: func(p *identityProvider) { p.TokenEndpoint = "http://idp.example.com/token" }, field: fieldIDPTokenEndpoint},
+		{name: "an http authorization endpoint off loopback", edit: func(p *identityProvider) { p.AuthorizationEndpoint = "http://idp.example.com/a" }, field: fieldIDPAuthorizationEndpoint},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := ok

@@ -265,12 +265,10 @@ func (r *turnRender) writeEntry(b *strings.Builder, e *marotte.Entry) {
 	case marotte.EntryKindCompaction, marotte.EntryKindCompactionFailed,
 		marotte.EntryKindSafetyBlocked, marotte.EntryKindModelSwitched, marotte.EntryKindModelRouted,
 		marotte.EntryKindModelFallback, marotte.EntryKindModeSwitched, marotte.EntryKindProfileSwitched,
-		marotte.EntryKindContextReset:
+		marotte.EntryKindContextReset, marotte.EntryKindJobEnded:
 		r.writeEvent(b, e)
 	case marotte.EntryKindTurnClose:
 		writeTurnCloseEntry(b, e)
-	case marotte.EntryKindJobEnded:
-		writeJobEndedMarkdown(b, e)
 	case marotte.EntryKindTurnBind, marotte.EntryKindReconciled, marotte.EntryKindSteerDelivered,
 		marotte.EntryKindSteerCleared, marotte.EntryKindRunNamed, marotte.EntryKindStepGraded:
 		// None renders: turn_bind is bookkeeping, reconciled a fact about the record, steer_delivered a time on its
@@ -306,6 +304,8 @@ func writeEventMarkdown(b *strings.Builder, e *marotte.Entry) {
 		writeProfileSwitchedMarkdown(b, e)
 	case marotte.EntryKindContextReset:
 		writeContextResetMarkdown(b, e)
+	case marotte.EntryKindJobEnded:
+		writeJobEndedMarkdown(b, e)
 	}
 }
 

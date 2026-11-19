@@ -85,7 +85,7 @@ func onSession(t *testing.T, cs *testChatStore, chatID marotte.ChatID, session s
 }
 
 // boundTurn writes one closed prompt turn whose prompt KAS bound on session, as a sent prompt leaves it.
-func boundTurn(t *testing.T, cs *testChatStore, chatID marotte.ChatID, session string) string {
+func boundTurn(t *testing.T, cs *testChatStore, chatID marotte.ChatID, session string) {
 	t.Helper()
 	ctx := t.Context()
 	opened, err := cs.OpenTurn(ctx, chatID, &chat.TurnSpec{
@@ -106,7 +106,6 @@ func boundTurn(t *testing.T, cs *testChatStore, chatID marotte.ChatID, session s
 	}
 	appendTo(opened.Turn+":bind", marotte.EntryKindTurnBind, marotte.EntryTurnBind{KASMessageID: "kas-" + session, SessionID: session})
 	appendTo(opened.Turn+":close", marotte.EntryKindTurnClose, marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted})
-	return opened.Turn
 }
 
 func contextResets(t *testing.T, cs *testChatStore, chatID marotte.ChatID) []marotte.ContextResetCause {

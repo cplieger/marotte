@@ -40,11 +40,12 @@ function foldRuns(chatID: string): RunFold {
       case "working":
         working++;
         break;
-      // Unreachable from a LIVE row: the mark withdraws when a run ends (`idle` keeps the switch
-      // total).
+      // Unreachable from a LIVE row: the mark withdraws when a run ends (`idle` and `background`
+      // keep the switch total).
       case "done":
       case "failed":
       case "idle":
+      case "background":
       case "":
         break;
     }

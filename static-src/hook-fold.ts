@@ -53,7 +53,7 @@ export function hookCounted(call: HookFacts, showStatus: boolean): boolean {
 }
 
 /** Where a hook that fires for one tool call sits beside that call's card: before it runs, or once its card exists. */
-export type HookCallSeat = "" | "before" | "after";
+type HookCallSeat = "" | "before" | "after";
 
 // The twin of internal/marotte HookCallSeatOf, keyed by the same canonical trigger names. PermissionRequest runs inside
 // the call's permission check, after its card exists.

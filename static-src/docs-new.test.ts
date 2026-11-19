@@ -376,8 +376,14 @@ describe("the Permission Request trigger", () => {
 
   it("sits between Pre and Post Tool Use, matches tool names and runs only a command, shown as text", () => {
     const form = openForm("hooks");
-    const tools = [...labelled(form, "Trigger").querySelectorAll('optgroup[label="Tool Hooks"] option')];
-    expect(tools.map((o) => o.textContent)).toEqual(["Pre Tool Use", "Permission Request", "Post Tool Use"]);
+    const tools = [
+      ...labelled(form, "Trigger").querySelectorAll('optgroup[label="Tool Hooks"] option'),
+    ];
+    expect(tools.map((o) => o.textContent)).toEqual([
+      "Pre Tool Use",
+      "Permission Request",
+      "Post Tool Use",
+    ]);
 
     setValue(labelled(form, "Action"), "agent");
     setValue(labelled(form, "Trigger"), "PermissionRequest");
@@ -388,7 +394,9 @@ describe("the Permission Request trigger", () => {
     expect(text?.hidden).toBe(false);
     expect(text?.textContent).toBe("Run Command");
     expect(labels(form)).toContain("Command to execute");
-    expect(action?.querySelector(".tool-form-hint")?.textContent).toContain('"behavior":"allow"|"deny"');
+    expect(action?.querySelector(".tool-form-hint")?.textContent).toContain(
+      '"behavior":"allow"|"deny"',
+    );
 
     setValue(labelled(form, "Trigger"), "Stop");
     expect(action?.querySelector("select")?.hidden).toBe(false);
@@ -397,11 +405,14 @@ describe("the Permission Request trigger", () => {
 
   it("names Pre Tool Use's answers in its command hint, and no other trigger's", () => {
     const form = openForm("hooks");
-    const hint = (): string => actionLabel(form)?.querySelector(".tool-form-hint")?.textContent ?? "";
+    const hint = (): string =>
+      actionLabel(form)?.querySelector(".tool-form-hint")?.textContent ?? "";
     setValue(labelled(form, "Trigger"), "PreToolUse");
     expect(hint()).toContain('"permissionDecision":"allow"|"ask"|"deny"');
     setValue(labelled(form, "Trigger"), "PostToolUse");
-    expect(hint()).toBe("Executes a shell command. The hook event payload is provided as JSON on stdin.");
+    expect(hint()).toBe(
+      "Executes a shell command. The hook event payload is provided as JSON on stdin.",
+    );
   });
 
   it("posts a command hook whatever the hidden select last held", async () => {
@@ -417,7 +428,11 @@ describe("the Permission Request trigger", () => {
       expect(onCreated).toHaveBeenCalled();
     });
     expect(posted().body).toEqual(
-      expect.objectContaining({ trigger: "PermissionRequest", matcher: "execute_bash", action: "command" }),
+      expect.objectContaining({
+        trigger: "PermissionRequest",
+        matcher: "execute_bash",
+        action: "command",
+      }),
     );
   });
 });

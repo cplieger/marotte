@@ -67,9 +67,17 @@ func (c *codeIndexStatuses) view() []marotte.CodeIndexStatusPayload {
 	return out
 }
 
-// codeIndexBuildEnded is KAS's terminal build states (succeeded, failed, canceled).
+// KAS's terminal build states.
+const (
+	codeIndexBuildSucceeded = "succeeded"
+	codeIndexBuildFailed    = "failed"
+	codeIndexBuildCanceled  = "canceled"
+)
+
+var codeIndexBuildEndStates = []string{codeIndexBuildSucceeded, codeIndexBuildFailed, codeIndexBuildCanceled}
+
 func codeIndexBuildEnded(state string) bool {
-	return state == "succeeded" || state == "failed" || state == "canceled"
+	return slices.Contains(codeIndexBuildEndStates, state)
 }
 
 func codeIndexStatusEqual(a, b *marotte.CodeIndexStatusPayload) bool {

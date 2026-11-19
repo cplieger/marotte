@@ -22,7 +22,9 @@ export const JOB_OUTCOME_WORDS: Readonly<Record<BackgroundJobState, string>> = {
 };
 
 /** Every chat's running jobs, oldest first; a chat with none has no key. */
-export const runningJobs: Signal<ReadonlyMap<string, readonly BackgroundJobPayload[]>> = signal(new Map());
+export const runningJobs: Signal<ReadonlyMap<string, readonly BackgroundJobPayload[]>> = signal(
+  new Map(),
+);
 
 /** Counts job_updates, so a list read can tell which chats moved while it was in flight. */
 let updateSeq = 0;
@@ -34,7 +36,9 @@ export function applyJobUpdate(chatID: string, job: BackgroundJobPayload): void 
   const rows = (runningJobs.peek().get(chatID) ?? []).filter((j) => j.id !== job.id);
   if (job.status === "running") {
     rows.push(job);
-    rows.sort((a, b) => (a.started_at ?? "").localeCompare(b.started_at ?? "") || a.id.localeCompare(b.id));
+    rows.sort(
+      (a, b) => (a.started_at ?? "").localeCompare(b.started_at ?? "") || a.id.localeCompare(b.id),
+    );
   }
   const next = new Map(runningJobs.peek());
   if (rows.length === 0) {

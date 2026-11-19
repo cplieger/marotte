@@ -33,7 +33,7 @@ const (
 // the object, where a block carries it as the map key.
 var pasteServerKeys = []string{
 	"args", "command", "disabled", "disabledTools",
-	"env", "headers", "name", "oauth", "oauthScopes", "prewarm", "timeout", "timeoutMs", "type", "url",
+	"env", "headers", "name", "oauth", keyOAuthScopes, "prewarm", "timeout", "timeoutMs", "type", "url",
 	"versionNegotiation", "waitForReady",
 }
 
@@ -60,7 +60,10 @@ const (
 // The nested object needs its own classification pass: encoding/json drops a
 // key with no matching field, so without one a misspelt `clientIdd` would be
 // accepted and discarded silently.
-var pasteOAuthKeys = []string{"clientId", "clientMetadataUrl", "mode", "oauthScopes", "redirectUri", "scopes"}
+// keyOAuthScopes is the scopes key both a server and its oauth object take.
+const keyOAuthScopes = "oauthScopes"
+
+var pasteOAuthKeys = []string{"clientId", "clientMetadataUrl", "mode", keyOAuthScopes, "redirectUri", "scopes"}
 
 // pasteOAuthSecretKey is refused by name, before the typo pass: a confidential
 // client cannot authenticate through KAS, so the server would fail at its token
@@ -103,10 +106,10 @@ type importNote struct {
 // noteScope is one pasted object a note can be about: its server, its position path and its keys' positions,
 // which encoding/json's maps discard.
 type noteScope struct {
+	order  map[string]int
 	server string
 	prefix string
 	at     []int
-	order  map[string]int
 }
 
 func newNoteScope(at []int, raw json.RawMessage) noteScope {
@@ -394,7 +397,7 @@ func nestedScopes(spec *pasteServer, oauthScope noteScope, req *importRequest) [
 	for _, c := range []struct {
 		key  string
 		list []string
-	}{{"oauthScopes", spec.OAuth.OAuthScopes}, {"scopes", spec.OAuth.Scopes}} {
+	}{{keyOAuthScopes, spec.OAuth.OAuthScopes}, {"scopes", spec.OAuth.Scopes}} {
 		switch {
 		case c.list == nil:
 		case scopes == nil:
@@ -408,7 +411,7 @@ func nestedScopes(spec *pasteServer, oauthScope noteScope, req *importRequest) [
 
 // noteStdioOAuthKeys reports the OAuth keys a local server's block carries, which translateServer drops.
 func noteStdioOAuthKeys(sc noteScope, obj map[string]json.RawMessage, req *importRequest) {
-	for _, key := range []string{"oauth", "oauthScopes"} {
+	for _, key := range []string{"oauth", keyOAuthScopes} {
 		if _, ok := obj[key]; ok {
 			req.note(sc, key, "Not stored: only a server with a url signs in with OAuth.")
 		}

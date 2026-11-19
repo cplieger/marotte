@@ -595,14 +595,7 @@ export function outcomeLatch(outcome: TurnOutcome | undefined): "done" | "failed
  *  `decision-dock.ts` imports this module; `waiting` only from the chat's own `chat_status`;
  *  `background` from a running job (`chatRunsJob`), a parameter for the same reason. */
 export type TabDotState =
-  | ""
-  | "input"
-  | "failed"
-  | "working"
-  | "background"
-  | "waiting"
-  | "done"
-  | "idle";
+  "" | "input" | "failed" | "working" | "background" | "waiting" | "done" | "idle";
 
 export function tabStatusFor(
   s: Session | undefined,

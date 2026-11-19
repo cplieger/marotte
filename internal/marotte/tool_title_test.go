@@ -144,31 +144,31 @@ func TestToolCard_LoadedResourceID(t *testing.T) {
 		typ       LoadedType
 		name, srv string
 	}{
-		{"tool::agent-mail::fetch_inbox", LoadedMCP, "fetch_inbox", "agent-mail"},
-		{"tool::inspect_workflow", LoadedTool, "inspect_workflow", ""},
-		{"builtin::inspect_workflow", LoadedTool, "inspect_workflow", ""},
+		{"tool::agent-mail::fetch_inbox", loadedMCP, "fetch_inbox", "agent-mail"},
+		{"tool::inspect_workflow", loadedTool, "inspect_workflow", ""},
+		{"builtin::inspect_workflow", loadedTool, "inspect_workflow", ""},
 		{"skill::land", LoadedSkill, "land", ""},
-		{"steering::code-style", LoadedSteering, "code-style", ""},
-		{"power::aws::overview", LoadedOverview, "aws", ""},
-		{"power::aws::tool::docs::search", LoadedMCP, "search", "docs"},
-		{"power::aws::steering::guide", LoadedSteering, "guide", ""},
+		{"steering::code-style", loadedSteering, "code-style", ""},
+		{"power::aws::overview", loadedOverview, "aws", ""},
+		{"power::aws::tool::docs::search", loadedMCP, "search", "docs"},
+		{"power::aws::steering::guide", loadedSteering, "guide", ""},
 		{"plugin::kit::skill::release", LoadedSkill, "release", ""},
-		{"plugin::kit::tool::srv::do", LoadedMCP, "do", "srv"},
-		{"tool::mailbox::", LoadedUnknown, "tool::mailbox::", ""},
-		{"tool::::x", LoadedUnknown, "tool::::x", ""},
-		{"power::aws", LoadedUnknown, "power::aws", ""},
-		{"plugin::::skill::x", LoadedUnknown, "plugin::::skill::x", ""},
-		{"memory::x", LoadedUnknown, "memory::x", ""},
+		{"plugin::kit::tool::srv::do", loadedMCP, "do", "srv"},
+		{"tool::mailbox::", loadedUnknown, "tool::mailbox::", ""},
+		{"tool::::x", loadedUnknown, "tool::::x", ""},
+		{"power::aws", loadedUnknown, "power::aws", ""},
+		{"plugin::::skill::x", loadedUnknown, "plugin::::skill::x", ""},
+		{"memory::x", loadedUnknown, "memory::x", ""},
 		{"skill::team::land", LoadedSkill, "team::land", ""},
-		{"steering::web::css", LoadedSteering, "web::css", ""},
-		{"skill::", LoadedUnknown, "skill::", ""},
+		{"steering::web::css", loadedSteering, "web::css", ""},
+		{"skill::", loadedUnknown, "skill::", ""},
 		{"power::aws::skill::a::b", LoadedSkill, "a::b", ""},
-		{"plugin::kit::steering::a::b", LoadedSteering, "a::b", ""},
-		{"power::a::b::skill::x", LoadedUnknown, "power::a::b::skill::x", ""},
-		{"plugin::a::b::steering::x", LoadedUnknown, "plugin::a::b::steering::x", ""},
+		{"plugin::kit::steering::a::b", loadedSteering, "a::b", ""},
+		{"power::a::b::skill::x", loadedUnknown, "power::a::b::skill::x", ""},
+		{"plugin::a::b::steering::x", loadedUnknown, "plugin::a::b::steering::x", ""},
 		// load_resource's id is a catalogue id, where a bare two-part id is no tool.
-		{"agent-mail::fetch_inbox", LoadedUnknown, "agent-mail::fetch_inbox", ""},
-		{"tool", LoadedUnknown, "tool", ""},
+		{"agent-mail::fetch_inbox", loadedUnknown, "agent-mail::fetch_inbox", ""},
+		{"tool", loadedUnknown, "tool", ""},
 	}
 	for _, c := range cases {
 		t.Run(strings.ReplaceAll(c.id, "/", "_"), func(t *testing.T) {
@@ -185,16 +185,16 @@ func TestToolCard_LoadedCalls(t *testing.T) {
 	}
 	t.Run("tool_ids skip non-strings and empties", func(t *testing.T) {
 		assertLoaded(t, loadCall("tool_load", `{"tool_ids":["skill::a",7,"","tool::b",null]}`),
-			[]LoadedResource{skill("skill::a", "a"), {ID: "tool::b", Type: LoadedTool, Name: "b"}})
+			[]LoadedResource{skill("skill::a", "a"), {ID: "tool::b", Type: loadedTool, Name: "b"}})
 	})
 	// tool_load's tool_ids schema: `builtin::<tool_name>` or `<server_name>::<tool_name>`.
 	t.Run("tool_ids server pairs are MCP tools", func(t *testing.T) {
 		assertLoaded(t, loadCall("tool_load",
 			`{"tool_ids":["agent-mail::fetch_inbox","agent-mail::send_message","builtin::control_process"]}`),
 			[]LoadedResource{
-				{ID: "agent-mail::fetch_inbox", Type: LoadedMCP, Name: "fetch_inbox", Server: "agent-mail"},
-				{ID: "agent-mail::send_message", Type: LoadedMCP, Name: "send_message", Server: "agent-mail"},
-				{ID: "builtin::control_process", Type: LoadedTool, Name: "control_process"},
+				{ID: "agent-mail::fetch_inbox", Type: loadedMCP, Name: "fetch_inbox", Server: "agent-mail"},
+				{ID: "agent-mail::send_message", Type: loadedMCP, Name: "send_message", Server: "agent-mail"},
+				{ID: "builtin::control_process", Type: loadedTool, Name: "control_process"},
 			})
 	})
 	t.Run("a non-string id falls to tool_ids", func(t *testing.T) {
@@ -215,7 +215,7 @@ func TestToolCard_LoadedCalls(t *testing.T) {
 	})
 	t.Run("disclose_context id steering", func(t *testing.T) {
 		assertLoaded(t, loadCall("disclose_context", `{"id":"steering::git-commits"}`),
-			[]LoadedResource{{ID: "steering::git-commits", Type: LoadedSteering, Name: "git-commits"}})
+			[]LoadedResource{{ID: "steering::git-commits", Type: loadedSteering, Name: "git-commits"}})
 	})
 	for _, c := range []struct{ name, tool, input string }{
 		{"not a load tool", "read_file", `{"id":"skill::a"}`},
@@ -244,7 +244,7 @@ func TestToolCard_LoadedDisclosed(t *testing.T) {
 	t.Run("steering", func(t *testing.T) {
 		tc := loadCall("disclose_context", `{"name":"marotte"}`)
 		tc.Disclosed = disclosed("steering", "marotte")
-		assertLoaded(t, tc, []LoadedResource{{ID: "steering::marotte", Type: LoadedSteering, Name: "marotte"}})
+		assertLoaded(t, tc, []LoadedResource{{ID: "steering::marotte", Type: loadedSteering, Name: "marotte"}})
 	})
 	t.Run("a type KAS does not define loads nothing", func(t *testing.T) {
 		tc := loadCall("", `{"name":"x"}`)

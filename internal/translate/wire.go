@@ -98,15 +98,15 @@ type acpKiroBlock struct {
 	// Notification tags a row KAS wrote onto a chat on something else's behalf;
 	// "workflow-progress" is a step's progress, a user_message_chunk carrying JSON.
 	Notification struct {
-		Kind string `json:"kind"`
+		// JobEnd and JobID are on a job notice's row (kind system-notification).
+		JobEnd *acpJobEnd `json:"jobEnd"`
+		Kind   string     `json:"kind"`
 		// Status is KAS's severity for a notification-kind row; only a REPLAY carries it here (the
 		// live frame uses notificationSeverity), so a replayed step note keeps its label.
 		Status string `json:"status"`
 		// Sender is "parent" or "step" on a workflow message's row (send_message).
 		Sender string `json:"sender"`
-		// JobID and JobEnd are on a job notice's row (kind system-notification).
-		JobID  string     `json:"jobId"`
-		JobEnd *acpJobEnd `json:"jobEnd"`
+		JobID  string `json:"jobId"`
 	} `json:"notification"`
 	// Workflow is on every frame of a workflow STEP's session and is the only mark of one.
 	// Nested at `params.update._meta.kiro.workflow`, not `params._meta`.

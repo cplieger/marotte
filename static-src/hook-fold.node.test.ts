@@ -2,7 +2,13 @@
 // dropped at the entry when Show hook status is off.
 
 import { describe, it, expect } from "vitest";
-import { hookCallSeat, hookCounted, hookQuiet, hookRenders, isToolTriggerHook } from "./hook-fold.js";
+import {
+  hookCallSeat,
+  hookCounted,
+  hookQuiet,
+  hookRenders,
+  isToolTriggerHook,
+} from "./hook-fold.js";
 import type { ToolCall } from "./types.js";
 
 function hook(over: Partial<ToolCall> = {}): ToolCall {

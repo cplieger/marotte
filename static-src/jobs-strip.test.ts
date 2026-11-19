@@ -9,7 +9,14 @@ import { setActive } from "./store.js";
 import type { BackgroundJobPayload } from "./wire/types.gen.js";
 
 function job(id: string, over: Partial<BackgroundJobPayload> = {}): BackgroundJobPayload {
-  return { id, kind: "shell", description: `sleep ${id}`, status: "running", started_at: new Date().toISOString(), ...over };
+  return {
+    id,
+    kind: "shell",
+    description: `sleep ${id}`,
+    status: "running",
+    started_at: new Date().toISOString(),
+    ...over,
+  };
 }
 
 describe("mountJobsStrip", () => {
@@ -53,7 +60,9 @@ describe("mountJobsStrip", () => {
 
     dispatch({ type: "job_update", chat_id: "c1", payload: job("7") });
     expect(strip().hidden).toBe(false);
-    expect(rows().map((r) => r.querySelector(".jobs-strip-desc")?.textContent)).toEqual(["sleep 7"]);
+    expect(rows().map((r) => r.querySelector(".jobs-strip-desc")?.textContent)).toEqual([
+      "sleep 7",
+    ]);
 
     dispatch({ type: "job_update", chat_id: "c1", payload: job("7", { status: "completed" }) });
     expect(strip().hidden).toBe(true);
@@ -69,9 +78,15 @@ describe("mountJobsStrip", () => {
 
     expect(rows()[0]?.querySelector(".jobs-strip-elapsed")?.textContent).toBe("Stopping");
     expect(stop?.disabled).toBe(true);
-    expect(requests).toContainEqual({ method: "POST", path: "/api/chats/c1/jobs/7/cancel", search: "" });
+    expect(requests).toContainEqual({
+      method: "POST",
+      path: "/api/chats/c1/jobs/7/cancel",
+      search: "",
+    });
     await vi.waitFor(() => {
-      expect(rows()[0]?.querySelector(".jobs-strip-message")?.textContent).toBe("the session has no job '7'");
+      expect(rows()[0]?.querySelector(".jobs-strip-message")?.textContent).toBe(
+        "the session has no job '7'",
+      );
     });
     expect(stop?.disabled).toBe(false);
   });
@@ -102,14 +117,17 @@ describe("mountJobsStrip", () => {
   });
 
   it("shows a failed read in the modal", async () => {
-    answer = () => Response.json({ error: "kiro-cli did not read the job's output." }, { status: 502 });
+    answer = () =>
+      Response.json({ error: "kiro-cli did not read the job's output." }, { status: 502 });
     mountJobsStrip();
     applyJobUpdate("c1", job("7"));
 
     rows()[0]?.querySelector<HTMLButtonElement>(".jobs-strip-show")?.click();
 
     await vi.waitFor(() => {
-      expect(document.querySelector(".job-output-status")?.textContent).toBe("kiro-cli did not read the job's output.");
+      expect(document.querySelector(".job-output-status")?.textContent).toBe(
+        "kiro-cli did not read the job's output.",
+      );
     });
   });
 

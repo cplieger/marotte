@@ -93,9 +93,9 @@ func (rt *Runtime) handleJobCancel(w http.ResponseWriter, r *http.Request) {
 }
 
 type kasJobOutput struct {
-	Gap    json.RawMessage `json:"gap"`
-	Status string          `json:"status"`
-	Lines  []string        `json:"lines"`
+	Gap    *json.RawMessage `json:"gap"`
+	Status string           `json:"status"`
+	Lines  []string         `json:"lines"`
 }
 
 // handleJobOutput answers a job's last lines; lines is clamped to 1..1000 before the call, 100 when absent.
@@ -118,7 +118,7 @@ func (rt *Runtime) handleJobOutput(w http.ResponseWriter, r *http.Request) {
 	view := marotte.BackgroundJobOutput{
 		Status: translate.JobState(out.Status),
 		Lines:  make([]string, 0, len(out.Lines)),
-		Gap:    len(out.Gap) > 0 && string(out.Gap) != "null",
+		Gap:    out.Gap != nil,
 	}
 	for _, l := range out.Lines {
 		view.Lines = append(view.Lines, sanitize.Output(l))

@@ -11,10 +11,11 @@ import type { ServerEvent } from "./types.js";
 import { byId } from "./dom.js";
 import { adoptSignInHealth } from "./signin-health.js";
 import type { DeviceMemory, SignInState } from "./wire/types.gen.js";
+import type * as ModalsModule from "./modals.js";
 
 const showLoginModal = vi.hoisted(() => vi.fn());
 vi.mock("./modals.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./modals.js")>()),
+  ...(await importOriginal<typeof ModalsModule>()),
   showLoginModal,
 }));
 
@@ -72,15 +73,9 @@ async function pastSkeletonDelay(): Promise<void> {
 
 let revision = 0;
 
-/** The settings a read answers: memory as given, or absent while the engine has reported no view. */
+/** The settings a read answers: memory as given, or null while the engine has reported no view. */
 function settingsWith(memory: DeviceMemory | null): EffectiveSettings {
-  const s = settingsPayload({ settings_epoch: 1, settings_revision: revision });
-  if (memory === null) {
-    delete s.memory;
-  } else {
-    s.memory = memory;
-  }
-  return s;
+  return { ...settingsPayload({ settings_epoch: 1, settings_revision: revision }), memory };
 }
 
 /** Deliver a settings event and answer the read it sends. */
@@ -130,7 +125,7 @@ afterEach(async () => {
   }
   await settled();
   // Leave the row read, so the next case starts from a known server answer.
-  await announced({ mode: "off" });
+  await announced({ mode: "off", lock: null });
 });
 
 afterAll(() => {
@@ -139,7 +134,7 @@ afterAll(() => {
 
 describe("the Memory row", () => {
   it("writes a pick through PUT /api/memory/mode and paints the answered choice", async () => {
-    await announced({ mode: "off" });
+    await announced({ mode: "off", lock: null });
 
     select().value = "learn";
     select().dispatchEvent(new Event("change"));
@@ -150,7 +145,7 @@ describe("the Memory row", () => {
     puts[0]?.answer(200, { lock: null, mode: "learn" });
     await settled();
     // The answer's own read still carries the old row: the answer stays shown until a later read.
-    gets.at(-1)?.answer(200, settingsWith({ mode: "off" }));
+    gets.at(-1)?.answer(200, settingsWith({ mode: "off", lock: null }));
     await settled();
     expect(select().value).toBe("learn");
     expect(select().disabled).toBe(false);
@@ -158,7 +153,10 @@ describe("the Memory row", () => {
   });
 
   it("disables the dropdown under a lock and names the layer", async () => {
-    await announced({ mode: "read_only", lock: { layer: "organization", name: "Your organization" } });
+    await announced({
+      mode: "read_only",
+      lock: { layer: "organization", name: "Your organization" },
+    });
 
     expect(select().value).toBe("read_only");
     expect(select().disabled).toBe(true);
@@ -167,7 +165,7 @@ describe("the Memory row", () => {
   });
 
   it("asks for a Kiro sign-in beside the reason while signed out", async () => {
-    await announced({ mode: "off" });
+    await announced({ mode: "off", lock: null });
     signIn("none");
     await settled();
 
@@ -184,7 +182,7 @@ describe("the Memory row", () => {
   });
 
   it("keeps the painted choice while kiro-cli has not reported, and says Reading only past the skeleton delay", async () => {
-    await announced({ mode: "read_only" });
+    await announced({ mode: "read_only", lock: null });
     await announced(null);
 
     expect(select().value, "the choice the page last painted").toBe("read_only");
@@ -195,7 +193,7 @@ describe("the Memory row", () => {
     expect(select().disabled).toBe(true);
     expect(reason()).toBe("Reading…");
 
-    await announced({ mode: "read_write" });
+    await announced({ mode: "read_write", lock: null });
     expect(select().value).toBe("read_write");
     expect(select().disabled).toBe(false);
     expect(lineShown()).toBe(false);
@@ -211,7 +209,7 @@ describe("the Memory row", () => {
   });
 
   it("shows a refused write's message under the row and keeps the server's choice", async () => {
-    await announced({ mode: "off" });
+    await announced({ mode: "off", lock: null });
 
     select().value = "read_only";
     select().dispatchEvent(new Event("change"));

@@ -460,14 +460,28 @@ describe("a hook seated after its call's card", () => {
     entry(
       seq,
       "tool_call",
-      { id: "inv", title: "invokeSubAgent", kind: "other", status, ts: 1, agent_subtask_id: "sub-1" },
+      {
+        id: "inv",
+        title: "invokeSubAgent",
+        kind: "other",
+        status,
+        ts: 1,
+        agent_subtask_id: "sub-1",
+      },
       { id: "inv" },
     );
   const permissionHook = (seq: number, status: "completed" | "failed"): Entry =>
     entry(
       seq,
       "tool_call",
-      { id: "ph", title: "Hook fired: gate", kind: "hook", status, ts: 1, hook_trigger: "PermissionRequest" },
+      {
+        id: "ph",
+        title: "Hook fired: gate",
+        kind: "hook",
+        status,
+        ts: 1,
+        hook_trigger: "PermissionRequest",
+      },
       { id: "ph" },
     );
 
@@ -475,8 +489,12 @@ describe("a hook seated after its call's card", () => {
   // refused delegate's card owns it and keeps it as a row with hook status off, as it does a hook that failed.
   it("prices a refused delegate's quiet PermissionRequest hook as its row with hook status off", () => {
     setHookStatusShown(false);
-    const quiet = stood(turn("seat-quiet", [text(1), delegate(2, "failed"), permissionHook(3, "completed"), text(4)]));
-    const loud = stood(turn("seat-loud", [text(1), delegate(2, "failed"), permissionHook(3, "failed"), text(4)]));
+    const quiet = stood(
+      turn("seat-quiet", [text(1), delegate(2, "failed"), permissionHook(3, "completed"), text(4)]),
+    );
+    const loud = stood(
+      turn("seat-loud", [text(1), delegate(2, "failed"), permissionHook(3, "failed"), text(4)]),
+    );
     expect(quiet).toBe(loud);
   });
 });

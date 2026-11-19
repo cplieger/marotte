@@ -171,7 +171,9 @@ describe("the organization sign-in a refused tool call started", () => {
 
   it("names the organization, not an integration", () => {
     fireSSE("open_external_url", "", org());
-    expect(mockShowBanner.mock.calls[0]?.[2]).toBe("Sign in to Acme to keep using its MCP servers.");
+    expect(mockShowBanner.mock.calls[0]?.[2]).toBe(
+      "Sign in to Acme to keep using its MCP servers.",
+    );
     expect(mockShowBanner.mock.calls[0]?.[5]).toEqual({
       label: "Open sign-in page",
       href: "https://idp.example.com/authorize?state=o1",
@@ -185,7 +187,9 @@ describe("the organization sign-in a refused tool call started", () => {
     fireSSE("mcp_identity_provider", "", { status: { reported: { state: "signing-in" } } });
     expect(mockClearBannerCodes).not.toHaveBeenCalled();
 
-    fireSSE("mcp_identity_provider", "", { status: { reported: { state: "signed-in", account: "a@acme" } } });
+    fireSSE("mcp_identity_provider", "", {
+      status: { reported: { state: "signed-in", account: "a@acme" } },
+    });
     expect(mockClearBannerCodes).toHaveBeenCalledWith("*", ["open_external_url"]);
     mockClearBannerCodes.mockClear();
     vi.advanceTimersByTime(300_000);

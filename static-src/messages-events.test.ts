@@ -465,7 +465,10 @@ describe("safety_blocked", () => {
 });
 
 describe("job_ended", () => {
-  const ended = (status: "completed" | "failed" | "timed_out" | "cancelled", description?: string) =>
+  const ended = (
+    status: "completed" | "failed" | "timed_out" | "cancelled",
+    description?: string,
+  ) =>
     event("job_ended", {
       job_id: "7",
       ...(description !== undefined && { description }),

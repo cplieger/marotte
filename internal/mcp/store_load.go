@@ -80,7 +80,7 @@ func (s *Store) load() error {
 // loadIdentityProvider takes the record's identity provider when the save rule accepts it. One it refuses is logged
 // and kept as read for persist, and KAS's file keeps the identityProvider it has until the user saves a provider.
 func (s *Store) loadIdentityProvider(raw json.RawMessage) {
-	if len(raw) == 0 || string(raw) == "null" {
+	if len(raw) == 0 || isJSONNull(raw) {
 		return
 	}
 	var idp identityProvider
@@ -112,7 +112,7 @@ func decodeEntries(entries []json.RawMessage) (servers []*Server, unreadable []j
 	for i, entry := range entries {
 		var sv Server
 		err := json.Unmarshal(entry, &sv)
-		if err == nil && string(entry) == "null" {
+		if err == nil && isJSONNull(entry) {
 			err = errors.New("the entry is null")
 		}
 		if err != nil {
@@ -235,3 +235,6 @@ func (s *Store) identicalAside(raw []byte) (string, bool) {
 	}
 	return "", false
 }
+
+// isJSONNull reports whether raw is the JSON literal null, which decodes into any value without an error.
+func isJSONNull(raw json.RawMessage) bool { return string(raw) == "null" }

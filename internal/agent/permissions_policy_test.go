@@ -139,9 +139,9 @@ func TestPresetStores_SendsSessionRootsWithoutSession(t *testing.T) {
 	if want, _ := json.Marshal([]string{f.work, f.extra}); string(roots) != string(want) {
 		t.Errorf("workspaceRoots = %s, want the work dir then the additional directory %s", roots, want)
 	}
-	if len(stores) != 3 || stores[0].Scope != "user" || stores[1].WorkspaceRoot != f.work ||
+	if len(stores) != 3 || stores[0].Scope != "user" || stores[1].File != f.work+"/.kiro/settings/permissions.yaml" ||
 		len(stores[1].Read.Presets) != 1 || stores[1].Read.Presets[0].Status != "applies" ||
-		stores[2].Read.OK || stores[2].Read.Error != "bad file" {
+		stores[2].Read.OK {
 		t.Errorf("stores = %+v, want the three rows as KAS sent them", stores)
 	}
 }

@@ -191,12 +191,12 @@ func TestRulesGrant_NamesWhatAFileGrantsOnItsOwn(t *testing.T) {
 			if tc.file != "" {
 				writeFixture(t, filepath.Join(dir, tc.file), tc.body)
 			}
-			got, err := RulesGrant(t.Context(), filepath.Join(dir, filename))
+			got, err := rulesGrant(t.Context(), filepath.Join(dir, filename))
 			if err != nil {
-				t.Fatalf("RulesGrant: %v", err)
+				t.Fatalf("rulesGrant: %v", err)
 			}
 			if got != tc.want {
-				t.Errorf("RulesGrant = %v, want %v", got, tc.want)
+				t.Errorf("rulesGrant = %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -205,8 +205,8 @@ func TestRulesGrant_NamesWhatAFileGrantsOnItsOwn(t *testing.T) {
 func TestRulesGrant_AnUnparseableFileIsAnError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), filename)
 	writeFixture(t, path, "rules: [\n")
-	if _, err := RulesGrant(t.Context(), path); err == nil {
-		t.Error("RulesGrant read an unparseable file as granting nothing; the caller cannot tell it from an empty one")
+	if _, err := rulesGrant(t.Context(), path); err == nil {
+		t.Error("rulesGrant read an unparseable file as granting nothing; the caller cannot tell it from an empty one")
 	}
 }
 
@@ -220,11 +220,11 @@ func TestPresetStore_Grants(t *testing.T) {
 		read       PresetStoreRead
 		want       bool
 	}{
-		{"a file KAS refused", allow, PresetStoreRead{Error: "bad file"}, false},
-		{"a preset KAS applies", "", ok(PresetReference{ID: "dev-shell", Status: "applies"}), true},
-		{"a preset that needs the classifier", "", ok(PresetReference{ID: "approve-for-me", Status: "needs-classifier"}), false},
-		{"an unknown preset", "", ok(PresetReference{ID: "dev-shel", Status: "unknown"}), false},
-		{"a status KAS adds later", "", ok(PresetReference{ID: "dev-shell", Status: "withheld"}), false},
+		{"a file KAS refused", allow, PresetStoreRead{}, false},
+		{"a preset KAS applies", "", ok(PresetReference{Status: "applies"}), true},
+		{"a preset that needs the classifier", "", ok(PresetReference{Status: "needs-classifier"}), false},
+		{"an unknown preset", "", ok(PresetReference{Status: "unknown"}), false},
+		{"a status KAS adds later", "", ok(PresetReference{Status: "withheld"}), false},
 		{"an allow rule and no preset", allow, ok(), true},
 		{"no preset and no file", "", ok(), false},
 	}
