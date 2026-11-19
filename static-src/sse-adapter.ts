@@ -86,9 +86,10 @@ let hydrated = false;
 let pending: ServerEvent[] = [];
 /** Watchdog that opens the gate if hydration never reports in. */
 let hydrateTimer: ReturnType<typeof setTimeout> | null = null;
-/** Subjects refused once already whose repair, a fresh hello, was asked for. A frame of one
- *  refused again before one of it applies keeps what applied, so a handler that throws on every
- *  hello's snapshot cannot reconnect the stream in a loop. */
+/** Refusals whose repair, a fresh hello, was asked for, keyed by subject and chat (`refusalKey`).
+ *  A refusal of a key already here keeps what applied until a frame of that key applies, so a
+ *  handler that throws for one chat on every live frame or every hello cannot reconnect the
+ *  stream in a loop. */
 const helloAsked = new Set<string>();
 
 const digest = createDigestClient({ url: "/api/sync", timeoutMs: DIGEST_TIMEOUT_MS });
@@ -209,7 +210,7 @@ function deliver(evt: ServerEvent): void {
       // is the one signal that they may have been refused with it.
       rereadHeldRuns();
     }
-    repair(evt.subject);
+    repair(evt.subject, evt.chat_id);
     return;
   }
   const run = runContentOf(evt);
@@ -226,32 +227,37 @@ function deliver(evt: ServerEvent): void {
     // A mirror's projection is held whenever it has applied a frame; any other projection only
     // while this client holds what the stamp certifies, else there is nothing to repair.
     if (isMirrorKind(subject.kind) || projectionHeld(subject)) {
-      repair(subject);
+      repair(subject, evt.chat_id);
     }
     return;
   }
-  helloAsked.delete(stampKey(subject));
+  helloAsked.delete(refusalKey(subject, evt.chat_id));
   if (projectionHeld(subject)) {
     observeStamp(subject);
   }
 }
 
-function stampKey(stamp: SubjectStamp): string {
-  return `${stamp.kind}\0${stamp.ref}`;
+/** What threw, not which frame: every live `chat_status` frame carries a new `status` version
+ *  with an empty ref, so a key without the chat would let each one reset the stream. */
+function refusalKey(stamp: SubjectStamp, chatID: string | undefined): string {
+  return `${stamp.kind}\0${stamp.ref}\0${chatID ?? ""}`;
 }
 
 /** A refused frame's path: run the subject's action and, when that action is a fresh hello,
- *  reconnect for it, once until a frame of the subject applies. */
-function repair(subject: SubjectStamp | undefined): void {
+ *  reconnect for it, once per `refusalKey` until a frame of that key applies. */
+function repair(subject: SubjectStamp | undefined, chatID: string | undefined): void {
+  if (subject === undefined) {
+    return;
+  }
   runStampAction(subject).then(
     (hello) => {
-      if (!hello || subject === undefined) {
+      if (!hello) {
         return;
       }
-      const key = stampKey(subject);
+      const key = refusalKey(subject, chatID);
       if (helloAsked.has(key)) {
         console.warn(
-          `sse: ${subject.kind} refused again after a fresh hello, keeping what applied`,
+          `sse: ${subject.kind} refused while its fresh hello is asked or already ran, keeping what applied`,
         );
         return;
       }
@@ -259,7 +265,7 @@ function repair(subject: SubjectStamp | undefined): void {
       attachment?.reconnect({ resetCursor: true });
     },
     (e: unknown) => {
-      console.warn(`sse: re-reading ${subject?.kind ?? "a subject"} failed:`, e);
+      console.warn(`sse: re-reading ${subject.kind} failed:`, e);
     },
   );
 }
@@ -380,9 +386,9 @@ function salvageUndecodable(data: string, err: unknown): void {
 }
 
 /** The refetch a moved subject earns, as a promise the revalidation awaits. `pending` and
- *  `status` reach the client only through the connect hook, so their action is a fresh hello:
- *  they resolve `true` and the caller runs that hello LAST, after every other refetch has
- *  settled, instead of this reconnecting itself. */
+ *  `status` have no read of their own: only the connect hook sends their whole set, so their
+ *  action is a fresh hello. They resolve `true` and the caller runs that hello LAST, after every
+ *  other refetch has settled, instead of this reconnecting itself. */
 function runStampAction(stamp: SubjectStamp | undefined, signal?: AbortSignal): Promise<boolean> {
   if (stamp === undefined) {
     return Promise.resolve(false);

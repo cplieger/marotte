@@ -17,10 +17,11 @@ import type * as Versions from "./subject-versions.js";
 import type * as Transport from "./transport.js";
 
 const SLOT_MS = 1000 / 60;
-/** The replay waits one real rendering update per display slot, and the recorded turn's frames
- *  arrive in 187 slots: under a throttled rAF the default timeout cuts it off mid-turn, and every
- *  later case then runs inside that open turn. */
-const REPLAY_TIMEOUT_MS = testTimeoutFor(framesBudgetMs(187));
+/** The display slots the recorded turn's frames arrive in, at most; the replay case asserts it. */
+const REPLAY_SLOTS = 187;
+/** The replay waits one real rendering update per display slot: under a throttled rAF the default
+ *  timeout cuts it off mid-turn, and every later case then runs inside that open turn. */
+const REPLAY_TIMEOUT_MS = testTimeoutFor(framesBudgetMs(REPLAY_SLOTS));
 
 type Envelope = { readonly type: string; readonly chat_id: string } & Record<string, unknown>;
 type Recorded = CannedStream["frames"][number];
@@ -310,6 +311,9 @@ describe("frame-batch", () => {
     async () => {
       expect(document.visibilityState).toBe("visible");
       const grouped = slots(frames);
+      expect(grouped.length, "the recording's slots within the replay timeout").toBeLessThanOrEqual(
+        REPLAY_SLOTS,
+      );
       const from = Date.now();
       const counts: SlotCount[] = [];
       for (const slot of grouped) {
@@ -426,7 +430,7 @@ describe("frame-batch", () => {
       await greet(() => thrown > 1);
       expect(thrown, "the refused set and the fresh hello's").toBe(2);
       expect(warns).toHaveBeenCalledWith(
-        "sse: pending refused again after a fresh hello, keeping what applied",
+        "sse: pending refused while its fresh hello is asked or already ran, keeping what applied",
       );
       expect(app.net.connections.length, "no second hello").toBe(opened + 1);
     } finally {
@@ -440,6 +444,68 @@ describe("frame-batch", () => {
     await task();
     app.release();
     expect(heldVersion(PENDING), "a set that applied").toBe("9000002");
+  });
+
+  it("a chat's status refused across live frames asks one fresh hello per chat until it applies", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const warns = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const other = "chat-status-other";
+    const faulty = new Set([chatID, other]);
+    const off = bus.onSSE("chat_status", (chat) => {
+      if (faulty.has(chat)) {
+        throw new Error("status handler fault");
+      }
+    });
+    let snapshots = 0;
+    const offSnapshots = bus.onSSE("status_snapshot", () => {
+      snapshots++;
+    });
+    let version = 9_100_000;
+    const deliverStatus = async (chat: string): Promise<void> => {
+      app.hub.send(
+        {
+          type: "chat_status",
+          chat_id: chat,
+          payload: { status: "in_progress", description: "" },
+          subject: { kind: "status", ref: "", version: String(version++) },
+        },
+        undefined,
+      );
+      await task();
+      gate.run(Date.now());
+      await task();
+      app.release();
+      await task();
+    };
+    try {
+      const opened = app.net.connections.length;
+      await deliverStatus(chatID);
+      expect(app.net.connections.length, "the first refusal asks a fresh hello").toBe(opened + 1);
+      await greet(() => snapshots > 0);
+      expect(snapshots, "the fresh hello's status set applied").toBe(1);
+      for (let i = 0; i < 3; i++) {
+        await deliverStatus(chatID);
+      }
+      expect(app.net.connections.length, "later refusals of that chat stay").toBe(opened + 1);
+      expect(warns).toHaveBeenCalledWith(
+        "sse: status refused while its fresh hello is asked or already ran, keeping what applied",
+      );
+      await deliverStatus(other);
+      expect(app.net.connections.length, "another chat's refusal asks its own").toBe(opened + 2);
+      await greet(() => snapshots > 1);
+      faulty.delete(chatID);
+      await deliverStatus(chatID);
+      expect(app.net.connections.length, "a status that applied asks nothing").toBe(opened + 2);
+      faulty.add(chatID);
+      await deliverStatus(chatID);
+      expect(app.net.connections.length, "the applied status re-armed the chat").toBe(opened + 3);
+      await greet(() => snapshots > 2);
+    } finally {
+      off();
+      offSnapshots();
+      errors.mockRestore();
+      warns.mockRestore();
+    }
   });
 
   it("transport.send posts after a turn_closed that arrived before it", async () => {
