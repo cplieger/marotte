@@ -39,20 +39,22 @@ type codeIndexStatuses struct {
 	mu     sync.Mutex
 }
 
-// codeIndexRoot is a root's shown status, the rank of its build's shown state, and the ids of the builds whose
-// terminal frame was accepted, oldest first.
+// codeIndexRoot is a root's shown status, the rank of its build's shown state, the latest startedAt accepted, and
+// the ids of the builds refused from now on (ended, or started before started), oldest first.
 type codeIndexRoot struct {
-	shown marotte.CodeIndexStatusPayload
-	ended []string
-	rank  int
+	started time.Time
+	shown   marotte.CodeIndexStatusPayload
+	ended   []string
+	rank    int
 }
 
-// set keeps st as its root's latest and reports whether it changed what is shown. Every lane delivers its own copy
-// of KAS's ordered sequence and build ids are random, so the order between builds is unknown: set refuses a frame of
-// an ended build, an earlier state of the shown build, and a build-less frame while the shown build runs, and keeps
-// any other build's frame. KAS sends a lane an older build's final frame before the latest build's, so the view
-// converges on the latest build.
-func (c *codeIndexStatuses) set(st *marotte.CodeIndexStatusPayload) bool {
+// set keeps st, whose build started at started (zero when KAS sent none), as its root's latest and reports whether
+// it changed what is shown. Every lane delivers its own copy of KAS's ordered sequence and build ids are random, so
+// builds are ordered by startedAt, KAS running one build per store at a time. set refuses a frame of an ended
+// build, an earlier state of the shown build, another build's frame that started before the latest accepted, and a
+// build-less frame while any build is shown: KAS never clears its finished build, so that frame is a lagging copy.
+// A frame without startedAt (queued, or canceled before it started) of a build not seen before is taken as newer.
+func (c *codeIndexStatuses) set(st *marotte.CodeIndexStatusPayload, started time.Time) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	r := c.byRoot[st.WorkspaceRoot]
@@ -65,31 +67,50 @@ func (c *codeIndexStatuses) set(st *marotte.CodeIndexStatusPayload) bool {
 	} else if codeIndexStatusEqual(&r.shown, st) {
 		return false
 	}
-	return r.take(st)
+	return r.take(st, started)
 }
 
-// take shows st unless one of set's rules refuses it, and reports whether it did.
-func (r *codeIndexRoot) take(st *marotte.CodeIndexStatusPayload) bool {
+// reset forgets every root.
+func (c *codeIndexStatuses) reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.byRoot = nil
+}
+
+func (r *codeIndexRoot) take(st *marotte.CodeIndexStatusPayload, started time.Time) bool {
 	shown, b := r.shown.Build, st.Build
 	if b == nil {
-		if shown != nil && !codeIndexBuildEnded(shown.State) {
+		if shown != nil {
 			return false
 		}
 		r.shown = *st
 		return true
 	}
 	rank := codeIndexBuildRank(b)
-	if slices.Contains(r.ended, b.BuildID) || (shown != nil && shown.BuildID == b.BuildID && rank < r.rank) {
+	same := shown != nil && shown.BuildID == b.BuildID
+	if slices.Contains(r.ended, b.BuildID) || (same && rank < r.rank) {
 		return false
 	}
+	if !same && !started.IsZero() && started.Before(r.started) {
+		r.refuse(b.BuildID)
+		return false
+	}
+	if started.After(r.started) {
+		r.started = started
+	}
 	if codeIndexBuildEnded(b.State) {
-		if len(r.ended) == maxCodeIndexBuilds {
-			r.ended = slices.Delete(r.ended, 0, 1)
-		}
-		r.ended = append(r.ended, b.BuildID)
+		r.refuse(b.BuildID)
 	}
 	r.shown, r.rank = *st, rank
 	return true
+}
+
+// refuse remembers id among the last maxCodeIndexBuilds builds whose frames are refused.
+func (r *codeIndexRoot) refuse(id string) {
+	if len(r.ended) == maxCodeIndexBuilds {
+		r.ended = slices.Delete(r.ended, 0, 1)
+	}
+	r.ended = append(r.ended, id)
 }
 
 // codeIndexPhases are KAS's running phases (indexPhase), in the order a build passes them.
@@ -145,12 +166,13 @@ func codeIndexStatusEqual(a, b *marotte.CodeIndexStatusPayload) bool {
 // kasCodeIndexStatus is indexStatus's params.
 type kasCodeIndexStatus struct {
 	Build *struct {
-		BuildID string `json:"buildId"`
-		State   string `json:"state"`
-		Phase   string `json:"phase"`
-		Message string `json:"message"`
-		Reason  string `json:"reason"`
-		Detail  string `json:"detail"`
+		BuildID   string `json:"buildId"`
+		State     string `json:"state"`
+		Phase     string `json:"phase"`
+		Message   string `json:"message"`
+		Reason    string `json:"reason"`
+		Detail    string `json:"detail"`
+		StartedAt string `json:"startedAt"`
 	} `json:"build"`
 	Store struct {
 		Summary *marotte.CodeIndexSummary `json:"summary"`
@@ -174,13 +196,17 @@ func (rt *Runtime) onCodeIndexStatus(ctx context.Context, _ marotte.ChatID, msg 
 		WorkspaceRoot: filepath.Clean(p.WorkspaceRoot),
 		Store:         marotte.CodeIndexStore{State: codeIndexText(p.Store.State), Summary: p.Store.Summary},
 	}
+	var started time.Time
 	if b := p.Build; b != nil {
 		st.Build = &marotte.CodeIndexBuild{
 			BuildID: b.BuildID, State: codeIndexText(b.State), Phase: codeIndexText(b.Phase),
 			Message: codeIndexText(b.Message), Reason: codeIndexText(b.Reason), Detail: codeIndexText(b.Detail),
 		}
+		if t, err := time.Parse(time.RFC3339Nano, b.StartedAt); err == nil {
+			started = t
+		}
 	}
-	if rt.codeIndex.set(&st) {
+	if rt.codeIndex.set(&st, started) {
 		rt.Broadcast(ctx, marotte.NewEvent(marotte.EventCodeIndexStatus, "", st))
 	}
 }

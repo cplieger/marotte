@@ -90,65 +90,94 @@ func codeIndexFrameText(f *marotte.CodeIndexStatusPayload) string {
 	return f.Build.BuildID + " " + f.Build.State + " " + f.Build.Phase
 }
 
-// KAS sends a lane an older build's final frame and then the latest build's, so a lagging lane's copy of an ended
-// build or of an earlier state of the shown one is refused, any other build's frame is kept, and the view converges
+// codeIndexFrame is one frame and the startedAt KAS sent with its build, zero when it sent none.
+type codeIndexFrame struct {
+	started time.Time
+	st      *marotte.CodeIndexStatusPayload
+}
+
+func unstarted(st *marotte.CodeIndexStatusPayload) codeIndexFrame { return codeIndexFrame{st: st} }
+
+// Every lane delivers its own copy of KAS's ordered sequence, so a lagging lane's copy of an ended build, of an
+// earlier state of the shown one, or of a build that started before the shown one is refused, and the view converges
 // on the latest build whichever lane's copy marotte saw first.
 func TestCodeIndexStatus_RefusesAnEarlierPhaseAndAnEndedBuild(t *testing.T) {
+	t1 := time.Date(2026, 11, 19, 10, 0, 0, 0, time.UTC)
+	t2 := t1.Add(time.Minute)
+	at := func(when time.Time, st *marotte.CodeIndexStatusPayload) codeIndexFrame {
+		return codeIndexFrame{started: when, st: st}
+	}
 	for _, tc := range []struct {
 		name   string
-		frames []*marotte.CodeIndexStatusPayload
+		frames []codeIndexFrame
 		want   []bool
 		shown  *marotte.CodeIndexBuild
 	}{{
 		name: "late same-build phase",
-		frames: []*marotte.CodeIndexStatusPayload{
-			codeIndexBuildStatus("b1", "queued", ""), codeIndexBuildStatus("b1", "running", "parse"),
-			codeIndexBuildStatus("b1", "running", "scan"), codeIndexBuildStatus("b1", "queued", ""),
-			codeIndexBuildStatus("b1", "running", "graph"),
+		frames: []codeIndexFrame{
+			unstarted(codeIndexBuildStatus("b1", "queued", "")), at(t1, codeIndexBuildStatus("b1", "running", "parse")),
+			at(t1, codeIndexBuildStatus("b1", "running", "scan")), unstarted(codeIndexBuildStatus("b1", "queued", "")),
+			at(t1, codeIndexBuildStatus("b1", "running", "graph")),
 		},
 		want:  []bool{true, true, false, false, true},
 		shown: codeIndexBuildStatus("b1", "running", "graph").Build,
 	}, {
 		name: "late older build",
-		frames: []*marotte.CodeIndexStatusPayload{
-			codeIndexBuildStatus("b1", "running", "parse"), codeIndexBuildStatus("b1", "succeeded", "save"),
-			codeIndexBuildStatus("b2", "queued", ""),
-			codeIndexBuildStatus("b1", "succeeded", "save"), codeIndexBuildStatus("b1", "running", "save"),
-			codeIndexBuildStatus("b2", "running", "scan"),
+		frames: []codeIndexFrame{
+			at(t1, codeIndexBuildStatus("b1", "running", "parse")), at(t1, codeIndexBuildStatus("b1", "succeeded", "save")),
+			unstarted(codeIndexBuildStatus("b2", "queued", "")),
+			at(t1, codeIndexBuildStatus("b1", "succeeded", "save")), at(t1, codeIndexBuildStatus("b1", "running", "save")),
+			at(t2, codeIndexBuildStatus("b2", "running", "scan")),
 		},
 		want:  []bool{true, true, true, false, false, true},
 		shown: codeIndexBuildStatus("b2", "running", "scan").Build,
 	}, {
 		name: "newer build seen first",
-		frames: []*marotte.CodeIndexStatusPayload{
-			codeIndexBuildStatus("b2", "queued", ""), codeIndexBuildStatus("b1", "running", "parse"),
-			codeIndexBuildStatus("b1", "failed", "parse"), codeIndexBuildStatus("b2", "running", "scan"),
-			codeIndexBuildStatus("b2", "succeeded", "save"),
+		frames: []codeIndexFrame{
+			unstarted(codeIndexBuildStatus("b2", "queued", "")), at(t1, codeIndexBuildStatus("b1", "running", "parse")),
+			at(t1, codeIndexBuildStatus("b1", "failed", "parse")), at(t2, codeIndexBuildStatus("b2", "running", "scan")),
+			at(t2, codeIndexBuildStatus("b2", "succeeded", "save")),
 		},
 		want:  []bool{true, true, true, true, true},
 		shown: codeIndexBuildStatus("b2", "succeeded", "save").Build,
 	}, {
+		name: "newer build ended before a lagging lane's older build",
+		frames: []codeIndexFrame{
+			at(t2, codeIndexBuildStatus("b2", "succeeded", "save")), at(t1, codeIndexBuildStatus("b1", "running", "parse")),
+			at(t1, codeIndexBuildStatus("b1", "succeeded", "save")), at(t2, codeIndexBuildStatus("b2", "running", "scan")),
+			at(t2, codeIndexBuildStatus("b2", "succeeded", "save")),
+		},
+		want:  []bool{true, false, false, false, false},
+		shown: codeIndexBuildStatus("b2", "succeeded", "save").Build,
+	}, {
 		name: "ended build stays ended",
-		frames: []*marotte.CodeIndexStatusPayload{
-			codeIndexBuildStatus("b1", "running", "save"), codeIndexBuildStatus("b1", "canceled", "save"),
-			codeIndexBuildStatus("b1", "running", "save"),
+		frames: []codeIndexFrame{
+			at(t1, codeIndexBuildStatus("b1", "running", "save")), at(t1, codeIndexBuildStatus("b1", "canceled", "save")),
+			at(t1, codeIndexBuildStatus("b1", "running", "save")),
 		},
 		want:  []bool{true, true, false},
 		shown: codeIndexBuildStatus("b1", "canceled", "save").Build,
 	}, {
-		name: "build-less frame while a build runs",
-		frames: []*marotte.CodeIndexStatusPayload{
-			codeIndexBuildStatus("b2", "running", "scan"), codeIndexStoreStatus(),
-			codeIndexBuildStatus("b2", "succeeded", "save"), codeIndexStoreStatus(),
+		name: "build-less frame after a finished build",
+		frames: []codeIndexFrame{
+			at(t1, codeIndexBuildStatus("b1", "succeeded", "save")), unstarted(codeIndexStoreStatus()),
 		},
-		want:  []bool{true, false, true, true},
-		shown: nil,
+		want:  []bool{true, false},
+		shown: codeIndexBuildStatus("b1", "succeeded", "save").Build,
+	}, {
+		name: "build-less frame while a build runs",
+		frames: []codeIndexFrame{
+			at(t2, codeIndexBuildStatus("b2", "running", "scan")), unstarted(codeIndexStoreStatus()),
+			at(t2, codeIndexBuildStatus("b2", "succeeded", "save")), unstarted(codeIndexStoreStatus()),
+		},
+		want:  []bool{true, false, true, false},
+		shown: codeIndexBuildStatus("b2", "succeeded", "save").Build,
 	}} {
 		t.Run(tc.name, func(t *testing.T) {
 			var c codeIndexStatuses
 			for i, f := range tc.frames {
-				if got := c.set(f); got != tc.want[i] {
-					t.Errorf("set(frame %d: %s) = %v, want %v", i, codeIndexFrameText(f), got, tc.want[i])
+				if got := c.set(f.st, f.started); got != tc.want[i] {
+					t.Errorf("set(frame %d: %s) = %v, want %v", i, codeIndexFrameText(f.st), got, tc.want[i])
 				}
 			}
 			v := c.view()
@@ -159,6 +188,34 @@ func TestCodeIndexStatus_RefusesAnEarlierPhaseAndAnEndedBuild(t *testing.T) {
 				t.Errorf("shown build = %+v, want %+v", got, tc.shown)
 			}
 		})
+	}
+}
+
+// KAS's startedAt orders two builds on the wire, so a lagging lane's older build cannot replace a newer one.
+func TestCodeIndexStatus_OrdersBuildsByTheirStartedAt(t *testing.T) {
+	h, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	for _, f := range []string{
+		`{"workspaceRoot":"/tmp/work","store":{"state":"ready"},"build":{"buildId":"b2","state":"succeeded","phase":"save","startedAt":"2026-11-19T10:01:00.000Z"}}`,
+		`{"workspaceRoot":"/tmp/work","store":{"state":"none"},"build":{"buildId":"b1","state":"running","phase":"parse","startedAt":"2026-11-19T10:00:00.000Z"}}`,
+	} {
+		h.translateACPEvent("c1", h.originOf("c1"), indexStatusFrame(f))
+	}
+	if v := codeIndexView(t, h); len(v.Statuses) != 1 || v.Statuses[0].Build == nil || v.Statuses[0].Build.BuildID != "b2" {
+		t.Errorf("statuses = %+v, want b2, the later-started build", v.Statuses)
+	}
+}
+
+// An engine that ended mid-build takes its in-memory status with it, so the next engine's build-less replay shows.
+func TestCodeIndexStatus_ResetLetsTheNextEngineReplayShow(t *testing.T) {
+	var c codeIndexStatuses
+	c.set(codeIndexBuildStatus("b1", "running", "scan"), time.Time{})
+	c.reset()
+	if !c.set(codeIndexStoreStatus(), time.Time{}) {
+		t.Error("set(no build) after reset = false, want true")
+	}
+	if v := c.view(); len(v) != 1 || v[0].Build != nil || v[0].Store.State != "ready" {
+		t.Errorf("view = %+v, want the ready store with no build", v)
 	}
 }
 
