@@ -14,6 +14,7 @@ import { msw } from "msw/vite";
 
 import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
 import { CostSequencer } from "./__test-helpers__/shard-sequencer.js";
+import { stallWatchdog } from "./__test-helpers__/stall-watchdog.js";
 
 // Exclude compiled output and node_modules. `**/.stryker-tmp/**` keeps Stryker's `inPlace` backup
 // copy from being collected twice (its fixtures are missing, so it fails). Every unit project needs
@@ -292,9 +293,12 @@ const alignInstances = ([1, 2] as const).map((dpr) => ({
 }));
 
 export default defineConfig({
-  // Serves the MSW worker script from the package for the browser tests that mock the network;
-  // each such test starts its own worker.
-  plugins: [msw({ mode: "worker-only" })],
+  plugins: [
+    // Serves the MSW worker script from the package for the browser tests that mock the network;
+    // each such test starts its own worker.
+    msw({ mode: "worker-only" }),
+    stallWatchdog(),
+  ],
   // cmd/bundle injects the SSE worker's content-hashed URL into the page bundle; a test
   // build ships no worker, and the empty string is the adapter's "run the per-tab
   // stream" reading (static-src/globals.d.ts).
