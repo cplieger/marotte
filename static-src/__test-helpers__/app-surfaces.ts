@@ -922,10 +922,7 @@ function plantFileRows(): void {
 function plantRunBar(names: readonly string[] = ["deadset-ci", "land", "app-review"]): void {
   const fold = q("#run-bar-fold");
   fold.hidden = false;
-  const toggle = roleButton(
-    "run-bar-open run-bar-toggle",
-    `${String(names.length)} workflows running`,
-  );
+  const toggle = roleButton("tracker-toggle", `${String(names.length)} workflows running`);
   toggle.setAttribute("aria-expanded", "true");
   fold.append(toggle, iconButton("icon-btn run-bar-all", "Pause all"));
   plantRunRows(names);
@@ -1602,7 +1599,7 @@ export const SURFACES: readonly Surface[] = [
       plantRunBar();
     },
     controls: ["#run-bar-fold .run-bar-all"],
-    rows: ["#run-bar-fold .run-bar-toggle", "#run-bar .run-bar-open"],
+    rows: ["#run-bar-fold .tracker-toggle", "#run-bar .run-bar-open"],
   },
   {
     name: "the run bar at one run",
@@ -1618,7 +1615,7 @@ export const SURFACES: readonly Surface[] = [
       plantRunBar(["deadset-ci", "land"]);
     },
     controls: ["#run-bar-fold .run-bar-all"],
-    rows: ["#run-bar-fold .run-bar-toggle", "#run-bar .run-bar-open"],
+    rows: ["#run-bar-fold .tracker-toggle", "#run-bar .run-bar-open"],
   },
   {
     name: "a turn",

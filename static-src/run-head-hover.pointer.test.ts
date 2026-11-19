@@ -139,9 +139,9 @@ function mountRunBar(runs: number): HTMLElement {
   frame = document.createElement("div");
   frame.style.cssText = "inline-size:1000px";
   const host = document.createElement("div");
-  host.className = "run-bar-host";
+  host.className = "tracker-host";
   const fold = document.createElement("div");
-  fold.className = "run-bar-fold";
+  fold.className = "tracker-fold";
   const batch = document.createElement("button");
   batch.type = "button";
   batch.className = "icon-btn run-bar-all";
@@ -167,11 +167,11 @@ function mountRunBar(runs: number): HTMLElement {
   }
   if (runs >= 2) {
     const toggle = document.createElement("div");
-    toggle.className = "run-bar-open run-bar-toggle";
+    toggle.className = "tracker-toggle";
     toggle.setAttribute("role", "button");
     toggle.setAttribute("aria-expanded", "true");
     const count = document.createElement("span");
-    count.className = "run-bar-count";
+    count.className = "tracker-count";
     count.textContent = `${String(runs)} workflows, 1 needs you`;
     toggle.append(count);
     fold.append(toggle, batch);
@@ -188,7 +188,7 @@ function mountRunBar(runs: number): HTMLElement {
 describe("the chat run bar's header row", () => {
   // The batch button keeps the icon button's own 6px (`--r`).
   it.each([
-    ["the fold row", 3, ".run-bar-fold > .run-bar-toggle", ".run-bar-count"],
+    ["the fold row", 3, ".tracker-fold > .tracker-toggle", ".tracker-count"],
     ["the one run's row", 1, ".run-bar > li > .run-bar-open", ".ev-sum-label"],
   ] as const)("rounds %s's hover and its batch button's", async (_, runs, rowSel, inkSel) => {
     await browser.viewport(1440, 900);

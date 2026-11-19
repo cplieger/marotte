@@ -113,7 +113,7 @@ export async function openChatTab(
  * tab-materialize.ts, which cannot read the dock.
  */
 export function chatTabDot(id: string): TabDotStatus | "" {
-  return tabStatusFor(get(id), hasPendingDecision(id));
+  return tabStatusFor(get(id), hasPendingDecision(id), chatRunsJob(id));
 }
 
 /**
@@ -738,6 +738,7 @@ function chatRowEffect(chatID: string): () => void {
   return effect(() => {
     const s = watchSession(chatID);
     const pendingAsk = hasPendingDecision(chatID);
+    const job = chatRunsJob(chatID);
     if (s === undefined) {
       return;
     }
@@ -750,7 +751,7 @@ function chatRowEffect(chatID: string): () => void {
     renameTab(tabID, s.name);
     // `updated_at` is LAST ACTIVITY, which the outcome phrase's age renders; the only caller
     // supplying one.
-    setTabStatus(tabID, tabStatusFor(s, pendingAsk, chatRunsJob(chatID)), s.updated_at);
+    setTabStatus(tabID, tabStatusFor(s, pendingAsk, job), s.updated_at);
   });
 }
 

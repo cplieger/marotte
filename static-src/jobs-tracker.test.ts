@@ -1,10 +1,13 @@
-// The jobs strip: the active chat's running jobs as compact rows, Stop and its refusal, and the output modal.
+// The jobs tracker: the active chat's running jobs as compact rows under the run tracker's fold, Stop and its
+// refusal, and the output modal.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { dispatch } from "./bus.js";
 import { applyJobUpdate, runningJobs } from "./job-state.js";
-import { mountJobsStrip } from "./jobs-strip.js";
+import { mountJobsTracker } from "./jobs-tracker.js";
+import { LS_UI_STATE_KEY } from "./ls-keys.js";
 import { setActive } from "./store.js";
 import type { BackgroundJobPayload } from "./wire/types.gen.js";
 
@@ -19,12 +22,16 @@ function job(id: string, over: Partial<BackgroundJobPayload> = {}): BackgroundJo
   };
 }
 
-describe("mountJobsStrip", () => {
+describe("mountJobsTracker", () => {
   const requests: { method: string; path: string; search: string }[] = [];
   let answer: (path: string) => Response;
+  let style: HTMLStyleElement | null = null;
 
   beforeEach(() => {
-    document.body.innerHTML = `<div id="jobs-strip" hidden><ul id="jobs-strip-list"></ul></div>`;
+    document.body.innerHTML =
+      `<div id="jobs-tracker" class="tracker-host" hidden>` +
+      `<div id="jobs-tracker-fold" class="tracker-fold" hidden></div>` +
+      `<ul id="jobs-tracker-list" class="jobs-tracker-list"></ul></div>`;
     requests.length = 0;
     answer = () => new Response(null, { status: 202 });
     vi.stubGlobal(
@@ -38,6 +45,7 @@ describe("mountJobsStrip", () => {
         return Promise.resolve(answer(url.pathname));
       }),
     );
+    localStorage.removeItem(LS_UI_STATE_KEY);
     runningJobs.value = new Map();
     setActive("c1");
   });
@@ -45,38 +53,95 @@ describe("mountJobsStrip", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     document.body.innerHTML = "";
+    style?.remove();
+    style = null;
+    localStorage.removeItem(LS_UI_STATE_KEY);
     runningJobs.value = new Map();
   });
 
-  const strip = (): HTMLElement => document.getElementById("jobs-strip") as HTMLElement;
-  const rows = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>(".jobs-strip-row")];
+  const tracker = (): HTMLElement => document.getElementById("jobs-tracker") as HTMLElement;
+  const fold = (): HTMLElement => document.getElementById("jobs-tracker-fold") as HTMLElement;
+  const list = (): HTMLElement => document.getElementById("jobs-tracker-list") as HTMLElement;
+  const toggle = (): HTMLElement | null => fold().querySelector<HTMLElement>(".tracker-toggle");
+  const rows = (): HTMLElement[] => [
+    ...document.querySelectorAll<HTMLElement>(".jobs-tracker-row"),
+  ];
 
   it("is hidden while the active chat runs no job, and lists another chat's jobs nowhere", () => {
-    mountJobsStrip();
-    expect(strip().hidden).toBe(true);
+    mountJobsTracker();
+    expect(tracker().hidden).toBe(true);
 
     applyJobUpdate("c2", job("9"));
-    expect(strip().hidden).toBe(true);
+    expect(tracker().hidden).toBe(true);
 
     dispatch({ type: "job_update", chat_id: "c1", payload: job("7") });
-    expect(strip().hidden).toBe(false);
-    expect(rows().map((r) => r.querySelector(".jobs-strip-desc")?.textContent)).toEqual([
+    expect(tracker().hidden).toBe(false);
+    expect(rows().map((r) => r.querySelector(".jobs-tracker-desc")?.textContent)).toEqual([
       "sleep 7",
     ]);
 
     dispatch({ type: "job_update", chat_id: "c1", payload: job("7", { status: "completed" }) });
-    expect(strip().hidden).toBe(true);
+    expect(tracker().hidden).toBe(true);
+  });
+
+  it("lists one job with no header, and two open under a header that counts them", () => {
+    mountJobsTracker();
+    applyJobUpdate("c1", job("7"));
+    expect(fold().hidden).toBe(true);
+    expect(list().hasAttribute("data-folded")).toBe(false);
+
+    applyJobUpdate("c1", job("8"));
+    expect(fold().hidden).toBe(false);
+    expect(toggle()?.textContent).toBe("2 background jobs running");
+    expect(toggle()?.getAttribute("aria-expanded")).toBe("true");
+    expect(list().hasAttribute("data-folded")).toBe(false);
+    expect(rows()).toHaveLength(2);
+  });
+
+  it("folds three jobs when this screen never chose, and opens them from the header", () => {
+    style = mountAppCSS();
+    mountJobsTracker();
+    for (const id of ["7", "8", "9"]) {
+      applyJobUpdate("c1", job(id));
+    }
+    expect(toggle()?.textContent).toBe("3 background jobs running");
+    expect(toggle()?.getAttribute("aria-expanded")).toBe("false");
+    expect(list().hasAttribute("data-folded")).toBe(true);
+    expect(list().getBoundingClientRect().height).toBe(0);
+
+    toggle()?.click();
+
+    expect(toggle()?.getAttribute("aria-expanded")).toBe("true");
+    expect(list().hasAttribute("data-folded")).toBe(false);
+    expect(rows().every((r) => r.checkVisibility())).toBe(true);
+    expect(JSON.parse(localStorage.getItem(LS_UI_STATE_KEY) ?? "{}")).toEqual({
+      jobs_open: true,
+    });
+  });
+
+  it("keeps the reader's fold of the jobs apart from the run tracker's", () => {
+    localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ run_bar_open: false }));
+    mountJobsTracker();
+    applyJobUpdate("c1", job("7"));
+    applyJobUpdate("c1", job("8"));
+    expect(toggle()?.getAttribute("aria-expanded")).toBe("true");
+
+    localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ jobs_open: false }));
+    applyJobUpdate("c1", job("9"));
+    applyJobUpdate("c1", job("9", { status: "completed" }));
+    expect(toggle()?.getAttribute("aria-expanded")).toBe("false");
+    expect(list().hasAttribute("data-folded")).toBe(true);
   });
 
   it("reads Stopping with Stop disabled once Stop is sent, and shows a refusal in the row", async () => {
     answer = () => Response.json({ error: "the session has no job '7'" }, { status: 409 });
-    mountJobsStrip();
+    mountJobsTracker();
     applyJobUpdate("c1", job("7"));
-    const stop = rows()[0]?.querySelector<HTMLButtonElement>(".jobs-strip-stop");
+    const stop = rows()[0]?.querySelector<HTMLButtonElement>(".jobs-tracker-stop");
 
     stop?.click();
 
-    expect(rows()[0]?.querySelector(".jobs-strip-elapsed")?.textContent).toBe("Stopping");
+    expect(rows()[0]?.querySelector(".jobs-tracker-elapsed")?.textContent).toBe("Stopping");
     expect(stop?.disabled).toBe(true);
     expect(requests).toContainEqual({
       method: "POST",
@@ -84,7 +149,7 @@ describe("mountJobsStrip", () => {
       search: "",
     });
     await vi.waitFor(() => {
-      expect(rows()[0]?.querySelector(".jobs-strip-message")?.textContent).toBe(
+      expect(rows()[0]?.querySelector(".jobs-tracker-message")?.textContent).toBe(
         "the session has no job '7'",
       );
     });
@@ -93,9 +158,9 @@ describe("mountJobsStrip", () => {
 
   it("opens the output modal with the job's last lines, and Close returns focus to Show output", async () => {
     answer = () => Response.json({ status: "running", lines: ["one", "two"] });
-    mountJobsStrip();
+    mountJobsTracker();
     applyJobUpdate("c1", job("7"));
-    const show = rows()[0]?.querySelector<HTMLButtonElement>(".jobs-strip-show");
+    const show = rows()[0]?.querySelector<HTMLButtonElement>(".jobs-tracker-show");
     show?.focus();
 
     show?.click();
@@ -119,10 +184,10 @@ describe("mountJobsStrip", () => {
   it("shows a failed read in the modal", async () => {
     answer = () =>
       Response.json({ error: "kiro-cli did not read the job's output." }, { status: 502 });
-    mountJobsStrip();
+    mountJobsTracker();
     applyJobUpdate("c1", job("7"));
 
-    rows()[0]?.querySelector<HTMLButtonElement>(".jobs-strip-show")?.click();
+    rows()[0]?.querySelector<HTMLButtonElement>(".jobs-tracker-show")?.click();
 
     await vi.waitFor(() => {
       expect(document.querySelector(".job-output-status")?.textContent).toBe(
@@ -144,7 +209,7 @@ describe("mountJobsStrip", () => {
           }),
       ),
     );
-    mountJobsStrip();
+    mountJobsTracker();
     applyJobUpdate("c1", job("7"));
 
     release();

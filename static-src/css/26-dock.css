@@ -240,7 +240,7 @@
    holding area left with no steer to show steps aside whole. */
 @media (height <= 30rem) {
   [id="prompt-form"]:has(> .decision-dock > .dock-user-input) {
-    & .run-bar-host,
+    & .tracker-host,
     & > [id="prompt-box"] {
       display: none;
     }
@@ -346,7 +346,7 @@
    composer not holding the typing too: there the card's floors and one line of a composer fill the
    band. A composer holding the typing stays: the question that arrived is not what it sends to. */
 :where(:root[data-keyboard][data-short-band]) {
-  & [id="prompt-form"]:where(:has(> .decision-dock > .dock-user-input)) .run-bar-host,
+  & [id="prompt-form"]:where(:has(> .decision-dock > .dock-user-input)) .tracker-host,
   &
     [id="prompt-form"]:where(:has(> .decision-dock > .dock-user-input))
     > .holding-area:has(.steer-stack.hidden),
@@ -871,34 +871,32 @@
   }
 
   /* stylelint-disable-next-line selector-max-pseudo-class -- a hide that loses to the tight-band hides' specificity needs this one :not(:has()) shape */
-  &:not(:has(.steer-row, .run-bar:not(.hidden), .jobs-strip:not([hidden]))) {
+  &:not(:has(.steer-row, .run-bar:not(.hidden), [id="jobs-tracker"]:not([hidden]))) {
     display: none;
   }
 }
 
 /* ==========================================================================
-   The jobs strip — the chat's running background jobs (jobs-strip.ts)
+   The jobs tracker — the chat's running background jobs (jobs-tracker.ts)
 
-   Compact rows, not cards: the description, how long it has run, any refusal,
-   then Stop and Show output. Three rows show; more scroll inside the strip, as
-   the run bar keeps its own rows to its box. Still: the job card in the
-   transcript and the chat list mark carry no motion either.
+   The run bar's box and fold (`.tracker-host`) over compact rows: the
+   description, how long it has run, any refusal, then Stop and Show output.
+   Still: the job card in the transcript and the chat list mark carry no motion
+   either.
    ========================================================================== */
 
-.jobs-strip-list {
+.jobs-tracker-list {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto auto auto;
-  gap: var(--run-row-gap, var(--sp-1)) var(--sp-2);
+  gap: var(--run-row-gap) var(--sp-2);
   margin: 0;
   padding: 0;
   list-style: none;
-  max-block-size: calc(3 * var(--row-tap-sm) + 2 * var(--run-row-gap, var(--sp-1)));
-  overflow: hidden auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
+  min-block-size: 0;
+  overflow: clip;
 }
 
-.jobs-strip-row {
+.jobs-tracker-row {
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns: subgrid;
@@ -907,7 +905,7 @@
   padding-inline: var(--sp-2);
   font-size: var(--fs-sm);
 
-  & .jobs-strip-desc {
+  & .jobs-tracker-desc {
     min-inline-size: 0;
     overflow: hidden;
     font-family: var(--font-mono);
@@ -915,14 +913,19 @@
     white-space: nowrap;
   }
 
-  & .jobs-strip-elapsed {
+  & .jobs-tracker-elapsed {
     color: var(--c-text-tertiary);
     font-variant-numeric: tabular-nums;
   }
 
-  & .jobs-strip-message {
+  & .jobs-tracker-message {
     color: var(--c-red);
   }
+}
+
+/* The header's mark is the chat list's still background-job dot, on the chevron's line. */
+.tracker-toggle > .tab-status-dot {
+  margin: 0;
 }
 
 .job-output-dialog {
@@ -987,7 +990,7 @@
 :where(:root[data-pointer="coarse"]) .holding-area {
   scroll-snap-type: y proximity;
 
-  & :is(.run-bar-fold, .run-bar > li, .steer-stack > li) {
+  & :is(.tracker-fold, .run-bar > li, .jobs-tracker-list > li, .steer-stack > li) {
     scroll-snap-align: start;
   }
 }
@@ -1356,12 +1359,13 @@
    their subject is a STEP — that is the line between the two vocabularies.
    ========================================================================== */
 
-/* ONE BOX FOR EVERY RUN COUNT, the bottom stack's card, drawn by the host: the fold row (from
-   `HEADER_AT` (2) runs) on top, the list below it. It takes its content height; the holding
-   area caps it with the steer stack. The host is also the rows' container, so a container query
-   can change the list's own columns; the measure is .steer-stack's, .prompt-box's and
-   .decision-dock's, so all four band regions share one column. */
-.run-bar-host {
+/* ONE BOX FOR EVERY COUNT, the bottom stack's card, drawn by the host of the run bar and of the
+   jobs tracker: the fold row (`tracker-fold.ts`, from `HEADER_AT` (2) items) on top, the list
+   below it. It takes its content height; the holding area caps it with the steer stack. The host
+   is also the rows' container, so a container query can change the list's own columns; the
+   measure is .steer-stack's, .prompt-box's and .decision-dock's, so all band regions share one
+   column. */
+.tracker-host {
   container: run-dock / inline-size;
   display: flex;
   flex-direction: column;
@@ -1386,14 +1390,15 @@
   /* The stacked fold row's painted height without the batch button; its ::after reaches the rest of the floor. */
   --run-fold-h: calc(var(--hit-floor) - var(--run-row-gap) - var(--stack-in) - var(--stack-gap));
 
-  &:has(> .run-bar.hidden) {
+  &:has(> .run-bar.hidden),
+  &[hidden] {
     display: none;
   }
 }
 
 /* Touch takes the two-line rows below at every width: a row is 44px under a finger, and one
    padded line leaves that height empty. */
-:where(:root[data-pointer="coarse"]) .run-bar-host {
+:where(:root[data-pointer="coarse"]) .tracker-host {
   --run-stack: 1;
   --run-row-h: 2.875rem;
 }
@@ -1410,7 +1415,7 @@
 /* The fold row sits outside the list's clip so its touch target can reach up into the box's
    padding and the stack gap above. The list's own row gap is restored below it while open. It is the box's header: the toggle takes the line and the batch button
    (`.run-bar-all`) ends it. */
-.run-bar-fold {
+.tracker-fold {
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -1473,8 +1478,9 @@
 /* A row's control: a line of the box, inset and rounded at the box's concentric
    corner, so its hover never meets a neighbour. The row is the target, so it takes
    the hit floor. Its summary is the dock head's own painter (`.ev-sum`,
-   31-exec-view.css), laid into the row's columns. */
-.run-bar-open {
+   31-exec-view.css), laid into the row's columns. The fold row's toggle is the same control. */
+.run-bar-open,
+.tracker-toggle {
   position: relative;
   min-block-size: var(--row-tap-sm);
   display: grid;
@@ -1568,20 +1574,20 @@
    moves and the ink does not — accent ink on hover is this app's TEXT-control
    idiom and reads as a link on a button-shaped control. */
 @media (any-hover: hover) {
-  .run-bar-open:hover {
+  :is(.run-bar-open, .tracker-toggle):hover {
     background-color: var(--c-hover);
   }
 }
 
-.run-bar-open:focus-visible {
+:is(.run-bar-open, .tracker-toggle):focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset-inset);
 }
 
 /* Folded, the rows stay rendered: a row leaving `display: none` would replay its entry rise.
-   `visibility` takes them out of the tab order and the accessibility tree. `run-bar.ts` slides
-   between this and the open height. */
-.run-bar[data-folded] {
+   `visibility` takes them out of the tab order and the accessibility tree. `tracker-fold.ts`
+   slides between this and the open height. */
+.tracker-host > [data-folded] {
   block-size: 0;
   visibility: hidden;
 }
@@ -1609,7 +1615,7 @@
 
   /* On the fold row it reaches up into the box's padding and the stack gap, short of the member above, and down
      over the row gap only, as the toggle does, so the first run's line keeps its own target. */
-  .run-bar-fold > & {
+  .tracker-fold > & {
     &::after {
       inset-block: calc(
           -1 *
@@ -1631,9 +1637,9 @@
   }
 }
 
-/* From `HEADER_AT` (2) runs the fold row heads the box, one line: a chevron, the mark and the
+/* From `HEADER_AT` (2) items the fold row heads the box, one line: a chevron, the mark and the
    count. */
-.run-bar-toggle {
+.tracker-toggle {
   display: flex;
   flex: 1 1 0;
   min-inline-size: 0;
@@ -1642,11 +1648,11 @@
 
 /* Beside the batch button the toggle's hover is the button's height on every pointer and width, so the
    fold row's two targets read as one line. */
-.run-bar-fold:has(> .run-bar-all:not([hidden])) > .run-bar-toggle {
+.tracker-fold:has(> .run-bar-all:not([hidden])) > .tracker-toggle {
   min-block-size: var(--btn-h);
 }
 
-.run-bar-chev {
+.tracker-chev {
   display: grid;
   place-items: center;
   flex-shrink: 0;
@@ -1655,16 +1661,16 @@
 
 /* The chevron is wider than a row's status square; the margins pull its centre onto the square's
    column and give the width back on the other side, so the mark and count do not move. */
-.run-bar-chev > .disclosure-chevron {
+.tracker-chev > .disclosure-chevron {
   margin-inline: calc((var(--dot-size) - var(--chev-size)) / 2)
     calc((var(--chev-size) - var(--dot-size)) / 2);
 }
 
-.run-bar-toggle[aria-expanded="true"] .disclosure-chevron {
+.tracker-toggle[aria-expanded="true"] .disclosure-chevron {
   --chev-turn: 0deg;
 }
 
-.run-bar-count {
+.tracker-count {
   flex: 1 1 0;
   min-inline-size: 0;
   overflow: hidden;
@@ -1685,7 +1691,7 @@
   }
 
   /* With no fold row the first title is the box's first ink, so it gets the air the last bar has. */
-  .run-bar-fold[hidden] + .run-bar > li:first-child {
+  .tracker-fold[hidden] + .run-bar > li:first-child {
     --row-top: calc(var(--run-air) - 1.5px);
   }
 
@@ -1752,7 +1758,7 @@
      padding, border and the stack gap, stopping short of the stack member above, and down over
      the row gap; the first row stacks above it. The box keeps what the floor needs past those
      two reaches. */
-  .run-bar-toggle {
+  .tracker-toggle {
     min-block-size: var(--run-fold-h);
     padding-block: calc(var(--run-air) - 1.5px) calc(var(--run-air) - 0.5px);
 

@@ -107,7 +107,7 @@ import { stagedAttachment } from "./attachments.js";
 import { initPendingSteers } from "./pending-steers.js";
 import { initRunBar } from "./run-bar.js";
 import { mountCodeIndexStatus } from "./code-index-status.js";
-import { mountJobsStrip } from "./jobs-strip.js";
+import { mountJobsTracker } from "./jobs-tracker.js";
 import { mountHoldingArea } from "./holding-area.js";
 import { initChatOptions } from "./chat-options.js";
 import { watchPillRow } from "./pill-row-fit.js";
@@ -528,7 +528,7 @@ function setupInput(): void {
 
   initContextCard();
   mountCodeIndexStatus();
-  mountJobsStrip();
+  mountJobsTracker();
   // Lazily on open (usage changes slowly and may be rate-limited); the agent-runtime line
   // re-probes /healthz too. `haspopup: "dialog"`: a status panel with one link, not a menu.
   makeExpandable($.accountBtn, $.statusCard, {

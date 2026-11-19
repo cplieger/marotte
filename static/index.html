@@ -353,14 +353,15 @@
                  the run is created), so this is the surface that persists across
                  turns and across a reload while the invocation card scrolls away. -->
             <!-- The host is the rows' container, so a container query can change the list's own columns. -->
-            <div class="run-bar-host">
-              <div id="run-bar-fold" class="run-bar-fold" hidden></div>
+            <div class="tracker-host">
+              <div id="run-bar-fold" class="tracker-fold" hidden></div>
               <ul id="run-bar" class="run-bar hidden" aria-label="Workflow runs from this chat"></ul>
             </div>
-            <!-- The chat's running background jobs (jobs-strip.ts): below the runs, since a
-                 job is a command of this chat's own turns, hidden while none runs. -->
-            <div id="jobs-strip" class="jobs-strip" hidden>
-              <ul id="jobs-strip-list" class="jobs-strip-list" aria-label="Background jobs in this chat"></ul>
+            <!-- The chat's running background jobs (jobs-tracker.ts), folding as the runs do: below
+                 them, since a job is a command of this chat's own turns, hidden while none runs. -->
+            <div id="jobs-tracker" class="tracker-host" hidden>
+              <div id="jobs-tracker-fold" class="tracker-fold" hidden></div>
+              <ul id="jobs-tracker-list" class="jobs-tracker-list" aria-label="Background jobs in this chat"></ul>
             </div>
             <!-- Messages waiting for the running turn or behind it, oldest at the
                  top: a new one appears at the bottom and pushes the older ones up.

@@ -313,7 +313,7 @@ type kasContentChunk struct {
 }
 
 // HandleToolContentChunk appends a running call's streamed output to its card in the chat's open turn.
-// A chunk for a call whose turn closed is dropped: the jobs strip's Show output reads a running job.
+// A chunk for a call whose turn closed is dropped: the jobs tracker's Show output reads a running job.
 func (t *Translator) HandleToolContentChunk(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := unmarshalParams[kasContentChunk](msg, "tools/content_chunk")
 	if !ok || p.ToolCallID == "" || p.Content.Content.Type != "text" || t.foreignSession(chatID, p.SessionID) {

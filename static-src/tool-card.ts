@@ -644,7 +644,7 @@ export function syncJobMark(card: HTMLElement, job: BackgroundJob | undefined): 
     return;
   }
   card.dataset["jobId"] = job.id;
-  // Still: the jobs strip owns the live state, and the reply no longer waits on the call.
+  // Still: the jobs tracker owns the live state, and the reply no longer waits on the call.
   header.querySelector(".tool-spinner")?.remove();
   delete card.dataset["startMs"];
   const words = jobLine(job);

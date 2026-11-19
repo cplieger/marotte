@@ -1,16 +1,19 @@
-// The jobs strip: the active chat's running background jobs, one compact row each above the message box, with Stop
-// and Show output. Hidden while the chat runs none. Show output opens a modal with the job's last lines.
+// The jobs tracker: the active chat's running background jobs, one compact row each above the message box under the
+// run bar's fold, with Stop and Show output. Hidden while the chat runs none. Show output opens a modal with the job's
+// last lines.
 
 import { effect, el } from "@cplieger/reactive";
 
 import { apiAction } from "./actions/index.js";
 import { apiGetTyped, apiGetTypedOrError } from "./api-client.js";
 import { BUS_RECONCILE, onBus, onSSE } from "./bus.js";
+import { jobsOpen, setJobsOpen } from "./device-view.js";
 import { byId } from "./dom.js";
 import { applyJobUpdate, jobsReadMark, runningJobs, setRunningJobs } from "./job-state.js";
 import { reconcile } from "./reconcile.js";
 import { watchActiveId } from "./store.js";
 import { formatElapsed } from "./strings.js";
+import { trackerFold } from "./tracker-fold.js";
 import { decodeBackgroundJobOutput, decodeBackgroundJobsView } from "./wire/decoders.gen.js";
 import type { BackgroundJobPayload } from "./wire/types.gen.js";
 
@@ -43,10 +46,10 @@ function jobPath(chatID: string, jobID: string, verb: string): string {
   return `/api/chats/${encodeURIComponent(chatID)}/jobs/${encodeURIComponent(jobID)}/${verb}`;
 }
 
-/** Mounts the strip on `#jobs-strip` and its list; call once at boot. */
-export function mountJobsStrip(): void {
-  const strip = byId<HTMLElement>("jobs-strip");
-  const list = byId<HTMLUListElement>("jobs-strip-list");
+/** Mounts the tracker on `#jobs-tracker`, its header and its list; call once at boot. */
+export function mountJobsTracker(): void {
+  const tracker = byId<HTMLElement>("jobs-tracker");
+  const list = byId<HTMLUListElement>("jobs-tracker-list");
   const states = new Map<string, RowState>();
   const output = createOutputDialog();
 
@@ -61,9 +64,26 @@ export function mountJobsStrip(): void {
 
   let shownChat = "";
   let shownJobs: readonly BackgroundJobPayload[] = [];
+  const fold = trackerFold({
+    list,
+    header: byId<HTMLElement>("jobs-tracker-fold"),
+    glyph: el("span", {
+      className: "tab-status-dot",
+      "data-status": "background",
+      "aria-hidden": "true",
+    }),
+    count: () => shownJobs.length,
+    stored: jobsOpen,
+    store: setJobsOpen,
+    repaint: () => {
+      paint();
+    },
+  });
   const paint = (): void => {
     const now = Date.now();
-    strip.hidden = shownJobs.length === 0;
+    const count = shownJobs.length;
+    tracker.hidden = count === 0;
+    const before = list.childElementCount;
     reconcile(list, shownJobs, {
       key: (job) => job.id,
       mount: (job) => {
@@ -75,20 +95,25 @@ export function mountJobsStrip(): void {
         paintRow(li, job, stateOf(job.id), now);
       },
     });
+    fold.paint(
+      count,
+      `${String(count)} background jobs running`,
+      list.childElementCount !== before,
+    );
   };
 
   const buildRow = (job: BackgroundJobPayload): HTMLElement => {
-    const desc = el("span", { className: "jobs-strip-desc" });
-    const elapsed = el("span", { className: "jobs-strip-elapsed" });
-    const message = el("span", { className: "jobs-strip-message", role: "status" });
+    const desc = el("span", { className: "jobs-tracker-desc" });
+    const elapsed = el("span", { className: "jobs-tracker-elapsed" });
+    const message = el("span", { className: "jobs-tracker-message", role: "status" });
     const stop = el(
       "button",
-      { type: "button", className: "btn-small jobs-strip-stop" },
+      { type: "button", className: "btn-small jobs-tracker-stop" },
       "Stop",
     ) as HTMLButtonElement;
     const show = el(
       "button",
-      { type: "button", className: "btn-small jobs-strip-show" },
+      { type: "button", className: "btn-small jobs-tracker-show" },
       "Show output",
     ) as HTMLButtonElement;
     stop.addEventListener("click", () => {
@@ -110,7 +135,7 @@ export function mountJobsStrip(): void {
     });
     return el(
       "li",
-      { className: "jobs-strip-row", "data-job-id": job.id },
+      { className: "jobs-tracker-row", "data-job-id": job.id },
       desc,
       elapsed,
       message,
@@ -155,10 +180,10 @@ export function mountJobsStrip(): void {
 }
 
 function paintRow(li: HTMLElement, job: BackgroundJobPayload, st: RowState, now: number): void {
-  const desc = li.querySelector<HTMLElement>(".jobs-strip-desc");
-  const elapsed = li.querySelector<HTMLElement>(".jobs-strip-elapsed");
-  const message = li.querySelector<HTMLElement>(".jobs-strip-message");
-  const stop = li.querySelector<HTMLButtonElement>(".jobs-strip-stop");
+  const desc = li.querySelector<HTMLElement>(".jobs-tracker-desc");
+  const elapsed = li.querySelector<HTMLElement>(".jobs-tracker-elapsed");
+  const message = li.querySelector<HTMLElement>(".jobs-tracker-message");
+  const stop = li.querySelector<HTMLButtonElement>(".jobs-tracker-stop");
   if (desc === null || elapsed === null || message === null || stop === null) {
     return;
   }
@@ -170,7 +195,7 @@ function paintRow(li: HTMLElement, job: BackgroundJobPayload, st: RowState, now:
   message.hidden = st.message === "";
   stop.disabled = st.stopping;
   stop.setAttribute("aria-label", `Stop ${what}`);
-  li.querySelector(".jobs-strip-show")?.setAttribute("aria-label", `Show the output of ${what}`);
+  li.querySelector(".jobs-tracker-show")?.setAttribute("aria-label", `Show the output of ${what}`);
 }
 
 interface OutputDialog {

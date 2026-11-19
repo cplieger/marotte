@@ -1,6 +1,6 @@
 package agent
 
-// The background jobs' routes: the running list the jobs strip and the chat list read, and a job's Stop and Show
+// The background jobs' routes: the running list the jobs tracker and the chat list read, and a job's Stop and Show
 // output, each sent on the chat's own session (KAS keys jobs by session).
 
 import (
