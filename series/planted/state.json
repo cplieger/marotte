@@ -1,15 +1,17 @@
 {
  "last": {
   "commit": "0c94ae85457a16a63306ab8d45946f44a14d476d",
-  "date": "2026-11-19T15:01:56Z",
-  "run_url": "https://github.com/cplieger/marotte/actions/runs/44550162426",
+  "date": "2026-11-19T15:11:12Z",
+  "run_url": "https://github.com/cplieger/marotte/actions/runs/44551904595",
   "runner": "ubuntu-26.04"
  },
  "scenarios": {
   "settings": {
    "bad_runs": [
-    "https://github.com/cplieger/marotte/actions/runs/44550162426"
+    "https://github.com/cplieger/marotte/actions/runs/44550162426",
+    "https://github.com/cplieger/marotte/actions/runs/44551904595"
    ],
+   "body": "<!-- perf-trend:planted:settings -->\nThe scheduled performance trend of the `planted` series measured **settings** past its thresholds at two consecutive points.\n\n| Cell | Before | After | Ratio |\n|---|---|---|---|\n| settings/x1/chromium/desktop/back/cpu_ms | 103 | 1563 | 15.17x |\n| settings/x1/chromium/desktop/cold/cpu_ms | 422 | 1857 | 4.40x |\n| settings/x1/chromium/phone/back/cpu_ms | 68 | 1568 | 23.06x |\n| settings/x1/chromium/phone/cold/cpu_ms | 361 | 1882 | 5.21x |\n| settings/x1/webkit/desktop/back/cpu_ms | 90 | 1610 | 17.89x |\n| settings/x1/webkit/desktop/cold/cpu_ms | 550 | 2170 | 3.95x |\n| settings/x1/webkit/phone/back/cpu_ms | 100 | 1590 | 15.90x |\n| settings/x1/webkit/phone/cold/cpu_ms | 550 | 2020 | 3.67x |\n| settings/x10/chromium/desktop/back/cpu_ms | 132 | 1591 | 12.05x |\n| settings/x10/chromium/desktop/cold/cpu_ms | 526 | 2018 | 3.84x |\n| settings/x10/chromium/phone/back/cpu_ms | 75 | 1566 | 20.88x |\n| settings/x10/chromium/phone/cold/cpu_ms | 426 | 1932 | 4.54x |\n| settings/x10/webkit/desktop/back/cpu_ms | 110 | 1580 | 14.36x |\n| settings/x10/webkit/desktop/cold/cpu_ms | 680 | 2130 | 3.13x |\n| settings/x10/webkit/phone/back/cpu_ms | 100 | 1600 | 16.00x |\n| settings/x10/webkit/phone/cold/cpu_ms | 625 | 2140 | 3.42x |\n\nCommits from the last good point `53d6896e3e68` to the first bad point `0c94ae85457a`: https://github.com/cplieger/marotte/compare/53d6896e3e689415a482aadbd8f1a938235a81ad...0c94ae85457a16a63306ab8d45946f44a14d476d\n\nRuns of the bad points:\n\n- https://github.com/cplieger/marotte/actions/runs/44550162426\n- https://github.com/cplieger/marotte/actions/runs/44551904595\n\nCounts that changed: `settings/x1/chromium/desktop/back/dom` 2599 to 2641, `settings/x1/chromium/desktop/back/max_bytes:GET /api/tools` 14454 to 14825, `settings/x1/chromium/desktop/cold/dom` 2599 to 2641, `settings/x1/chromium/desktop/cold/max_bytes:GET /api/tools` 14454 to 14825, `settings/x1/webkit/phone/back/dom` 2641 to 2599, `settings/x1/webkit/phone/back/max_bytes:GET /api/tools` 14825 to 14454, `settings/x1/webkit/phone/cold/dom` 2641 to 2599, `settings/x1/webkit/phone/cold/max_bytes:GET /api/tools` 14825 to 14454, `settings/x10/chromium/phone/cold/max_bytes:GET /api/engine` 303 to 304.\n\nBefore is the cell's baseline, the median of up to 7 earlier good points; After is the latest point. A cell is bad at cpu_ms over 2.0x and more than 250 ms over, server_cpu_ms over 2.0x and more than 10 ms over, heap_mb over 1.25x and more than 2 MB over, rss_mb over 1.25x and more than 50 MB over. This issue closes itself after two consecutive good points; closing it by hand accepts the new values as the baseline.\n",
    "first_bad": {
     "commit": "0c94ae85457a16a63306ab8d45946f44a14d476d",
     "date": "2026-11-19T15:01:56Z",
@@ -38,8 +40,9 @@
     "date": "2026-11-19T09:23:20Z",
     "run_url": "https://github.com/cplieger/marotte/actions/runs/44495904258"
    },
+   "opened": "2026-11-19T15:11:12Z",
    "runner": "ubuntu-26.04",
-   "status": "suspect"
+   "status": "open"
   }
  },
  "schema": 1,
