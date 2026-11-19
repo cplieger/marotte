@@ -1919,6 +1919,7 @@ const arbModel = fc.letrec<{
   ),
   MCPServerStatus: fc.record(
     {
+      enterprise: tie("MCPEnterpriseAuth"),
       name: fc.string(),
       state: fc.string(),
       origin: arbMCPOrigin,
@@ -1932,7 +1933,6 @@ const arbModel = fc.letrec<{
       resource_templates: fc.array(tie("MCPResourceTemplateInfo"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       relayed: fc.boolean(),
       shadows: fc.boolean(),
-      enterprise: tie("MCPEnterpriseAuth"),
     },
     { requiredKeys: ["name", "state", "origin"] },
   ),

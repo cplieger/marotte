@@ -288,7 +288,7 @@ func TestHandleMCPStatus_CarriesTheIdentityProvider(t *testing.T) {
 				"state": "signed-in", "issuer": "https://login.acme.example", "displayName": "Acme", "account": "ada@acme.example",
 			},
 			want: &marotte.MCPIdentityProviderStatus{
-				State: marotte.MCPIdentityProviderSignedIn, Issuer: "https://login.acme.example", DisplayName: "Acme",
+				State: marotte.MCPIdentityProviderState("signed-in"), Issuer: "https://login.acme.example", DisplayName: "Acme",
 				Account: "ada@acme.example",
 			},
 		},

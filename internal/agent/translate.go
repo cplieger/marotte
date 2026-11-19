@@ -115,7 +115,8 @@ func (rt *Runtime) initDispatch() {
 		// The only frame telling marotte that KAS moved the effort level or the messaging switch, or offered
 		// workflowLaunch, itself.
 		marotte.ACPUpdateConfigOption: rt.coord.observeMessaging(
-			rt.coord.healWorkflowLaunch(rt.coord.healEffort(rt.translator.HandleConfigOptionUpdate))),
+			rt.coord.healWorkflowLaunch(rt.coord.healEffort(rt.translator.HandleConfigOptionUpdate)),
+		),
 		// The slash-menu catalog; any session's own frame feeds it.
 		marotte.ACPUpdateAvailableCommands: rt.translator.HandleAvailableCommandsUpdate,
 	}

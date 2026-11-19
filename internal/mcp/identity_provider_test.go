@@ -379,7 +379,7 @@ func TestIdentityProviderRoute(t *testing.T) {
 	s.SetIdentityProviderStatus(func(_ context.Context, cfg *IdentityProvider) (marotte.MCPIdentityProviderPayload, *marotte.SubjectStamp) {
 		p := marotte.MCPIdentityProviderPayload{Known: true}
 		if cfg != nil {
-			p.Status = &marotte.MCPIdentityProviderStatus{State: marotte.MCPIdentityProviderSignedOut, Issuer: cfg.Issuer}
+			p.Status = &marotte.MCPIdentityProviderStatus{State: marotte.MCPIdentityProviderState("signed-out"), Issuer: cfg.Issuer}
 		}
 		return p, &marotte.SubjectStamp{Kind: "mcp_identity_provider", Version: "3"}
 	})

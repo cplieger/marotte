@@ -240,7 +240,8 @@ func (s *Store) importIdentityProviderLocked(req *importRequest) bool {
 	}
 	req.notes = append(req.notes, fmt.Sprintf(
 		"kept the configured organization sign-in: the pasted %q names a different provider. Change it under Settings > MCP > Organization sign-in",
-		kasIdentityProviderKey))
+		kasIdentityProviderKey,
+	))
 	return false
 }
 

@@ -121,7 +121,7 @@ const (
 )
 
 // oauthRedirectHosts are the loopback hosts KAS serves its OAuth callback on.
-var oauthRedirectHosts = []string{"localhost", "127.0.0.1"}
+var oauthRedirectHosts = []string{"localhost", loopbackIPv4}
 
 // Adding a new transport requires only a map entry, not a control-flow change. The init() below
 // validates that every known transport has a registered validator, preventing nil-call panics.
@@ -494,7 +494,7 @@ func validateRemoteURL(raw string) error {
 			Msg:   fmt.Sprintf("url must be an absolute http(s) URL: %q", raw),
 		}
 	}
-	if u.Scheme != schemeHTTP && u.Scheme != "https" {
+	if u.Scheme != schemeHTTP && u.Scheme != schemeHTTPS {
 		return &fieldError{
 			Field: fieldURL,
 			Msg:   fmt.Sprintf("url scheme must be http or https: %q", u.Scheme),
@@ -524,7 +524,7 @@ func validateOAuthMetadataURL(raw string) error {
 		return err
 	}
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.Path == "" || u.Path == "/" {
+	if err != nil || u.Scheme != schemeHTTPS || u.Host == "" || u.Path == "" || u.Path == "/" {
 		return &fieldError{
 			Field: fieldOAuthClientMetadataURL,
 			Msg:   fmt.Sprintf("oauth_client_metadata_url must be an https URL with a path: %q", raw),
@@ -535,7 +535,13 @@ func validateOAuthMetadataURL(raw string) error {
 
 // schemeHTTP is the plain-HTTP URL scheme, which shares its spelling with
 // transportHTTP but is a different vocabulary.
-const schemeHTTP = "http"
+const (
+	schemeHTTP  = "http"
+	schemeHTTPS = "https"
+)
+
+// loopbackIPv4 is the IPv4 loopback host KAS accepts beside localhost.
+const loopbackIPv4 = "127.0.0.1"
 
 // validateOAuthRedirectURI mirrors KAS's three accepted redirectUri forms
 // ("host:port", ":port", or an http URL with no query or fragment) on a
@@ -582,7 +588,7 @@ func splitOAuthRedirectURI(v, raw string) (host, port, msg string) {
 		}
 		return strings.ToLower(u.Hostname()), u.Port(), ""
 	case strings.HasPrefix(v, ":"):
-		return "127.0.0.1", v[1:], ""
+		return loopbackIPv4, v[1:], ""
 	}
 	h, p, ok := strings.Cut(v, ":")
 	if !ok || h == "" || strings.ContainsAny(h, " /@") {
@@ -695,7 +701,7 @@ func validateKeyPairs(kind string, pairs []keyPair, maxEntries, maxValue int, ca
 const idpNameMax = 128
 
 // idpLoopbackHosts are the hosts KAS accepts an identity provider URL on over plain http (isHttpsOrLocalhost).
-var idpLoopbackHosts = []string{"localhost", "127.0.0.1", "::1"}
+var idpLoopbackHosts = []string{"localhost", loopbackIPv4, "::1"}
 
 // validateIdentityProvider mirrors KAS's parse of the identityProvider member (issuer, a non-empty clientId, each
 // URL https or on a loopback host), so a saved provider never reaches KAS as invalid-config. It accumulates.
@@ -729,7 +735,7 @@ func validateIDPURL(field, label, raw string) error {
 	switch {
 	case err != nil || u.Host == "":
 		return &fieldError{Field: field, Msg: fmt.Sprintf("%s must be an absolute https URL: %q", label, raw)}
-	case u.Scheme == "https":
+	case u.Scheme == schemeHTTPS:
 		return nil
 	case u.Scheme == schemeHTTP && slices.Contains(idpLoopbackHosts, strings.ToLower(u.Hostname())):
 		return nil

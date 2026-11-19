@@ -15,7 +15,7 @@ import (
 // signedIn is KAS's organization status for Acme, signed in as account.
 func signedIn(account string) *marotte.MCPIdentityProviderStatus {
 	return &marotte.MCPIdentityProviderStatus{
-		State: marotte.MCPIdentityProviderSignedIn, Issuer: "https://login.acme.example", DisplayName: "Acme", Account: account,
+		State: marotte.MCPIdentityProviderState("signed-in"), Issuer: "https://login.acme.example", DisplayName: "Acme", Account: account,
 	}
 }
 
@@ -61,15 +61,15 @@ func TestMCPRegistry_IdentityProviderFollowsTheNewestFrame(t *testing.T) {
 
 	h.mcpRegistry.RecordSessionStatus(t.Context(), "sess_a", translate.MCPSessionStatus{IdentityProvider: signedIn("ada@acme.example")})
 	h.mcpRegistry.RecordSessionStatus(t.Context(), "sess_b", translate.MCPSessionStatus{IdentityProvider: &marotte.MCPIdentityProviderStatus{
-		State: marotte.MCPIdentityProviderSessionExpired, Issuer: "https://login.acme.example", DisplayName: "Acme",
+		State: marotte.MCPIdentityProviderState("session-expired"), Issuer: "https://login.acme.example", DisplayName: "Acme",
 	}})
 
 	got := servedIDP(h)
-	if !got.Known || got.Status == nil || got.Status.State != marotte.MCPIdentityProviderSessionExpired {
+	if !got.Known || got.Status == nil || got.Status.State != marotte.MCPIdentityProviderState("session-expired") {
 		t.Errorf("served = %+v, want sess_b's newer session-expired", got)
 	}
 	frames := idpFramesSince(t, h, before)
-	if len(frames) != 2 || frames[1].Status.State != marotte.MCPIdentityProviderSessionExpired {
+	if len(frames) != 2 || frames[1].Status.State != marotte.MCPIdentityProviderState("session-expired") {
 		t.Fatalf("mcp_identity_provider frames = %+v, want one per change, the last session-expired", frames)
 	}
 	h.mcpRegistry.RecordSessionStatus(t.Context(), "sess_a", translate.MCPSessionStatus{})
@@ -107,7 +107,7 @@ func TestObserverForward_RecordsTheIdentityProvider(t *testing.T) {
 	close(held.stream)
 	joinInflight(h)
 
-	if got := servedIDP(h); !got.Known || got.Status == nil || got.Status.State != marotte.MCPIdentityProviderSignedOut {
+	if got := servedIDP(h); !got.Known || got.Status == nil || got.Status.State != marotte.MCPIdentityProviderState("signed-out") {
 		t.Errorf("served = %+v, want the pass's signed-out", got)
 	}
 	h.mcpRegistry.mu.RLock()
@@ -361,7 +361,7 @@ func TestMCPIdentityProviderStatus_ColdWarmsOnce(t *testing.T) {
 	cfg := &mcp.IdentityProvider{Issuer: "https://login.acme.example", ClientID: "kiro-client"}
 
 	got, stamp := h.MCPIdentityProviderStatus(t.Context(), cfg)
-	if !got.Known || got.Status == nil || got.Status.State != marotte.MCPIdentityProviderSignedOut {
+	if !got.Known || got.Status == nil || got.Status.State != marotte.MCPIdentityProviderState("signed-out") {
 		t.Errorf("cold GET = %+v, want the pass's signed-out", got)
 	}
 	if stamp == nil || stamp.Kind != "mcp_identity_provider" || stamp.Version == "0" {

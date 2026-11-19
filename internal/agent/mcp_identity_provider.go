@@ -38,19 +38,19 @@ var errOrgSignInInProgress = errors.New("an organization sign-in is already in p
 
 // idpState is the registry's organization sign-in, guarded by its lock.
 type idpState struct {
-	// signIn is the Sign in the user started, the zero value when none stands.
-	signIn orgSignIn
 	// status is kiro-cli's last report, nil when it has no provider; known says one arrived since the engine started.
 	status *marotte.MCPIdentityProviderStatus
 	// recorded is closed and replaced at each report, waking a warm.
 	recorded chan struct{}
-	// served is the last committed projection, the one the GET serves and mcp_identity_provider announced.
-	served marotte.MCPIdentityProviderPayload
+	// signIn is the Sign in the user started, the zero value when none stands.
+	signIn orgSignIn
 	// signInError is why kiro-cli ended the last Sign in without signing in.
 	signInError string
 	// warmedFor is the provider the last warm ran for, so a status that never matches it warms once.
 	warmedFor string
-	known     bool
+	// served is the last committed projection, the one the GET serves and mcp_identity_provider announced.
+	served marotte.MCPIdentityProviderPayload
+	known  bool
 }
 
 // orgSignIn is a standing organization Sign in; attempt is the claim that filed it, as for a server's.

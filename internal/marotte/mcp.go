@@ -54,8 +54,11 @@ type MCPSource struct {
 
 // MCPServerStatus is one server's row of GET /api/mcp/status and of an mcp_status frame.
 type MCPServerStatus struct {
-	Name  string         `json:"name"`
-	State MCPServerState `json:"state"`
+	// Enterprise is set when the server signs in through the organization identity provider: empty on a
+	// connected row, its reason on a failed one.
+	Enterprise *MCPEnterpriseAuth `json:"enterprise,omitempty"`
+	Name       string             `json:"name"`
+	State      MCPServerState     `json:"state"`
 	// Origin is never omitted: the client attributes a status to marotte's row only on "user".
 	Origin      Origin `json:"origin"`
 	OriginRoot  string `json:"origin_root,omitempty"`
@@ -73,9 +76,6 @@ type MCPServerStatus struct {
 	Relayed bool `json:"relayed,omitempty"`
 	// Shadows keeps the client from putting this status on marotte's config row.
 	Shadows bool `json:"shadows,omitempty"`
-	// Enterprise is set when the server signs in through the organization identity provider: empty on a
-	// connected row, its reason on a failed one.
-	Enterprise *MCPEnterpriseAuth `json:"enterprise,omitempty"`
 }
 
 // MCPEnterpriseAuth is kiro-cli's enterpriseAuthorization on one server's status. Reason is empty on a connected
@@ -90,14 +90,9 @@ type MCPEnterpriseAuth struct {
 // later is carried as it comes.
 type MCPIdentityProviderState string
 
-// The organization sign-in states kiro-cli reports. A provider kiro-cli has no config for is reported as none at all.
-const (
-	MCPIdentityProviderSignedOut      MCPIdentityProviderState = "signed-out"
-	MCPIdentityProviderSigningIn      MCPIdentityProviderState = "signing-in"
-	MCPIdentityProviderSignedIn       MCPIdentityProviderState = "signed-in"
-	MCPIdentityProviderSessionExpired MCPIdentityProviderState = "session-expired"
-	MCPIdentityProviderInvalidConfig  MCPIdentityProviderState = "invalid-config"
-)
+// MCPIdentityProviderInvalidConfig is kiro-cli's state for a provider config it cannot parse, the one state with no
+// issuer; marotte branches on no other state.
+const MCPIdentityProviderInvalidConfig MCPIdentityProviderState = "invalid-config"
 
 // MCPIdentityProviderStatus is kiro-cli's organization sign-in as its _kiro/mcp/status frames report it. Error is
 // set for invalid-config only, which carries no issuer; Account only when signed in and the ID token names one.

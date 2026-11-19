@@ -83,6 +83,7 @@ type viewSignIn struct {
 // Origin "user" attaches it to marotte's own row; anything else gives it a read-only row. Shadows
 // marks one occupying a configured name.
 type mcpServerRuntime struct {
+	Enterprise  *marotte.MCPEnterpriseAuth
 	Name        string
 	State       mcpServerState
 	Origin      marotte.Origin
@@ -96,9 +97,8 @@ type mcpServerRuntime struct {
 	Resources         []marotte.MCPResourceInfo
 	ResourceTemplates []marotte.MCPResourceTemplateInfo
 	// Relayed is the row's anchor's relay latch, filled by projectLocked; a stored record never holds it.
-	Relayed    bool
-	Shadows    bool
-	Enterprise *marotte.MCPEnterpriseAuth
+	Relayed bool
+	Shadows bool
 }
 
 // mcpView is one session's last _kiro/mcp/status frame and the Sign ins standing in that session.

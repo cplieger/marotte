@@ -43,8 +43,21 @@ func (st *Settings) seedModelFallbacks(ctx context.Context) {
 		return
 	}
 	done, _, _ := settings.Lookup[[]string](d, settings.KeyModelFallbackSeeded)
-	var record []string
-	wrote := false
+	record, wrote := st.fillUnseededFallbacks(ctx, done)
+	if len(record) == 0 {
+		return
+	}
+	if err := recordSeededFallbacks(ctx, dir, record, st.broadcast); err != nil {
+		slog.Warn("seeded model fallbacks were not recorded", "models", record, "error", err)
+		if wrote {
+			st.announceSettings()
+		}
+	}
+}
+
+// fillUnseededFallbacks writes Kiro's default to each unset, editable model not in done and returns the models to
+// record (filled or found already chosen); wrote says a write landed.
+func (st *Settings) fillUnseededFallbacks(ctx context.Context, done []string) (record []string, wrote bool) {
 	for _, f := range st.ModelFallbacks() {
 		if f.Model == marotte.ModelAuto || slices.Contains(done, f.Model) {
 			continue
@@ -62,15 +75,7 @@ func (st *Settings) seedModelFallbacks(ctx context.Context) {
 			record = append(record, f.Model)
 		}
 	}
-	if len(record) == 0 {
-		return
-	}
-	if err := recordSeededFallbacks(ctx, dir, record, st.broadcast); err != nil {
-		slog.Warn("seeded model fallbacks were not recorded", "models", record, "error", err)
-		if wrote {
-			st.announceSettings()
-		}
-	}
+	return record, wrote
 }
 
 // recordSeededFallbacks adds models to settings.KeyModelFallbackSeeded, sorted; a stored value that does not decode

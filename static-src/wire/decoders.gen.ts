@@ -2919,6 +2919,10 @@ export const decodeMCPServerStatus: Decoder<MCPServerStatus> = (v) => {
     origin: reqOneOf(o, "origin", MCP_ORIGINS, "$.mcp_server_status"),
   };
   {
+    const $v = own(o, "enterprise");
+    if ($v !== undefined && $v !== null) out.enterprise = decodeMCPEnterpriseAuth(own(o, "enterprise"));
+  }
+  {
     const $v = own(o, "origin_root");
     if ($v !== undefined && $v !== null) out.origin_root = reqStr(o, "origin_root", "$.mcp_server_status");
   }
@@ -2957,10 +2961,6 @@ export const decodeMCPServerStatus: Decoder<MCPServerStatus> = (v) => {
   {
     const $v = own(o, "shadows");
     if ($v !== undefined && $v !== null) out.shadows = reqBool(o, "shadows", "$.mcp_server_status");
-  }
-  {
-    const $v = own(o, "enterprise");
-    if ($v !== undefined && $v !== null) out.enterprise = decodeMCPEnterpriseAuth(own(o, "enterprise"));
   }
   return out;
 };

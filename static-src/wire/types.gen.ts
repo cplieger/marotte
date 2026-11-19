@@ -2574,6 +2574,11 @@ export interface MCPResourceTemplateInfo {
 
 /** MCPServerStatus is one server's row of GET /api/mcp/status and of an mcp_status frame. */
 export interface MCPServerStatus {
+  /**
+   * Enterprise is set when the server signs in through the organization identity provider: empty on a
+   * connected row, its reason on a failed one.
+   */
+  enterprise?: MCPEnterpriseAuth;
   name: string;
   state: string;
   /** Origin is never omitted: the client attributes a status to marotte's row only on "user". */
@@ -2593,11 +2598,6 @@ export interface MCPServerStatus {
   relayed?: boolean;
   /** Shadows keeps the client from putting this status on marotte's config row. */
   shadows?: boolean;
-  /**
-   * Enterprise is set when the server signs in through the organization identity provider: empty on a
-   * connected row, its reason on a failed one.
-   */
-  enterprise?: MCPEnterpriseAuth;
 }
 
 /**

@@ -188,8 +188,15 @@ type Store struct {
 	// orphanCheck is non-nil while an unreadable entry whose name does not read waits for the
 	// first readable KAS file (holdOrphans): the nameKey of every server load read.
 	orphanCheck map[string]bool
-	path        string
-	kasPath     string
+	// identityProvider is the configured organization provider, nil when none. It and heldIdentityProvider change
+	// only on the write turn under mu.
+	identityProvider *IdentityProvider
+	// forgetIdentityProviderSessions deletes every stored organization session; nil leaves them.
+	forgetIdentityProviderSessions func(context.Context) error
+	// identityProviderStatus answers the organization sign-in's live status; nil serves a zero one.
+	identityProviderStatus IdentityProviderStatusFunc
+	path                   string
+	kasPath                string
 	// kasRefused keys the last KAS file state readKASDoc refused, so a retry over it is not
 	// reported again; written on the write turn.
 	kasRefused string
@@ -197,16 +204,10 @@ type Store struct {
 	// unreadable are the record's entries load could not decode, which persist writes back. Set
 	// before New returns and never changed, so read without mu.
 	unreadable []json.RawMessage
-	// identityProvider is the configured organization provider, nil when none. heldIdentityProvider is
-	// the record's member load could not read, written back and its KAS key kept as the file has it until
-	// a save of the provider replaces it. Both change only on the write turn under mu.
-	identityProvider     *IdentityProvider
+	// heldIdentityProvider is the record's member load could not read, written back and its KAS key kept as the
+	// file has it until a save of the provider replaces it.
 	heldIdentityProvider json.RawMessage
-	// forgetIdentityProviderSessions deletes every stored organization session; nil leaves them.
-	forgetIdentityProviderSessions func(context.Context) error
-	// identityProviderStatus answers the organization sign-in's live status; nil serves a zero one.
-	identityProviderStatus IdentityProviderStatusFunc
-	callbacks              sync.WaitGroup
+	callbacks            sync.WaitGroup
 	// mu guards servers and onChange; a writer of servers holds it only alongside the turn.
 	mu sync.RWMutex
 }
