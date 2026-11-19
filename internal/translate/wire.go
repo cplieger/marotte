@@ -263,13 +263,14 @@ type acpConsentMetaShadow acpConsentMeta
 // UnmarshalJSON decodes the block and reports any member it does not read. askType needs no
 // reader (KAS offers no Always allow on an explicit ask); matchedRule and source name the rule
 // that asked, which the card does not show; KAS falls back to the request's own workspaceRoot
-// when an answer omits it.
+// when an answer omits it; scopes lists where an always answer may persist and holds session
+// and user whenever the answer can persist, the only two marotte sends.
 func (c *acpConsentMeta) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, (*acpConsentMetaShadow)(c)); err != nil {
 		return err
 	}
 	censusMeta("session/request_permission._meta.kiro.consent", data, reflect.TypeFor[acpConsentMetaShadow](),
-		"askType", "matchedRule", "source", "workspaceRoot")
+		"askType", "matchedRule", "source", "workspaceRoot", "scopes")
 	return nil
 }
 
@@ -321,13 +322,16 @@ type acpPermissionKiroBlockShadow acpPermissionKiroBlock
 // UnmarshalJSON decodes the block and reports any member KAS sent that it does not read;
 // the declined ones are read elsewhere or belong to asks this frame does not render.
 // workflowPlan is a plan approval's structured step list, which the card has no view for.
+// askId, askKind and requester are KAS's own ask identity; marotte keys an ask on its request id
+// and toolCallId.
 func (b *acpPermissionKiroBlock) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, (*acpPermissionKiroBlockShadow)(b)); err != nil {
 		return err
 	}
 	censusMeta("session/request_permission._meta.kiro", data, reflect.TypeFor[acpPermissionKiroBlockShadow](),
 		"agentManagesTrust", "disclosedContext", "hookName", "executionId", "kind",
-		"requirementText", "question", "requirementRange", "requirementsFilePath", "workflowPlan")
+		"requirementText", "question", "requirementRange", "requirementsFilePath", "workflowPlan",
+		"askId", "askKind", "requester")
 	return nil
 }
 
