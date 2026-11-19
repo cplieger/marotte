@@ -4,26 +4,17 @@
 import { effect, el, signal } from "@cplieger/reactive";
 import { reopenChat } from "./chat.js";
 import { showContextMenu } from "./context-menu.js";
-import { isSliding } from "./disclosure-row.js";
-import { $, maybeEl, setText } from "./dom.js";
+import { $, setText } from "./dom.js";
 import { iconEl } from "./icon-el.js";
-import { type Press, focusAs, lastPress } from "./legacy-ui/scripted-focus.js";
+import { type Press, lastPress } from "./legacy-ui/scripted-focus.js";
 import { bindContextPress } from "./context-hold.js";
 import { ICON_TRASH } from "./icons.js";
 import { deleteClosedChat } from "./chat-delete.js";
 import { formatClock, formatShortDate, formatWeekdayStamp, watchClock } from "./locale-time.js";
 import { isRetentionEnabled, onRetentionChange } from "./retention.js";
-import {
-  bindSectionToggle,
-  foldRows,
-  isSectionFolded,
-  paintSectionHeader,
-  sectionToggle,
-  type SidebarSection,
-} from "./section-header.js";
+import { sideSection } from "./side-section.js";
 import { watchSession } from "./store.js";
 import {
-  focusHistoryEntry,
   focusTabRow,
   getActiveTabId,
   historyPaneTab,
@@ -47,15 +38,6 @@ interface Row {
   entry: RecentClose;
   label: string;
   drawn: string;
-}
-
-/** Where focus was inside the section before a repaint: a row's button or Delete, More or the header. */
-type Mark =
-  | { readonly at: "row" | "delete"; readonly ref: string; readonly order: readonly string[] }
-  | { readonly at: "more" | "header" };
-
-function isShown(e: Element | null | undefined): e is HTMLElement {
-  return e instanceof HTMLElement && e.isConnected && e.getClientRects().length > 0;
 }
 
 /** The entries the section draws: none while retention is off, since a chat closed then is deleted.
@@ -92,19 +74,18 @@ function closedWhen(ms: number, today: number): { readonly short: string; readon
 
 /** Wire `#history-section` once its markup is in the page. */
 export function initHistorySection(): void {
-  const section = maybeEl("history-section");
-  const list = maybeEl("history-list");
-  const toggle = list === null ? null : sectionToggle(list);
-  if (section === null || list === null || toggle === null) {
-    return;
-  }
-  const fold: SidebarSection = {
+  const side = sideSection("history-section", "history-list", {
     key: "history",
-    list,
     foldedByDefault: true,
     noun: "chat",
-    emptyHides: "section",
-  };
+    tail: [$.historyMore],
+    foldDot: () => null,
+    // More stays while its page shows, so the fold keeps the row you are on.
+    kept: () => (historyPaneTab() === null ? null : $.historyMore.closest("li")),
+  });
+  if (side === null) {
+    return;
+  }
   $.historyMore.addEventListener("click", () => {
     showHistoryView();
   });
@@ -112,10 +93,7 @@ export function initHistorySection(): void {
   onRetentionChange(() => {
     retentionOn.value = isRetentionEnabled();
   });
-  const tabList = maybeEl("tab-list");
   const rows = new Map<string, Row>();
-  /** The refs as last drawn, newest first. */
-  let order: readonly string[] = [];
   const busy = new Map<string, "reopen" | "delete">();
   // A row says its clock only on its close's day, so each midnight redraws the list.
   const dayTurn = signal(0);
@@ -140,85 +118,14 @@ export function initHistorySection(): void {
   /** The press that asked for each delete in flight: its row's focus moves take that press's ring. */
   const deletePress = new Map<string, Press | null>();
 
-  const noteFocus = (): Mark | null => {
-    const f = document.activeElement;
-    if (f === null || !section.contains(f)) {
-      return null;
-    }
-    if (f === $.historyMore) {
-      return { at: "more" };
-    }
-    for (const [ref, row] of rows) {
-      if (row.li.contains(f)) {
-        return { at: f === row.remove ? "delete" : "row", ref, order };
-      }
-    }
-    return { at: "header" };
-  };
-
-  /** Put focus back after a repaint when it was at `mark` and is now lost: on the same control, re-seated or
-   *  not, else the nearest row after, before, More, the header, the Open section's first row, History's entry,
-   *  the composer or the active tab's row, with the ring of `press` (`focusAs`). Focus anywhere shown is left
-   *  alone. */
-  const restoreFocus = (mark: Mark | null, press?: Press | null): void => {
-    const now = document.activeElement;
-    if (mark === null || (now !== document.body && isShown(now))) {
-      return;
-    }
-    const near: (HTMLElement | undefined)[] = [];
-    if (mark.at === "row" || mark.at === "delete") {
-      const row = rows.get(mark.ref);
-      const i = mark.order.indexOf(mark.ref);
-      near.push(
-        mark.at === "row" ? row?.button : row?.remove,
-        ...mark.order.slice(i + 1).map((r) => rows.get(r)?.button),
-        ...mark.order
-          .slice(0, i)
-          .reverse()
-          .map((r) => rows.get(r)?.button),
-      );
-    }
-    const openRow = [
-      ...(tabList?.querySelectorAll<HTMLElement>(":scope > [data-tab-id]") ?? []),
-    ].find((r) => !r.classList.contains("exiting") && isShown(r));
-    for (const to of [...near, $.historyMore, toggle, openRow]) {
-      if (isShown(to)) {
-        focusAs(to, press);
-        if (document.activeElement === to) {
-          return;
-        }
-      }
-    }
-    if (!focusHistoryEntry(press)) {
-      $.promptInput.focus();
-      if (document.activeElement !== $.promptInput) {
-        focusTabRow(getActiveTabId(), press);
-      }
-    }
-  };
-
-  /** Hide the rows when `folded`, More too unless its page shows, unless a running slide owns
-   *  them, and paint the header. Reads the page's signal first, so the effect tracks it. */
-  const paintFold = (folded: boolean, slideOwnsRows = false): void => {
-    const moreSelected = historyPaneTab() !== null;
-    if (!slideOwnsRows) {
-      foldRows(
-        list.querySelectorAll<HTMLElement>(":scope > li"),
-        folded,
-        (li) => moreSelected && li.contains($.historyMore),
-      );
-    }
-    paintSectionHeader(fold, { count: order.length, dot: null });
-  };
-
-  async function reopen(row: Row): Promise<void> {
+  const reopen = async (row: Row): Promise<void> => {
     const ref = row.entry.ref;
     if (busy.has(ref)) {
       return;
     }
     busy.set(ref, "reopen");
     row.button.setAttribute("aria-busy", "true");
-    const mark = noteFocus();
+    const mark = side.noteFocus();
     try {
       const outcome = await reopenChat(ref, row.entry.name);
       const tabID = tabIdFor("chat", ref);
@@ -234,12 +141,12 @@ export function initHistorySection(): void {
     } finally {
       busy.delete(ref);
       row.button.removeAttribute("aria-busy");
-      restoreFocus(mark);
+      side.restoreFocus(mark);
     }
-  }
+  };
 
   /** Delete for good through the History page's own door; the server's frame then drops the row. */
-  async function remove(row: Row): Promise<void> {
+  const remove = async (row: Row): Promise<void> => {
     const ref = row.entry.ref;
     if (busy.has(ref)) {
       return;
@@ -247,7 +154,7 @@ export function initHistorySection(): void {
     busy.set(ref, "delete");
     row.remove.setAttribute("aria-busy", "true");
     // A click that moves no focus (confirm.ts owns the WebKit case) can leave it outside the section: the row stands for it.
-    const mark = noteFocus() ?? { at: "row", ref, order };
+    const mark = side.noteFocus() ?? side.markRow(ref);
     deletePress.set(ref, lastPress());
     try {
       if (await deleteClosedChat(ref, row.label)) {
@@ -257,10 +164,10 @@ export function initHistorySection(): void {
     } finally {
       busy.delete(ref);
       row.remove.removeAttribute("aria-busy");
-      restoreFocus(mark, deletePress.get(ref));
+      side.restoreFocus(mark, deletePress.get(ref));
       deletePress.delete(ref);
     }
-  }
+  };
 
   function openMenu(row: Row, x: number, y: number): void {
     showContextMenu(
@@ -358,40 +265,24 @@ export function initHistorySection(): void {
     const reopening = [...busy].some(
       ([ref, job]) => job === "reopen" && rows.get(ref)?.li.contains(focused) === true,
     );
-    const mark = reopening ? null : noteFocus();
+    const mark = reopening ? null : side.noteFocus();
     const entries = drawnEntries(recentClosed(), retentionOn.value);
     const keep = new Set(entries.map((e) => e.ref));
-    for (const [ref, row] of rows) {
+    for (const ref of rows.keys()) {
       if (!keep.has(ref)) {
-        row.li.remove();
         rows.delete(ref);
       }
     }
-    let prev: HTMLLIElement | null = null;
-    for (const entry of entries) {
+    const seated = entries.map((entry) => {
       let row = rows.get(entry.ref);
       if (row === undefined) {
         row = makeRow(entry);
         rows.set(entry.ref, row);
       }
       paintRow(row, entry, today);
-      // Seated only when out of place, since a re-seat blurs a focused row; More stays last.
-      const want: Element | null = prev === null ? list.firstElementChild : prev.nextElementSibling;
-      if (want !== row.li) {
-        if (prev === null) {
-          list.prepend(row.li);
-        } else {
-          prev.after(row.li);
-        }
-      }
-      prev = row.li;
-    }
-    order = entries.map((e) => e.ref);
-    paintFold(isSectionFolded(fold), isSliding(list));
-    restoreFocus(mark, mark !== null && "ref" in mark ? deletePress.get(mark.ref) : undefined);
-  });
-
-  bindSectionToggle(fold, (folded) => {
-    paintFold(folded);
+      return { ref: entry.ref, li: row.li, controls: [row.button, row.remove] };
+    });
+    side.seat(seated);
+    side.restoreFocus(mark, mark !== null && "ref" in mark ? deletePress.get(mark.ref) : undefined);
   });
 }

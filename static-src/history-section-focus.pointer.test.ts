@@ -327,8 +327,8 @@ async function askShown(): Promise<HTMLDialogElement> {
   return ask() as HTMLDialogElement;
 }
 
-/** Open the delete's confirm with `open` and press its `button` with the mouse; resolves once it has closed and
- *  the frame that drops the row has run. */
+/** Open the delete's confirm with `open` and press its `button` with the mouse; resolves once it has closed, the
+ *  delete has settled and the frame that drops the row has run. */
 async function deleteBy(open: () => Promise<void>, button: "Delete" | "Cancel"): Promise<void> {
   await open();
   const d = await askShown();
@@ -350,6 +350,11 @@ async function deleteBy(open: () => Promise<void>, button: "Delete" | "Cancel"):
   // confirm.ts answers on the close event, a task of its own that a busy page can run after later
   // timers, not when `open` turns false at the end of the close animation.
   await until(() => closed, "the confirm's close event");
+  // The delete's own await settles on the server's answer, which a loaded run can hold past a few ticks.
+  await until(
+    () => document.querySelector(".history-row-delete[aria-busy]") === null,
+    "the delete to settle",
+  );
   await settle();
   await settleTabs();
 }

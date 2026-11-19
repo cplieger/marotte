@@ -109,7 +109,7 @@ function mountComposer(d: Document = doc): {
 }
 
 /** The sidebar as `static/index.html` authors it, down to the three children the measurement
- *  needs: the header, the `flex: 1` section column that pushes the footer down, and the footer.
+ *  needs: the header, the `flex: 1` middle that pushes the footer down, and the footer.
  *  Without that middle element the footer sits at the TOP of the panel and the gap to the
  *  panel's own bottom edge measures the panel's leftover space rather than its inset. */
 function mountSidebar(d: Document): { panel: HTMLElement; footer: HTMLElement } {
@@ -118,8 +118,11 @@ function mountSidebar(d: Document): { panel: HTMLElement; footer: HTMLElement } 
 
   const header = d.createElement("div");
   header.className = "sidebar-header";
+  const middle = d.createElement("div");
+  middle.className = "sidebar-middle";
   const sections = d.createElement("div");
   sections.id = "tab-sections";
+  middle.append(sections);
   const footer = d.createElement("div");
   footer.className = "sidebar-footer";
   const account = d.createElement("button");
@@ -132,7 +135,7 @@ function mountSidebar(d: Document): { panel: HTMLElement; footer: HTMLElement } 
   glyph.setAttribute("class", "ic-ui");
   logout.appendChild(glyph);
   footer.append(account, logout);
-  panel.append(header, sections, footer);
+  panel.append(header, middle, footer);
   d.body.replaceChildren(panel);
   return { panel, footer };
 }
