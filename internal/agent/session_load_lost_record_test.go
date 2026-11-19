@@ -18,10 +18,15 @@ import (
 	"github.com/cplieger/marotte/internal/runlease"
 )
 
-// A load KAS answers with a blank record restores nothing; these pin that marotte tells such a load from a real
-// one by its replay, retires the session, and says so in the chat.
+// Every load is strict, so KAS refuses a session whose record is gone; these pin that marotte retires the refused
+// session for a new one, says so in the chat only when the chat shows turns it was sent, and keeps every other load.
 
 const lostSession = "old-acp"
+
+// strictRefusal is the session door's error for KAS's refusal of a strict load of session.
+func strictRefusal(session string) error {
+	return fmt.Errorf("session/load: %w", &marotte.RPCError{Code: -32000, Message: "Session '" + session + "' not found"})
+}
 
 // doorFakes hands every door its own fake, numbered in door order, so a retired session and its replacement are
 // told apart by identity.
@@ -80,7 +85,7 @@ func onSession(t *testing.T, cs *testChatStore, chatID marotte.ChatID, session s
 }
 
 // boundTurn writes one closed prompt turn whose prompt KAS bound on session, as a sent prompt leaves it.
-func boundTurn(t *testing.T, cs *testChatStore, chatID marotte.ChatID, session string) string {
+func boundTurn(t *testing.T, cs *testChatStore, chatID marotte.ChatID, session string) {
 	t.Helper()
 	ctx := t.Context()
 	opened, err := cs.OpenTurn(ctx, chatID, &chat.TurnSpec{
@@ -101,7 +106,6 @@ func boundTurn(t *testing.T, cs *testChatStore, chatID marotte.ChatID, session s
 	}
 	appendTo(opened.Turn+":bind", marotte.EntryKindTurnBind, marotte.EntryTurnBind{KASMessageID: "kas-" + session, SessionID: session})
 	appendTo(opened.Turn+":close", marotte.EntryKindTurnClose, marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted})
-	return opened.Turn
 }
 
 func contextResets(t *testing.T, cs *testChatStore, chatID marotte.ChatID) []marotte.ContextResetCause {
@@ -133,8 +137,8 @@ func chatRecord(t *testing.T, cs *testChatStore, chatID marotte.ChatID) *marotte
 	return c
 }
 
-func TestSessionLoad_ALoadThatReplaysNothingForItsBoundSessionOpensANewOne(t *testing.T) {
-	h, cs, fakes := lostRecordHub(t, nil)
+func TestSessionLoad_AStrictRefusalOfABoundSessionRecordsSessionMissing(t *testing.T) {
+	h, cs, fakes := lostRecordHub(t, func(b *fakeBridge) { b.loadErr = strictRefusal(lostSession) })
 	const chatID marotte.ChatID = "c1"
 	onSession(t, cs, chatID, lostSession)
 	boundTurn(t, cs, chatID, lostSession)
@@ -145,15 +149,12 @@ func TestSessionLoad_ALoadThatReplaysNothingForItsBoundSessionOpensANewOne(t *te
 	}
 
 	doors, loads := fakes.doors()
-	if len(doors) != 2 || !loads[0] || loads[1] {
-		t.Fatalf("doors = %d (loads %v), want the load then one session/new", len(doors), loads)
-	}
-	if !doors[0].isClosed() {
-		t.Error("the blank session the load produced was left open; KAS keeps it resident beside the new one")
+	if len(doors) != 1 || loads[0] {
+		t.Fatalf("completed doors = %d (loads %v), want the one session/new after the refusal", len(doors), loads)
 	}
 	rec := chatRecord(t, cs, chatID)
-	if rec.ACPSessionID != doors[1].sessionID || sb.SessionID() != marotte.SessionID(doors[1].sessionID) {
-		t.Errorf("chat runs %q (bridge %q), want the new session %q", rec.ACPSessionID, sb.SessionID(), doors[1].sessionID)
+	if rec.ACPSessionID != doors[0].sessionID || sb.SessionID() != marotte.SessionID(doors[0].sessionID) {
+		t.Errorf("chat runs %q (bridge %q), want the new session %q", rec.ACPSessionID, sb.SessionID(), doors[0].sessionID)
 	}
 	if !slices.Contains(rec.PriorACPSessionIDs, lostSession) {
 		t.Errorf("prior sessions = %v, want %q kept in the chain", rec.PriorACPSessionIDs, lostSession)
@@ -163,9 +164,9 @@ func TestSessionLoad_ALoadThatReplaysNothingForItsBoundSessionOpensANewOne(t *te
 	}
 }
 
-func TestSessionLoad_AnEmptyReplayOfASessionWithNoBoundTurnKeepsIt(t *testing.T) {
+func TestSessionLoad_AStrictRefusalOfAnUnboundSessionRecordsNothing(t *testing.T) {
 	t.Parallel()
-	h, cs, fakes := lostRecordHub(t, nil)
+	h, cs, fakes := lostRecordHub(t, func(b *fakeBridge) { b.loadErr = strictRefusal("s-b") })
 	const chatID marotte.ChatID = "c1"
 	onSession(t, cs, chatID, "s-a")
 	boundTurn(t, cs, chatID, "s-a")
@@ -175,33 +176,28 @@ func TestSessionLoad_AnEmptyReplayOfASessionWithNoBoundTurnKeepsIt(t *testing.T)
 		t.Fatalf("openBridge: %v", err)
 	}
 
-	if _, loads := fakes.doors(); !slices.Equal(loads, []bool{true}) {
-		t.Errorf("doors (load?) = %v, want the one load of s-b kept", loads)
-	}
-	if rec := chatRecord(t, cs, chatID); rec.ACPSessionID != "s-b" {
-		t.Errorf("chat runs %q, want s-b kept: it never held a prompt, so an empty replay is its true state", rec.ACPSessionID)
+	if _, loads := fakes.doors(); !slices.Equal(loads, []bool{false}) {
+		t.Errorf("completed doors (load?) = %v, want the one session/new after the refusal", loads)
 	}
 	if got := contextResets(t, cs, chatID); len(got) != 0 {
-		t.Errorf("context resets = %v, want none", got)
+		t.Errorf("context resets = %v, want none: the chat shows no turn s-b was sent", got)
 	}
 }
 
-func TestSessionLoad_AnEmptyReplayAfterEveryBoundTurnWasRewoundKeepsIt(t *testing.T) {
+// A load that succeeds is the agent's record whatever it replays: only KAS's refusal says the record is gone.
+func TestSessionLoad_AnEmptyReplayOfABoundSessionKeepsIt(t *testing.T) {
 	t.Parallel()
 	h, cs, fakes := lostRecordHub(t, nil)
 	const chatID marotte.ChatID = "c1"
 	onSession(t, cs, chatID, lostSession)
-	turn := boundTurn(t, cs, chatID, lostSession)
-	if _, _, err := cs.Revert(t.Context(), chatID, turn, "kas-"+lostSession); err != nil {
-		t.Fatalf("Revert: %v", err)
-	}
+	boundTurn(t, cs, chatID, lostSession)
 
 	if _, err := h.coord.openReleased(t.Context(), chatID, ""); err != nil {
 		t.Fatalf("openBridge: %v", err)
 	}
 
 	if _, loads := fakes.doors(); !slices.Equal(loads, []bool{true}) {
-		t.Errorf("doors (load?) = %v, want the one load kept: the rewind left KAS no messages", loads)
+		t.Errorf("doors (load?) = %v, want the one load kept", loads)
 	}
 	if rec := chatRecord(t, cs, chatID); rec.ACPSessionID != lostSession {
 		t.Errorf("chat runs %q, want %q kept", rec.ACPSessionID, lostSession)
@@ -246,8 +242,8 @@ func TestSessionLoad_ARefusedLoadOfAnUnboundSessionRecordsNothing(t *testing.T) 
 	}
 }
 
-func TestSessionLoad_ABlankLoadUnderAPromptSendsThePromptToTheNewSession(t *testing.T) {
-	h, cs, fakes := lostRecordHub(t, nil)
+func TestSessionLoad_AStrictRefusalUnderAPromptSendsThePromptToTheNewSession(t *testing.T) {
+	h, cs, fakes := lostRecordHub(t, func(b *fakeBridge) { b.loadErr = strictRefusal(lostSession) })
 	const chatID marotte.ChatID = "c1"
 	onSession(t, cs, chatID, lostSession)
 	boundTurn(t, cs, chatID, lostSession)
@@ -264,15 +260,15 @@ func TestSessionLoad_ABlankLoadUnderAPromptSendsThePromptToTheNewSession(t *test
 		t.Fatalf("openBridge: %v", err)
 	}
 
-	doors, _ := fakes.doors()
-	if len(doors) != 2 {
-		t.Fatalf("doors = %d, want the load then session/new", len(doors))
+	doors, loads := fakes.doors()
+	if len(doors) != 1 || loads[0] {
+		t.Fatalf("completed doors = %d (loads %v), want the one session/new after the refusal", len(doors), loads)
 	}
-	// The blank session's forward has exited; give its tail the time it takes to misread the close.
+	// The refused session's forward has exited; give its tail the time it takes to misread the close.
 	deadline := time.Now().Add(200 * time.Millisecond)
 	for time.Now().Before(deadline) {
-		if cur := h.coord.bridgeFor(chatID); cur == nil || cur.SessionID() != marotte.SessionID(doors[1].sessionID) {
-			t.Fatalf("the chat's bridge is %v, want the new session %q registered", cur, doors[1].sessionID)
+		if cur := h.coord.bridgeFor(chatID); cur == nil || cur.SessionID() != marotte.SessionID(doors[0].sessionID) {
+			t.Fatalf("the chat's bridge is %v, want the new session %q registered", cur, doors[0].sessionID)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -282,15 +278,15 @@ func TestSessionLoad_ABlankLoadUnderAPromptSendsThePromptToTheNewSession(t *test
 	}
 	for i := range entries {
 		if entries[i].Turn == turnID && entries[i].Kind == marotte.EntryKindTurnClose {
-			t.Fatalf("the prompt's turn was closed (%s) by the blank session's close, so it never reaches the new session",
+			t.Fatalf("the prompt's turn was closed (%s) by the refused session's end, so it never reaches the new session",
 				entries[i].Payload)
 		}
 	}
 }
 
-func TestOpenBridge_ABlankLoadRecordsTheUnservedModelOnce(t *testing.T) {
+func TestOpenBridge_AStrictRefusalRecordsTheUnservedModelOnce(t *testing.T) {
 	t.Parallel()
-	h, cs, _ := lostRecordHub(t, nil)
+	h, cs, _ := lostRecordHub(t, func(b *fakeBridge) { b.loadErr = strictRefusal(lostSession) })
 	const chatID marotte.ChatID = "c1"
 	onSession(t, cs, chatID, lostSession)
 	boundTurn(t, cs, chatID, lostSession)
@@ -321,7 +317,7 @@ func TestOpenBridge_ABlankLoadRecordsTheUnservedModelOnce(t *testing.T) {
 		}
 	}
 	if unavailable != 1 {
-		t.Errorf("model_switched{reason: unavailable} entries = %d, want 1: the blank load wrote session facts", unavailable)
+		t.Errorf("model_switched{reason: unavailable} entries = %d, want 1: the refused load wrote session facts", unavailable)
 	}
 }
 
@@ -373,30 +369,6 @@ func TestSessionLoad_ASessionEndingDuringItsReplayFailsTheOpenAndKeepsTheSession
 	}
 }
 
-func TestSwapProjectedTranscript_ZeroFramesForABoundSessionRestoredNothing(t *testing.T) {
-	t.Parallel()
-	h, cs, _ := newTestHub()
-	const chatID marotte.ChatID = "c1"
-	onSession(t, cs, chatID, lostSession)
-	boundTurn(t, cs, chatID, lostSession)
-	h.coord.turns.testLifecycle(chatID)
-	before := logOf(t, cs, chatID)
-
-	blank := &loadProjection{proj: projectedTurn(t, h).proj, sessionID: lostSession}
-	if err := h.replay.swapProjectedTranscript(chatID, blank); !errors.Is(err, errReplayRestoredNothing) {
-		t.Errorf("swap of a zero-frame replay = %v, want errReplayRestoredNothing", err)
-	}
-	if after := logOf(t, cs, chatID); len(after) != len(before) {
-		t.Errorf("the log holds %d entries after a refused swap, want %d unchanged", len(after), len(before))
-	}
-
-	replayed := projectedTurn(t, h)
-	replayed.sessionID, replayed.frames = lostSession, 4
-	if err := h.replay.swapProjectedTranscript(chatID, replayed); err != nil {
-		t.Errorf("swap of a four-frame replay = %v, want nil", err)
-	}
-}
-
 func TestHoldsTurnsOf(t *testing.T) {
 	t.Parallel()
 	bind := func(turn, session string) marotte.Entry {
@@ -408,19 +380,17 @@ func TestHoldsTurnsOf(t *testing.T) {
 	}
 	text := marotte.Entry{ID: "t1:text", Turn: "t1", Kind: marotte.EntryKindText, Payload: json.RawMessage(`{"text":"hi"}`)}
 	cases := []struct {
-		name     string
-		entries  []marotte.Entry
-		reverted map[string]struct{}
-		want     bool
+		name    string
+		entries []marotte.Entry
+		want    bool
 	}{
 		{name: "a_bind_to_the_session", entries: []marotte.Entry{text, bind("t1", "s")}, want: true},
 		{name: "a_bind_to_another_session", entries: []marotte.Entry{bind("t1", "other")}},
-		{name: "a_bind_only_in_a_reverted_turn", entries: []marotte.Entry{bind("t1", "s")}, reverted: map[string]struct{}{"t1": {}}},
 		{name: "no_bind", entries: []marotte.Entry{text}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := holdsTurnsOf(tc.entries, tc.reverted, "s"); got != tc.want {
+			if got := holdsTurnsOf(tc.entries, "s"); got != tc.want {
 				t.Errorf("holdsTurnsOf = %v, want %v", got, tc.want)
 			}
 		})

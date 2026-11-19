@@ -40,6 +40,7 @@ const (
 	EntryKindReconciled       EntryKind = "reconciled"
 	EntryKindTurnClose        EntryKind = "turn_close"
 	EntryKindStepGraded       EntryKind = "step_graded"
+	EntryKindJobEnded         EntryKind = "job_ended"
 )
 
 // Entry is one sealed row of a turn's log. Every field but Payload is the
@@ -220,6 +221,8 @@ type EntryToolResult struct {
 	Offload    *ToolOffload    `json:"offload,omitempty"`
 	// Interaction is how the call's approval or question was answered.
 	Interaction *ToolInteraction `json:"interaction,omitempty"`
+	// Job is ToolCall's. A result whose job has no End sealed the call while the job ran on.
+	Job *BackgroundJob `json:"job,omitempty"`
 	// Truncated is what the STORE dropped to bound this result on disk, nil when it
 	// fit; OutputBytes and HasFull mark the served PREVIEW, as on EntryToolCall.
 	Truncated *ToolTruncation `json:"truncated,omitempty"`
@@ -784,6 +787,7 @@ func EntryToolResultOf(tc *ToolCall) EntryToolResult {
 		Denial:      tc.Denial,
 		Offload:     tc.Offload,
 		Interaction: tc.Interaction,
+		Job:         tc.Job,
 		Truncated:   tc.Truncated,
 		Title:       tc.Title,
 		Kind:        tc.Kind,

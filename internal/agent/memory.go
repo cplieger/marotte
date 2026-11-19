@@ -2,7 +2,7 @@ package agent
 
 // The Memories tab: list, get, update and delete over KAS's _kiro/memory/* engine calls.
 // KAS owns the store. Calls carry no sessionId, so KAS answers from the account's entitlement
-// alone, whatever the Memory setting.
+// alone, whatever the Memory choice.
 
 import (
 	"context"
@@ -264,6 +264,7 @@ func memoryFailure(err error) engineReply {
 func (st *Settings) registerMemoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/memory", st.handleMemoryCollection)
 	mux.HandleFunc("/api/memory/sync", st.handleMemorySync)
+	mux.HandleFunc("/api/memory/mode", st.handleMemoryMode)
 	mux.HandleFunc("/api/model-fallback", st.handleModelFallback)
 	mux.HandleFunc("/api/memory/import-prompt", st.handleMemoryImportPrompt)
 	mux.HandleFunc("/api/memory/import", st.handleMemoryImport)

@@ -93,3 +93,43 @@ func TestClose_AnAbortKeepsTheFoldsTitleFields(t *testing.T) {
 		})
 	}
 }
+
+// A call kiro-cli moved into a background job returned to the model at the move, so the live close seals it
+// completed with its whole fold and the job's mark, never aborted: the job outlives the turn.
+func TestClose_ABackgroundJobsCardIsSealedRunning(t *testing.T) {
+	turn, rec := open(t)
+	rec.seal(turn.ToolCall(t.Context(), "", &storedShell))
+	folded := marotte.ToolCallOfEntry(&storedShell)
+	folded.Status = marotte.ToolInProgress
+	folded.Output = "Still running after 30s, so it moved to the background as job 7.\n"
+	folded.Job = &marotte.BackgroundJob{ID: "7"}
+	turn.SetOpenCall("c1", &folded)
+
+	s := resultSeal(t, rec.seal(turn.Close(t.Context(), marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCompleted})))
+	var got marotte.EntryToolResult
+	if err := json.Unmarshal(s.Entry.Payload, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := marotte.EntryToolResult{
+		Title: "Run Command", Kind: marotte.ToolKindExecute, Status: marotte.ToolCompleted,
+		Output: folded.Output, Job: &marotte.BackgroundJob{ID: "7"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("closed job card = %+v, want %+v", got, want)
+	}
+}
+
+// A job's end files as an interjection: it seals no lane, so the reply streaming beside it keeps its entry.
+func TestJobEnded_InterjectsWithoutSealing(t *testing.T) {
+	turn, rec := open(t)
+	rec.seal(turn.TextDelta(t.Context(), "", "say-1", "still "))
+	sealed := rec.seal(turn.JobEnded(t.Context(), &marotte.EntryJobEnded{
+		JobID: "7", End: marotte.BackgroundJobEnd{Status: marotte.BackgroundJobFailed, DurationMs: 5},
+	}))
+	if len(sealed) != 1 || sealed[0].Entry.Kind != marotte.EntryKindJobEnded || sealed[0].Entry.ID != marotte.JobEndedID("7") {
+		t.Fatalf("seals = %+v, want only the job_ended", sealed)
+	}
+	if open := turn.OpenEntries(); len(open) != 1 || open[0].Text != "still " {
+		t.Errorf("open entries = %+v, want the reply still open", open)
+	}
+}

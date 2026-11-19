@@ -798,6 +798,17 @@ DOT_STATES: list[tuple[str, str, dict[str, str]]] = [
         },
     ),
     (
+        "background",
+        "--c-dot-working",
+        {
+            "fill": "hollow",
+            "surround": "none",
+            "motion": "still",
+            "shape": "circle",
+            "band": "3",
+        },
+    ),
+    (
         "waiting",
         "--c-dot-input",
         {

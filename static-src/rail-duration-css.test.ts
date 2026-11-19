@@ -49,6 +49,11 @@ const RULED = new Map<string, string>([
     "history-row-time",
     "wall clock, not a duration: a closed row's close time in the History section",
   ],
+  // A running job's row carries its elapsed time at rest, the one live fact the row exists to show.
+  [
+    "jobs-tracker-elapsed",
+    "painted at rest: a background job's elapsed time in its jobs tracker row",
+  ],
 ]);
 
 describe("the closed list stays closed", () => {

@@ -20,6 +20,7 @@ import { buildChip } from "./chip.js";
 import { wireAddForm } from "./add-form.js";
 import type { AddForm } from "./add-form.js";
 import {
+  type ImportNote,
   type ValidationField,
   importServers,
   saveServer,
@@ -634,6 +635,7 @@ function initRawPanel(existing: Server | null): void {
   err.textContent = "";
   textarea.value = editing ? storedRecordJSON(existing) : RAW_TEMPLATE;
   showRawEditNote(editing);
+  queryEl<HTMLElement>("." + CLS_IMPORT_NOTES)?.remove();
 
   const saveBtn = byId<HTMLButtonElement>("mcp-raw-save");
   setSaveLabel(saveBtn, editing ? "Save" : "Connect");
@@ -722,6 +724,7 @@ async function submitPaste(
   saveBtn: HTMLButtonElement,
 ): Promise<void> {
   clearFieldMarks();
+  queryEl<HTMLElement>("." + CLS_IMPORT_NOTES)?.remove();
   const unbind = bindLoadingSpinner("mcp.import_servers", saveBtn);
   const o = await importServers.dispatch(block, {
     onSettled: () => {
@@ -733,9 +736,44 @@ async function submitPaste(
     showSubmitError(err, o.status === "error" ? o.error : undefined, "Connect failed.");
     return;
   }
-  closeModal($.mcpModal);
   mcpState.refetchServers();
   void mcpState.refetchStatus();
+  // The notes are what the user must read to fix the block, so the box stays open while there are any.
+  if (o.value.notes.length === 0) {
+    closeModal($.mcpModal);
+    return;
+  }
+  showImportNotes(o.value.notes);
+}
+
+const CLS_IMPORT_NOTES = "mcp-import-notes";
+
+/** List each note under the paste box, in the paste's key order: the key as code, then what Kiro does instead.
+ *  Exported for its test. */
+export function renderImportNotes(notes: readonly ImportNote[]): HTMLElement {
+  const list = el("ul", { className: "mcp-error-list" });
+  for (const n of notes) {
+    const item = el("li", {}, el("code", {}, n.key), ": ", n.text);
+    if (n.server !== undefined) {
+      item.append(` (${n.server})`);
+    }
+    list.appendChild(item);
+  }
+  return el(
+    "div",
+    { className: `mcp-mode-hint ${CLS_IMPORT_NOTES}`, role: "status" },
+    el("span", {}, "Connected. Not taken as pasted:"),
+    list,
+  );
+}
+
+function showImportNotes(notes: readonly ImportNote[]): void {
+  const panel = queryEl<HTMLDivElement>('.mcp-mode-panel[data-mcp-mode="raw"]');
+  if (panel === null) {
+    return;
+  }
+  panel.querySelector("." + CLS_IMPORT_NOTES)?.remove();
+  byId<HTMLParagraphElement>("mcp-raw-error").before(renderImportNotes(notes));
 }
 
 const RAW_TEMPLATE = `{

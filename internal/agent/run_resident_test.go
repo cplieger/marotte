@@ -640,6 +640,38 @@ func TestEnsureResident_AFailedLoadIsAFaultOnThisServer(t *testing.T) {
 	}
 }
 
+// A launching session kiro-cli holds no record of is a state of the run, answered 409 like one no load can hold, and
+// nothing stands in for it.
+func TestEnsureResident_AGoneLaunchingSessionIsUnavailable(t *testing.T) {
+	h, _, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowList:    parentlessRunList("wf_1"),
+		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", ""),
+	}
+	br.loadErr = fmt.Errorf("session/load: %w",
+		&marotte.RPCError{Code: -32000, Message: "Session '" + testLaunchSession + "' not found"})
+	leaseParentless(t, h, "wf_1")
+	starts := br.startCount()
+
+	err := h.runs.resume(t.Context(), "wf_1", callerPage)
+	if !errors.Is(err, errLaunchSessionUnavailable) {
+		t.Fatalf("Resume = %v, want errLaunchSessionUnavailable", err)
+	}
+	if errors.Is(err, errRunHostStart) {
+		t.Error("a run state was reported as a fault on this server")
+	}
+	if got := br.startCount() - starts; got != 0 {
+		t.Errorf("%d sessions opened, want 0: no fresh session may stand in", got)
+	}
+	if h.bridge.mgr.get(runChatID("wf_1")) != nil {
+		t.Error("a host lane was left registered for a run nothing loaded")
+	}
+	if slices.Contains(br.callLog(), methodKiroWorkflowResume) {
+		t.Error("the resume was sent although no session holds the launching session")
+	}
+}
+
 // A launch session no load can hold is a 409; a run kiro-cli does not know is a 404; a refused load is a 500.
 func TestControlHandler_SplitsAnUnavailableLaunchSessionFromAFailedLoad(t *testing.T) {
 	t.Parallel()
@@ -661,6 +693,15 @@ func TestControlHandler_SplitsAnUnavailableLaunchSessionFromAFailedLoad(t *testi
 			leased:  true,
 			loadErr: fmt.Errorf("session/load: %w", &marotte.RPCError{Code: -32603, Message: "Internal error"}),
 			want:    http.StatusInternalServerError,
+		},
+		"a launching session kiro-cli holds no record of is a 409": {
+			inspect: func(t *testing.T) json.RawMessage {
+				return inspectLaunched(t, "wf_1", marotte.RunStatusPaused, testLaunchSession, "publish")
+			},
+			leased: true,
+			loadErr: fmt.Errorf("session/load: %w",
+				&marotte.RPCError{Code: -32000, Message: "Session '" + testLaunchSession + "' not found"}),
+			want: http.StatusConflict,
 		},
 	}
 	for name, tc := range cases {

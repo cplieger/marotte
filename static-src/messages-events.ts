@@ -1,4 +1,4 @@
-// The boundary rows ten entry kinds draw inside a turn's body. `messages.ts` hands this to the dispatcher as
+// The boundary rows eleven entry kinds draw inside a turn's body. `messages.ts` hands this to the dispatcher as
 // `makeEvent`, so the block renderer declares no event vocabulary.
 
 import type {
@@ -19,7 +19,10 @@ import {
   ICON_REWIND,
   ICON_SHIELD,
   ICON_TOOL_SWITCH,
+  ICON_TOOL_TERMINAL,
 } from "./icons.js";
+import { JOB_OUTCOME_WORDS } from "./job-state.js";
+import type { EntryJobEnded } from "./wire/types.gen.js";
 import { wireDetailsSlide } from "./disclosure-row.js";
 import { effortLabel } from "./effort.js";
 import { renderMarkdownInto } from "./markdown.js";
@@ -36,15 +39,16 @@ type EventEntryKind =
   | "mode_switched"
   | "profile_switched"
   | "turn_revert"
-  | "context_reset";
+  | "context_reset"
+  | "job_ended";
 
 /**
- * The ten entry kinds that render as a boundary row; `placeEntry` routes every other kind. Distributed over the
- * ten: `KindedEntry` of a union kind is one object with a union payload, which no switch can narrow.
+ * The eleven entry kinds that render as a boundary row; `placeEntry` routes every other kind. Distributed over the
+ * eleven: `KindedEntry` of a union kind is one object with a union payload, which no switch can narrow.
  */
 export type EventEntry = { [K in EventEntryKind]: KindedEntry<K> }[EventEntryKind];
 
-type BoundaryKind = "switched" | "compacted" | "failed" | "blocked" | "rewound" | "reset";
+type BoundaryKind = "switched" | "compacted" | "failed" | "blocked" | "rewound" | "reset" | "job";
 
 /** The boundary labels' separator; the no-break space keeps the dot from starting a wrapped line. */
 const SEP = "\u00a0\u00b7 ";
@@ -92,6 +96,9 @@ export function buildEvent(e: EventEntry): HTMLElement {
     }
     case "context_reset": {
       return boundary("reset", ICON_REFRESH, CONTEXT_RESET_LABELS[e.payload.cause]);
+    }
+    case "job_ended": {
+      return jobEndedRow(e.payload);
     }
     case "compaction": {
       const summary = e.payload.summary;
@@ -239,6 +246,53 @@ type LabelPart = string | HTMLElement;
  *  text alone (internal/chat entrySegments). */
 function worded(text: string): HTMLElement {
   return el("span", { [CHROME_ATTR]: "" }, text);
+}
+
+/** "Job <description> ended: <outcome>", the outcome in the failed tone when the job failed or timed out, with
+ *  Show the job while the job's card is in the transcript. */
+function jobEndedRow(p: EntryJobEnded): HTMLElement {
+  const status = p.end.status;
+  const failed = status === "failed" || status === "timed_out";
+  const what = p.description ?? "";
+  const row = boundary(
+    failed ? "failed" : "job",
+    ICON_TOOL_TERMINAL,
+    worded("Job "),
+    what === "" ? p.job_id : what,
+    worded(` ended: ${JOB_OUTCOME_WORDS[status].toLowerCase()}`),
+  );
+  const show = el(
+    "button",
+    { type: "button", className: "boundary-action btn-small", [CHROME_ATTR]: "" },
+    "Show the job",
+  );
+  show.addEventListener("click", () => {
+    const card = jobCardOf(row, p.job_id);
+    if (card === null) {
+      show.remove();
+      return;
+    }
+    card.scrollIntoView({ block: "center" });
+    const heading = card.querySelector<HTMLElement>(".tool-header");
+    if (heading !== null) {
+      heading.tabIndex = -1;
+      heading.focus({ preventScroll: true });
+    }
+  });
+  row.querySelector(".boundary-label")?.after(show);
+  // A card outside the loaded window cannot be shown, so the control goes rather than doing nothing.
+  queueMicrotask(() => {
+    if (row.isConnected && jobCardOf(row, p.job_id) === null) {
+      show.remove();
+    }
+  });
+  return row;
+}
+
+/** The job's tool card in the transcript holding `row`. */
+function jobCardOf(row: HTMLElement, jobID: string): HTMLElement | null {
+  const root = row.closest("#messages") ?? row.ownerDocument;
+  return root.querySelector<HTMLElement>(`.tool-call[data-job-id="${CSS.escape(jobID)}"]`);
 }
 
 /** `icon` is a registry glyph, hidden from assistive tech: the label carries the row's meaning. */

@@ -223,7 +223,8 @@ func TestStepTranscript_AnUnknownPathIsAClientError(t *testing.T) {
 	}
 }
 
-// TestStepTranscript_AFailedLoadIsUnavailable pins that KAS's unknown-id and transient answers look alike, so never `gone`.
+// TestStepTranscript_AFailedLoadIsUnavailable pins that any refusal but the strict load's lost record may be
+// transient, so it reads `unavailable`, never `gone`.
 func TestStepTranscript_AFailedLoadIsUnavailable(t *testing.T) {
 	t.Parallel()
 	h, _, br := newTestHub()
@@ -244,6 +245,64 @@ func TestStepTranscript_AFailedLoadIsUnavailable(t *testing.T) {
 	}
 	if len(got.Entries) != 0 {
 		t.Errorf("entries = %+v, want none", got.Entries)
+	}
+}
+
+// TestStepTranscript_AStrictRefusalIsGone pins that KAS's refusal of the strict load, its record of the step's session
+// gone, reads `gone`, and that nothing was loaded for the terminal run's close to dispose of.
+func TestStepTranscript_AStrictRefusalIsGone(t *testing.T) {
+	h, _, br := newTestHub()
+	armStepInspect(br)
+	br.mu.Lock()
+	br.callRPCErrs = map[string]*marotte.RPCError{
+		marotte.MethodSessionLoad: {Code: -32000, Message: "Session 'sess_pass0' not found"},
+	}
+	br.mu.Unlock()
+
+	got, err := h.Runs().stepTranscript(t.Context(), "wf_1", "wf_1:loop:iter-0:build")
+	if err != nil {
+		t.Fatalf("StepTranscript: %v", err)
+	}
+	if got.State != marotte.RunStepTranscriptGone {
+		t.Errorf("state = %q, want gone", got.State)
+	}
+	if len(got.Entries) != 0 {
+		t.Errorf("entries = %+v, want none", got.Entries)
+	}
+	shutdownHub(t, h)
+	if slices.Contains(br.callLog(), marotte.MethodSessionClose) {
+		t.Error("a step session KAS refused to load was closed")
+	}
+}
+
+// TestStepTranscript_LoadSendsRequireExisting pins that the step load is strict, so KAS refuses a step it holds no
+// record of instead of creating it blank, and carries no session-door setting.
+func TestStepTranscript_LoadSendsRequireExisting(t *testing.T) {
+	h, _, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	armStepInspect(br)
+	armStepReplay(br, "sess_pass0", "done")
+
+	if _, err := h.Runs().stepTranscript(t.Context(), "wf_1", "wf_1:loop:iter-0:build"); err != nil {
+		t.Fatalf("StepTranscript: %v", err)
+	}
+	raw, err := json.Marshal(br.lastParamsFor(marotte.MethodSessionLoad))
+	if err != nil {
+		t.Fatalf("marshal the load's params: %v", err)
+	}
+	var params struct {
+		Meta struct {
+			Kiro map[string]json.RawMessage `json:"kiro"`
+		} `json:"_meta"`
+	}
+	if err := json.Unmarshal(raw, &params); err != nil {
+		t.Fatalf("decode the load's params %s: %v", raw, err)
+	}
+	if got := string(params.Meta.Kiro["requireExisting"]); got != "true" {
+		t.Errorf("step load _meta.kiro.requireExisting = %q, want true; params were %s", got, raw)
+	}
+	if len(params.Meta.Kiro) != 1 {
+		t.Errorf("step load _meta.kiro = %s, want requireExisting alone", raw)
 	}
 }
 

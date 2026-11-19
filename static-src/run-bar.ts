@@ -7,7 +7,7 @@ import { el, computed, effect, touch, untracked } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import { reconcile } from "./reconcile.js";
 import { announce } from "./legacy-ui/announce.js";
-import { $, setAttr, setText } from "./dom.js";
+import { $, setAttr } from "./dom.js";
 import { watchActiveId } from "./store.js";
 import {
   liveRunIDsForChat,
@@ -30,10 +30,9 @@ import { runToExec, type ExecFoldMemo } from "./run-exec-source.js";
 import type { ExecRun } from "./exec-view/model.js";
 import { buildExecSummary, type ExecSummaryView } from "./exec-view/summary.js";
 import { wantsReader } from "./exec-view/alert.js";
-import { chevronEl } from "./chevron.js";
-import { isSliding, selectableButton, slideBox, targetOpen } from "./disclosure-row.js";
+import { selectableButton } from "./disclosure-row.js";
 import { runBarOpen, setRunBarOpen } from "./device-view.js";
-import { FOLD_AT } from "./stack-fold.js";
+import { trackerFold, type TrackerFold } from "./tracker-fold.js";
 import { holdRunClock, releaseRunClock, type RunClockHolder } from "./messages-blocks.js";
 import { openRunView } from "./run-view.js";
 import { bindLoadingState } from "./actions/index.js";
@@ -47,10 +46,6 @@ import type { TabRunDotStatus } from "./tabs.js";
 /** The name a run with no fetched state carries: `runLabelOf` answers `""` there, and a row with
  *  no name at all is unclickable in practice. */
 const FALLBACK_NAME = "Workflow run";
-
-/** From this many live runs a header row heads the list with the recap, its fold toggle and the batch button. One run
- *  gets no header: the batch button, as Pause or Resume, ends that run's row. */
-const HEADER_AT = 2;
 
 /** One bar row's painted parts, kept so a repaint and the clock patch them in place. */
 interface RowView {
@@ -75,6 +70,10 @@ const rowViews = new WeakMap<HTMLElement, RowView>();
 let batchBtn: HTMLButtonElement | null = null;
 /** The run whose row holds the batch button, or `null` while it sits on the header row. */
 let batchRun: string | null = null;
+/** The list's fold and header row (`tracker-fold.ts`), built once by `initRunBar`. */
+let runFold: TrackerFold | null = null;
+/** The header's mark, painted by `paintSummary`. */
+const foldGlyph = el("span", { className: "run-bar-glyph", "aria-hidden": "true" });
 /** The render effect's disposer, held only so `_resetRunBarForTest` can stop it. Production
  *  never tears the bar down — it lives as long as the page. */
 let stopRender: (() => void) | null = null;
@@ -87,8 +86,19 @@ export function initRunBar(): void {
   bound = true;
   const bar = $.runBar;
   batchBtn = buildBatchButton();
-  // After the toggle, which `buildSummary` prepends, so the button ends the header row.
+  // After the toggle, which the fold prepends, so the button ends the header row.
   $.runBarFold.append(batchBtn);
+  runFold = trackerFold({
+    list: bar,
+    header: $.runBarFold,
+    glyph: foldGlyph,
+    count: () => rows(watchActiveId()).length,
+    stored: runBarOpen,
+    store: setRunBarOpen,
+    repaint: () => {
+      render(bar);
+    },
+  });
   const sig = computed(() => key());
   stopRender = effect(() => {
     touch(sig);
@@ -275,9 +285,6 @@ function render(bar: HTMLUListElement): void {
   const live = rows(chatID);
   const waiting = live.filter(needsYou);
   const ids = [...waiting, ...live.filter((id) => !waiting.includes(id))];
-  const headed = ids.length >= HEADER_AT;
-  const open = listOpen(ids.length);
-
   bar.classList.toggle("hidden", ids.length === 0);
   // BEFORE the rows, not after: `buildRow` points this run's hold at its row, so a hold created
   // afterwards would leave the FIRST render's row unaddressable, and the tick would never paint it.
@@ -297,16 +304,14 @@ function render(bar: HTMLUListElement): void {
     mount: (id: string) => buildRow(id, chatID),
     update: paintRow,
   });
-  settleFold(bar, open, bar.childElementCount !== before);
+  runFold?.paint(
+    ids.length,
+    summaryText(ids.length, waiting.length),
+    bar.childElementCount !== before,
+  );
+  setAttr(foldGlyph, "data-status", waiting.length > 0 ? "input" : "working");
   if (held !== null && held.isConnected && document.activeElement !== held) {
     held.focus({ preventScroll: true });
-  }
-  setAttr(fold, "hidden", headed ? null : "");
-  if (headed) {
-    if (fold.querySelector(".run-bar-toggle") === null) {
-      fold.prepend(buildSummary(bar));
-    }
-    paintSummary(fold, ids.length, waiting.length, open);
   }
   paintBatch(bar, ids, batchHadFocus);
   // Hiding the header, or the button, under the keyboard would drop focus to the body, so it moves to the run left.
@@ -338,65 +343,11 @@ function render(bar: HTMLUListElement): void {
   prevChatID = chatID;
 }
 
-/** The fold row: how many runs and how many need the reader, opening the list in place. */
-function buildSummary(bar: HTMLUListElement): HTMLElement {
-  const btn = selectableButton("div", "run-bar-open run-bar-toggle", () => {
-    const open = !listOpen(rows(watchActiveId()).length);
-    setRunBarOpen(open);
-    // 0 is `.run-bar[data-folded]`'s `block-size` (26-dock.css).
-    slideBox(bar, open, applyOpen(bar), { fade: true, closedHeight: 0 });
-    render(bar);
-  });
-  btn.setAttribute("aria-expanded", "false");
-  btn.append(
-    el("span", { className: "run-bar-chev", "aria-hidden": "true" }, chevronEl()),
-    el("span", { className: "run-bar-glyph", "aria-hidden": "true" }),
-    el("span", { className: "run-bar-count" }),
-  );
-  return btn;
-}
-
-/** Whether the list shows its rows for `count` runs: always with no header, else as the reader last chose, else open
- *  below `FOLD_AT`. */
-function listOpen(count: number): boolean {
-  return count < HEADER_AT || (runBarOpen() ?? count < FOLD_AT);
-}
-
-/** The `apply` of the list's `slideBox`: folded is `.run-bar[data-folded]` (26-dock.css). */
-function applyOpen(bar: HTMLUListElement): (open: boolean) => void {
-  return (open) => {
-    bar.toggleAttribute("data-folded", !open);
-  };
-}
-
-/** Bring the list to `open` at once, unless the reader's slide is already heading there: it owns the attribute until
- *  it ends, so a repaint mid-close keeps the rows shown. An open whose rows came or went (`resized`) slides on to the
- *  new height; a slide heading the other way (the fold row left) is cut. */
-function settleFold(bar: HTMLUListElement, open: boolean, resized: boolean): void {
-  if (!isSliding(bar)) {
-    applyOpen(bar)(open);
-  } else if (targetOpen(bar, open) !== open) {
-    slideBox(bar, open, applyOpen(bar), { motion: false });
-  } else if (open && resized) {
-    slideBox(bar, true, applyOpen(bar), { fade: true });
-  }
-}
-
-function paintSummary(fold: HTMLElement, total: number, waiting: number, open: boolean): void {
-  const btn = fold.querySelector<HTMLElement>(".run-bar-toggle");
-  if (btn === null) {
-    return;
-  }
-  const text =
-    waiting === 0
-      ? `${String(total)} workflows running`
-      : `${String(total)} workflows, ${String(waiting)} ${waiting === 1 ? "needs" : "need"} you`;
-  setText(btn.querySelector(".run-bar-count"), text);
-  setAttr(btn, "aria-expanded", String(open));
-  const glyph = btn.querySelector(".run-bar-glyph");
-  if (glyph !== null) {
-    setAttr(glyph, "data-status", waiting > 0 ? "input" : "working");
-  }
+/** The header's count: how many runs, and how many need the reader. */
+function summaryText(total: number, waiting: number): string {
+  return waiting === 0
+    ? `${String(total)} workflows running`
+    : `${String(total)} workflows, ${String(waiting)} ${waiting === 1 ? "needs" : "need"} you`;
 }
 
 /** One row: an `<li>` carrying the state, holding the control that opens the run's own tab. */
@@ -559,6 +510,8 @@ export function _resetRunBarForTest(): void {
   execs.clear();
   batchBtn?.remove();
   batchBtn = null;
+  runFold?.toggle()?.remove();
+  runFold = null;
   batchRun = null;
   bound = false;
   prevCount = 0;

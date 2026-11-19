@@ -44,14 +44,7 @@ type sessionInfoKiroBlock struct {
 	Workflow     *ACPWorkflowMeta `json:"workflow"`
 	ContextUsage struct {
 		UsagePercentage *float64 `json:"usagePercentage"`
-		// SummarizationThreshold rides only KAS's publication of its stored figure (publishContextUsage:
-		// a prompt's end, a context refresh, a session load), never a model response's own reading.
-		SummarizationThreshold *float64 `json:"summarizationThreshold"`
 	} `json:"contextUsage"`
-	// Breakdown marks a context_usage reading's twin, which KAS sends after the plain frame from an unawaited step
-	// (handleContextUsageUpdate awaits the steering read), so it can land after the next response's frames. Only its
-	// presence is read: its token estimate is coarser than turn_completion's contextBreakdown.
-	Breakdown json.RawMessage `json:"breakdown"`
 	// Focus is the kind=="focus_update" block (see focus.go).
 	Focus *focusUpdate `json:"focus"`
 	// Activity rides the engine's own focus_update, FLAT beside Kind (see focus.go).
@@ -128,13 +121,14 @@ func (b *sessionInfoKiroBlock) UnmarshalJSON(data []byte) error {
 	// truncated, an interaction's consentRound (read on the permission request). A plan approval's
 	// flat `_meta` (its workflowPlan) is declined unread; a live bracket's timestamp and
 	// boundarySource add nothing, the boundary being observed at the frame's own time. A
-	// context_usage's flat summarizationThreshold repeats the nested one. A rule-decided close's rule
-	// and an ask copy's copy flag change nothing marotte does with the frame.
+	// context_usage's summarizationThreshold and breakdown are declined: the chat shows the
+	// percentage alone, and turn_completion's contextBreakdown is the finer measure. A rule-decided
+	// close's rule and an ask copy's copy flag change nothing marotte does with the frame.
 	censusMeta("session_info_update._meta.kiro", data, reflect.TypeFor[sessionInfoKiroShadow](),
 		"errorType", "retryErrorType", "toolCallId", "outcome", "selectedOption",
 		"interactionType", "question", "options", "agentSubtaskId", "status", "_meta",
 		"stopReason", "stopDetails", "timestamp", "boundarySource",
-		"title", "conversationSummary", "truncated", "summarizationThreshold",
+		"title", "conversationSummary", "truncated", "summarizationThreshold", "breakdown",
 		"consentRound", "rule", "copy")
 	return nil
 }
@@ -382,8 +376,7 @@ func (t *Translator) handleContextUsage(ctx context.Context, chatID marotte.Chat
 		logUnconsumedInfoKind(chatID, k.Kind)
 		return
 	}
-	live := k.ContextUsage.SummarizationThreshold == nil && !k.Replay && len(k.Breakdown) == 0
-	t.persistUsage(ctx, chatID, *pct, 0, live) // no size on this channel
+	t.persistUsage(ctx, chatID, *pct, 0) // no size on this channel
 }
 
 // handleTurnEvent takes the wire's turn bracket and the routing notice inside it, reporting whether
@@ -549,21 +542,18 @@ func (t *Translator) HandleUsageUpdate(ctx context.Context, chatID marotte.ChatI
 	if json.Unmarshal(raw, &u) != nil || u.Size <= 0 {
 		return
 	}
-	t.persistUsage(ctx, chatID, float64(u.Used)/float64(u.Size)*100, int(u.Size), true)
+	t.persistUsage(ctx, chatID, float64(u.Used)/float64(u.Size)*100, int(u.Size))
 }
 
 // persistUsage writes the context percentage, and optionally the window size (size <= 0 leaves it),
 // into the chat's usage. The percentage gate is a MATERIAL delta: each Mutate rewrites the whole chat
-// file and KAS emits the percentage several times per response. Only a live reading (a model
-// response's own) replaces the figure a compaction cleared, since a figure KAS publishes after one is
-// not a model reading (Usage.ContextCompacted).
-func (t *Translator) persistUsage(ctx context.Context, chatID marotte.ChatID, pct float64, size int, live bool) {
+// file and KAS emits the percentage several times per response.
+func (t *Translator) persistUsage(ctx context.Context, chatID marotte.ChatID, pct float64, size int) {
 	_, err := t.chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
-		if !exists || !live && c.Usage.ContextCompacted {
+		if !exists {
 			return false
 		}
-		changed := live && c.Usage.ContextCompacted
-		c.Usage.ContextCompacted = false
+		changed := false
 		if !c.Usage.HasRealData || materialPctDelta(c.Usage.ContextPct, pct) {
 			c.Usage.ContextPct = pct
 			c.Usage.HasRealData = true

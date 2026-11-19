@@ -31,7 +31,16 @@ func postImport(t *testing.T, mux http.Handler, body string) *httptest.ResponseR
 
 type importResponse struct {
 	Results []importResult `json:"results"`
-	Notes   []string       `json:"notes"`
+	Notes   []importNote   `json:"notes"`
+}
+
+// noteLines renders notes one per line as "key: text", the order and words the paste box shows.
+func noteLines(notes []importNote) string {
+	lines := make([]string, len(notes))
+	for i, n := range notes {
+		lines[i] = n.Key + ": " + n.Text
+	}
+	return strings.Join(lines, "\n")
 }
 
 func decodeImport(t *testing.T, rec *httptest.ResponseRecorder) importResponse {
@@ -228,7 +237,7 @@ func TestImport_UnmodelledKeysAreAcceptedWithANote(t *testing.T) {
 	if len(got.Results) != 1 || got.Results[0].Outcome != importCreated {
 		t.Fatalf("results = %#v, want the server created anyway", got.Results)
 	}
-	joined := strings.Join(got.Notes, "\n")
+	joined := noteLines(got.Notes)
 	for _, want := range []string{"cwd", "description", "$schema"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("notes %q should name %q", joined, want)
@@ -236,6 +245,12 @@ func TestImport_UnmodelledKeysAreAcceptedWithANote(t *testing.T) {
 	}
 	if got := len(s.list(t.Context())); got != 1 {
 		t.Errorf("stored = %d, want 1", got)
+	}
+
+	approval := decodeImport(t, postImport(t, mux, `{"mcpServers": {"x": {"command":"srv","autoApprove":["read"]}}}`))
+	if joined := noteLines(approval.Notes); !strings.Contains(joined, "autoApprove: Kiro does not read a per-server approval list") ||
+		!strings.Contains(joined, "permission settings") {
+		t.Errorf("notes = %q, want autoApprove's note to name Kiro and the permission settings", joined)
 	}
 }
 
@@ -249,7 +264,7 @@ func TestImport_ConsumesWaitForReadyAndTimeout(t *testing.T) {
 	if len(got.Results) != 1 || got.Results[0].Outcome != importCreated {
 		t.Fatalf("results = %#v, want the server created", got.Results)
 	}
-	if joined := strings.Join(got.Notes, "\n"); strings.Contains(joined, "waitForReady") || strings.Contains(joined, "timeout") {
+	if joined := noteLines(got.Notes); strings.Contains(joined, "waitForReady") || strings.Contains(joined, "timeout") {
 		t.Errorf("notes = %q, want no ignored-key note for fields the record now carries", joined)
 	}
 	stored := s.list(t.Context())
@@ -415,7 +430,7 @@ func TestImport_OAuthScopesReachTheRecord(t *testing.T) {
 	  "mcpServers": {"graph": {"url":"https://mcp.example/mcp",
 	    "oauthScopes": [" read ", "write"]}}
 	}`))
-	if joined := strings.Join(got.Notes, "\n"); strings.Contains(joined, "oauthScopes") {
+	if joined := noteLines(got.Notes); strings.Contains(joined, "oauthScopes") {
 		t.Errorf("notes = %q, want no ignoring note for a key the record now carries", joined)
 	}
 	raw := s.enabledRaw(t.Context())
@@ -449,8 +464,8 @@ func TestImport_OAuthKeysOnAStdioBlockAreNoted(t *testing.T) {
 	got := decodeImport(t, postImport(t, mux, `{
 	  "mcpServers": {"x": {"command":"npx","oauth":{"clientId":"cid"},"oauthScopes":["read"]}}
 	}`))
-	joined := strings.Join(got.Notes, "\n")
-	for _, key := range []string{`ignoring "oauth"`, `ignoring "oauthScopes"`} {
+	joined := noteLines(got.Notes)
+	for _, key := range []string{"oauth: Not stored", "oauthScopes: Not stored"} {
 		if !strings.Contains(joined, key) {
 			t.Errorf("notes = %q, want one %s", joined, key)
 		}
@@ -504,8 +519,8 @@ func TestImport_ClientMetadataURLIsStored(t *testing.T) {
 	if raw[0].OAuthClientID != "cid-1" || raw[0].OAuthClientMetadataURL != "https://slack.test/oauth-client.json" {
 		t.Errorf("stored oauth = %q / %q, want both members", raw[0].OAuthClientID, raw[0].OAuthClientMetadataURL)
 	}
-	if joined := strings.Join(got.Notes, "\n"); strings.Contains(joined, "ignoring") {
-		t.Errorf("notes = %q, want no ignoring note", joined)
+	if len(got.Notes) != 0 {
+		t.Errorf("notes = %q, want none", noteLines(got.Notes))
 	}
 }
 
@@ -759,7 +774,7 @@ func TestTranslate_NameIsAdjustedAndReported(t *testing.T) {
 	if got != "acme-my-server" {
 		t.Errorf("name = %q, want %q", got, "acme-my-server")
 	}
-	if len(req.notes) == 0 || !strings.Contains(strings.Join(req.notes, "\n"), got) {
+	if len(req.notes) == 0 || !strings.Contains(noteLines(req.notes), got) {
 		t.Errorf("the adjustment must be reported; notes = %#v", req.notes)
 	}
 }
@@ -949,7 +964,7 @@ func FuzzParseImportBody(f *testing.F) {
 					i, req.servers[i].Name, second.servers[i].Name)
 			}
 		}
-		if strings.Join(second.notes, "\n") != strings.Join(req.notes, "\n") {
+		if noteLines(second.notes) != noteLines(req.notes) {
 			t.Errorf("non-deterministic notes: %#v vs %#v", req.notes, second.notes)
 		}
 	})
@@ -1080,7 +1095,7 @@ func TestImport_ConsumesVersionNegotiation(t *testing.T) {
 	if len(got.Results) != 1 || got.Results[0].Outcome != importCreated {
 		t.Fatalf("results = %#v, want the server created", got.Results)
 	}
-	if joined := strings.Join(got.Notes, "\n"); strings.Contains(joined, "versionNegotiation") {
+	if joined := noteLines(got.Notes); strings.Contains(joined, "versionNegotiation") {
 		t.Errorf("notes = %q, want no ignored-key note for a field the record carries", joined)
 	}
 	stored := s.list(t.Context())
@@ -1101,5 +1116,134 @@ func TestImport_UnknownVersionNegotiationIsRefusedNamingTheField(t *testing.T) {
 	}
 	if n := len(s.list(t.Context())); n != 0 {
 		t.Errorf("stored = %d, want nothing installed", n)
+	}
+}
+
+// KAS reads `timeoutMs` when `timeout` is absent, so a block written for it installs with its timeout.
+func TestImport_TimeoutMsFillsTheTimeout(t *testing.T) {
+	s, mux := newRoutedStore(t)
+
+	got := decodeImport(t, postImport(t, mux, `{"mcpServers": {"x": {"command":"npx","timeoutMs":90000}}}`))
+	if len(got.Notes) != 0 {
+		t.Errorf("notes = %q, want none", noteLines(got.Notes))
+	}
+	if stored := s.list(t.Context()); len(stored) != 1 || stored[0].TimeoutMS != 90_000 {
+		t.Errorf("stored = %+v, want timeout_ms 90000", stored)
+	}
+
+	below := decodeImport(t, postImport(t, mux, `{"mcpServers": {"y": {"command":"npx","timeoutMs":0}}}`))
+	if joined := noteLines(below.Notes); !strings.Contains(joined, "timeoutMs: Below 1, so Kiro uses its default timeout") {
+		t.Errorf("notes = %q, want a timeoutMs below KAS's minimum of 1 noted as ignored", joined)
+	}
+	for _, sv := range s.list(t.Context()) {
+		if sv.Name == "y" && sv.TimeoutMS != 0 {
+			t.Errorf("y timeout_ms = %d, want none stored", sv.TimeoutMS)
+		}
+	}
+}
+
+func TestImport_TimeoutWinsOverTimeoutMs(t *testing.T) {
+	s, mux := newRoutedStore(t)
+
+	got := decodeImport(t, postImport(t, mux, `{"mcpServers": {"x": {"command":"npx","timeout":120000,"timeoutMs":90000}}}`))
+	if joined := noteLines(got.Notes); !strings.Contains(joined, `timeoutMs: Kiro uses "timeout" instead.`) {
+		t.Errorf("notes = %q, want timeoutMs noted as ignored", joined)
+	}
+	if stored := s.list(t.Context()); len(stored) != 1 || stored[0].TimeoutMS != 120_000 {
+		t.Errorf("stored = %+v, want timeout_ms 120000", stored)
+	}
+}
+
+// KAS takes the nested `oauth.oauthScopes`, else `oauth.scopes`, when the server has no `oauthScopes`.
+func TestImport_NestedOAuthScopesFillTheScopes(t *testing.T) {
+	for _, tc := range []struct {
+		name, oauth string
+		want        []string
+		noted       string
+	}{
+		{name: "oauthScopes outranks scopes", oauth: `{"oauthScopes":["a"],"scopes":["b"]}`, want: []string{"a"}, noted: `oauth.scopes: Kiro uses "oauth.oauthScopes" instead.`},
+		{name: "scopes alone", oauth: `{"scopes":["b"," c "]}`, want: []string{"b", "c"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, mux := newRoutedStore(t)
+			got := decodeImport(t, postImport(t, mux, `{"mcpServers": {"g": {"url":"https://mcp.example/mcp","oauth":`+tc.oauth+`}}}`))
+			joined := noteLines(got.Notes)
+			if tc.noted != "" && !strings.Contains(joined, tc.noted) {
+				t.Errorf("notes = %q, want %s", joined, tc.noted)
+			}
+			if tc.noted == "" && len(got.Notes) != 0 {
+				t.Errorf("notes = %q, want none", joined)
+			}
+			if raw := s.enabledRaw(t.Context()); len(raw) != 1 || !slices.Equal(raw[0].OAuthScopes, tc.want) {
+				t.Errorf("stored = %+v, want oauth_scopes %q", raw, tc.want)
+			}
+		})
+	}
+}
+
+// The server's own `oauthScopes` wins over both nested lists, an explicit empty list included.
+func TestImport_TopLevelScopesWinOverNested(t *testing.T) {
+	for _, tc := range []struct {
+		name, top string
+		want      []string
+	}{
+		{name: "a list", top: `["top"]`, want: []string{"top"}},
+		{name: "an explicit empty list", top: `[]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, mux := newRoutedStore(t)
+			got := decodeImport(t, postImport(t, mux, `{"mcpServers": {"g": {"url":"https://mcp.example/mcp",
+			  "oauthScopes":`+tc.top+`,"oauth":{"scopes":["nested"]}}}}`))
+			if joined := noteLines(got.Notes); !strings.Contains(joined, `oauth.scopes: Kiro uses "oauthScopes" instead.`) {
+				t.Errorf("notes = %q, want oauth.scopes noted as ignored", joined)
+			}
+			if raw := s.enabledRaw(t.Context()); len(raw) != 1 || !slices.Equal(raw[0].OAuthScopes, tc.want) {
+				t.Errorf("stored = %+v, want oauth_scopes %q", raw, tc.want)
+			}
+		})
+	}
+}
+
+// Each note sits where its key sits in the paste, whatever order the servers are translated in, so the list reads
+// down the block the user pasted.
+func TestImport_NotesFollowThePastedKeyOrder(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		want       []string
+	}{
+		{
+			name: "one server's keys",
+			body: `{"mcpServers":{"x":{"icon":"i","command":"npx","cwd":"/t","timeout":1000,"timeoutMs":5,"description":"d"}}}`,
+			want: []string{"icon", "cwd", "timeoutMs", "description"},
+		},
+		{
+			name: "servers and the top level",
+			body: `{"mcpServers":{"zeta":{"command":"a","cwd":"/"},"alpha":{"command":"b","icon":"i"}},"$schema":"s"}`,
+			want: []string{"cwd", "icon", "$schema"},
+		},
+		{
+			name: "a nested oauth key between its siblings",
+			body: `{"mcpServers":{"g":{"description":"d","url":"https://mcp.example/mcp","oauth":{"scopes":["b"],"oauthScopes":["a"]},"icon":"x"}}}`,
+			want: []string{"description", "oauth.scopes", "icon"},
+		},
+		{
+			name: "a renamed single server",
+			body: `{"icon":"i","name":"@acme/x","command":"npx","cwd":"/"}`,
+			want: []string{"icon", "@acme/x", "cwd"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := parseImportBody([]byte(tc.body))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			got := make([]string, len(req.notes))
+			for i, n := range req.notes {
+				got[i] = n.Key
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("note keys = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

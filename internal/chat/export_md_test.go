@@ -588,3 +588,28 @@ func TestRenderChatMarkdown_MarksADelegatesLane(t *testing.T) {
 		t.Errorf("delegate notes = %d, want 1: the parent's prose carries none", n)
 	}
 }
+
+// A job's end reads as the transcript's row does, its outcome in words.
+func TestRenderChatMarkdown_NamesABackgroundJobsEnd(t *testing.T) {
+	for _, tc := range []struct {
+		payload marotte.EntryJobEnded
+		want    string
+	}{
+		{
+			payload: marotte.EntryJobEnded{JobID: "7", Description: "sleep 60", End: marotte.BackgroundJobEnd{Status: marotte.BackgroundJobTimedOut}},
+			want:    "**Job sleep 60 ended: timed out**\n\n",
+		},
+		{
+			payload: marotte.EntryJobEnded{JobID: "7", End: marotte.BackgroundJobEnd{Status: marotte.BackgroundJobOutcomeUnknown}},
+			want:    "**Job 7 ended: outcome unknown**\n\n",
+		},
+	} {
+		entries, _ := chatOf(openTurn("t-1", 1, nil).add("", marotte.JobEndedID("7"), marotte.EntryKindJobEnded, tc.payload))
+
+		md := renderChatMarkdown(&marotte.Chat{ID: "c1", Name: "Jobs"}, entries)
+
+		if !strings.Contains(md, tc.want) {
+			t.Errorf("renderChatMarkdown over %+v missing %q\n---\n%s", tc.payload, tc.want, md)
+		}
+	}
+}

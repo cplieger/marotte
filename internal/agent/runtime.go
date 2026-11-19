@@ -347,6 +347,8 @@ type Runtime struct {
 	acpArgs     []string
 	sessionSeen sessionBaseline
 	processLive processLive
+	// codeIndex is kiro-cli's latest code-index status per workspace root (code_index.go).
+	codeIndex codeIndexStatuses
 	// configDoc owns whether config.json reads and the values every spawn, restart decision and session door read.
 	configDoc lastReadable
 	// bootPass guards the boot observer pass (onEngineReady).
@@ -635,6 +637,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	sseP.observe = runs.noteRunEvent
 	configP.engine = h.engine
 	configP.observe = h.observe
+	configP.sessionRoots = h.sessionRoots
 	configP.broadcast = sseP.Broadcast
 	configP.onLocksChanged = h.onGovernanceLocksChanged
 	configP.onAdminResolved = h.powers.requestSync
@@ -670,6 +673,11 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	lc.loops.Go(func() { h.powers.syncLoop(lc.shutdownCtx, lc.done) })
 	h.engine.start()
 	return h
+}
+
+// sessionRoots is the workspace roots a chat session door opens over: its cwd, then the additional directories.
+func (rt *Runtime) sessionRoots(ctx context.Context) []string {
+	return append([]string{rt.lifecycle.workDir}, rt.readSessionSettings(ctx).AdditionalDirectories...)
 }
 
 // MCPRegistry returns the MCP runtime registry as a RouteRegistrar.

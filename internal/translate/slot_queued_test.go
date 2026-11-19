@@ -30,8 +30,9 @@ func eventsOf(events []marotte.ServerEvent, typ marotte.EventType) []marotte.Ser
 	return out
 }
 
-// The recorded shape of a stopped turn: KAS queued the prompt behind another chat's turn, which held its one autonomous
-// slot for 31 minutes. The chat says what it waits for, naming that chat, and turn_start ends the wait.
+// The recorded shape of a stopped turn: KAS queued the prompt behind another chat's turn, which held KAS's one execution
+// slot for 31 minutes (recorded on an older kiro-cli, when autonomous took the slot). The chat says what it waits for,
+// naming that chat, and turn_start ends the wait.
 func TestSessionInfo_AQueuedPromptNamesTheChatHoldingTheSlot(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
 	if _, err := store.Mutate(t.Context(), "c2", func(c *marotte.Chat, _ bool) bool {
@@ -58,7 +59,7 @@ func TestSessionInfo_AQueuedPromptNamesTheChatHoldingTheSlot(t *testing.T) {
 	}
 	n := notices[0].Payload.(marotte.SystemNoticePayload)
 	if n.Level != marotte.NoticeInfo || n.ChatName != "A" ||
-		n.Message != `Waiting for "Overnight autonomous build" to finish: outside Default and Default v2, kiro-cli runs one turn at a time, so this turn starts when that one ends.` {
+		n.Message != `Waiting for "Overnight autonomous build" to finish: kiro-cli runs one turn of this kind at a time, so this turn starts when that one ends.` {
 		t.Errorf("notice = %+v, want an info notice on c1 naming the blocking chat", n)
 	}
 

@@ -55,9 +55,10 @@ export const TAB_ICONS: Readonly<Record<TabKind, string>> = {
  *  default, so a dead network does not strand the reader on a skeleton. */
 export const SWITCH_LOAD_MS = 10_000;
 
-/** The activity dot's states: six from a chat's live state (`tabStatusFor`) and "dirty", the
+/** The activity dot's states: seven from a chat's live state (`tabStatusFor`) and "dirty", the
  *  editor's unsaved mark (a tab is never both). Grammar and rationale: css/12-tabs.css. */
-export type TabDotStatus = "idle" | "working" | "waiting" | "input" | "failed" | "done" | "dirty";
+export type TabDotStatus =
+  "idle" | "working" | "background" | "waiting" | "input" | "failed" | "done" | "dirty";
 
 /** Everything the strip needs about a tab that the server does not, produced only by
  *  `materializeTab`. No `id`/`kind`/`ref` (the subject's identity) and no `pinned` (mutable). A

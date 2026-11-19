@@ -909,9 +909,8 @@ func (bc *bridgeCoordinator) reportSupervisedNotApplied(ctx context.Context, cha
 // merged. An error keeps the chat's session for the next open: it wraps ErrBridgeExited when the engine ended under
 // the load and its one retry, under the replay, or before any engine became ready, wraps ErrChatClosedDuringCall
 // when the chat's close refused the door's forward, is a load kiro-cli left unanswered that sessionHoldsLiveRun
-// keeps (failedLoad), and otherwise is the replay's merge failing. Any other failed load, and a load whose
-// replay restored none of the chat's turns (errReplayRestoredNothing), returns loaded false with a nil error after
-// retireSession, so the generation opens session/new.
+// keeps (failedLoad), and otherwise is the replay's merge failing. Any other failed load, KAS's refusal of a lost
+// record included, returns loaded false with a nil error after retireSession, so the generation opens session/new.
 func (bc *bridgeCoordinator) tryLoadSession(
 	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, rec *marotte.Chat, so *marotte.SessionOpts,
 	held unservedSelection, stamp uint64,
@@ -923,21 +922,13 @@ func (bc *bridgeCoordinator) tryLoadSession(
 	if bc.replayProjection != nil {
 		bc.replayProjection.OpenReplayProjection(ctx, chatID, acpSessionID, replayed)
 	}
-	session, gen, forwardDone, err := bc.loadOnEngine(ctx, chatID, sb, so, replayed, stamp)
+	session, gen, err := bc.loadOnEngine(ctx, chatID, sb, so, replayed, stamp)
 	err = closeCut(ctx, err)
 	if err != nil {
 		return false, bc.failedLoad(ctx, chatID, acpSessionID, err)
 	}
 	bc.markReplayLoaded(chatID, gen, session, replayed)
-	// The verdict comes before any fact is written from the session: a blank one must leave the record as the
-	// session/new replacing it finds it, or commitUnservedModel records an unserved model twice.
 	switch verdict := replayed.wait(bc.lifecycle.shutdownCtx); {
-	case errors.Is(verdict, errReplayRestoredNothing):
-		if closeErr := closeBlankLoad(ctx, session, forwardDone); closeErr != nil {
-			return false, closeErr
-		}
-		bc.retireSession(ctx, chatID, marotte.ContextResetSessionMissing)
-		return false, nil
 	case verdict != nil:
 		return false, verdict
 	case !session.Open():
@@ -976,6 +967,12 @@ func (bc *bridgeCoordinator) failedLoad(ctx context.Context, chatID marotte.Chat
 	if bc.replayProjection != nil {
 		bc.replayProjection.DiscardReplayProjection(chatID)
 	}
+	if marotte.SessionRecordGone(err, acpSessionID) {
+		slog.Warn("kiro-cli holds no record of the chat's session, starting new",
+			"chat_id", chatID, "acp_session", acpSessionID)
+		bc.retireSession(ctx, chatID, marotte.ContextResetSessionMissing)
+		return nil
+	}
 	if errors.Is(err, marotte.ErrBridgeExited) || errors.Is(err, marotte.ErrChatClosedDuringCall) {
 		return err
 	}
@@ -992,33 +989,13 @@ func (bc *bridgeCoordinator) failedLoad(ctx context.Context, chatID marotte.Chat
 	return nil
 }
 
-// closeBlankLoad closes the blank session a lost record's load produced (KAS keeps its blank record) and waits for
-// its forward to exit. It must run while the generation is still starting: the forward's exit then reads the close
-// as the generation's own, not as the session ending under the prompt's open turn (bridgeManager.removeIfBridge).
-func closeBlankLoad(
-	ctx context.Context, session engineSession, forwardDone <-chan struct{},
-) error {
-	if err := session.Close(ctx); err != nil && session.Open() {
-		return fmt.Errorf("close the blank session a lost record loaded: %w", err)
-	}
-	if forwardDone == nil {
-		return nil
-	}
-	select {
-	case <-forwardDone:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
 // loadOnEngine runs chatID's session/load and reports the forward attachment its lane position is comparable within
-// (replay_drain.go), and the channel that attachment's forward closes on exit. A load the engine's end failed is still
-// KAS's to load, so it runs again on the next engine, once the first attempt's forward has folded what
-// it replayed, into a fresh projection.
+// (replay_drain.go). A load the engine's end failed is still KAS's to load, so it runs again on the next engine, once
+// the first attempt's forward has folded what it replayed, into a fresh projection.
 func (bc *bridgeCoordinator) loadOnEngine(
 	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, so *marotte.SessionOpts, replayed *sessionSettle, stamp uint64,
-) (session engineSession, gen uint64, forwardDone <-chan struct{}, err error) {
+) (session engineSession, gen uint64, err error) {
+	var forwardDone <-chan struct{}
 	attach := func(s engineSession) error {
 		g, attachErr := bc.goForward(ctx, chatID, s, stamp)
 		if attachErr != nil {
@@ -1031,7 +1008,7 @@ func (bc *bridgeCoordinator) loadOnEngine(
 	}
 	session, engineGen, err := bc.engine.loadSessionAfter(ctx, 0, so, attach)
 	if !errors.Is(err, marotte.ErrBridgeExited) || engineGen == 0 {
-		return session, gen, forwardDone, err
+		return session, gen, err
 	}
 	slog.Info("the agent engine ended under a session load; loading again on the next engine",
 		"chat_id", chatID, "acp_session", so.SessionID, "generation", engineGen)
@@ -1045,7 +1022,7 @@ func (bc *bridgeCoordinator) loadOnEngine(
 		bc.replayProjection.OpenReplayProjection(ctx, chatID, so.SessionID, replayed)
 	}
 	session, _, err = bc.engine.loadSessionAfter(ctx, engineGen, so, attach)
-	return session, gen, forwardDone, err
+	return session, gen, err
 }
 
 // retireSession blanks chatID's session id so its next open runs session/new, then records the context reset. It is
@@ -1078,13 +1055,33 @@ func (bc *bridgeCoordinator) recordContextReset(ctx context.Context, chatID maro
 		slog.Error("context reset: read the chat's log", "chat_id", chatID, "error", err)
 		return
 	}
-	if !holdsTurnsOf(entries, nil, sessionID) {
+	if !holdsTurnsOf(entries, sessionID) {
 		return
 	}
 	if err := translate.AppendBetweenTurns(ctx, broadcastFunc(bc.broadcast), bc.chatStore, chatID,
 		marotte.EntryKindContextReset, "", marotte.EntryContextReset{Cause: cause}); err != nil {
 		slog.Error("context reset: record the entry between turns", "chat_id", chatID, "cause", cause, "error", err)
 	}
+}
+
+// holdsTurnsOf reports whether a turn_bind naming session is in entries: a prompt the session was sent and the chat
+// still shows. Replayed turns carry no bind, so a session only resumed from kiro-cli is not counted until its first
+// prompt here.
+func holdsTurnsOf(entries []marotte.Entry, session string) bool {
+	if session == "" {
+		return false
+	}
+	for i := range entries {
+		e := &entries[i]
+		if e.Kind != marotte.EntryKindTurnBind {
+			continue
+		}
+		var bind marotte.EntryTurnBind
+		if json.Unmarshal(e.Payload, &bind) == nil && bind.SessionID == session {
+			return true
+		}
+	}
+	return false
 }
 
 // markReplayLoaded records the read-loop position replay completion is measured against, with one
@@ -1758,7 +1755,7 @@ func (bc *bridgeCoordinator) persistModelSwitch(ctx context.Context, chatID maro
 			return false
 		}
 		mv.landOn(c)
-		c.Usage = marotte.Usage{ContextSize: contextSize, ContextCompacted: c.Usage.ContextCompacted}
+		c.Usage = marotte.Usage{ContextSize: contextSize}
 		c.ResetSpend()
 		return true
 	}); err != nil {

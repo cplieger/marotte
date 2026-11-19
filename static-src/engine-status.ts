@@ -42,6 +42,7 @@ const ENGINE_ROWS: ReadonlyMap<string, EngineRow> = new Map([
     "steering_reminders_enabled",
     { label: "Steering reminders", controlID: "flag-steering-reminders" },
   ],
+  ["code_analysis_enabled", { label: "Kiro Code Analysis", controlID: "flag-code-analysis" }],
   ["auto_routing", { label: "Auto model routing", controlID: "auto-routing" }],
   ["auto_delegation", { label: "Smart helper models", controlID: "auto-delegation" }],
   [

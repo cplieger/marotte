@@ -3,6 +3,8 @@
 import { join } from "@cplieger/keyenc";
 
 import type { Session, ChatHeader, TurnState } from "./types.js";
+import { noteJobEnded } from "./job-state.js";
+import { payloadOf } from "./turns.js";
 import { apiGetTyped, apiGetTypedOrError } from "./api-client.js";
 import {
   asArray,
@@ -783,6 +785,12 @@ async function fetchPage(
     return ABORTED;
   }
   const page = buildPageTurns(d.entries, d.open_entries);
+  for (const e of d.entries) {
+    const end = payloadOf(e, "job_ended");
+    if (end !== undefined) {
+      noteJobEnded(chatID, end);
+    }
+  }
   // The byte comparison is the refetch-outcome measurement, bounded by the resident window.
   const heldBefore = beforeTurnID === undefined ? snapshotWindow(session) : "";
   const pageStartsWindow = applyPage(session, page, beforeTurnID !== undefined, heldAtRequest);

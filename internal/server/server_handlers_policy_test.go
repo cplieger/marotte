@@ -24,6 +24,12 @@ type fakePolicy struct {
 	explain     *marotte.PolicyExplainResult
 	explainErr  error
 	explainReqs []marotte.PolicyExplainRequest
+	stores      []policyfile.PresetStore
+	storesErr   error
+}
+
+func (f *fakePolicy) PresetStores(context.Context) ([]policyfile.PresetStore, error) {
+	return f.stores, f.storesErr
 }
 
 func (f *fakePolicy) PolicyList(_ context.Context, _ string) ([]marotte.PolicyRule, error) {

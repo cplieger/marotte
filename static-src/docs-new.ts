@@ -1,6 +1,7 @@
 import { el } from "@cplieger/reactive";
 import { createPopover } from "./legacy-ui/popover.js";
 import { createDoc, type NewDocRequest } from "./actions/docs.js";
+import { hookCallSeat } from "./hook-fold.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_PLUS_UI } from "./icons.js";
 import type { DocsTab } from "./route-path.js";
@@ -342,6 +343,7 @@ const HOOK_TRIGGER_GROUPS = [
     "Tool Hooks",
     [
       ["PreToolUse", "Pre Tool Use"],
+      ["PermissionRequest", "Permission Request"],
       ["PostToolUse", "Post Tool Use"],
     ],
   ],
@@ -388,7 +390,7 @@ const FILE_MATCHER: MatcherCopy = {
 };
 
 function matcherCopy(trigger: string): MatcherCopy | null {
-  if (trigger === "PreToolUse" || trigger === "PostToolUse") {
+  if (hookCallSeat(trigger) !== "") {
     return TOOL_MATCHER;
   }
   if (trigger === "PostFileCreate" || trigger === "PostFileSave" || trigger === "PostFileDelete") {
@@ -396,6 +398,21 @@ function matcherCopy(trigger: string): MatcherCopy | null {
   }
   return null;
 }
+
+// kiro-cli runs only Run Command hooks for these triggers (internal/marotte HookTriggerRunsCommandsOnly).
+const COMMANDS_ONLY: ReadonlySet<string> = new Set(["PermissionRequest"]);
+
+// What a tool hook's command can print to answer for the call, in kiro-cli's create_hook wording.
+const ANSWER_HINTS: ReadonlyMap<string, string> = new Map([
+  [
+    "PreToolUse",
+    'To decide the call, exit 0 and print {"hookSpecificOutput":{"permissionDecision":"allow"|"ask"|"deny","permissionDecisionReason":"…","updatedInput":{…}}}. allow approves only this call\'s would-prompt permissions; deny blocks it; updatedInput replaces the call\'s arguments. Hard policy denies still win.',
+  ],
+  [
+    "PermissionRequest",
+    'Runs when a permission rule would ask. To answer, exit 0 and print {"hookSpecificOutput":{"decision":{"behavior":"allow"|"deny","message":"…"}}}, or exit 2 to deny with stderr as the reason. With no decision, you are asked as usual.',
+  ],
+]);
 
 const ACTION_COPY = {
   command: {
@@ -457,7 +474,10 @@ function hookForm(hooks: FormHooks): NewDocForm {
     "Maximum execution time for the command. Default is 60s. Set to 0 to disable.",
   );
 
+  // A one-option select changes nothing, so a commands-only trigger shows the action as text.
+  const commandOnly = el("span", { className: "tool-form-input", hidden: true }, "Run Command");
   const actionField = field("Action", action, actionHint);
+  action.after(commandOnly);
   const fields = [
     field("Title", title),
     field("Description", description),
@@ -470,7 +490,7 @@ function hookForm(hooks: FormHooks): NewDocForm {
 
   const { form, button } = formShell(fields, "Create Hook", () => {
     const pattern = matcherCopy(trigger.value) === null ? "" : matcher.value.trim();
-    const isCommand = action.value === "command";
+    const isCommand = COMMANDS_ONLY.has(trigger.value) || action.value === "command";
     const req: NewDocRequest = {
       category: "hook",
       name: title.value,
@@ -500,9 +520,13 @@ function hookForm(hooks: FormHooks): NewDocForm {
         actionField.before(matcherField);
       }
     }
-    const isCommand = action.value === "command";
+    const fixed = COMMANDS_ONLY.has(trigger.value);
+    action.hidden = fixed;
+    commandOnly.hidden = !fixed;
+    const isCommand = fixed || action.value === "command";
     const act = ACTION_COPY[isCommand ? "command" : "agent"];
-    actionHint.textContent = act.help;
+    const answers = isCommand ? ANSWER_HINTS.get(trigger.value) : undefined;
+    actionHint.textContent = answers === undefined ? act.help : `${act.help} ${answers}`;
     contentLabel.textContent = act.label;
     content.placeholder = isCommand ? "Command to execute" : "Instructions";
     if (isCommand && !timeoutField.isConnected) {

@@ -128,13 +128,30 @@ describe("the holding area", () => {
       const chat = await mountChat(w, h, 5, true, 17, 0);
       expect(chat.area.scrollHeight, "the area scrolls").toBeGreaterThan(chat.area.clientHeight);
       const box = document.querySelector("#prompt-box")!.getBoundingClientRect();
-      for (const sel of [".run-bar-host", ".steer-stack > li"]) {
+      for (const sel of [".tracker-host", ".steer-stack > li"]) {
         const r = chat.area.querySelector(sel)!.getBoundingClientRect();
         expect(r.left, `${sel} start`).toBeCloseTo(box.left, 0);
         expect(r.right, `${sel} end`).toBeCloseTo(box.right, 0);
       }
     });
   }
+
+  it("shows the area for a running background job alone, and hides it once none runs", async () => {
+    await browser.viewport(1440, 900);
+    style = mountAppCSS();
+    const root = mountView(900, '<div id="chat-view"', '<div id="settings-view"');
+    const area = root.querySelector<HTMLElement>("#holding-area")!;
+    const jobs = root.querySelector<HTMLElement>("#jobs-tracker")!;
+    expect(area.checkVisibility(), "nothing to hold").toBe(false);
+
+    jobs.hidden = false;
+    expect(area.checkVisibility(), "a job runs").toBe(true);
+    expect(jobs.checkVisibility()).toBe(true);
+
+    jobs.hidden = true;
+    expect(area.checkVisibility(), "the job ended").toBe(false);
+    expect(jobs.checkVisibility()).toBe(false);
+  });
 
   it("ellipsises a long file name inside its row at phone width, the actions column in the row", async () => {
     await browser.viewport(390, 844);

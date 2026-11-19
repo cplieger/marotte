@@ -109,7 +109,7 @@ func agentToolCallMsg() *marotte.RPCResponse {
 	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
 }
 
-// modelReadingMsg is a model response's own context reading, KAS's in-turn context_usage (no summarizationThreshold).
+// modelReadingMsg is a model response's own context reading, KAS's context_usage.
 func modelReadingMsg(pct float64) *marotte.RPCResponse {
 	return newSessionInfoMsg(map[string]any{
 		"kind": "context_usage", "usagePercentage": pct, "contextUsage": map[string]any{"usagePercentage": pct},

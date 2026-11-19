@@ -186,6 +186,8 @@ interface Provenance {
   originRoot?: string;
   originPower?: string;
   shadows?: boolean;
+  /** The config keys kiro-cli reported it does not use for this server; absent when none. */
+  ignoredFields?: readonly string[];
 }
 
 export type RuntimeStatus = Provenance &
@@ -225,6 +227,9 @@ function adaptProvenance(w: MCPServerStatus): Provenance {
   }
   if (w.shadows === true) {
     p.shadows = true;
+  }
+  if (w.ignored_fields !== undefined && w.ignored_fields.length > 0) {
+    p.ignoredFields = w.ignored_fields;
   }
   return p;
 }

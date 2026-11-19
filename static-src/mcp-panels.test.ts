@@ -71,7 +71,7 @@ vi.mock("./actions/mcp.js", () => ({
 }));
 
 import { simplifyName } from "./mcp-panels-search.js";
-import { extractNpxPackage } from "./mcp-panels.js";
+import { extractNpxPackage, renderImportNotes } from "./mcp-panels.js";
 import type { Server } from "./mcp-state.js";
 
 describe("simplifyName", () => {
@@ -176,5 +176,21 @@ describe("simplifyName property", () => {
       ),
       { numRuns: 500 },
     );
+  });
+});
+
+describe("renderImportNotes", () => {
+  it("lists each note in the order given, its key as code, then the text and its server", () => {
+    const box = renderImportNotes([
+      { server: "github", key: "cwd", text: "Not stored: marotte has no working-directory field." },
+      { key: "$schema", text: "Not stored: a schema pointer, not configuration." },
+    ]);
+    const items = [...box.querySelectorAll("li")];
+    expect(items.map((li) => li.querySelector("code")?.textContent)).toEqual(["cwd", "$schema"]);
+    expect(items.map((li) => li.textContent)).toEqual([
+      "cwd: Not stored: marotte has no working-directory field. (github)",
+      "$schema: Not stored: a schema pointer, not configuration.",
+    ]);
+    expect(items.every((li) => li.firstChild?.nodeName === "CODE")).toBe(true);
   });
 });

@@ -16,11 +16,11 @@ func TestLoggingReaders_StayQuietWhenTheirCtxEnded(t *testing.T) {
 		name string
 		read func(ctx context.Context, dir string)
 	}{
-		{"Field", func(ctx context.Context, dir string) { Field[string](ctx, dir, KeyMemoryMode) }},
-		{"fieldOr", func(ctx context.Context, dir string) { fieldOr(ctx, dir, KeyMemoryMode, "") }},
+		{"Field", func(ctx context.Context, dir string) { Field[string](ctx, dir, KeyTheme) }},
+		{"fieldOr", func(ctx context.Context, dir string) { fieldOr(ctx, dir, KeyTheme, "") }},
 		{"FieldInto", func(ctx context.Context, dir string) {
 			var out string
-			FieldInto(ctx, dir, KeyMemoryMode, &out)
+			FieldInto(ctx, dir, KeyTheme, &out)
 		}},
 		{"RetentionEnabled", func(ctx context.Context, dir string) { RetentionEnabled(ctx, dir) }},
 	}

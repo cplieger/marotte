@@ -164,8 +164,8 @@ func (rt *Runtime) workspaceSessionRows(ctx context.Context) ([]kasSessionRow, e
 	// is the only narrowing kiro-cli 3.3.0 reads (it ignores cursor and limit): a workspace with 16,900 step sessions
 	// answered 16.36 MiB unfiltered, over the frame cap, and 1.26 MiB filtered.
 	raw, err := rt.engine.rawCall(cctx, "session list call", marotte.MethodSessionList, map[string]any{
-		"cwd":   rt.lifecycle.workDir,
-		"_meta": map[string]any{"kiro": map[string]any{"filter": map[string]any{"workflowSessions": "exclude"}}},
+		"cwd":           rt.lifecycle.workDir,
+		marotte.KeyMeta: map[string]any{marotte.KeyKiro: map[string]any{"filter": map[string]any{"workflowSessions": "exclude"}}},
 	})
 	if errors.Is(err, marotte.ErrFrameTooLarge) {
 		return nil, sessionListOversizeError{cause: err}

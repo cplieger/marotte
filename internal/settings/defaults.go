@@ -70,11 +70,6 @@ const (
 	// Sent at initialize and pushed live through _kiro/contentCollection/settings_changed.
 	KeyContentCollectionEnabled = "content_collection_enabled"
 
-	// KeyMemoryMode is the Memory dropdown (memory.go's Memory* values), resolved per session door by
-	// MemoryPreferenceFor. KAS freezes the mode per session; the reflection half is re-sent on
-	// session/load.
-	KeyMemoryMode = "memory_mode"
-
 	// KeyMCPWaitForReady makes KAS hold each prompt until every enabled MCP server
 	// has settled. It reaches the agent through the rendered KAS MCP file, not the
 	// spawn, so a flip is live at the next prompt of every open chat. Default off.
@@ -92,10 +87,13 @@ const (
 	// KeyAutoDelegation are three-state: empty sends nothing, so kiro-cli's own
 	// experiment decides; KeyCloudFormationSafety also takes "enforce". KeyModelFallback
 	// sends KAS's refusal and availability fallback flags as true or false; it defaults
-	// on, as kiro-cli does.
+	// on, as kiro-cli does. KeyCodeAnalysis is an engine setting (a restart applies it), KeyBackgroundJobs a
+	// session-door one (open chats reload onto it).
 	KeySpecPlanning         = "spec_planning"
 	KeySpecPlanningAskFirst = "spec_planning_ask_first"
 	KeySteeringReminders    = "steering_reminders_enabled"
+	KeyCodeAnalysis         = "code_analysis_enabled"
+	KeyBackgroundJobs       = "background_jobs"
 	KeyWorkflowsEnabled     = "workflows_enabled"
 	KeyChatMessaging        = "chat_messaging_enabled"
 	KeyChatAwareness        = "chat_awareness_enabled"
@@ -189,6 +187,8 @@ var KnownKeys = map[string]struct{}{
 	KeySpecPlanning:             {},
 	KeySpecPlanningAskFirst:     {},
 	KeySteeringReminders:        {},
+	KeyCodeAnalysis:             {},
+	KeyBackgroundJobs:           {},
 	KeyTerminalCommandTimeoutMs: {},
 	KeyWorkValidation:           {},
 	KeyWorkflowsEnabled:         {},
@@ -211,7 +211,6 @@ var KnownKeys = map[string]struct{}{
 	KeyLastMergeMethod:          {},
 	KeyLastModel:                {},
 	KeyMCPWaitForReady:          {},
-	KeyMemoryMode:               {},
 	KeyNotificationsEnabled:     {},
 	KeyNotifyAgentFinished:      {},
 	KeyNotifyPRStatus:           {},

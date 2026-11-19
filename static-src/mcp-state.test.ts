@@ -258,6 +258,22 @@ describe("adaptStatus", () => {
       expected: { name: "aws", origin: "power", originPower: "aws-infra", state: "connected" },
     },
     {
+      name: "the keys kiro-cli ignores ride every state",
+      input: { name: "x", state: "failed", error: "boom", ignored_fields: ["autoApprove", "cwd"] },
+      expected: {
+        name: "x",
+        origin: "user",
+        ignoredFields: ["autoApprove", "cwd"],
+        state: "failed",
+        error: "boom",
+      },
+    },
+    {
+      name: "an empty ignored list is no list",
+      input: { name: "x", state: "connected", ignored_fields: [] },
+      expected: { name: "x", origin: "user", state: "connected" },
+    },
+    {
       name: "a shadowing server says so",
       input: { name: "mine", state: "connected", origin: "workspace", shadows: true },
       expected: { name: "mine", origin: "workspace", shadows: true, state: "connected" },

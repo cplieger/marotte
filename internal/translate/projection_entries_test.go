@@ -607,7 +607,7 @@ func TestEntryProjection_ASteerLandsAtItsArrivalPosition(t *testing.T) {
 // TestEntryProjection_ANotifyRowIsAnAgentSteerCarryingItsSeverity pins a step's send_message
 // note as an agent steer with its severity (from _meta.kiro.notification.status).
 func TestEntryProjection_ANotifyRowIsAnAgentSteerCarryingItsSeverity(t *testing.T) {
-	k, raw := replayFrame(t, replayUserChunkKind, "the step needs a decision", "", map[string]any{
+	k, raw := replayFrame(t, UserChunkKind, "the step needs a decision", "", map[string]any{
 		"messageId":    "notify-1",
 		"timestamp":    "2026-09-15T13:00:00.000Z",
 		"source":       "steer",
@@ -637,7 +637,7 @@ func TestEntryProjection_AWorkflowMessageRowCarriesItsSenderAndSendTime(t *testi
 		want   marotte.SteerOrigin
 	}{{"step", marotte.SteerOriginStep}, {"parent", marotte.SteerOriginParent}, {"peer", marotte.SteerOriginPeer}} {
 		t.Run(c.sender, func(t *testing.T) {
-			k, raw := replayFrame(t, replayUserChunkKind, "part 1 done", "", map[string]any{
+			k, raw := replayFrame(t, UserChunkKind, "part 1 done", "", map[string]any{
 				"messageId": "notify-1",
 				"timestamp": "2026-09-15T13:00:00.000Z",
 				"source":    "steer",
@@ -663,7 +663,7 @@ func TestEntryProjection_AWorkflowMessageRowCarriesItsSenderAndSendTime(t *testi
 
 // TestEntryProjection_AWorkflowProgressRowIsDropped pins the drop of the run card's JSON row.
 func TestEntryProjection_AWorkflowProgressRowIsDropped(t *testing.T) {
-	k, raw := replayFrame(t, replayUserChunkKind, `{"kind":"node_start"}`, "", map[string]any{
+	k, raw := replayFrame(t, UserChunkKind, `{"kind":"node_start"}`, "", map[string]any{
 		"messageId": "wf-progress-1",
 		"timestamp": "2026-09-15T13:00:00.000Z",
 		"source":    "steer",
@@ -1316,5 +1316,46 @@ func TestEntryProjection_AReplayedDelegateStopGradesTheResult(t *testing.T) {
 	payloadOf(t, entryOfKind(t, turns[0], marotte.EntryKindToolResult), &res)
 	if res.Status != marotte.ToolFailed || res.DelegateStop != "max_turn_requests" {
 		t.Errorf("tool_result status, delegate_stop = %q, %q; want failed, max_turn_requests", res.Status, res.DelegateStop)
+	}
+}
+
+// A replayed job notice is the job's end, never a steer the merge would stamp dropped, and it names the card the
+// replay moved; the moved card's turn seals it completed with its job, as the live closer does.
+func TestJobNoticeIsNotASteer(t *testing.T) {
+	frames := [][2]any{
+		turnStartFrame(t),
+		pair(marotte.ACPUpdateToolCall, jobCreate(t)),
+		pair(marotte.ACPUpdateToolUpdate, jobMoved(t)),
+		turnEndFrame(t, "end_turn"),
+		pair(UserChunkKind, jobNotice(t, "completed")),
+	}
+
+	turns := entryProject(frames)
+
+	var ended []marotte.Entry
+	for i := range turns {
+		for _, e := range turns[i].Entries {
+			switch e.Kind {
+			case marotte.EntryKindSteer:
+				t.Errorf("the notice projected as a steer:\n%s", dumpTurns(turns))
+			case marotte.EntryKindJobEnded:
+				ended = append(ended, e)
+			case marotte.EntryKindToolResult:
+				var res marotte.EntryToolResult
+				payloadOf(t, e, &res)
+				if res.Status != marotte.ToolCompleted || res.Job == nil || res.Job.ID != jobID {
+					t.Errorf("the moved card settled %+v, want completed with job 7", res)
+				}
+			}
+		}
+	}
+	if len(ended) != 1 || ended[0].ID != marotte.JobEndedID(jobID) {
+		t.Fatalf("job_ended entries = %d, want one with the job's id:\n%s", len(ended), dumpTurns(turns))
+	}
+	var got marotte.EntryJobEnded
+	payloadOf(t, ended[0], &got)
+	if got.ToolCallID != jobCallID || got.End.Status != marotte.BackgroundJobCompleted || got.End.DurationMs != jobDuration ||
+		got.Description != `sleep 60 && echo "done"` {
+		t.Errorf("job_ended = %+v, want completed card %s with the notice's description", got, jobCallID)
 	}
 }

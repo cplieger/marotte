@@ -9,6 +9,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/subtle"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
@@ -94,6 +95,7 @@ type mcpServerRuntime struct {
 	Prompts           []marotte.MCPPromptInfo
 	Resources         []marotte.MCPResourceInfo
 	ResourceTemplates []marotte.MCPResourceTemplateInfo
+	IgnoredFields     []string
 	// Relayed is the row's anchor's relay latch, filled by projectLocked; a stored record never holds it.
 	Relayed bool
 	Shadows bool
@@ -116,6 +118,11 @@ type mcpView struct {
 type viewSignInFailure struct {
 	server string
 	reason string
+}
+
+type ignoredFieldsDrift struct {
+	since  time.Time
+	fields []string
 }
 
 type mcpRegistry struct {
@@ -145,6 +152,8 @@ type mcpRegistry struct {
 	notifyCh chan struct{}
 	// launchResets counts each server's automatic resets since it last connected (resetFailedForLaunch).
 	launchResets map[string]int
+	// ignoredDrift is, per marotte-owned server, the ignored keys last logged and since when.
+	ignoredDrift map[string]ignoredFieldsDrift
 	// now reads the clock for the sign-ins' and the anchors' deadlines.
 	now func() time.Time
 	// views is in recording order; resolveServers picks the view that represents each name.
@@ -512,9 +521,39 @@ func (reg *mcpRegistry) deriveServerLocked(d *mcpDerived, next map[string]*mcpSe
 	if rec.State == mcpStateConnected {
 		delete(reg.launchResets, s.Name)
 	}
+	if rec.Origin == marotte.OriginUser {
+		reg.noteIgnoredFieldsLocked(rec)
+	}
 	next[s.Name] = rec
 	if old := reg.servers[s.Name]; old == nil || !sameRecord(old, rec) {
 		d.changed = true
+	}
+}
+
+// noteIgnoredFieldsLocked logs the standing state "kiro-cli ignores keys of marotte's own server": marotte rendered
+// every key it declares, so a reported one is a render KAS does not read. The state is kept by name, not on the
+// record, so a session closing and the next reporting the same keys is no new start.
+func (reg *mcpRegistry) noteIgnoredFieldsLocked(rec *mcpServerRuntime) {
+	was, standing := reg.ignoredDrift[rec.Name]
+	switch {
+	case len(rec.IgnoredFields) == 0:
+		if standing {
+			delete(reg.ignoredDrift, rec.Name)
+			slog.Info("mcp: kiro-cli now uses every key marotte writes for the server",
+				"server", rec.Name, "duration", reg.now().Sub(was.since).Round(time.Second))
+		}
+	case !standing || !slices.Equal(was.fields, rec.IgnoredFields):
+		since := reg.now()
+		if standing {
+			since = was.since
+		}
+		if reg.ignoredDrift == nil {
+			reg.ignoredDrift = map[string]ignoredFieldsDrift{}
+		}
+		reg.ignoredDrift[rec.Name] = ignoredFieldsDrift{since: since, fields: rec.IgnoredFields}
+		slog.Warn("mcp: kiro-cli ignores keys marotte writes for the server", "server", rec.Name,
+			"ignored_fields", rec.IgnoredFields,
+			"hint", "the server runs without those settings; edit or remove them in Settings > MCP")
 	}
 }
 
@@ -529,7 +568,8 @@ func sameRecord(a, b *mcpServerRuntime) bool {
 	return a.Name == b.Name && a.State == b.State && a.Origin == b.Origin && a.OriginRoot == b.OriginRoot &&
 		a.OriginPower == b.OriginPower && a.OAuthURL == b.OAuthURL && a.Error == b.Error && a.Shadows == b.Shadows &&
 		a.Relayed == b.Relayed && slices.Equal(a.Tools, b.Tools) && slices.Equal(a.Prompts, b.Prompts) &&
-		slices.Equal(a.Resources, b.Resources) && slices.Equal(a.ResourceTemplates, b.ResourceTemplates)
+		slices.Equal(a.Resources, b.Resources) && slices.Equal(a.ResourceTemplates, b.ResourceTemplates) &&
+		slices.Equal(a.IgnoredFields, b.IgnoredFields)
 }
 
 // recordFor is the record a report derives; ok is false for marotte's own server reported disabled, whose config
@@ -555,6 +595,7 @@ func (reg *mcpRegistry) recordFor(s *translate.MCPServerReport, configured map[s
 	// Sign in can complete.
 	rec.Error = s.Error
 	rec.Tools, rec.Prompts, rec.Resources, rec.ResourceTemplates = s.Tools, s.Prompts, s.Resources, s.ResourceTemplates
+	rec.IgnoredFields = s.IgnoredFields
 	return rec, true
 }
 

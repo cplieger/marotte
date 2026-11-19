@@ -148,7 +148,7 @@ The flags go on the command line of kiro-cli's own Node.js, not in `NODE_OPTIONS
 
 ## Credentials in the container environment (`MAROTTE_ALLOW_BRIDGE_ENV`)
 
-The shell commands the agent runs inherit the container's full `environment:`. A `GITHUB_TOKEN` added there for another reason is a credential those commands can read and use. The kiro-cli process gets a screened copy instead.
+The shell commands the agent runs inherit the container's full `environment:`. A `GITHUB_TOKEN` added there for another reason is a credential those commands can read and use. The kiro-cli process gets a screened copy instead. With **Background jobs** on under **Agent capabilities** in **Settings**, the agent's commands run inside kiro-cli, so they get the screened copy too.
 
 marotte drops credential-looking names from the kiro-cli process and logs which ones, by name only. That covers any name ending in `_TOKEN` or `_SECRET`, plus `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `KIRO_API_KEY`. Other variables pass unchanged, `AWS_REGION` and `AWS_PROFILE` included. An allowlisted `KIRO_API_KEY` makes the agent run as that key's identity instead of the account signed in on the page, because kiro-cli prefers the key, and marotte logs a warning at start when it does. While it does, the account menu shows the API key, and signing in or out on the page is refused. marotte keeps the saved sign-in, and it is used again once you remove the variable and recreate the container.
 

@@ -603,10 +603,16 @@ export function outcomeLatch(outcome: TurnOutcome | undefined): "done" | "failed
 /** Derive the chat tab's activity-dot state. ONE rule, shared by the store effect and the
  *  turn-lifecycle handlers. Order is precedence. `input` comes only from `pendingAsk` (the dock's
  *  decisions, `hasPendingDecision`), a parameter because
- *  `decision-dock.ts` imports this module; `waiting` only from the chat's own `chat_status`. */
-export type TabDotState = "" | "input" | "failed" | "working" | "waiting" | "done" | "idle";
+ *  `decision-dock.ts` imports this module; `waiting` only from the chat's own `chat_status`;
+ *  `background` from a running job (`chatRunsJob`), a parameter for the same reason. */
+export type TabDotState =
+  "" | "input" | "failed" | "working" | "background" | "waiting" | "done" | "idle";
 
-export function tabStatusFor(s: Session | undefined, pendingAsk = false): TabDotState {
+export function tabStatusFor(
+  s: Session | undefined,
+  pendingAsk = false,
+  backgroundJob = false,
+): TabDotState {
   if (s === undefined) {
     return "";
   }
@@ -614,6 +620,10 @@ export function tabStatusFor(s: Session | undefined, pendingAsk = false): TabDot
     return "input";
   }
   const live = turnLive(s);
+  // A running reply outranks a job; a job outranks every state that describes a turn already over.
+  if (!live && backgroundJob) {
+    return "background";
+  }
   const latch = outcomeLatch(s.last_turn_outcome);
   if (!live && latch === "failed") {
     return "failed";
@@ -1498,6 +1508,7 @@ export function foldToolCallDelta(prev: ToolCall, d: ToolProgressPayload): ToolC
     ...(d.disclosed !== undefined && { disclosed: d.disclosed }),
     ...(d.denial !== undefined && { denial: d.denial }),
     ...(d.offload !== undefined && { offload: d.offload }),
+    ...(d.job !== undefined && { job: d.job }),
     // ONE-WAY: the wire only ever sends `true`, so an absent field means unchanged rather than
     // false and the mark is never cleared by a later frame.
     ...(d.declined === true && { declined: true }),
@@ -1574,6 +1585,7 @@ export function settledToolCall(
     ...(result.disclosed !== undefined && { disclosed: result.disclosed }),
     ...(result.denial !== undefined && { denial: result.denial }),
     ...(result.offload !== undefined && { offload: result.offload }),
+    ...(result.job !== undefined && { job: result.job }),
     ...(result.interaction !== undefined && { interaction: result.interaction }),
     ...(result.declined === true && { declined: true }),
     ...(result.classifier_approved === true && { classifier_approved: true }),
@@ -1600,6 +1612,8 @@ export function paintsTheSame(shown: ToolCall, next: ToolCall): boolean {
     shown.delegate_stop === next.delegate_stop &&
     shown.terminal_id === next.terminal_id &&
     shown.offload?.path === next.offload?.path &&
+    shown.job?.id === next.job?.id &&
+    (shown.job?.end === undefined) === (next.job?.end === undefined) &&
     (shown.declined === true) === (next.declined === true) &&
     (shown.denial === undefined) === (next.denial === undefined) &&
     factOf(shown) === factOf(next) &&

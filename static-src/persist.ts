@@ -1,6 +1,6 @@
 // Settings persistence. Debounces PATCHes to coalesce rapid writes (e.g. theme toggle +
 // notification toggle changes into one round-trip), and owns the settings reads and the fallback
-// answers laid over the shown settings. The settings state and every other rule over it are
+// and Memory answers laid over the shown settings. The settings state and every other rule over it are
 // settings-state.ts's, which this module runs.
 
 import { signal, type Signal } from "@cplieger/reactive";
@@ -23,7 +23,7 @@ import {
   type Source,
   type Stamp,
 } from "./settings-state.js";
-import type { EffectiveSettings, ModelFallback } from "./wire/types.gen.js";
+import type { DeviceMemory, EffectiveSettings, ModelFallback } from "./wire/types.gen.js";
 
 // The GET /api/settings payload. GENERATED from the Go struct marotte.EffectiveSettings (see
 // internal/wirespec), so it is not maintained here and cannot drift from what the server sends.
@@ -65,13 +65,27 @@ const fallbackAnswers = new Map<
   { readonly row: ModelFallback; readonly afterReads: number }
 >();
 
+/** The answered PUT /api/memory/mode, held like a fallback answer. */
+let memoryAnswer: { readonly row: DeviceMemory; readonly afterReads: number } | null = null;
+/** The newest Memory the shown settings carried, kept while the server answers memory null (its engine has not
+ *  reported a view yet), so the row keeps showing the choice it last painted. */
+let lastShownMemory: DeviceMemory | null = null;
+
 /** settingsAsShown as a signal, written on every settings-state step, for a surface that repaints when
  *  shown settings change outside the Settings panel. */
 export const shownSettingsSignal: Signal<EffectiveSettings | null> = signal(null);
 
 function step(event: SettingsEvent): void {
   state = reduce(state, event);
-  shownSettingsSignal.value = settingsAsShown();
+  publishShown();
+}
+
+function publishShown(): void {
+  const shown = settingsAsShown();
+  if (shown?.memory != null) {
+    lastShownMemory = shown.memory;
+  }
+  shownSettingsSignal.value = shown;
 }
 
 function asPayload(s: EffectiveSettings): Payload {
@@ -84,7 +98,7 @@ function asPayload(s: EffectiveSettings): Payload {
  *  what the server holds. */
 export function settingsAsShown(): EffectiveSettings | null {
   const shown = shownSettings(state) as unknown as EffectiveSettings | null;
-  if (shown === null || fallbackAnswers.size === 0) {
+  if (shown === null || (fallbackAnswers.size === 0 && memoryAnswer === null)) {
     return shown;
   }
   const rows = shown.model_fallbacks.map((f) => fallbackAnswers.get(f.model)?.row ?? f);
@@ -93,15 +107,32 @@ export function settingsAsShown(): EffectiveSettings | null {
       rows.push(row);
     }
   }
-  return { ...shown, model_fallbacks: rows };
+  const answered = { ...shown, model_fallbacks: rows };
+  if (memoryAnswer !== null) {
+    answered.memory = memoryAnswer.row;
+  }
+  return answered;
+}
+
+/** The Memory choice to paint: the shown settings', else the last one they carried, else null when this page has
+ *  never been told one. */
+export function memoryAsShown(): DeviceMemory | null {
+  return settingsAsShown()?.memory ?? lastShownMemory;
 }
 
 /** Shows an answered PUT /api/model-fallback in the shown settings until a settings read sent after
  *  it is adopted, and sends that read. */
 export function showFallbackAnswer(row: ModelFallback): void {
   fallbackAnswers.set(row.model, { row, afterReads: readsSent });
-  shownSettingsSignal.value = settingsAsShown();
+  publishShown();
   // The write's own announce read can go out before this answer arrives, and ends nothing.
+  void (reading === null ? startRead() : readAfter(reading));
+}
+
+/** showFallbackAnswer for an answered PUT /api/memory/mode. */
+export function showMemoryAnswer(row: DeviceMemory): void {
+  memoryAnswer = { row, afterReads: readsSent };
+  publishShown();
   void (reading === null ? startRead() : readAfter(reading));
 }
 
@@ -140,6 +171,8 @@ export function __testResetTracking(): void {
   writeSwitches.clear();
   bases.clear();
   fallbackAnswers.clear();
+  memoryAnswer = null;
+  lastShownMemory = null;
   readsSent = 0;
   reading = null;
   rereading = null;
@@ -295,6 +328,9 @@ function startRead(): Promise<EffectiveSettings | null> {
         if (afterReads < readNo) {
           fallbackAnswers.delete(model);
         }
+      }
+      if (memoryAnswer !== null && memoryAnswer.afterReads < readNo) {
+        memoryAnswer = null;
       }
     }
     if (adoptSettings(s)) {

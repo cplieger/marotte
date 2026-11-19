@@ -36,6 +36,7 @@ vi.mock("./actions/index.js", () => ({
   // retention.js defines an action at module scope. Browser Mode links this factory for real, so a
   // name anywhere in the graph has to exist on it.
   defineAction: vi.fn(() => ({ dispatch: vi.fn() })),
+  apiAction: vi.fn(() => ({ dispatch: vi.fn() })),
   retryNetwork: vi.fn(),
 }));
 vi.mock("./actions/settings.js", () => ({

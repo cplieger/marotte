@@ -137,10 +137,12 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID marotte.Ch
 	turn, ok := t.updateTarget(chatID, attr)
 	if !ok {
 		t.lateStepResult(ctx, chatID, attr, &tu, content)
+		t.lateJobEnd(ctx, chatID, attr, &tu, content)
 		return
 	}
 	open, ok := turn.OpenCallFor(tu.ToolCallID)
 	if !ok {
+		t.lateJobEnd(ctx, chatID, attr, &tu, content)
 		return
 	}
 	// Folded on a COPY and written back: the fold reaches the terminal registry, the line
@@ -148,6 +150,9 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID marotte.Ch
 	before := open.Call
 	tc := open.Call
 	t.applyToolCallUpdate(ctx, chatID, turn, &open, &tc, &tu, content)
+	if tc.Job != nil && sc.runID == "" {
+		t.jobs.noteCard(chatID, tc.Job.ID, tc.ID)
+	}
 	if !tc.Status.Terminal() {
 		turn.SetOpenCall(tu.ToolCallID, &tc)
 		if sc.runID == "" {
@@ -163,6 +168,9 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID marotte.Ch
 	t.publishSealed(ctx, sc, sealed)
 	if err != nil {
 		appendFailed(sc, "tool_result", err)
+	}
+	if sc.runID == "" {
+		t.jobEndOfCall(ctx, chatID, &tc)
 	}
 }
 
@@ -277,6 +285,9 @@ func deltaAttachments(d *marotte.ToolProgressPayload, before, after *marotte.Too
 	}
 	if before.Offload == nil && after.Offload != nil {
 		d.Offload = after.Offload
+	}
+	if after.Job != nil && (before.Job == nil || (before.Job.End == nil) != (after.Job.End == nil)) {
+		d.Job = after.Job
 	}
 }
 
@@ -406,6 +417,10 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID marotte.Cha
 		tc.TerminalID = content.terminalID
 	}
 	t.applyToolCallStatus(ctx, chatID, open.StartedTs, tc, tu)
+	// A streamed call's terminal content restates the whole stream.
+	if open.Streamed && tc.Status.Terminal() && content.output != "" {
+		tc.Output = ""
+	}
 	tc.Output = toolUpdateOutput(tc.Output, tc.Status, tu, content)
 	t.gradeStoppedCall(chatID, turn, tc)
 	if len(tu.Locations) > 0 {
@@ -601,6 +616,10 @@ func mergeToolMeta(tc *marotte.ToolCall, tu *acpToolCallUpdateWire) {
 	}
 	if tc.Offload == nil {
 		tc.Offload = offloadFrom(tu.Meta.Kiro.OutputTransformation)
+	}
+	// One-way: a job is adopted once and gains its end once.
+	if j := jobFrom(tu.Meta.Kiro.Job); j != nil && (tc.Job == nil || tc.Job.End == nil) {
+		tc.Job = j
 	}
 	tc.ClassifierApproved = tc.ClassifierApproved || tu.Meta.Kiro.TrustClassifierApproved
 	if tc.ClassifierNote == "" {

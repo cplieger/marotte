@@ -107,9 +107,9 @@ marotte has no login of its own. Anyone who can reach port 9847 (or the port `LI
 
 Set `ALLOWED_HOSTS` on any server that stays up. marotte then answers only at the addresses you list, so another website cannot use your browser to reach it.
 
-The agent can read the container's `environment:`. marotte drops names ending in `_TOKEN` or `_SECRET` and the AWS key pair, so keep other credentials out of it.
+The agent's shell commands can read the container's `environment:`. With **Background jobs** on in **Settings**, they run inside kiro-cli, which marotte starts without names ending in `_TOKEN` or `_SECRET`, the AWS key pair and `KIRO_API_KEY`. Keep credentials out of it either way.
 
-marotte sends no telemetry. kiro-cli's own telemetry is on by default, as in kiro-cli, and one switch in **Settings** turns it off. **Settings** also has **Share content with AWS for service improvement**, which lets AWS use what marotte sends the model to improve its service and is on by default, as in kiro-cli. [Security](docs/hardening.md) covers the container user, tool installs and how kiro-cli is verified.
+marotte sends no telemetry. kiro-cli's own telemetry is on by default, as in kiro-cli, and one switch in **Settings** turns it off. **Settings** also has **Share content with AWS for service improvement**, which lets AWS use what marotte sends the model to improve its service and is on by default, as in kiro-cli. Unless **Memory** is Off, the agent keeps memories from your chats and from the workflow runs marotte starts. [Security](docs/hardening.md) covers the container user, tool installs and how kiro-cli is verified.
 
 ## Troubleshooting
 

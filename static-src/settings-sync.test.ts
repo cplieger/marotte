@@ -1026,15 +1026,15 @@ describe("settings sync ordering", () => {
   });
 
   it("puts a select back to the server's value when its write is refused", async () => {
-    await boot(settingsPayload({ settings_epoch: 1, settings_revision: 1, memory_mode: "off" }));
-    const memory = byId<HTMLSelectElement>("memory-mode");
-    memory.value = "read_only";
-    memory.dispatchEvent(new Event("change"));
+    await boot(settingsPayload({ settings_epoch: 1, settings_revision: 1, work_validation: "" }));
+    const validation = byId<HTMLSelectElement>("work-validation");
+    validation.value = "on";
+    validation.dispatchEvent(new Event("change"));
     await debounced();
-    expect(patches[0]?.body).toEqual({ memory_mode: "read_only" });
+    expect(patches[0]?.body).toEqual({ work_validation: "on" });
     patches[0]?.fail();
     await settled();
-    expect(memory.value).toBe("off");
+    expect(validation.value).toBe("");
   });
 
   it("keeps a value typed since a refused write was sent", async () => {

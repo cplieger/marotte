@@ -2,6 +2,7 @@ package chat
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -264,7 +265,7 @@ func (r *turnRender) writeEntry(b *strings.Builder, e *marotte.Entry) {
 	case marotte.EntryKindCompaction, marotte.EntryKindCompactionFailed,
 		marotte.EntryKindSafetyBlocked, marotte.EntryKindModelSwitched, marotte.EntryKindModelRouted,
 		marotte.EntryKindModelFallback, marotte.EntryKindModeSwitched, marotte.EntryKindProfileSwitched,
-		marotte.EntryKindContextReset:
+		marotte.EntryKindContextReset, marotte.EntryKindJobEnded:
 		r.writeEvent(b, e)
 	case marotte.EntryKindTurnClose:
 		writeTurnCloseEntry(b, e)
@@ -303,6 +304,8 @@ func writeEventMarkdown(b *strings.Builder, e *marotte.Entry) {
 		writeProfileSwitchedMarkdown(b, e)
 	case marotte.EntryKindContextReset:
 		writeContextResetMarkdown(b, e)
+	case marotte.EntryKindJobEnded:
+		writeJobEndedMarkdown(b, e)
 	}
 }
 
@@ -461,6 +464,23 @@ func writeContextResetMarkdown(b *strings.Builder, e *marotte.Entry) {
 	if decodePayload(e, &p) {
 		fmt.Fprintf(b, "**Event: context_reset** %s\n\n", oneLine(string(p.Cause)))
 	}
+}
+
+// writeJobEndedMarkdown writes the job's row in the transcript's words (messages-events.ts jobEndedLabel).
+func writeJobEndedMarkdown(b *strings.Builder, e *marotte.Entry) {
+	var p marotte.EntryJobEnded
+	if decodePayload(e, &p) {
+		fmt.Fprintf(b, "**Job %s ended: %s**\n\n", oneLine(cmp.Or(p.Description, p.JobID)), jobOutcomeWords[p.End.Status])
+	}
+}
+
+// jobOutcomeWords is how a job's end reads in a sentence, as the client's row words it (JOB_OUTCOME_WORDS).
+var jobOutcomeWords = map[marotte.BackgroundJobState]string{
+	marotte.BackgroundJobCompleted:      "completed",
+	marotte.BackgroundJobFailed:         "failed",
+	marotte.BackgroundJobCancelled:      "cancelled",
+	marotte.BackgroundJobTimedOut:       "timed out",
+	marotte.BackgroundJobOutcomeUnknown: "outcome unknown",
 }
 
 func writeProfileSwitchedMarkdown(b *strings.Builder, e *marotte.Entry) {

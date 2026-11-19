@@ -51,9 +51,9 @@
       "reason": "restart",
       "label": "Workflow result not delivered · the session restarted",
       "sites": [
-        "internal/agent/bridge_coord.go:1989",
-        "internal/agent/entry_merge.go:609",
-        "internal/agent/runtime.go:865"
+        "internal/agent/bridge_coord.go:1986",
+        "internal/agent/entry_merge.go:612",
+        "internal/agent/runtime.go:873"
       ]
     },
     {
@@ -75,7 +75,7 @@
       "reason": "",
       "label": "Workflow result",
       "sites": [
-        "internal/translate/projection_entries.go:239",
+        "internal/translate/projection_entries.go:252",
         "internal/translate/workflow_message.go:41"
       ]
     },
@@ -94,7 +94,7 @@
       "reason": "restart",
       "label": "Message from the main agent not delivered · the session restarted",
       "sites": [
-        "internal/agent/entry_merge.go:609"
+        "internal/agent/entry_merge.go:612"
       ]
     },
     {
@@ -113,7 +113,7 @@
       "reason": "",
       "label": "Message from the main agent",
       "sites": [
-        "internal/translate/projection_entries.go:239",
+        "internal/translate/projection_entries.go:252",
         "internal/translate/workflow_message.go:41"
       ]
     },
@@ -132,7 +132,7 @@
       "reason": "restart",
       "label": "Message from another chat not delivered · the session restarted",
       "sites": [
-        "internal/agent/entry_merge.go:609"
+        "internal/agent/entry_merge.go:612"
       ]
     },
     {
@@ -151,7 +151,7 @@
       "reason": "",
       "label": "Message from another chat",
       "sites": [
-        "internal/translate/projection_entries.go:239",
+        "internal/translate/projection_entries.go:252",
         "internal/translate/workflow_message.go:41"
       ]
     },
@@ -170,7 +170,7 @@
       "reason": "restart",
       "label": "Message to the main agent not delivered · the session restarted",
       "sites": [
-        "internal/agent/entry_merge.go:609"
+        "internal/agent/entry_merge.go:612"
       ]
     },
     {
@@ -189,7 +189,7 @@
       "reason": "",
       "label": "Message to the main agent",
       "sites": [
-        "internal/translate/projection_entries.go:239",
+        "internal/translate/projection_entries.go:252",
         "internal/translate/workflow_message.go:41"
       ]
     },
@@ -199,7 +199,7 @@
       "reason": "boundary",
       "label": "Not read · the turn ended first",
       "sites": [
-        "internal/agent/command_chat_ops.go:157",
+        "internal/agent/command_chat_ops.go:158",
         "internal/agent/steer_buffer.go:525",
         "internal/translate/steering.go:198"
       ]
@@ -210,8 +210,8 @@
       "reason": "restart",
       "label": "Not read · the session restarted",
       "sites": [
-        "internal/agent/entry_merge.go:609",
-        "internal/agent/runtime.go:859"
+        "internal/agent/entry_merge.go:612",
+        "internal/agent/runtime.go:867"
       ]
     },
     {
@@ -232,28 +232,28 @@
       "reason": "",
       "label": "Mid-turn message",
       "sites": [
-        "internal/translate/projection_entries.go:239",
+        "internal/translate/projection_entries.go:252",
         "internal/translate/workflow_message.go:41"
       ]
     }
   ],
   "sites": [
     {
-      "site": "internal/agent/bridge_coord.go:1989",
+      "site": "internal/agent/bridge_coord.go:1986",
       "form": "literal",
       "origin": "agent",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/command_chat_ops.go:157",
+      "site": "internal/agent/command_chat_ops.go:158",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
       "reason": "boundary"
     },
     {
-      "site": "internal/agent/entry_merge.go:609",
+      "site": "internal/agent/entry_merge.go:612",
       "form": "mutation",
       "origin": "",
       "state": "dropped",
@@ -295,14 +295,14 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/runtime.go:859",
+      "site": "internal/agent/runtime.go:867",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/runtime.go:865",
+      "site": "internal/agent/runtime.go:873",
       "form": "mutation",
       "origin": "agent",
       "state": "dropped",
@@ -316,7 +316,7 @@
       "reason": "boundary"
     },
     {
-      "site": "internal/translate/projection_entries.go:239",
+      "site": "internal/translate/projection_entries.go:252",
       "form": "literal",
       "origin": "",
       "state": "",

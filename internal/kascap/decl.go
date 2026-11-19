@@ -108,6 +108,8 @@ type EngineSpawn struct {
 	Knowledge bool
 	// SteeringReminders is a value-gated setting, always sent.
 	SteeringReminders bool
+	// CodeAnalysis is KAS's c2s setting, value-gated and always sent so off holds against a ramp.
+	CodeAnalysis bool
 	// DisableTelemetry sends telemetryEnabled false at initialize; the zero value is KAS's own default, on.
 	DisableTelemetry bool
 	// ContentCollection is sent at initialize as settings.contentCollection.enabled, always present; KAS reads a
@@ -122,9 +124,6 @@ type EngineSpawn struct {
 type SessionSpawn struct {
 	// OverrideSessionID is the id marotte minted for a session/new; empty on session/load, which names its id itself.
 	OverrideSessionID string
-	// MemoryMode and MemoryReflection are the session's `settings.memory` preference. An EMPTY mode is sent as
-	// "disabled", so a session that resolves no setting fails closed.
-	MemoryMode string
 	// SpecPlan is "" (off), "quick" or "full"; SpecAskClarification asks the spec's clarifying questions first.
 	// Value-gated, always sent: on load KAS falls back to the persisted value when the key is absent.
 	SpecPlan string
@@ -142,7 +141,6 @@ type SessionSpawn struct {
 	CustomAgents []marotte.ClientCustomAgent
 	// AutoCompactionThreshold is KAS's in-turn compaction point in percent; zero withholds the key.
 	AutoCompactionThreshold int
-	MemoryReflection        bool
 	// DisableAutoCompaction turns KAS's own compaction off for this session; the row is value-gated, so false is
 	// sent too.
 	DisableAutoCompaction bool
@@ -155,6 +153,14 @@ type SessionSpawn struct {
 	// ProfileAgentTurns is whether the session's turns render in a chat's turn footer, so the turns KAS starts on
 	// its own ask for a chat prompt's profiling. A run host's and an observer's turns render nowhere.
 	ProfileAgentTurns bool
+	// MemoryFromDevice withholds settings.memory, so KAS's session/new takes the device Memory choice. The zero
+	// value sends memory off, so a role that does not opt in fails closed.
+	MemoryFromDevice bool
+	// BackgroundJobs is KAS's universalBackgroundTool for this session; value-gated, always sent on both doors.
+	BackgroundJobs bool
+	// RequireExisting is set by session/load only, which then refuses a session KAS holds no record of instead of
+	// creating it blank.
+	RequireExisting bool
 }
 
 // Prompt carries the per-prompt facts the prompt door's rows read.

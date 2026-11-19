@@ -1,6 +1,7 @@
 package agent
 
-// list and explain ride an observer pass and name its session, unlike the workspace-global knowledge calls.
+// list and explain ride an observer pass and name its session; presets/stores, like the workspace-global
+// knowledge calls, names none.
 
 import (
 	"encoding/json"
@@ -113,5 +114,53 @@ func TestPolicyExplainRequiresTarget(t *testing.T) {
 	seedPolicy(br, `{}`, `{}`)
 	if _, err := h.config.PolicyExplain(t.Context(), marotte.PolicyExplainRequest{}); err == nil {
 		t.Error("PolicyExplain with no capability/toolId should error")
+	}
+}
+
+// stores is sessionless (KAS answers a sessionId -32602) and asks about exactly the roots a chat door opens over.
+func TestPresetStores_SendsSessionRootsWithoutSession(t *testing.T) {
+	f := newAgentRootsFixture(t)
+	h, _, br := newTestHubIn(f.work, WithConfigDir(f.config))
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br.callResults = map[string]json.RawMessage{methodKiroPermissionsPresetStores: json.RawMessage(`{"stores":[` +
+		`{"scope":"user","file":"/u/settings/permissions.yaml","read":{"ok":true,"presets":[]}},` +
+		`{"scope":"workspace","workspaceRoot":"` + f.work + `","file":"` + f.work + `/.kiro/settings/permissions.yaml",` +
+		`"read":{"ok":true,"presets":[{"id":"dev-shell","status":"applies"}]}},` +
+		`{"scope":"workspace","workspaceRoot":"` + f.extra + `","file":"` + f.extra + `/.kiro/settings/permissions.json",` +
+		`"read":{"ok":false,"error":"bad file"}}]}`)}
+
+	stores, err := h.config.PresetStores(t.Context())
+	if err != nil {
+		t.Fatalf("PresetStores: %v", err)
+	}
+	p := br.paramsFor(methodKiroPermissionsPresetStores)
+	if _, ok := p[marotte.KeySessionID]; ok {
+		t.Errorf("presets/stores params carry a sessionId, which KAS refuses: %+v", p)
+	}
+	if len(p) != 1 {
+		t.Errorf("presets/stores params = %+v, want only workspaceRoots", p)
+	}
+	roots, _ := json.Marshal(p["workspaceRoots"])
+	if want, _ := json.Marshal([]string{f.work, f.extra}); string(roots) != string(want) {
+		t.Errorf("workspaceRoots = %s, want the work dir then the additional directory %s", roots, want)
+	}
+	if len(stores) != 3 || stores[0].Scope != "user" || stores[1].File != f.work+"/.kiro/settings/permissions.yaml" ||
+		len(stores[1].Read.Presets) != 1 || stores[1].Read.Presets[0].Status != "applies" ||
+		stores[2].Read.OK {
+		t.Errorf("stores = %+v, want the three rows as KAS sent them", stores)
+	}
+}
+
+func TestPresetStores_AnEmptyReplyIsNoRowsAndABadOneAnError(t *testing.T) {
+	h, _, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br.callResults = map[string]json.RawMessage{methodKiroPermissionsPresetStores: json.RawMessage(`{}`)}
+	stores, err := h.config.PresetStores(t.Context())
+	if err != nil || stores == nil || len(stores) != 0 {
+		t.Errorf("PresetStores = %+v, %v; want no rows and no error", stores, err)
+	}
+	br.callResults = map[string]json.RawMessage{methodKiroPermissionsPresetStores: json.RawMessage(`{"stores":{}}`)}
+	if _, err := h.config.PresetStores(t.Context()); err == nil {
+		t.Error("PresetStores decoded a malformed reply as no rows; the pill would hide a saved grant silently")
 	}
 }

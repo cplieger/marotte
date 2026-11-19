@@ -8,9 +8,9 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 // exist before the imports below are evaluated.
 // The fold row and the list sit in their host as `index.html` has them, so the shipped stylesheet lays them out.
 const runHost = document.createElement("div");
-runHost.className = "run-bar-host";
+runHost.className = "tracker-host";
 runHost.append(
-  Object.assign(document.createElement("div"), { id: "run-bar-fold", className: "run-bar-fold" }),
+  Object.assign(document.createElement("div"), { id: "run-bar-fold", className: "tracker-fold" }),
   Object.assign(document.createElement("ul"), { id: "run-bar", className: "run-bar hidden" }),
 );
 document.body.appendChild(runHost);
@@ -294,7 +294,7 @@ describe("the run bar", () => {
     }
     inspect.set(ids[2]!, state({ display_name: ids[2], status: "paused" }));
     await activate(c);
-    const toggle = fold.querySelector<HTMLElement>(".run-bar-toggle")!;
+    const toggle = fold.querySelector<HTMLElement>(".tracker-toggle")!;
     expect(fold.hidden).toBe(false);
     expect(toggle.textContent).toBe("4 workflows, 1 needs you");
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
@@ -315,7 +315,7 @@ describe("the run bar", () => {
     expect(bar.hasAttribute("data-folded")).toBe(true);
 
     const range = document.createRange();
-    range.selectNodeContents(toggle.querySelector(".run-bar-count")!);
+    range.selectNodeContents(toggle.querySelector(".tracker-count")!);
     document.getSelection()?.addRange(range);
     toggle.click();
     expect(
@@ -439,7 +439,7 @@ describe("the run bar", () => {
       live(id, c);
     }
     await activate(c);
-    const toggle = fold.querySelector<HTMLElement>(".run-bar-toggle")!;
+    const toggle = fold.querySelector<HTMLElement>(".tracker-toggle")!;
     expect(toggle.tagName).not.toBe("BUTTON");
     expect(toggle.getAttribute("role")).toBe("button");
     expect(toggle.tabIndex).toBe(0);
@@ -984,7 +984,7 @@ describe("the run bar's fold motion", () => {
       live(id, chat);
     }
     await activate(chat);
-    const toggle = fold.querySelector<HTMLElement>(".run-bar-toggle");
+    const toggle = fold.querySelector<HTMLElement>(".tracker-toggle");
     if (toggle === null) {
       throw new Error("no fold row");
     }
@@ -1249,7 +1249,7 @@ describe("Pause all and Resume all", () => {
     chats.push(c);
     const [a, b] = [runID("fa"), runID("fb")];
     await mount(c, { [a]: running("a"), [b]: running("b") });
-    const toggle = fold.querySelector<HTMLElement>(".run-bar-toggle");
+    const toggle = fold.querySelector<HTMLElement>(".tracker-toggle");
     toggle?.focus();
     expect(document.activeElement, "focused on the header").toBe(toggle);
 
@@ -1635,7 +1635,7 @@ describe("Pause all and Resume all", () => {
     }
 
     function toggleEl(): HTMLElement {
-      const t = fold.querySelector<HTMLElement>(".run-bar-toggle");
+      const t = fold.querySelector<HTMLElement>(".tracker-toggle");
       if (t === null || fold.hidden) {
         throw new Error("no header row");
       }
@@ -1727,7 +1727,7 @@ describe("Pause all and Resume all", () => {
       it(`heads ${String(n)} runs with the recap, its toggle and Pause all at its right`, async () => {
         await mountN(n, billed(running));
         const t = toggleEl();
-        expect(t.querySelector(".run-bar-count")?.textContent).toBe(
+        expect(t.querySelector(".tracker-count")?.textContent).toBe(
           `${String(n)} workflows running`,
         );
         expect(t.getAttribute("aria-expanded"), "open below three runs").toBe(String(n < 3));

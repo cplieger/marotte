@@ -426,6 +426,17 @@
       "search": []
     },
     {
+      "name": "a background job's end is worded without naming the job",
+      "wake": {
+        "reason": "job_ended"
+      },
+      "label": "A background job ended",
+      "body": "",
+      "search": [
+        "A background job ended"
+      ]
+    },
+    {
       "name": "a step-message wake that names no message keeps today's line",
       "wake": {
         "reason": "step_message"

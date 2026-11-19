@@ -52,9 +52,25 @@ export function hookCounted(call: HookFacts, showStatus: boolean): boolean {
   return showStatus || !hookQuiet(call);
 }
 
+/** Where a hook that fires for one tool call sits beside that call's card: before it runs, or once its card exists. */
+type HookCallSeat = "" | "before" | "after";
+
+// The twin of internal/marotte HookCallSeatOf, keyed by the same canonical trigger names. PermissionRequest runs inside
+// the call's permission check, after its card exists.
+const HOOK_CALL_SEATS: ReadonlyMap<string, HookCallSeat> = new Map([
+  ["PreToolUse", "before"],
+  ["PermissionRequest", "after"],
+  ["PostToolUse", "after"],
+]);
+
+/** The seat of a hook fired by `trigger`; "" for a trigger that fires for no single call, or an unresolved one. */
+export function hookCallSeat(trigger: string | undefined): HookCallSeat {
+  return trigger === undefined ? "" : (HOOK_CALL_SEATS.get(trigger) ?? "");
+}
+
 /** A hook that gates one tool call. An unresolved trigger is not one. */
 export function isToolTriggerHook(call: HookFacts): boolean {
-  return call.hook_trigger === "PreToolUse" || call.hook_trigger === "PostToolUse";
+  return hookCallSeat(call.hook_trigger) !== "";
 }
 
 /** Whether a hook's entry draws a card. Only a quiet hook that gates no tool call goes, and only with the switch off;

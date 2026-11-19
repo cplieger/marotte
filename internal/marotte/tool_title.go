@@ -17,7 +17,7 @@ func ToolCard(tc *ToolCall) (title string, loaded []LoadedResource) {
 
 func cardTitle(tc *ToolCall, loaded []LoadedResource) string {
 	if d := tc.Disclosed; d != nil {
-		if d.Type == string(LoadedSteering) {
+		if d.Type == string(loadedSteering) {
 			return "Loaded steering: " + d.DisplayName
 		}
 		return "Loaded skill: " + d.DisplayName
@@ -39,13 +39,13 @@ type LoadedType string
 
 // The LoadedType values, one per kind of thing KAS's resource-id grammar names.
 const (
-	LoadedMCP      LoadedType = "mcp"
-	LoadedTool     LoadedType = "tool"
+	loadedMCP      LoadedType = "mcp"
+	loadedTool     LoadedType = "tool"
 	LoadedSkill    LoadedType = "skill"
-	LoadedSteering LoadedType = "steering"
-	LoadedOverview LoadedType = "overview"
-	// LoadedUnknown is an id outside KAS's resource-id grammar; its Name is the id.
-	LoadedUnknown LoadedType = "unknown"
+	loadedSteering LoadedType = "steering"
+	loadedOverview LoadedType = "overview"
+	// loadedUnknown is an id outside KAS's resource-id grammar; its Name is the id.
+	loadedUnknown LoadedType = "unknown"
 )
 
 // LoadedResource is one resource a load call loaded.
@@ -56,7 +56,7 @@ type LoadedResource struct {
 	Type LoadedType `json:"type"`
 	// Name is the tool, skill, document or Power name.
 	Name string `json:"name"`
-	// Server is a LoadedMCP resource's server, else empty.
+	// Server is an mcp resource's server, else empty.
 	Server string `json:"server"`
 }
 
@@ -64,7 +64,7 @@ func toolLoaded(tc *ToolCall) []LoadedResource {
 	if loaded := loadedIDs(tc); loaded != nil {
 		return loaded
 	}
-	if d := tc.Disclosed; d != nil && (d.Type == string(LoadedSkill) || d.Type == string(LoadedSteering)) {
+	if d := tc.Disclosed; d != nil && (d.Type == string(LoadedSkill) || d.Type == string(loadedSteering)) {
 		return []LoadedResource{{ID: d.Type + "::" + d.DisplayName, Type: LoadedType(d.Type), Name: d.DisplayName}}
 	}
 	return nil
@@ -108,7 +108,7 @@ func loadedIDs(tc *ToolCall) []LoadedResource {
 func parseResourceID(id string) LoadedResource {
 	parts := strings.Split(id, "::")
 	if len(parts) == 3 && parts[0] == "power" && parts[1] != "" && parts[2] == "overview" {
-		return LoadedResource{ID: id, Type: LoadedOverview, Name: parts[1]}
+		return LoadedResource{ID: id, Type: loadedOverview, Name: parts[1]}
 	}
 	if (parts[0] == "power" || parts[0] == "plugin") && len(parts) >= 3 && parts[1] != "" {
 		parts = parts[2:]
@@ -116,19 +116,19 @@ func parseResourceID(id string) LoadedResource {
 	if r, ok := parseMemberID(id, parts); ok {
 		return r
 	}
-	return LoadedResource{ID: id, Type: LoadedUnknown, Name: id}
+	return LoadedResource{ID: id, Type: loadedUnknown, Name: id}
 }
 
 // parseMemberID reads the id's parts after any Power or plugin prefix; false outside the grammar.
 func parseMemberID(id string, parts []string) (LoadedResource, bool) {
 	head := parts[0]
 	switch {
-	case (head == string(LoadedSkill) || head == string(LoadedSteering)) && len(parts) > 1 && parts[1] != "":
+	case (head == string(LoadedSkill) || head == string(loadedSteering)) && len(parts) > 1 && parts[1] != "":
 		return LoadedResource{ID: id, Type: LoadedType(head), Name: strings.Join(parts[1:], "::")}, true
 	case len(parts) == 3 && head == "tool" && parts[1] != "" && parts[2] != "":
-		return LoadedResource{ID: id, Type: LoadedMCP, Name: parts[2], Server: parts[1]}, true
+		return LoadedResource{ID: id, Type: loadedMCP, Name: parts[2], Server: parts[1]}, true
 	case len(parts) == 2 && parts[1] != "" && (head == "tool" || head == "builtin"):
-		return LoadedResource{ID: id, Type: LoadedTool, Name: parts[1]}, true
+		return LoadedResource{ID: id, Type: loadedTool, Name: parts[1]}, true
 	}
 	return LoadedResource{}, false
 }
@@ -139,8 +139,8 @@ func parseMemberID(id string, parts []string) (LoadedResource, bool) {
 func parseToolLoadID(id string) LoadedResource {
 	r := parseResourceID(id)
 	server, name, ok := strings.Cut(id, "::")
-	if r.Type == LoadedUnknown && ok && server != "" && name != "" && !strings.Contains(name, "::") {
-		return LoadedResource{ID: id, Type: LoadedMCP, Name: name, Server: server}
+	if r.Type == loadedUnknown && ok && server != "" && name != "" && !strings.Contains(name, "::") {
+		return LoadedResource{ID: id, Type: loadedMCP, Name: name, Server: server}
 	}
 	return r
 }
@@ -149,11 +149,11 @@ func loadedTitle(loaded []LoadedResource) string {
 	labels := make([]string, len(loaded))
 	for i, r := range loaded {
 		switch r.Type {
-		case LoadedMCP:
+		case loadedMCP:
 			labels[i] = r.Server + " " + r.Name
-		case LoadedOverview:
+		case loadedOverview:
 			labels[i] = "power overview: " + r.Name
-		case LoadedUnknown:
+		case loadedUnknown:
 			labels[i] = r.ID
 		default:
 			labels[i] = string(r.Type) + ": " + r.Name

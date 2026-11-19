@@ -76,6 +76,7 @@ type ToolProgressPayload struct {
 	Disclosed  *ToolDisclosed  `json:"disclosed,omitempty"`
 	Denial     *ToolDenial     `json:"denial,omitempty"`
 	Offload    *ToolOffload    `json:"offload,omitempty"`
+	Job        *BackgroundJob  `json:"job,omitempty"`
 	Turn       string          `json:"turn"`
 	ToolCallID string          `json:"tool_call_id"`
 	// Title and Kind: KAS sends them nullish on most updates, so absent is "keep".

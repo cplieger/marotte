@@ -44,10 +44,10 @@
       "terminal": true,
       "sites": [
         "internal/chat/entrylog.go:1136",
-        "internal/translate/projection_entries.go:732",
-        "internal/translate/streaming_tools.go:497",
+        "internal/translate/projection_entries.go:755",
+        "internal/translate/streaming_tools.go:512",
         "internal/translate/wire_enums.go:36",
-        "internal/turnlog/turnlog.go:909"
+        "internal/turnlog/turnlog.go:936"
       ]
     },
     {
@@ -59,8 +59,10 @@
       "terminal": true,
       "sites": [
         "internal/translate/hook_status.go:120",
+        "internal/translate/projection_entries.go:757",
         "internal/translate/steering_inclusion.go:88",
-        "internal/translate/wire_enums.go:34"
+        "internal/translate/wire_enums.go:34",
+        "internal/turnlog/turnlog.go:940"
       ]
     },
     {
@@ -114,12 +116,12 @@
   ],
   "sites": [
     {
-      "site": "internal/agent/entry_merge.go:1016",
+      "site": "internal/agent/entry_merge.go:1019",
       "form": "compare",
       "status": "aborted"
     },
     {
-      "site": "internal/agent/entry_merge.go:1016",
+      "site": "internal/agent/entry_merge.go:1019",
       "form": "compare",
       "status": "completed"
     },
@@ -184,9 +186,14 @@
       "status": "failed"
     },
     {
-      "site": "internal/translate/projection_entries.go:732",
+      "site": "internal/translate/projection_entries.go:755",
       "form": "status_field",
       "status": "aborted"
+    },
+    {
+      "site": "internal/translate/projection_entries.go:757",
+      "form": "status_field",
+      "status": "completed"
     },
     {
       "site": "internal/translate/steering_inclusion.go:88",
@@ -194,42 +201,42 @@
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:368",
+      "site": "internal/translate/streaming_tools.go:379",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:472",
+      "site": "internal/translate/streaming_tools.go:487",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:496",
+      "site": "internal/translate/streaming_tools.go:511",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:497",
+      "site": "internal/translate/streaming_tools.go:512",
       "form": "status_assign",
       "status": "aborted"
     },
     {
-      "site": "internal/translate/streaming_tools.go:519",
+      "site": "internal/translate/streaming_tools.go:534",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:533",
+      "site": "internal/translate/streaming_tools.go:548",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:533",
+      "site": "internal/translate/streaming_tools.go:548",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:555",
+      "site": "internal/translate/streaming_tools.go:570",
       "form": "compare",
       "status": "completed"
     },
@@ -274,9 +281,14 @@
       "status": "pending"
     },
     {
-      "site": "internal/turnlog/turnlog.go:909",
+      "site": "internal/turnlog/turnlog.go:936",
       "form": "status_field",
       "status": "aborted"
+    },
+    {
+      "site": "internal/turnlog/turnlog.go:940",
+      "form": "status_assign",
+      "status": "completed"
     }
   ],
   "readers": [

@@ -126,6 +126,8 @@ type ToolCall struct {
 	Offload *ToolOffload `json:"offload,omitempty"`
 	// Interaction is how the call's approval or question was answered; one-way.
 	Interaction *ToolInteraction `json:"interaction,omitempty"`
+	// Job is set once kiro-cli moved the call into a background job; one-way.
+	Job *BackgroundJob `json:"job,omitempty"`
 	// Truncated is what the STORE dropped to bound this call on disk, nil when it fit.
 	Truncated *ToolTruncation  `json:"truncated,omitempty"`
 	Input     json.RawMessage  `json:"input,omitempty"`
@@ -333,9 +335,6 @@ type Usage struct {
 	Credits       float64        `json:"credits"`
 	LastTurnMs    float64        `json:"last_turn_ms"`
 	HasRealData   bool           `json:"has_real_data"`
-	// ContextCompacted: a compaction committed and no live reading has come since, so a figure KAS
-	// publishes is not a model reading and is not stored.
-	ContextCompacted bool `json:"context_compacted,omitempty"`
 }
 
 // MeteringItem is one usage dimension from kiro-cli's meteringUsage array.

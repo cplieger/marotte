@@ -8,10 +8,17 @@ import { initGitBadge } from "./git-badge.js";
 import { initTools, loadToolsList } from "./tools.js";
 import { initCodeIntelStatus, loadCodeIntelStatus } from "./code-intel-status.js";
 import { restoreNotifications } from "./notify.js";
-import { adoptWriteAnswer, patchSettings, refreshSettings, settingsAsShown } from "./persist.js";
+import {
+  adoptWriteAnswer,
+  memoryAsShown,
+  patchSettings,
+  refreshSettings,
+  settingsAsShown,
+  showMemoryAnswer,
+} from "./persist.js";
 import type { SettingsSwitch } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
-import type { KiroDefault } from "./wire/types.gen.js";
+import type { DeviceMemory, KiroDefault } from "./wire/types.gen.js";
 import { cacheTheme, cachedTheme } from "./device-view.js";
 import type { ThemeChoice } from "./device-view.js";
 import { applyThemeChoice, initThemeToggle } from "./theme.js";
@@ -29,7 +36,10 @@ import { loadVersions, getVersions } from "./versions.js";
 import { openConfigFile } from "./editor-openers.js";
 import { $, maybeEl } from "./dom.js";
 import { effect, el, touch } from "@cplieger/reactive";
-import { adoptAPIKeySignIn, signInHealth } from "./signin-health.js";
+import { adoptAPIKeySignIn, apiKeySignsIn, signInHealth } from "./signin-health.js";
+import { memoryModeError, setMemoryMode } from "./actions/memory-mode.js";
+import { skeletonTiming, type SkeletonTimingController } from "./legacy-ui/skeleton.js";
+import { showLoginModal } from "./modals.js";
 import type { SignInState } from "./wire/types.gen.js";
 import { initNotificationToggles } from "./settings-notifications.js";
 
@@ -832,6 +842,8 @@ const agentCapabilities: readonly {
     | "model_fallback_enabled"
     | "spec_planning_ask_first"
     | "steering_reminders_enabled"
+    | "code_analysis_enabled"
+    | "background_jobs"
     | "workflows_enabled"
     | "chat_messaging_enabled"
     | "chat_awareness_enabled"
@@ -842,6 +854,8 @@ const agentCapabilities: readonly {
   { key: "model_fallback_enabled", inputID: "flag-model-fallback" },
   { key: "spec_planning_ask_first", inputID: "flag-spec-ask-first" },
   { key: "steering_reminders_enabled", inputID: "flag-steering-reminders" },
+  { key: "code_analysis_enabled", inputID: "flag-code-analysis" },
+  { key: "background_jobs", inputID: "flag-background-jobs" },
   { key: "workflows_enabled", inputID: "flag-workflows" },
   { key: "chat_messaging_enabled", inputID: "flag-chat-messaging" },
   { key: "chat_awareness_enabled", inputID: "flag-chat-awareness" },
@@ -1016,8 +1030,21 @@ function paintSubRows(): void {
   maybeEl("chat-awareness-mode-row")?.classList.toggle("hidden", !awareness);
 }
 
-/** The Memory dropdown's values, mirroring settings.MemoryOff and its siblings. */
+/** The Memory dropdown's values, mirroring marotte.DeviceMemoryOff and its siblings. */
 const MEMORY_MODES = ["off", "read_only", "read_write", "learn"] as const;
+
+const MEMORY_SIGN_IN_WORDS = "Sign in to Kiro to change Memory.";
+const MEMORY_READING_WORDS = "Reading…";
+
+/** The Memory row's own state: the server's last answer (null until its engine reported a view, which the wire
+ *  carries as an absent memory), whether the
+ *  read has outlasted the skeleton delay, and a refused write's message. */
+const memoryRow: {
+  server: DeviceMemory | null;
+  reading: SkeletonTimingController | null;
+  slow: boolean;
+  error: string;
+} = { server: null, reading: null, slow: false, error: "" };
 
 function memorySelect(): HTMLSelectElement | null {
   return maybeEl<HTMLSelectElement>("memory-mode");
@@ -1053,11 +1080,104 @@ function applyAgentCapabilities(s: EffectiveSettings): void {
 
 function paintMemory(s: EffectiveSettings): void {
   const memory = memorySelect();
-  // The server validates the value; an unknown one from a newer build leaves the control as it is
-  // rather than selecting nothing.
-  if (memory !== null && (MEMORY_MODES as readonly string[]).includes(s.memory_mode)) {
-    memory.value = s.memory_mode;
+  if (memory === null) {
+    return;
   }
+  memoryRow.server = s.memory ?? null;
+  // A mode from a newer kiro-cli leaves the control as it is rather than selecting nothing.
+  const choice = memoryAsShown();
+  if (choice !== null && (MEMORY_MODES as readonly string[]).includes(choice.mode)) {
+    memory.value = choice.mode;
+  }
+  if (memoryRow.server === null) {
+    memoryRow.reading ??= skeletonTiming(() => {
+      memoryRow.slow = true;
+      paintMemoryState();
+    });
+  } else if (memoryRow.reading !== null) {
+    const reading = memoryRow.reading;
+    memoryRow.reading = null;
+    reading.cancel();
+    memoryRow.slow = false;
+  }
+  paintMemoryState();
+}
+
+/** Whether the engine's Kiro sign-in is known to be absent, so kiro-cli refuses a Memory write. */
+function memorySignedOut(): boolean {
+  const state = signInHealth().peek()?.state;
+  return (state === "none" || state === "signed_out") && !apiKeySignsIn().peek();
+}
+
+/** Paint the line under the Memory dropdown and whether it can change: a lock, then a missing sign-in, then a read
+ *  slower than the skeleton delay, then a refused write. */
+function paintMemoryState(): void {
+  const memory = memorySelect();
+  const line = maybeEl("memory-mode-state");
+  const reason = maybeEl("memory-mode-reason");
+  const signIn = maybeEl<HTMLButtonElement>("memory-mode-sign-in");
+  if (memory === null || line === null || reason === null || signIn === null) {
+    return;
+  }
+  const lock = memoryRow.server?.lock ?? null;
+  const signedOut = lock === null && memorySignedOut();
+  const reading = memoryRow.server === null && memoryRow.slow;
+  let text = memoryRow.error;
+  if (lock !== null) {
+    text = `Locked by ${lock.name}.`;
+  } else if (signedOut) {
+    text = MEMORY_SIGN_IN_WORDS;
+  } else if (reading) {
+    text = MEMORY_READING_WORDS;
+  }
+  memory.disabled = lock !== null || signedOut || reading;
+  reason.textContent = text;
+  signIn.classList.toggle("hidden", !signedOut);
+  line.classList.toggle("hidden", text === "");
+}
+
+function initMemoryControl(): void {
+  const memory = memorySelect();
+  if (memory === null) {
+    return;
+  }
+  maybeEl("memory-mode-sign-in")?.addEventListener("click", showLoginModal);
+  effect(() => {
+    touch(signInHealth());
+    touch(apiKeySignsIn());
+    paintMemoryState();
+  });
+  memory.addEventListener("change", () => {
+    const mode = memory.value;
+    // Not yet read: kiro-cli's current rows are unknown, so a write could skip a member it must change.
+    if (memoryRow.server === null) {
+      const shown = memoryAsShown();
+      if (shown !== null) {
+        memory.value = shown.mode;
+      }
+      return;
+    }
+    memoryRow.error = "";
+    paintMemoryState();
+    void setMemoryMode.dispatch(
+      { mode },
+      {
+        silent: true,
+        onSuccess: (row) => {
+          showMemoryAnswer(row);
+        },
+        onError: (err) => {
+          memoryRow.error = memoryModeError({ mode }, err);
+        },
+        onSettled: () => {
+          const shown = settingsAsShown();
+          if (shown !== null) {
+            paintMemory(shown);
+          }
+        },
+      },
+    );
+  });
 }
 
 function paintAgentChoice(choice: (typeof agentChoices)[number], s: EffectiveSettings): void {
@@ -1099,10 +1219,7 @@ function initAgentCapabilityControls(): void {
       });
     });
   }
-  const memory = memorySelect();
-  memory?.addEventListener("change", () => {
-    saveControl(memory, { memory_mode: memory.value }, paintMemory);
-  });
+  initMemoryControl();
   for (const choice of agentChoices) {
     const select = maybeEl<HTMLSelectElement>(choice.selectID);
     select?.addEventListener("change", () => {

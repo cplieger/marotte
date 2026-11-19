@@ -38,9 +38,10 @@ func (rt *Runtime) initWorkspaceHandlers() {
 		methodKiroMemorySyncStatus: func(_ context.Context, _ marotte.ChatID, _ *marotte.RPCResponse) {
 			rt.config.broadcastMemorySyncChanged()
 		},
-		methodV3PolicyChanged: rt.translator.HandlePolicyChanged,
-		methodV3PolicyError:   rt.translator.HandlePolicyError,
-		methodV3SteeringDocs:  rt.translator.HandleSteeringDocuments,
+		methodKiroCodeIndexStatus: rt.onCodeIndexStatus,
+		methodV3PolicyChanged:     rt.translator.HandlePolicyChanged,
+		methodV3PolicyError:       rt.translator.HandlePolicyError,
+		methodV3SteeringDocs:      rt.translator.HandleSteeringDocuments,
 		// A run lane's run:<id> keeps naming the run in the toast.
 		methodV3SystemNotify: rt.translator.HandleSystemNotify,
 	}

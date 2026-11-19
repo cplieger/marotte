@@ -62,8 +62,10 @@ type acpKiroBlock struct {
 	OutputTransformation *acpOutputTransformation `json:"outputTransformation,omitempty"`
 	// TrustClassifier is KAS's safety check handing a pending call to a person (decision "prompt").
 	TrustClassifier *acpTrustClassifier `json:"trustClassifier,omitempty"`
-	Kind            string              `json:"kind"`
-	AgentSubtaskID  string              `json:"agentSubtaskId"`
+	// Job marks a tool call KAS moved into a background job, with End once the job ended.
+	Job            *acpJobMeta `json:"job,omitempty"`
+	Kind           string      `json:"kind"`
+	AgentSubtaskID string      `json:"agentSubtaskId"`
 	// ToolID is KAS's machine name for the few tool calls it stamps one on (`disclose_context`,
 	// `user_input`). Not model- or locale-composed, so the internal-tool suppression keys on it.
 	ToolID string `json:"toolId"`
@@ -96,12 +98,15 @@ type acpKiroBlock struct {
 	// Notification tags a row KAS wrote onto a chat on something else's behalf;
 	// "workflow-progress" is a step's progress, a user_message_chunk carrying JSON.
 	Notification struct {
-		Kind string `json:"kind"`
+		// JobEnd and JobID are on a job notice's row (kind system-notification).
+		JobEnd *acpJobEnd `json:"jobEnd"`
+		Kind   string     `json:"kind"`
 		// Status is KAS's severity for a notification-kind row; only a REPLAY carries it here (the
 		// live frame uses notificationSeverity), so a replayed step note keeps its label.
 		Status string `json:"status"`
 		// Sender is "parent" or "step" on a workflow message's row (send_message).
 		Sender string `json:"sender"`
+		JobID  string `json:"jobId"`
 	} `json:"notification"`
 	// Workflow is on every frame of a workflow STEP's session and is the only mark of one.
 	// Nested at `params.update._meta.kiro.workflow`, not `params._meta`.
@@ -123,12 +128,60 @@ type acpTrustClassifier struct {
 	Reason   string `json:"reason"`
 }
 
+// acpJobMeta is _meta.kiro.job on a moved tool call's updates (KAS's LiveJobCards). outputFile, an
+// engine-host path, is not read: the output is read through _kiro/job/output.
+type acpJobMeta struct {
+	End *acpJobEnd `json:"end"`
+	ID  string     `json:"id"`
+}
+
+// acpJobEnd is a job's end record (KAS's jobEndOf): times are ISO 8601.
+type acpJobEnd struct {
+	Status     string  `json:"status"`
+	StopReason string  `json:"stopReason"`
+	StartedAt  string  `json:"startedAt"`
+	EndedAt    string  `json:"endedAt"`
+	DurationMs float64 `json:"durationMs"`
+}
+
+// JobState maps KAS's job status onto the closed set; a value KAS adds later reads as outcome_unknown.
+func JobState(s string) marotte.BackgroundJobState {
+	switch st := marotte.BackgroundJobState(s); st {
+	case marotte.BackgroundJobRunning, marotte.BackgroundJobCompleted, marotte.BackgroundJobFailed,
+		marotte.BackgroundJobCancelled, marotte.BackgroundJobTimedOut, marotte.BackgroundJobOutcomeUnknown:
+		return st
+	}
+	return marotte.BackgroundJobOutcomeUnknown
+}
+
+// jobEndFrom is nil for no end; an end is never running.
+func jobEndFrom(in *acpJobEnd) *marotte.BackgroundJobEnd {
+	if in == nil {
+		return nil
+	}
+	st := JobState(in.Status)
+	if st == marotte.BackgroundJobRunning {
+		st = marotte.BackgroundJobOutcomeUnknown
+	}
+	return &marotte.BackgroundJobEnd{
+		Status: st, StopReason: in.StopReason, StartedAt: in.StartedAt, EndedAt: in.EndedAt,
+		DurationMs: int64(max(in.DurationMs, 0)),
+	}
+}
+
+// jobFrom is nil when the frame names no job.
+func jobFrom(in *acpJobMeta) *marotte.BackgroundJob {
+	if in == nil || in.ID == "" {
+		return nil
+	}
+	return &marotte.BackgroundJob{ID: in.ID, End: jobEndFrom(in.End)}
+}
+
 // classifierAsksPerson is the acpTrustClassifier decision that hands the call to a person.
 const classifierAsksPerson = "prompt"
 
-// agentInitiatedReason is KAS's engine-turn cause from its closed set. job-end-wake (kiro-cli 3.4.0) wakes a
-// session with jobs on, an arm marotte pins off (kascap's universalBackgroundTool rows), so it maps to no constant;
-// an unknown value is kept as sent.
+// agentInitiatedReason is KAS's engine-turn cause, from a closed set of four values; an unknown value is
+// kept as sent.
 type agentInitiatedReason string
 
 const (
@@ -141,6 +194,9 @@ const (
 	// reasonNotificationRewake re-delivers the notifications a reader's cancel cleared
 	// (rewakeClearedNotifications).
 	reasonNotificationRewake agentInitiatedReason = "notification-rewake"
+	// reasonJobEndWake is a background job of a session with jobs on ending while the session was
+	// idle (JobEndNotifications).
+	reasonJobEndWake agentInitiatedReason = "job-end-wake"
 )
 
 // wakeReason maps KAS's cause onto the turn_wake's; any other value, an empty one included, is
@@ -153,6 +209,8 @@ func (r agentInitiatedReason) wakeReason() marotte.WakeReason {
 		return marotte.WakeReasonRunFinished
 	case reasonNotificationRewake:
 		return marotte.WakeReasonRewake
+	case reasonJobEndWake:
+		return marotte.WakeReasonJobEnded
 	}
 	censusWakeReason(string(r))
 	return marotte.WakeReasonUnknown

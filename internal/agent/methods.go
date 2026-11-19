@@ -25,13 +25,14 @@ const (
 )
 
 // KAS native Cedar policy methods: list/explain are observer-pass requests for the read-only
-// view; changed/error are notifications. policy/check is never used: it raises a real
-// session/request_permission. explain raises none.
+// view; presets/stores is sessionless (a sessionId is -32602); changed/error are notifications.
+// policy/check is never used: it raises a real session/request_permission. explain raises none.
 const (
-	methodV3PermissionsList    = "_kiro/permissions/list"    // C→A request: {sessionId, scope?} → {rules[]}
-	methodV3PermissionsExplain = "_kiro/permissions/explain" // C→A request: {sessionId, capability|toolId, resource?} → {effect, matchedRule?, scope, source, isExplicitAsk}
-	methodV3PolicyChanged      = "_kiro/policy/changed"      // A→C notification: {sessionId, status, errors?}
-	methodV3PolicyError        = "_kiro/policy/error"        // A→C notification: {sessionId, errors[]}
+	methodV3PermissionsList           = "_kiro/permissions/list"           // C→A request: {sessionId, scope?} → {rules[]}
+	methodV3PermissionsExplain        = "_kiro/permissions/explain"        // C→A request: {sessionId, capability|toolId, resource?} → {effect, matchedRule?, scope, source, isExplicitAsk}
+	methodKiroPermissionsPresetStores = "_kiro/permissions/presets/stores" // C→A request: {workspaceRoots?: absolute paths} → {stores: [{scope, workspaceRoot?, file, read}]}
+	methodV3PolicyChanged             = "_kiro/policy/changed"             // A→C notification: {sessionId, status, errors?}
+	methodV3PolicyError               = "_kiro/policy/error"               // A→C notification: {sessionId, errors[]}
 )
 
 // v3 request names outside the notification set: openExternalUrl is A→C (bridge_v3_hostreq.go), the others C→A on the engine.
@@ -39,6 +40,21 @@ const (
 	methodKiroOpenExternalURL = "_kiro/openExternalUrl"  // A→C request: {url} — open a URL for the user (MCP OAuth); needs the openExternalUrl client capability
 	methodKiroGetUsage        = "_kiro/account/getUsage" // C→A request: account/subscription usage; needs the authenticated profile
 	methodKiroCodeIntel       = "_kiro/codeIntelligence" // C→A request: code-intelligence status/init (subcommand param); needs the session opted in via initialize _meta.kiro.settings
+)
+
+// The code index's verbs, served while the engine's c2s setting is on; a refusal is -32000.
+const (
+	methodKiroCodeIndexStatus      = "_kiro/codeIntelligence/indexStatus" // A→C notification: {sessionId, workspaceRoot, store {state, summary? {files, functions}}, build? {buildId, state, phase, message, reason?, detail?}}
+	methodKiroCodeIndexStartBuild  = "_kiro/codeIntelligence/startBuild"  // C→A request: {sessionId, analysisScope?} → {buildId, workspaceRoot, analysisScope, status}
+	methodKiroCodeIndexCancelBuild = "_kiro/codeIntelligence/cancelBuild" // C→A request: {sessionId, buildId?} → {status: canceled|not-running}
+)
+
+// A session's background jobs, live only with kiro-cli's job shell on (settings.universalBackgroundTool).
+const (
+	methodKiroJobUpdate        = "_kiro/job/update"          // A→C notification: {sessionId, id, kind, description, status, startedAt, endedAt?}
+	methodKiroJobCancel        = "_kiro/job/cancel"          // C→A request: {sessionId, jobId} → {jobs: [{jobId, wasRunning, confirmed}]}
+	methodKiroJobOutput        = "_kiro/job/output"          // C→A request: {sessionId, jobId, lines?: 1..1000} → {status, lines[], gap?: {at}}
+	methodKiroToolContentChunk = "_kiro/tools/content_chunk" // A→C notification: {sessionId, toolCallId, content: {type: content, content: {type: text, text}}}; needs streamingShellContent
 )
 
 // methodKiroSessionNotify is the notification KAS's `send_message` builtin raises:

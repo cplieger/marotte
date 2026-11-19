@@ -35,6 +35,7 @@ const KIND_SET: Record<EntryKind, true> = {
   reconciled: true,
   turn_close: true,
   step_graded: true,
+  job_ended: true,
 };
 
 const KINDS = Object.keys(KIND_SET) as readonly EntryKind[];

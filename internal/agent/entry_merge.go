@@ -173,7 +173,8 @@ func (f *tsFill) entry(e *marotte.Entry, turn []marotte.Entry) {
 
 // carriedSteerKeys is every steer row key a record prompt or steer names in Resends, in any turn:
 // that carrier holds the row's words under no entry of the key's own, while KAS replays the row
-// at its send position.
+// at its send position. A recorded job_ended's id is one too: the live end is filed where it
+// arrived, while KAS replays its notice where it persisted the row, often another turn.
 func carriedSteerKeys(record []recordTurn) map[string]struct{} {
 	keys := make(map[string]struct{})
 	for i := range record {
@@ -190,6 +191,8 @@ func carriedSteerKeys(record []recordTurn) map[string]struct{} {
 // undecodable payload.
 func carriedSteerIDs(e *marotte.Entry) []string {
 	switch e.Kind {
+	case marotte.EntryKindJobEnded:
+		return []string{e.ID}
 	case marotte.EntryKindSteer:
 		var steer marotte.EntrySteer
 		if json.Unmarshal(e.Payload, &steer) != nil {
@@ -205,7 +208,7 @@ func carriedSteerIDs(e *marotte.Entry) []string {
 }
 
 func carriedSteer(e *marotte.Entry, carried map[string]struct{}) bool {
-	if e.Kind != marotte.EntryKindSteer {
+	if e.Kind != marotte.EntryKindSteer && e.Kind != marotte.EntryKindJobEnded {
 		return false
 	}
 	_, ok := carried[e.ID]

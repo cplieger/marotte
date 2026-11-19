@@ -68,6 +68,8 @@ marotte sends no telemetry. Its outbound requests are these:
 
 AWS may use what marotte sends the model, which is your chats and workflow runs, to improve its service. The **Share content with AWS for service improvement** switch under **Data sharing** in **Settings** decides it. It is on by default, as in kiro-cli, and a switch you turned off stays off. On an enterprise account, the organization's setting decides it instead. kiro-cli run in the Shell panel follows its own setting, which [Content sharing with AWS](configuration.md#content-sharing-with-aws) covers.
 
+**Memory** under **General** in **Settings** is Off by default. Under any other choice, the agent reads memories in every chat started after the change and in the workflow runs marotte starts from **Run**, a schedule or an event rule. Under the last two choices it also adds memories there. The choice belongs to the Kiro account signed in on this machine and is shared with kiro-cli signed in to the same account.
+
 kiro-cli's own telemetry is on by default, as in kiro-cli. The **kiro-cli telemetry** switch under **Data sharing** in **Settings** covers both kinds: its usage telemetry, which sends usage data linked to your signed-in account, and its legacy toolkit telemetry. Turned off, it stops both. On an enterprise account, the organization's usage-analytics setting decides it instead. Push notifications go only to the browser vendors' push services, over HTTPS on port 443. Each push connection is checked again after the name is resolved.
 
 ## How kiro-cli is installed

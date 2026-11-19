@@ -27,9 +27,10 @@ import (
 
 const bridgeGroupGrace = 2 * time.Second
 
-// stdinEOFGrace is how long a kiro-cli process whose stdin was closed gets to exit before it is signalled: kiro-cli
-// acp kills an engine still running about 5.5 s after stdin EOF, and KAS's session teardown, its lease release
-// included, runs inside that window. A var for tests.
+// stdinEOFGrace is how long a kiro-cli process whose stdin was closed gets to exit before it is signalled. On EOF KAS
+// answers what it still owes for up to 2 s, finishes its session teardown (SessionEnd hooks and the lease release
+// inside it) within 4.5 s of the close and exits 0; kiro-cli acp kills an engine still running about 5 s after EOF.
+// 6 s covers both. A var for tests.
 var stdinEOFGrace = 6 * time.Second
 
 // bridgeTeardownGrace is how long a SIGTERMed tree gets before SIGKILL: after a SIGTERM kiro-cli ends its node engine
@@ -74,11 +75,11 @@ func deathSignalOf(state *os.ProcessState) syscall.Signal {
 	return 0
 }
 
-// reapProcess reaps the kiro-cli process's group, then the node engine's: on 2.18.0 a head-only kill left the kiro-cli
-// process and its node child alive at about 250 MB (procgroup.Kill), and the node engine leads its own group
-// (sweepEngineGroups). When closed says teardown closed its stdin, a process that had not ended itself gets
-// stdinEOFGrace to exit on that EOF; only one still alive after it does the SIGTERM do real work. pgid and owns are
-// GroupOf's answer and endedItself is endedOnItsOwn's, both from before the stdin close.
+// reapProcess reaps the kiro-cli process's group, then the node engine's: a head-only kill leaves the kiro-cli process
+// and its node child alive (procgroup.Kill), and the node engine leads its own group (sweepEngineGroups). When closed
+// says teardown closed its stdin, a process that had not ended itself gets stdinEOFGrace to exit on that EOF; only one
+// still alive after it does the SIGTERM do real work. pgid and owns are GroupOf's answer and endedItself is
+// endedOnItsOwn's, both from before the stdin close.
 func (e *Engine) reapProcess(pgid int, owns, endedItself, closed bool) {
 	if closed && !endedItself {
 		awaitExit(e.cmd.Process.Pid, stdinEOFGrace)
@@ -263,8 +264,8 @@ func (e *Engine) teardown() {
 		var pgid int
 		var owns bool
 		if started {
-			// Before the stdin close: on EOF kiro-cli kills its node engine and exits, after which the node group is
-			// init's and no walk finds it (procgroup.GroupOf).
+			// Before the stdin close: on EOF the node engine exits and kiro-cli follows it, after which the node group
+			// is init's and no walk finds it (procgroup.GroupOf).
 			pgid, owns = procgroup.GroupOf(e.cmd.Process)
 			e.noteEngineGroups()
 		}

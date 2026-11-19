@@ -353,9 +353,9 @@ func entrySegments(e *marotte.Entry, t *searchTurn, names map[string]string) []s
 		marotte.EntryKindModelSwitched, marotte.EntryKindModeSwitched, marotte.EntryKindProfileSwitched,
 		marotte.EntryKindSteerDelivered,
 		marotte.EntryKindSteerCleared, marotte.EntryKindRunNamed, marotte.EntryKindContextReset,
-		marotte.EntryKindStepGraded:
+		marotte.EntryKindStepGraded, marotte.EntryKindJobEnded:
 		// A compaction summary restates history searchable at its source, and a bind draws nothing. A switch or
-		// reset row draws its words as one string (messages-events.ts switchedLabel), not as chrome around content
+		// reset or job_ended row draws its words as one string (messages-events.ts switchedLabel), not as chrome around content
 		// like fallbackLabel, so indexing it needs that marking first and a search-items contract change.
 		return nil
 	}

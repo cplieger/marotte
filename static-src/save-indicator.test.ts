@@ -53,12 +53,12 @@ describe("save-indicator", () => {
   });
 
   it("spins only the slot whose key was written", () => {
-    const slot = mountSlots("debug_logs", "memory_mode");
+    const slot = mountSlots("debug_logs", "work_validation");
 
     showSaving("debug_logs");
 
     expect(spinner(slot("debug_logs"))).not.toBeNull();
-    expect(slot("memory_mode").children.length).toBe(0);
+    expect(slot("work_validation").children.length).toBe(0);
   });
 
   it("spins every slot a multi-key write carried", () => {
@@ -92,13 +92,13 @@ describe("save-indicator", () => {
   });
 
   it("settles the written slot and leaves its neighbour untouched", () => {
-    const slot = mountSlots("debug_logs", "memory_mode");
+    const slot = mountSlots("debug_logs", "work_validation");
 
     showSaving("debug_logs");
     showSaved("debug_logs");
 
     expect(ok(slot("debug_logs"))).not.toBeNull();
-    expect(slot("memory_mode").children.length).toBe(0);
+    expect(slot("work_validation").children.length).toBe(0);
   });
 
   it("shows the failure face on the slot that failed", () => {

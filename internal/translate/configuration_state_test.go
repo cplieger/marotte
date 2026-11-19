@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -261,5 +262,77 @@ func TestDecodeModelFallbackSetting(t *testing.T) {
 	}
 	if _, ok := DecodeModelFallbackSetting(json.RawMessage(`{"krn":"krn:::setting/memorySync","value":"on","contributions":[]}`)); ok {
 		t.Error("ok = true for a setting that is not a model fallback")
+	}
+}
+
+// TestDeviceMemoryView_Choice pins the reduction kiro-cli's terminal UI applies to the two device rows
+// (mode ?? disabled, reflection ?? off, read_write plus reflection on reads as learn) and the lock naming.
+func TestDeviceMemoryView_Choice(t *testing.T) {
+	row := func(setting, value, compose, assertion string) string {
+		assertions := `[]`
+		if assertion != "" {
+			assertions = `[{"layer":"` + assertion + `"}]`
+		}
+		return `{"krn":"krn:::setting/` + setting + `","value":"` + value + `","compose":"` + compose +
+			`","assertions":` + assertions + `,"contributions":[]}`
+	}
+	view := func(observer string, rows ...string) json.RawMessage {
+		return json.RawMessage(`{"view":{"observer":"` + observer + `"},"layers":[{"id":"organization","name":"Your organization"},` +
+			`{"id":"user-local","name":"This device"}],"settings":[` + strings.Join(rows, ",") + `]}`)
+	}
+	for _, tc := range []struct {
+		name string
+		raw  json.RawMessage
+		want marotte.DeviceMemory
+	}{
+		{"nothing stated", view("connection"), marotte.DeviceMemory{Mode: "off"}},
+		{"disabled", view("connection", row("memoryMode", "disabled", "replace", ""), row("memoryReflection", "on", "replace", "")), marotte.DeviceMemory{Mode: "off"}},
+		{"read only", view("connection", row("memoryMode", "read_only", "replace", "")), marotte.DeviceMemory{Mode: "read_only"}},
+		{"read and write", view("connection", row("memoryMode", "read_write", "replace", ""), row("memoryReflection", "off", "replace", "")), marotte.DeviceMemory{Mode: "read_write"}},
+		{"read and write, reflection unstated", view("connection", row("memoryMode", "read_write", "replace", "")), marotte.DeviceMemory{Mode: "read_write"}},
+		{"learn", view("connection", row("memoryMode", "read_write", "replace", ""), row("memoryReflection", "on", "replace", "")), marotte.DeviceMemory{Mode: "learn"}},
+		{"a mode KAS added", view("connection", row("memoryMode", "write_only", "replace", "")), marotte.DeviceMemory{Mode: "write_only"}},
+		{
+			"a locked mode", view("connection", row("memoryMode", "disabled", "locked", "organization")),
+			marotte.DeviceMemory{Mode: "off", Lock: &marotte.SettingLock{Layer: "organization", Name: "Your organization"}},
+		},
+		{
+			"a locked reflection under an unnamed layer", view("connection", row("memoryMode", "read_write", "replace", ""), row("memoryReflection", "off", "locked", "managed")),
+			marotte.DeviceMemory{Mode: "read_write", Lock: &marotte.SettingLock{Layer: "managed", Name: "managed"}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v, ok := DecodeDeviceMemoryView(tc.raw)
+			got := v.Choice()
+			if !ok {
+				t.Fatal("DecodeDeviceMemoryView ok = false, want true for a connection view")
+			}
+			if got.Mode != tc.want.Mode || (got.Lock == nil) != (tc.want.Lock == nil) || (got.Lock != nil && *got.Lock != *tc.want.Lock) {
+				t.Errorf("Choice = %+v (lock %+v), want %+v (lock %+v)", got, got.Lock, tc.want, tc.want.Lock)
+			}
+		})
+	}
+	if _, ok := DecodeDeviceMemoryView(view("session", row("memoryMode", "read_only", "replace", ""))); ok {
+		t.Error("DecodeDeviceMemoryView(session view) ok = true, want false: only the connection view states the device rows")
+	}
+	if _, ok := DecodeDeviceMemoryView(json.RawMessage(`{`)); ok {
+		t.Error("DecodeDeviceMemoryView(undecodable) ok = true, want false")
+	}
+}
+
+func TestDeviceMemoryRows_MapsEachChoiceOntoKASsRows(t *testing.T) {
+	for _, tc := range []struct{ mode, wantMode, wantReflection string }{
+		{"off", "disabled", "off"},
+		{"read_only", "read_only", "off"},
+		{"read_write", "read_write", "off"},
+		{"learn", "read_write", "on"},
+	} {
+		m, r, ok := DeviceMemoryRows(tc.mode)
+		if !ok || m != tc.wantMode || r != tc.wantReflection {
+			t.Errorf("DeviceMemoryRows(%q) = (%q, %q, %v), want (%q, %q, true)", tc.mode, m, r, ok, tc.wantMode, tc.wantReflection)
+		}
+	}
+	if _, _, ok := DeviceMemoryRows("disabled"); ok {
+		t.Error(`DeviceMemoryRows("disabled") ok = true, want false: the client speaks the dropdown's four`)
 	}
 }

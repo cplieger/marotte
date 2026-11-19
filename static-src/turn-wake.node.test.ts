@@ -29,7 +29,7 @@ describe("the wake wording shared with the Go implementation", () => {
 
   it("reads every reason of the shared fixture", () => {
     expect(new Set(cases.map((c) => c.wake.reason))).toEqual(
-      new Set(["step_message", "run_finished", "rewake", "unknown"]),
+      new Set(["step_message", "run_finished", "rewake", "job_ended", "unknown"]),
     );
   });
 

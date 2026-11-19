@@ -90,6 +90,11 @@ type EntryProjection struct {
 	// fixed at the create frame; callOrder is the order the turn's close aborts them
 	// in.
 	calls map[string]string
+	// jobCalls are the unsettled calls KAS moved into a background job, which the close seals as
+	// the live closer does (turnlog.closedResult).
+	jobCalls map[string]*marotte.BackgroundJob
+	// jobCards maps every job the replay saw to its tool call, across turns, so a notice names its card.
+	jobCards map[string]string
 	// laneOpen is the say each lane is accumulating, so an id-less delta extends it; cleared when
 	// another kind seals the lane.
 	laneOpen map[string]laneSay
@@ -139,7 +144,7 @@ type EntryProjection struct {
 // NewEntryProjection returns an empty EntryProjection. newID mints unique ids for the bracket
 // entries and id-less deltas (injected for determinism); workDir relativizes diff paths.
 func NewEntryProjection(newID func() string, workDir string) *EntryProjection {
-	return &EntryProjection{newID: newID, workDir: workDir, compactAt: -1}
+	return &EntryProjection{newID: newID, workDir: workDir, compactAt: -1, jobCards: map[string]string{}}
 }
 
 func (p *EntryProjection) relPath(ref string) string {
@@ -162,7 +167,7 @@ func (p *EntryProjection) Ingest(kind marotte.ACPUpdateKind, raw json.RawMessage
 		p.ingestToolUpdate(raw)
 	default:
 		// user_message_chunk's kind constant is outside the ACPUpdate* set.
-		if kind == replayUserChunkKind {
+		if kind == UserChunkKind {
 			p.ingestUserText(raw)
 		}
 	}
@@ -194,6 +199,14 @@ func (p *EntryProjection) ingestUserText(raw json.RawMessage) {
 	}
 	// A workflow-progress row also carries the steering source, so this drop leads.
 	if isWorkflowProgress(&c.Meta) {
+		return
+	}
+	if end, ok := jobNoticeOf(&c.Meta, c.Content.Text); ok {
+		end.ToolCallID = p.jobCards[end.JobID]
+		p.flushUser()
+		p.ensureTurn(marotte.TurnOpenNameEvent)
+		p.sealLanes()
+		p.appendEntry(marotte.EntryKindJobEnded, marotte.JobEndedID(end.JobID), "", replayTS(c.Meta.Kiro.Timestamp), end)
 		return
 	}
 	// Without this, an empty steering-boundary row would hijack the following prompt's identity
@@ -431,6 +444,12 @@ func (p *EntryProjection) ingestToolUpdate(raw json.RawMessage) {
 	tu.gate()
 	tu.ToolCallID = strings.TrimSuffix(tu.ToolCallID, replayInvocationSuffix)
 	if !tu.Status.Terminal() {
+		if job := jobFrom(tu.Meta.Kiro.Job); job != nil {
+			if _, known := p.calls[tu.ToolCallID]; known {
+				p.jobCalls[tu.ToolCallID] = job
+			}
+			p.jobCards[job.ID] = tu.ToolCallID
+		}
 		return
 	}
 	lane, known := p.calls[tu.ToolCallID]
@@ -455,6 +474,7 @@ func (p *EntryProjection) ingestToolUpdate(raw json.RawMessage) {
 		Checkpoint: checkpointFrom(tu.Meta.Kiro.Checkpoint),
 		Disclosed:  disclosedFrom(tu.Meta.Kiro.DisclosedContext),
 		Offload:    offloadFrom(tu.Meta.Kiro.OutputTransformation),
+		Job:        jobFrom(tu.Meta.Kiro.Job),
 		// The meta read carries the id on a replay; rawOutput is the live path's spelling.
 		WorkflowID: cmp.Or(tu.Meta.Kiro.WorkflowID, rawOutputWorkflowID(tu.RawOutput)),
 	}
@@ -465,6 +485,9 @@ func (p *EntryProjection) ingestToolUpdate(raw json.RawMessage) {
 		res.Input = tu.RawInput
 	}
 	res.Status, res.DelegateStop = delegateGrade(res.Status, tu.Meta.Kiro.StopReason, "")
+	if res.Job != nil {
+		p.jobCards[res.Job.ID] = tu.ToolCallID
+	}
 	p.sealLane(lane)
 	p.settleCall(tu.ToolCallID)
 	p.appendEntry(marotte.EntryKindToolResult, marotte.ToolResultID(tu.ToolCallID), lane,
@@ -666,6 +689,7 @@ func (p *EntryProjection) startTurn(source marotte.TurnOpenSourceName, prompt *m
 	p.minted = map[string]bool{}
 	p.laneOpen = map[string]laneSay{}
 	p.calls = map[string]string{}
+	p.jobCalls = map[string]*marotte.BackgroundJob{}
 	p.callOrder = nil
 	p.lane = ""
 	p.closed = false
@@ -728,10 +752,14 @@ func (p *EntryProjection) settle() {
 	// A call with no result is aborted in its own lane; KAS's synthetic `failed` result pre-empts it.
 	for _, id := range p.callOrder {
 		lane := p.calls[id]
+		res := marotte.EntryToolResult{Status: marotte.ToolAborted}
+		if job := p.jobCalls[id]; job != nil {
+			res = marotte.EntryToolResult{Status: marotte.ToolCompleted, Job: job}
+		}
 		p.appendEntry(marotte.EntryKindToolResult, marotte.ToolResultID(id), lane, 0,
-			*p.facts.footer.WithInteraction(id, &marotte.EntryToolResult{Status: marotte.ToolAborted}))
+			*p.facts.footer.WithInteraction(id, &res))
 	}
-	p.calls, p.callOrder = map[string]string{}, nil
+	p.calls, p.callOrder, p.jobCalls = map[string]string{}, nil, map[string]*marotte.BackgroundJob{}
 }
 
 func (p *EntryProjection) sealCur() {
@@ -755,6 +783,7 @@ func (p *EntryProjection) trackCall(id, lane string) {
 
 func (p *EntryProjection) settleCall(id string) {
 	delete(p.calls, id)
+	delete(p.jobCalls, id)
 	p.callOrder = slices.DeleteFunc(p.callOrder, func(s string) bool { return s == id })
 }
 

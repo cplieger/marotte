@@ -309,3 +309,43 @@ func TestSearch_HookStatusOffRefusalKeepsTheRunTheTranscriptDraws(t *testing.T) 
 		})
 	}
 }
+
+// KAS runs a PermissionRequest hook inside its call's permission check, after the call's card exists, so it gates that
+// call like a PostToolUse hook: a refusal keeps it as a row, and a delegate's card right before it owns it.
+func TestSearch_HookStatusOffRefusalKeepsItsPermissionRequestHook(t *testing.T) {
+	cases := []struct {
+		name    string
+		calls   []marotte.EntryToolCall
+		results []marotte.EntryToolResult
+		want    int
+	}{
+		{
+			name:    "a passing call's permission hook hides",
+			calls:   []marotte.EntryToolCall{command("c1"), guard("h1", "PermissionRequest")},
+			results: []marotte.EntryToolResult{completed(), completed()},
+			want:    0,
+		},
+		{
+			name:    "a refused call keeps its permission hook",
+			calls:   []marotte.EntryToolCall{command("c1"), guard("h1", "PermissionRequest")},
+			results: []marotte.EntryToolResult{{Status: marotte.ToolFailed}, completed()},
+			want:    1,
+		},
+		{
+			name:    "a failed delegate's card owns and keeps the permission hook after it",
+			calls:   []marotte.EntryToolCall{invocation("i1"), guard("h1", "PermissionRequest")},
+			results: []marotte.EntryToolResult{{Status: marotte.ToolFailed}, completed()},
+			want:    1,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := newTestStore(t)
+			WithHookStatusShown(func() bool { return false })(s)
+			seedHookChat(t, s, "c1", tc.calls, tc.results)
+			if got := searchVia(t, s, "c1", "?q=Destructive").Matched; got != tc.want {
+				t.Errorf("in-chat find matched %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
