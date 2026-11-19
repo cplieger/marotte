@@ -9,6 +9,7 @@ import (
 // A turn fails on the newest refusal answered while it was open, else on the engine's newest answer before it opened
 // when that was a refusal; a served answer as the newest before it opened means the engine held a served credential.
 func TestSignInAsks_ATurnReadsOnlyTheAsksItCouldHaveDependedOn(t *testing.T) {
+	t.Parallel()
 	const served, down, out = signin.Refusal(0), signin.RefusedUnreachable, signin.RefusedSignedOut
 	cases := map[string]struct {
 		before, during []signin.Refusal
@@ -43,6 +44,7 @@ func TestSignInAsks_ATurnReadsOnlyTheAsksItCouldHaveDependedOn(t *testing.T) {
 
 // A runtime with no vault books no asks, and its turns fail on no refusal.
 func TestSignInAsks_ANilBookAnswersNoRefusal(t *testing.T) {
+	t.Parallel()
 	var b *signInAsks
 	b.answered(signin.RefusedUnreachable)
 	if got := b.refusalFor(b.mark()); got != 0 {

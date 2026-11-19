@@ -8,11 +8,11 @@ package agent
 
 import (
 	"go/ast"
-	"go/parser"
 	"go/token"
-	"path/filepath"
+	"maps"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -63,30 +63,31 @@ type stampSite struct {
 	frames  []string // the Event* constants the frame it lands on can carry, when traceable
 }
 
-func parseStampPackages(t *testing.T) map[string][]*ast.File {
-	t.Helper()
-	fset := token.NewFileSet()
+var stampPackages = sync.OnceValues(func() (map[string][]*ast.File, error) {
 	files := map[string][]*ast.File{}
 	for _, dir := range stampWalkPackages {
-		names, err := filepath.Glob(filepath.Join(dir, "*.go"))
+		set, err := parseSources(dir, 0)
 		if err != nil {
-			t.Fatalf("Setup: glob %s: %v", dir, err)
+			return nil, err
 		}
-		for _, name := range names {
-			if strings.HasSuffix(name, "_test.go") {
-				continue
-			}
-			f, err := parser.ParseFile(fset, name, nil, 0)
-			if err != nil {
-				t.Fatalf("Setup: parse %s: %v", name, err)
-			}
+		for _, f := range set.files {
+			name := set.fset.Position(f.Package).Filename
 			files[name] = append(files[name], f)
 		}
+	}
+	return files, nil
+})
+
+func parseStampPackages(t *testing.T) map[string][]*ast.File {
+	t.Helper()
+	files, err := stampPackages()
+	if err != nil {
+		t.Fatalf("Setup: %v", err)
 	}
 	if len(files) < 20 {
 		t.Fatalf("Setup: parsed %d files across %v, want the four packages", len(files), stampWalkPackages)
 	}
-	return files
+	return maps.Clone(files)
 }
 
 func calleeName(call *ast.CallExpr) string {
@@ -316,6 +317,7 @@ func callsAny(body *ast.BlockStmt, names []string) []string {
 }
 
 func TestStamping_EveryVersionComesFromItsMint(t *testing.T) {
+	t.Parallel()
 	files := parseStampPackages(t)
 	seen := 0
 	for file, fs := range files {
@@ -407,6 +409,7 @@ func stampFromHonestSource(expr ast.Expr, d definitions) (bool, string) {
 }
 
 func TestStamping_OnlyEmitAndTheConnectHookPublish(t *testing.T) {
+	t.Parallel()
 	files := parseStampPackages(t)
 	publishers := map[string][]string{}
 	var emitBody, hookBody *ast.FuncDecl

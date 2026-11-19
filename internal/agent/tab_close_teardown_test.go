@@ -20,13 +20,13 @@ import (
 )
 
 // closeTabHub is a runtime with a tab store and chat c1 open in a tab.
-func closeTabHub(t *testing.T) (*Runtime, *testChatStore, *fakeBridge, marotte.TabSubject) {
+func closeTabHub(t *testing.T, opts ...Option) (*Runtime, *testChatStore, *fakeBridge, marotte.TabSubject) {
 	t.Helper()
 	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("Setup: tab store: %v", err)
 	}
-	h, cs, br := newTestHub(WithTabs(st))
+	h, cs, br := newTestHub(append([]Option{WithTabs(st)}, opts...)...)
 	seedChat(t, cs, "c1")
 	opened, err := h.Membership().OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c1"}, "op-open")
 	if err != nil {
@@ -201,6 +201,7 @@ func TestCloseTab_APromptWaitingOnItsDoorEndsCancelledAndOpensNoSecondDoor(t *te
 
 // A running turn is cancelled while its session is still open, then the session is let go.
 func TestCloseTab_ARunningTurnIsCancelledBeforeItsSessionCloses(t *testing.T) {
+	t.Parallel()
 	h, _, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
@@ -413,6 +414,7 @@ func TestCloseTab_APromptWaitingOnATeardownIsEndedByASecondClose(t *testing.T) {
 // The teardown lets its session go when kiro-cli never answers its close: close_tab has answered, the job returns,
 // and a reopen's door for the same session waits until the engine confirms the close.
 func TestCloseTab_TheTeardownReleasesItsSession(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, _, br, tab := closeTabHub(t)
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -478,6 +480,7 @@ func recordSessionID(t *testing.T, cs *testChatStore) string {
 
 // A prompt's reply that lands after the close's teardown forgot the chat mints no lifecycle and closes the turn once.
 func TestCloseTab_ALatePromptReplyAfterTheCloseMintsNothing(t *testing.T) {
+	t.Parallel()
 	h, _, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
@@ -506,6 +509,7 @@ func TestCloseTab_ALatePromptReplyAfterTheCloseMintsNothing(t *testing.T) {
 
 // An old prompt's reply landing after a reopen leaves the reopened chat's turn open until its own reply.
 func TestCloseTab_ALatePromptReplyAfterAReopenLeavesTheNewTurnAlone(t *testing.T) {
+	t.Parallel()
 	h, _, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
@@ -554,6 +558,7 @@ func TestCloseTab_ALatePromptReplyAfterAReopenLeavesTheNewTurnAlone(t *testing.T
 
 // A History delete during a background close runs after the close's job: its session/delete waits for the job.
 func TestCloseTab_ADeleteDuringABackgroundCloseRunsAfterIt(t *testing.T) {
+	t.Parallel()
 	h, _, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
@@ -592,6 +597,7 @@ func TestCloseTab_ADeleteDuringABackgroundCloseRunsAfterIt(t *testing.T) {
 
 // A turn the close ends starts no tail: the parked model pick stays parked and no session/set_config_option is sent.
 func TestCloseTab_TheTeardownsOwnTurnCloseStartsNoTail(t *testing.T) {
+	t.Parallel()
 	h, cs, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
@@ -749,6 +755,7 @@ func TestOpenGeneration_ARefusedAttachEndsTheDoorBeforeItWrites(t *testing.T) {
 // The commit cuts a running session/prompt, and the job waits for that call to give up before its own
 // session/cancel, which precedes the session's release; the turn closes cancelled with no error frame.
 func TestCloseTab_TheJobWaitsForEveryLeaseBeforeItsCancel(t *testing.T) {
+	t.Parallel()
 	h, cs, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
@@ -811,6 +818,7 @@ func TestCloseTab_TheJobWaitsForEveryLeaseBeforeItsCancel(t *testing.T) {
 // A report that the session moved its effort level, arriving after the close committed and before the teardown
 // let the session go, repairs nothing: the ended life refuses the heal's call.
 func TestEffortHeal_AfterTheCommitSendsNothing(t *testing.T) {
+	t.Parallel()
 	h, cs, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -848,6 +856,7 @@ func TestEffortHeal_AfterTheCommitSendsNothing(t *testing.T) {
 // A run the chat launched keeps its verbs on the chat's resident session after the close committed, since run work
 // outlives the chat's life, and moves to the engine lane once the teardown released that session.
 func TestRunVerb_ACloseLeavesTheResidentSessionToTheRunUntilItsRelease(t *testing.T) {
+	t.Parallel()
 	h, _, lane, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	chat := newFakeBridge()
@@ -902,6 +911,7 @@ func TestRunVerb_ACloseLeavesTheResidentSessionToTheRunUntilItsRelease(t *testin
 // A prompt past StartTurn and parked at its send gate when the close lands never sends: its turn closes cancelled
 // with no frame.
 func TestCloseTab_APromptBetweenStartTurnAndItsSendEndsCancelled(t *testing.T) {
+	t.Parallel()
 	h, _, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {

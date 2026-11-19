@@ -10,6 +10,7 @@ import (
 // The client renders a pause with one of marotte's reasons as marotte's own, and a control with apiCallerReason as an
 // agent's (static-src/run-store.ts attributedSentence), reading the same fixture.
 func TestPauseReasons_MatchTheClientFixture(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile("testdata/pause_reasons.json")
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)

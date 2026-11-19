@@ -12,12 +12,12 @@ import (
 	"go/token"
 	"go/types"
 	"maps"
-	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/command"
@@ -107,8 +107,7 @@ type leaseCensus struct {
 
 func newLeaseCensus(t *testing.T, fixtures map[string]string) *leaseCensus {
 	t.Helper()
-	fset := token.NewFileSet()
-	files := parseAgentSources(t, fset)
+	fset, files := parseAgentSources(t)
 	for _, name := range slices.Sorted(mapsKeys(fixtures)) {
 		f, err := parser.ParseFile(fset, name, fixtures[name], parser.SkipObjectResolution)
 		if err != nil {
@@ -572,7 +571,7 @@ func (c *leaseCensus) sessionTaking() []string {
 	return bad
 }
 
-func recordSessionCallers(fset *token.FileSet, files []*ast.File) map[string]int {
+func recordSessionCallers(files []*ast.File) map[string]int {
 	out := map[string]int{}
 	for _, f := range files {
 		for _, decl := range f.Decls {
@@ -590,35 +589,23 @@ func recordSessionCallers(fset *token.FileSet, files []*ast.File) map[string]int
 			})
 		}
 	}
-	_ = fset
 	return out
 }
 
-func parseCommandSources(t *testing.T, fset *token.FileSet) []*ast.File {
+var commandSources = sync.OnceValues(func() (sourceSet, error) {
+	return parseSources(filepath.Join("..", "command"), parser.SkipObjectResolution)
+})
+
+func parseCommandSources(t *testing.T) []*ast.File {
 	t.Helper()
-	names, err := filepath.Glob(filepath.Join("..", "command", "*.go"))
+	set, err := commandSources()
 	if err != nil {
-		t.Fatalf("glob: %v", err)
+		t.Fatalf("Setup: %v", err)
 	}
-	var files []*ast.File
-	for _, name := range names {
-		if strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		src, rErr := os.ReadFile(name)
-		if rErr != nil {
-			t.Fatalf("read %s: %v", name, rErr)
-		}
-		f, pErr := parser.ParseFile(fset, name, src, parser.SkipObjectResolution)
-		if pErr != nil {
-			t.Fatalf("parse %s: %v", name, pErr)
-		}
-		files = append(files, f)
+	if len(set.files) < commandFileFloor {
+		t.Fatalf("parsed %d command files, want at least %d", len(set.files), commandFileFloor)
 	}
-	if len(files) < commandFileFloor {
-		t.Fatalf("parsed %d command files, want at least %d", len(files), commandFileFloor)
-	}
-	return files
+	return slices.Clip(set.files)
 }
 
 func recordWriterViolations(pkg string, callers map[string]int) []string {
@@ -674,6 +661,7 @@ func wantCaught(t *testing.T, bad []string, want string) {
 }
 
 func TestSessionLease_TheSessionFieldIsReadOnlyInTheLeaseFile(t *testing.T) {
+	t.Parallel()
 	reportAll(t, newLeaseCensus(t, nil).fieldOwner())
 	t.Run("a read in another file fails", func(t *testing.T) {
 		c := newLeaseCensus(t, map[string]string{
@@ -684,6 +672,7 @@ func TestSessionLease_TheSessionFieldIsReadOnlyInTheLeaseFile(t *testing.T) {
 }
 
 func TestSessionLease_EveryLeaseMethodIsClassified(t *testing.T) {
+	t.Parallel()
 	reportAll(t, newLeaseCensus(t, nil).classified())
 	t.Run("an unclassified method fails", func(t *testing.T) {
 		c := newLeaseCensus(t, map[string]string{
@@ -694,6 +683,7 @@ func TestSessionLease_EveryLeaseMethodIsClassified(t *testing.T) {
 }
 
 func TestSessionLease_OneConstructorBuildsEveryEntry(t *testing.T) {
+	t.Parallel()
 	reportAll(t, newLeaseCensus(t, nil).oneConstructor())
 	t.Run("a literal in the bridge manager fails", func(t *testing.T) {
 		c := newLeaseCensus(t, map[string]string{
@@ -704,6 +694,7 @@ func TestSessionLease_OneConstructorBuildsEveryEntry(t *testing.T) {
 }
 
 func TestSessionLease_TheSessionTypesAreTheListedInterfaces(t *testing.T) {
+	t.Parallel()
 	c := newLeaseCensus(t, nil)
 	got := c.derivedSessionTypes()
 	want := slices.Sorted(slices.Values(append(slices.Clone(sessionTypes), engineLaneTypes...)))
@@ -724,6 +715,7 @@ func TestSessionLease_TheSessionTypesAreTheListedInterfaces(t *testing.T) {
 }
 
 func TestSessionLease_NoSessionIsStoredOutsideTheDecorators(t *testing.T) {
+	t.Parallel()
 	reportAll(t, newLeaseCensus(t, nil).noStore())
 	for name, src := range map[string]string{
 		"a struct field":  "type parked struct{ s engineSession }",
@@ -739,6 +731,7 @@ func TestSessionLease_NoSessionIsStoredOutsideTheDecorators(t *testing.T) {
 }
 
 func TestSessionLease_NoAssertionWidensAResponder(t *testing.T) {
+	t.Parallel()
 	reportAll(t, newLeaseCensus(t, nil).noWidening())
 	for name, src := range map[string]string{
 		"an assertion":  "func f(r acpResponder) { _ = r.(acpCaller) }",
@@ -753,6 +746,7 @@ func TestSessionLease_NoAssertionWidensAResponder(t *testing.T) {
 }
 
 func TestSessionLease_ALeasedSessionDoesNotEscapeItsCall(t *testing.T) {
+	t.Parallel()
 	bad, callbacks := newLeaseCensus(t, nil).noEscape()
 	reportAll(t, bad)
 	if callbacks < leaseCallbackFloor {
@@ -782,6 +776,7 @@ func TestSessionLease_ALeasedSessionDoesNotEscapeItsCall(t *testing.T) {
 const leaseCallbackFloor = 10
 
 func TestSessionLease_EverySessionTakingFunctionIsListed(t *testing.T) {
+	t.Parallel()
 	reportAll(t, newLeaseCensus(t, nil).sessionTaking())
 	for name, param := range map[string]string{
 		"an engineSession":    "engineSession",
@@ -809,20 +804,22 @@ func TestSessionLease_EverySessionTakingFunctionIsListed(t *testing.T) {
 }
 
 func TestSessionLease_OnlyTheListedFunctionsWriteTheSessionID(t *testing.T) {
-	fset := token.NewFileSet()
-	reportAll(t, recordWriterViolations("agent", recordSessionCallers(fset, parseAgentSources(t, fset))))
-	reportAll(t, recordWriterViolations("command", recordSessionCallers(fset, parseCommandSources(t, fset))))
+	t.Parallel()
+	fset, agentFiles := parseAgentSources(t)
+	reportAll(t, recordWriterViolations("agent", recordSessionCallers(agentFiles)))
+	reportAll(t, recordWriterViolations("command", recordSessionCallers(parseCommandSources(t))))
 	t.Run("another writer fails", func(t *testing.T) {
 		f, err := parser.ParseFile(fset, "prompt.go",
 			"package command\nfunc refresh(c interface{ RecordSession(string) }) { c.RecordSession(\"\") }\n", 0)
 		if err != nil {
 			t.Fatalf("parse fixture: %v", err)
 		}
-		wantCaught(t, recordWriterViolations("command", recordSessionCallers(fset, []*ast.File{f})), "refresh writes")
+		wantCaught(t, recordWriterViolations("command", recordSessionCallers([]*ast.File{f})), "refresh writes")
 	})
 }
 
 func TestSessionLease_TheCommandSeamReturnsNoSession(t *testing.T) {
+	t.Parallel()
 	reportAll(t, seamSessions(reflect.TypeFor[command.Bridge]()))
 	reportAll(t, seamSessions(reflect.TypeFor[bridgeRole]()))
 	t.Run("a seam returning a session fails", func(t *testing.T) {

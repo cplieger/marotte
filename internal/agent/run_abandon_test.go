@@ -53,6 +53,7 @@ func wantPersonsLease(t *testing.T, rs *Runs) {
 // A person's retry and the rule's cancel of the run it abandoned never interleave: whichever owns the run first
 // finishes before the other starts, so the cancel never stops, parks or releases the person's run.
 func TestAbandonedRunOwner_Concurrent(t *testing.T) {
+	t.Parallel()
 	t.Run("a retry during the cancel waits for its answer", func(t *testing.T) {
 		fc := &fakeConfirmer{retried: true}
 		h, br := triggeredRetryHub(t, fc, t.TempDir())
@@ -173,6 +174,7 @@ func TestAbandonedRunOwner_Concurrent(t *testing.T) {
 
 // A retry that waits out its timeout behind the rule's cancel is refused with nothing changed.
 func TestRetryBehindAbandonedCancelTimesOut(t *testing.T) {
+	t.Parallel()
 	fc := &fakeConfirmer{retried: true}
 	h, br := triggeredRetryHub(t, fc, t.TempDir())
 	answer := blockCancel(t, br)
@@ -203,5 +205,29 @@ func TestRetryBehindAbandonedCancelTimesOut(t *testing.T) {
 	}
 	if br.called(methodKiroWorkflowRetry) {
 		t.Error("the retry verb was sent though the retry was refused")
+	}
+}
+
+// A free run is owned at once, whatever the caller's deadline: only a wait for another owner can run out of time.
+func TestRunOwners_AFreeRunIsOwnedEvenPastTheCallersDeadline(t *testing.T) {
+	t.Parallel()
+	var o runOwners
+	done, cancel := context.WithCancel(t.Context())
+	cancel()
+	for i := range 64 {
+		release, err := o.hold(done, "wf_1")
+		if err != nil {
+			t.Fatalf("hold %d of a free run past its caller's deadline = %v, want the run owned", i, err)
+		}
+		release()
+	}
+
+	release, err := o.hold(t.Context(), "wf_1")
+	if err != nil {
+		t.Fatalf("Setup: hold = %v", err)
+	}
+	defer release()
+	if _, err := o.hold(done, "wf_1"); !errors.Is(err, context.Canceled) {
+		t.Errorf("hold of an owned run past its caller's deadline = %v, want context.Canceled", err)
 	}
 }

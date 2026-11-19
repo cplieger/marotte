@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/filemode/filemodetest"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/signin"
 )
@@ -81,6 +82,7 @@ func TestUnreadableConfig_ATelemetryMoveIsQueuedAndAppliedOnceConfigReads(t *tes
 }
 
 func TestUnreadableConfig_AKiroCLIVersionMoveIsQueuedAndAppliedOnceConfigReads(t *testing.T) {
+	t.Parallel()
 	h, dir, src := restartFixture(t)
 	const next = "/fake/v2/kiro-cli"
 
@@ -97,7 +99,8 @@ type notLiveBackend struct{ flowBackend }
 func (*notLiveBackend) LiveSwitchable(_, _ signin.Credential) bool { return false }
 
 func TestUnreadableConfig_AnAccountSwitchIsQueuedAndAppliedOnceConfigReads(t *testing.T) {
-	vault := openVault(t, t.TempDir(), &notLiveBackend{flowBackend{id: "test"}})
+	t.Parallel()
+	vault := openVault(t, filemodetest.NewDisk(), &notLiveBackend{flowBackend{id: "test"}})
 	h, dir := reopenFixture(t, WithSignIn(vault, "test"))
 	awaitBoot(h)
 	src := fakeSourceOf(t, h)
@@ -176,6 +179,7 @@ func assertStartedOnTheLastReadable(t *testing.T, h *Runtime, src *fakeEngineSou
 }
 
 func TestUnreadableConfig_ACrashRespawnStartsOnTheLastReadableSettings(t *testing.T) {
+	t.Parallel()
 	h, src := lastReadableHub(t)
 
 	src.current().crash()
@@ -186,6 +190,7 @@ func TestUnreadableConfig_ACrashRespawnStartsOnTheLastReadableSettings(t *testin
 }
 
 func TestUnreadableConfig_AConfirmedRestartWithNothingQueuedStartsOnTheLastReadableSettings(t *testing.T) {
+	t.Parallel()
 	h, src := lastReadableHub(t)
 	if h.engine.restartPending() {
 		t.Fatalf("Setup: reasons = %v before the restart, want none", h.engine.status().Restart.Reasons)

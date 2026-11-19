@@ -147,6 +147,7 @@ func holdFirstLaunch(t *testing.T, h *Runtime) (parked <-chan struct{}, release 
 }
 
 func TestNotify_AnswerComesWhileTheDeliveryIsHeld(t *testing.T) {
+	t.Parallel()
 	t.Run("the steer reply held", func(t *testing.T) {
 		s, cs, br := steerOpsHub(t)
 		id, _ := s.h.stagePromptTurn(t, "c1")
@@ -205,6 +206,7 @@ func TestNotify_AnswerComesWhileTheDeliveryIsHeld(t *testing.T) {
 }
 
 func TestNotify_BackToBackWakesAnswerInOrderWhileTheFirstDeliveryIsHeld(t *testing.T) {
+	t.Parallel()
 	t.Run("two sources each answer and go in POST order", func(t *testing.T) {
 		s, cs, br := steerOpsHub(t)
 		k := kas320On(s.h, "c1", br)
@@ -260,6 +262,7 @@ func TestNotify_BackToBackWakesAnswerInOrderWhileTheFirstDeliveryIsHeld(t *testi
 // A wake taken at once whose turn then fails to open was already answered accepted: it waits paused, never lost and
 // never retried in a loop, and the caller's next send is the retry, which opens the turn with the later text.
 func TestNotify_AWakeWhoseLaunchFailsAfterItsAnswerIsRetriedByTheNextWake(t *testing.T) {
+	t.Parallel()
 	s, cs, _ := steerOpsHub(t)
 	idleChat(t, s)
 	route := notifyRoute(t, s.h, cs)

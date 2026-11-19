@@ -21,6 +21,7 @@ func newVersionedStatusCache() (*chatStatusCache, *subject.Versions) {
 }
 
 func TestMergeStamped_BumpsAndReturnsTheMintedStamp(t *testing.T) {
+	t.Parallel()
 	c, v := newVersionedStatusCache()
 	payload, stamp := c.mergeStamped("c1", marotte.ChatStatusPayload{Status: "in_progress", Description: "reading"})
 	if payload.Status != "in_progress" {
@@ -40,6 +41,7 @@ func TestMergeStamped_BumpsAndReturnsTheMintedStamp(t *testing.T) {
 }
 
 func TestMergeStamped_ChatlessDeclarationMintsNothing(t *testing.T) {
+	t.Parallel()
 	c, v := newVersionedStatusCache()
 	c.mergeStamped("c1", marotte.ChatStatusPayload{Status: "in_progress"})
 	before := statusVersion(t, v)
@@ -53,6 +55,7 @@ func TestMergeStamped_ChatlessDeclarationMintsNothing(t *testing.T) {
 }
 
 func TestStatusCache_OnlyWaitingRemovalsMint(t *testing.T) {
+	t.Parallel()
 	c, v := newVersionedStatusCache()
 	c.Merge("waiting", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
 	c.Merge("busy", marotte.ChatStatusPayload{Status: "in_progress"})
@@ -96,6 +99,7 @@ func TestStatusCache_OnlyWaitingRemovalsMint(t *testing.T) {
 }
 
 func TestStatusSnapshotStamped_CarriesTheWaitingSetMinusBusyChats(t *testing.T) {
+	t.Parallel()
 	c, v := newVersionedStatusCache()
 	c.Merge("w1", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, Description: "one"})
 	c.Merge("w2", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, Description: "two"})

@@ -324,6 +324,7 @@ var inheritedWriteSites = []durableSite{{
 // The seam: one detach, below the position wait, above every closer. Either misplacement fails
 // (refused at shutdown, or an unbounded wait).
 func TestFinalizeTurn_EveryDurableWriteRunsDetached(t *testing.T) {
+	t.Parallel()
 	const rel = "internal/agent/turn_finalize.go"
 	fset, file := parseModuleFile(t, rel)
 	fn := funcDeclNamed(t, file, rel, "finalizeTurn")
@@ -400,6 +401,7 @@ func TestFinalizeTurn_EveryDurableWriteRunsDetached(t *testing.T) {
 
 // A store write in a function no list names is the omission the gate exists for.
 func TestDurableWrites_EveryStoreWriteCarriesARuling(t *testing.T) {
+	t.Parallel()
 	ruled := map[string]string{}
 	for _, list := range []struct {
 		name  string
@@ -451,6 +453,7 @@ func TestDurableWrites_EveryStoreWriteCarriesARuling(t *testing.T) {
 
 // The non-finalize half: handlers called from the translate cascade and Forward.
 func TestDurableWrites_EverySiteCarryingAConversationalRecordIsDetached(t *testing.T) {
+	t.Parallel()
 	for _, site := range durableWriteSites {
 		t.Run(site.file+"_"+site.fn, func(t *testing.T) {
 			found, attached := siteWrites(t, site)
@@ -468,6 +471,7 @@ func TestDurableWrites_EverySiteCarryingAConversationalRecordIsDetached(t *testi
 
 // Each abandonable ruling must still describe real code, or a rename empties the list.
 func TestDurableWrites_TheAbandonableSitesAreExemptedNotForgotten(t *testing.T) {
+	t.Parallel()
 	for _, site := range abandonableWriteSites {
 		t.Run(site.file+"_"+site.fn, func(t *testing.T) {
 			found, attached := siteWrites(t, site)
@@ -486,6 +490,7 @@ func TestDurableWrites_TheAbandonableSitesAreExemptedNotForgotten(t *testing.T) 
 
 // A detach inside a shared persist helper would change shutdown behaviour unreviewed.
 func TestDurableWrites_TheInheritedSitesDecideNothing(t *testing.T) {
+	t.Parallel()
 	for _, site := range inheritedWriteSites {
 		t.Run(site.file+"_"+site.fn, func(t *testing.T) {
 			found, attached := siteWrites(t, site)

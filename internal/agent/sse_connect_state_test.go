@@ -97,6 +97,7 @@ func busySetOf(p marotte.ConnectedPayload) map[marotte.ChatID]bool {
 }
 
 func TestConnect_StatesTheBusySet(t *testing.T) {
+	t.Parallel()
 	rt := newBudgetRuntime(t)
 	ids := busyChatsWithHugeTurns(t, rt, 3)
 
@@ -116,6 +117,7 @@ func TestConnect_StatesTheBusySet(t *testing.T) {
 
 // A workflow step's turn is its run's, so the hosting chat is not busy.
 func TestConnect_TheBusySetExcludesStepTurns(t *testing.T) {
+	t.Parallel()
 	rt := newBudgetRuntime(t)
 	rt.bridge.mgr.orInsertNow("c-step")
 	rt.bridge.mgr.orInsertNow("c-own")
@@ -140,6 +142,7 @@ func TestConnect_TheBusySetExcludesStepTurns(t *testing.T) {
 
 // In the admission window no Turn exists yet, so a reconnect must not retract.
 func TestConnect_TheBusySetIncludesAnAdmittedPromptWithNoTurnMinted(t *testing.T) {
+	t.Parallel()
 	rt := newBudgetRuntime(t)
 	if !rt.coord.tryReserveNow("c-admitted", marotte.TurnSourcePrompt) {
 		t.Fatal("a fresh chat refused a prompt reservation")
@@ -153,6 +156,7 @@ func TestConnect_TheBusySetIncludesAnAdmittedPromptWithNoTurnMinted(t *testing.T
 }
 
 func TestConnect_TheBusySetIsWithheldOverTheCap(t *testing.T) {
+	t.Parallel()
 	rt := newBudgetRuntime(t)
 	for i := range maxBusyChats + 1 {
 		id := marotte.ChatID("c-over-" + string(rune('a'+i%26)) + string(rune('a'+i/26)))
@@ -175,6 +179,7 @@ func TestConnect_TheBusySetIsWithheldOverTheCap(t *testing.T) {
 
 // The inventory rides this frame, so the first paint costs no round trip.
 func TestConnect_CarriesEveryHeldLeaseAndStatesTheInventory(t *testing.T) {
+	t.Parallel()
 	rt := newBudgetRuntime(t)
 	store := rt.runs.leaseStore()
 	if err := store.Put(t.Context(), &runlease.Lease{WorkflowID: "wf_a", ChatID: "c1", Recipe: "r", Origin: runlease.OriginManual}); err != nil {
@@ -203,6 +208,7 @@ func TestConnect_CarriesEveryHeldLeaseAndStatesTheInventory(t *testing.T) {
 
 // liveRunRowsStamped serves both doors, so the handshake and endpoint agree.
 func TestLiveRunRows_AnswersIdenticallyToTheEndpoint(t *testing.T) {
+	t.Parallel()
 	rt := newBudgetRuntime(t)
 	store := rt.runs.leaseStore()
 	for _, id := range []string{"wf_a", "wf_b", "wf_c"} {
@@ -238,6 +244,7 @@ func TestLiveRunRows_AnswersIdenticallyToTheEndpoint(t *testing.T) {
 // The handshake's rows and its `runs` version come from one lease-store read, so a client that adopts them orders the
 // next live_run frame and inventory read against the version those rows are at.
 func TestConnect_LiveRunsVersionIsTheInventoryReadsVersion(t *testing.T) {
+	t.Parallel()
 	rt := newBudgetRuntime(t)
 	store := rt.runs.leaseStore()
 	if err := store.Put(t.Context(), &runlease.Lease{WorkflowID: "wf_a", ChatID: "c1", Recipe: "r", Origin: runlease.OriginManual}); err != nil {
@@ -264,6 +271,7 @@ func TestConnect_LiveRunsVersionIsTheInventoryReadsVersion(t *testing.T) {
 
 // TestConnect_V3CarriesTheWholePendingSetAsOneStampedFrame pins one pending_snapshot at the `pending` version and no per-item frames.
 func TestConnect_V3CarriesTheWholePendingSetAsOneStampedFrame(t *testing.T) {
+	t.Parallel()
 	rt := newBudgetRuntime(t)
 	ids := busyChatsWithHugeTurns(t, rt, 2)
 	rt.bus.steers.SteerWaiting(ids[1], &marotte.SteerQueuedPayload{SteerID: "s1", Text: "steer text"})
@@ -312,6 +320,7 @@ func TestConnect_V3CarriesTheWholePendingSetAsOneStampedFrame(t *testing.T) {
 
 // TestConnect_V3EmptySetsAreOneFrameEach pins that an empty snapshot frame is what clears a row resolved during the gap.
 func TestConnect_V3EmptySetsAreOneFrameEach(t *testing.T) {
+	t.Parallel()
 	rt := newBudgetRuntime(t)
 
 	frames := connectFrames(t, rt, false)
@@ -346,6 +355,7 @@ func TestConnect_V3EmptySetsAreOneFrameEach(t *testing.T) {
 
 // TestConnect_V3StatusSnapshotCarriesTheWaitingSetMinusBusyChats pins that a running chat suppresses a stale waiting_on_user.
 func TestConnect_V3StatusSnapshotCarriesTheWaitingSetMinusBusyChats(t *testing.T) {
+	t.Parallel()
 	rt := newBudgetRuntime(t)
 	rt.bus.chatStatus.mergeStamped("c-waiting", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, Description: "pick one"})
 	rt.bus.chatStatus.mergeStamped("c-working", marotte.ChatStatusPayload{Status: "in_progress"})
@@ -378,6 +388,7 @@ func TestConnect_V3StatusSnapshotCarriesTheWaitingSetMinusBusyChats(t *testing.T
 
 // TestConnect_LegacyKeepsThePerItemReplayAndNumericBounds pins the v2 shape: no aggregate frames, per-item frames, numeric floor/head.
 func TestConnect_LegacyKeepsThePerItemReplayAndNumericBounds(t *testing.T) {
+	t.Parallel()
 	rt := newBudgetRuntime(t)
 	ids := busyChatsWithHugeTurns(t, rt, 2)
 	rt.bus.steers.SteerWaiting(ids[1], &marotte.SteerQueuedPayload{SteerID: "s1", Text: "steer text"})
@@ -423,6 +434,7 @@ func TestConnect_LegacyKeepsThePerItemReplayAndNumericBounds(t *testing.T) {
 
 // TestConnect_V3ConnectedCarriesNoFloorOrHead pins that a v3 client gets them from the library's hello.
 func TestConnect_V3ConnectedCarriesNoFloorOrHead(t *testing.T) {
+	t.Parallel()
 	rt := newBudgetRuntime(t)
 	rt.bus.emit(marotte.ServerEvent{Type: marotte.EventChatUpdated, ChatID: "c1"})
 
@@ -444,6 +456,7 @@ func TestConnect_V3ConnectedCarriesNoFloorOrHead(t *testing.T) {
 
 // TestHandleSSE_CountsConnectsByWireGeneration pins the counter the legacy overlap is retired on.
 func TestHandleSSE_CountsConnectsByWireGeneration(t *testing.T) {
+	t.Parallel()
 	rt := newBudgetRuntime(t)
 	coldConnectAs(t, rt, true)
 	coldConnectAs(t, rt, false)

@@ -106,6 +106,7 @@ func (p transcriptPage) kinds() []string {
 
 // TestReconnectMidTurn_TheTranscriptGETCarriesTheInFlightTurn — a reloaded view must not show the prompt over an empty body.
 func TestReconnectMidTurn_TheTranscriptGETCarriesTheInFlightTurn(t *testing.T) {
+	t.Parallel()
 	rt, mux := newReplayGapRuntime(t)
 	openReplayGapTurn(t, rt)
 
@@ -146,6 +147,7 @@ func TestReconnectMidTurn_TheTranscriptGETCarriesTheInFlightTurn(t *testing.T) {
 
 // TestTranscriptGET_AnOpenTurnThatProducedNothingCarriesNoTail pins that `live` says a turn runs; an empty open entry would mount a blank row.
 func TestTranscriptGET_AnOpenTurnThatProducedNothingCarriesNoTail(t *testing.T) {
+	t.Parallel()
 	rt, mux := newReplayGapRuntime(t)
 	const quiet marotte.ChatID = "c-quiet"
 	rt.bridge.mgr.orInsertNow(quiet)
@@ -166,6 +168,7 @@ func TestTranscriptGET_AnOpenTurnThatProducedNothingCarriesNoTail(t *testing.T) 
 
 // TestTranscriptGET_AnIdleChatIsNotLive pins that or a reader waits for deltas that never come.
 func TestTranscriptGET_AnIdleChatIsNotLive(t *testing.T) {
+	t.Parallel()
 	rt, mux := newReplayGapRuntime(t)
 	const idle marotte.ChatID = "c-idle"
 	rt.bridge.mgr.orInsertNow(idle)

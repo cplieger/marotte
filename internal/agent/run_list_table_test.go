@@ -90,6 +90,7 @@ func (w *tableWorld) wireOpen(turnID string, bracketed bool) {
 
 // One row per head shape and event, each stating the verb a send gets and the list order after the event.
 func TestRunList_Table(t *testing.T) {
+	t.Parallel()
 	type row struct {
 		run       func(t *testing.T, w *tableWorld) string
 		name      string

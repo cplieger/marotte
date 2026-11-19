@@ -35,6 +35,7 @@ func pickProfile(t *testing.T, h *Runtime, chatID marotte.ChatID, to string) {
 }
 
 func TestMoveChatProfile_AnIdlePickRecordsOneLineAtOnce(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name, c.SecurityProfile = "A", policyfile.ProfileTrusted
@@ -56,6 +57,7 @@ func TestMoveChatProfile_AnIdlePickRecordsOneLineAtOnce(t *testing.T) {
 }
 
 func TestMoveChatProfile_AMidTurnPickRecordsItsLineOnlyOnceTheTurnCloses(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name, c.SecurityProfile = "A", policyfile.ProfileTrusted
@@ -89,6 +91,7 @@ func TestMoveChatProfile_AMidTurnPickRecordsItsLineOnlyOnceTheTurnCloses(t *test
 }
 
 func TestMoveChatProfile_AMidTurnPickUndoneBeforeTheCloseRecordsNoLine(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name, c.SecurityProfile = "A", policyfile.ProfileTrusted
@@ -108,6 +111,7 @@ func TestMoveChatProfile_AMidTurnPickUndoneBeforeTheCloseRecordsNoLine(t *testin
 }
 
 func TestMoveChatProfile_AnUnstartedChatRecordsNoLine(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name, c.SecurityProfile = "A", policyfile.ProfileTrusted
@@ -124,6 +128,7 @@ func TestMoveChatProfile_AnUnstartedChatRecordsNoLine(t *testing.T) {
 // A pick in a turn's close window, after a closer claimed it and before its parked move lands, still files one line,
 // after the turn's turn_close.
 func TestMoveChatProfile_APickDuringTheCloseRecordsOneLineAfterIt(t *testing.T) {
+	t.Parallel()
 	tests := map[string]struct {
 		parkFirst bool
 		window    string
@@ -222,6 +227,7 @@ func awaitPick(t *testing.T, picked <-chan struct{}) {
 // A pick made while the close lands its parked move, whether on the land's header read or on its line's append, files
 // its line after the land's: the transcript's last line names the profile the chat runs.
 func TestMoveChatProfile_APickDuringTheLandFilesItsLineAfterTheLands(t *testing.T) {
+	t.Parallel()
 	tests := map[string]int{
 		"on the land's header read": 1,
 		"on the land's append":      2,
@@ -267,6 +273,7 @@ func TestMoveChatProfile_APickDuringTheLandFilesItsLineAfterTheLands(t *testing.
 // Two picks between turns, the second made while the first files its line, file their lines in the order they moved
 // the header.
 func TestMoveChatProfile_IdlePicksFileTheirLinesInTheOrderTheyMoved(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name, c.SecurityProfile = "A", policyfile.ProfileTrusted
@@ -290,6 +297,7 @@ func TestMoveChatProfile_IdlePicksFileTheirLinesInTheOrderTheyMoved(t *testing.T
 }
 
 func TestMoveChatProfile_WritesOnlyThatChatsHeader(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	for _, id := range []marotte.ChatID{"c1", "c2"} {
 		_, _ = cs.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool {
@@ -311,6 +319,7 @@ func TestMoveChatProfile_WritesOnlyThatChatsHeader(t *testing.T) {
 }
 
 func TestMoveChatProfile_TheSameProfileChangesNothing(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name, c.SecurityProfile = "A", policyfile.ProfileTrusted
@@ -329,6 +338,7 @@ func TestMoveChatProfile_TheSameProfileChangesNothing(t *testing.T) {
 }
 
 func TestMoveChatProfile_AnUnknownChatIsNotCreated(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 
 	found, changed, err := h.MoveChatProfile(t.Context(), "nope", policyfile.ProfileReadOnly)

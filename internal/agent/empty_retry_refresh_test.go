@@ -27,6 +27,7 @@ func refreshHub(t *testing.T) (*Runtime, *testChatStore, *fakeBridge, marotte.Ta
 // An empty turn's refresh that runs after the chat's close committed touches nothing: neither the reopened chat's
 // session nor the closing one, and the record keeps its session id.
 func TestEmptyRetry_ARefreshAfterAReopenTouchesNothing(t *testing.T) {
+	t.Parallel()
 	t.Run("after a reopen", func(t *testing.T) {
 		h, cs, _, tab, old, sessionID := refreshHub(t)
 		if code := postCloseTab(t, h, tab); code != http.StatusOK {
@@ -173,6 +174,7 @@ func (s *signalMutate) Mutate(ctx context.Context, id marotte.ChatID, fn func(c 
 
 // A close that commits while the refresh's detach waits for the chat's store lock keeps the record's session id.
 func TestEmptyRetry_ACutDuringTheDetachsLockWaitKeepsTheSessionID(t *testing.T) {
+	t.Parallel()
 	h, cs, _, _, old, sessionID := refreshHub(t)
 	locked, unblock := make(chan struct{}), make(chan struct{})
 	go func() {
@@ -210,6 +212,7 @@ func TestEmptyRetry_ACutDuringTheDetachsLockWaitKeepsTheSessionID(t *testing.T) 
 // The refresh lets go of its session through its own lease: a ready entry's session is released once and the entry
 // is gone; an entry the release check claimed is left to it, with no turn closed and the detach still comparing.
 func TestEmptyRetry_TheRefreshReleasesThroughItsLease(t *testing.T) {
+	t.Parallel()
 	t.Run("a ready entry", func(t *testing.T) {
 		h, cs, br, _, sb, _ := refreshHub(t)
 		releases := 0

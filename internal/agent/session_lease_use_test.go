@@ -11,6 +11,7 @@ import (
 )
 
 func TestSessionLease_ARefusedLeaseRunsNothing(t *testing.T) {
+	t.Parallel()
 	r := newTurnRegistry(nopTurnRecords{})
 	const chatID marotte.ChatID = "chat-lease"
 	sb := newSharedBridge(r.testLifecycle(chatID))
@@ -55,6 +56,7 @@ func (l lockProbeLife) beginLease(*sharedBridge, context.CancelCauseFunc) (conte
 func (lockProbeLife) closingSession(*sharedBridge) bool { return false }
 
 func TestSessionLease_UseHoldsNoLockAcrossBeginLease(t *testing.T) {
+	t.Parallel()
 	free := false
 	life := &lockProbeLife{free: &free}
 	sb := newSharedBridge(life)
@@ -69,6 +71,7 @@ func TestSessionLease_UseHoldsNoLockAcrossBeginLease(t *testing.T) {
 }
 
 func TestNewSharedBridge_PanicsOnANilLife(t *testing.T) {
+	t.Parallel()
 	defer func() {
 		r := recover()
 		msg, _ := r.(string)
@@ -81,6 +84,7 @@ func TestNewSharedBridge_PanicsOnANilLife(t *testing.T) {
 }
 
 func TestSessionLease_TheCommitCutsARunningLease(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	const chatID marotte.ChatID = "chat-cut"
@@ -118,6 +122,7 @@ func TestSessionLease_TheCommitCutsARunningLease(t *testing.T) {
 
 // The commit has cut a running lease by the time it returns, so a check the lease makes after the commit fails.
 func TestSessionLease_TheCommitHasCutTheLeaseWhenItReturns(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	const chatID marotte.ChatID = "chat-cut-sync"

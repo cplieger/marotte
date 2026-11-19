@@ -10,6 +10,7 @@ import (
 // TestChatSteeringReachesBothChatVerbsAndNotAnObserver pins chat-only steering on session/new and session/load, and
 // its absence from an observer pass.
 func TestChatSteeringReachesBothChatVerbsAndNotAnObserver(t *testing.T) {
+	t.Parallel()
 	sentinel := []marotte.ClientSteeringDoc{{Name: "marotte", Inclusion: "always", Content: "probe"}}
 	for _, tc := range []struct {
 		name    string

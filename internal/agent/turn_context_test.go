@@ -89,6 +89,7 @@ func TestTurnContext_CleanupCancels(t *testing.T) {
 
 // TestTurnContext_PreservesValues pins that WithoutCancel severs cancellation, not values.
 func TestTurnContext_PreservesValues(t *testing.T) {
+	t.Parallel()
 	h, cancelLifetime := hubOnLifetime(t)
 	defer cancelLifetime()
 

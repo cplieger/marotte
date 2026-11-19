@@ -10,6 +10,7 @@ import (
 )
 
 func TestChatHold_CommitEndsTheLife(t *testing.T) {
+	t.Parallel()
 	const chatID marotte.ChatID = "c-hold"
 	t.Run("commit", func(t *testing.T) {
 		h, _, _ := newTestHub()

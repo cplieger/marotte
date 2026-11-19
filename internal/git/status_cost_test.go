@@ -61,6 +61,9 @@ func writeSynthRepos(t *testing.T, work string, repos int) {
 func TestStatusCost_StatusSummaryHoldsItsBudget(t *testing.T) {
 	testsupport.RequireCostBuild(t)
 	skipNoGit(t)
+	if !testsupport.Alone(t) {
+		return
+	}
 	// exec.Cmd hands each git it starts the whole environment, so the scan would cost what the host exports: a
 	// GitHub runner's variables more than doubled its bytes.
 	home := testsupport.FixedLengthDir(t)

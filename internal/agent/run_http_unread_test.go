@@ -13,6 +13,7 @@ import (
 // A run control whose answer arrived and could not be read may have taken effect: 502 sending the reader to a
 // refresh, never KAS's refusal (409) or marotte's own fault (500).
 func TestControlHandler_AnAnswerThatCouldNotBeReadIsNotARefusal(t *testing.T) {
+	t.Parallel()
 	unread := map[string]error{
 		"an undecoded answer": undecodedReply(),
 		"an oversize answer":  &marotte.TransportError{Err: marotte.ErrFrameTooLarge},
@@ -53,6 +54,7 @@ func TestControlHandler_AnAnswerThatCouldNotBeReadIsNotARefusal(t *testing.T) {
 // An inspect answer that arrived unread says nothing about whether the run exists: 502, never the 404 a client
 // treats as final. Only KAS's own refusal is the engine saying it has no such run.
 func TestWriteInspectErr_AnAnswerThatCouldNotBeReadIsNotRunNotFound(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		err  error
 		want int
@@ -79,6 +81,7 @@ func TestWriteInspectErr_AnAnswerThatCouldNotBeReadIsNotRunNotFound(t *testing.T
 // A resume whose answer could not be read may have re-driven the run, so the run gets its deadline as a resume
 // that took does; a resume KAS refused leaves the run unbounded.
 func TestResume_AnAnswerThatCouldNotBeReadArmsTheDeadline(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		arm     func(br *fakeBridge)
 		bounded bool

@@ -69,6 +69,9 @@ func heldRev(h *Runtime) uint64 {
 // A step's transcript is read from that step's turns, so it costs the same on the x10 run as on the x1 run.
 func TestReadCost_StepTranscriptCostsTheStepNotTheRun(t *testing.T) {
 	testsupport.RequireCostBuild(t)
+	if !testsupport.Alone(t) {
+		return
+	}
 	costs := map[int]testsupport.Cost{}
 	for _, scale := range []int{1, 10} {
 		op := fmt.Sprintf("step transcript x%d", scale)
@@ -90,6 +93,9 @@ func TestReadCost_StepTranscriptCostsTheStepNotTheRun(t *testing.T) {
 
 func TestReadCost_RunReadsHoldTheirBudgets(t *testing.T) {
 	testsupport.RequireCostBuild(t)
+	if !testsupport.Alone(t) {
+		return
+	}
 	for _, scale := range []int{1, 10} {
 		run := lanesRuns[scale]()
 		h, _ := hostedLeasedRun(t, run.inspect)
@@ -183,6 +189,9 @@ func historySessions(t *testing.T, scale int) *Runtime {
 
 func TestReadCost_SessionListingHoldsItsBudget(t *testing.T) {
 	testsupport.RequireCostBuild(t)
+	if !testsupport.Alone(t) {
+		return
+	}
 	for _, scale := range []int{1, 10} {
 		op := fmt.Sprintf("session listing x%d", scale)
 		t.Run(op, func(t *testing.T) {

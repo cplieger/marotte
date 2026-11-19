@@ -31,6 +31,7 @@ func resendFixture(t *testing.T, configDir string, seedLane func(lane *fakeBridg
 }
 
 func TestEngineLive_APushTheEngineMissedIsResentAtTheNextOpen(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		body   string
@@ -61,6 +62,7 @@ func TestEngineLive_APushTheEngineMissedIsResentAtTheNextOpen(t *testing.T) {
 }
 
 func TestEngineLive_ASettingTheEngineStartFailedToSendIsSentAtTheNextOpen(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		boot   string
@@ -104,6 +106,7 @@ func TestEngineLive_ASettingTheEngineStartFailedToSendIsSentAtTheNextOpen(t *tes
 }
 
 func TestOpenBridge_AFailedContentCollectionNotifyIsResentAtTheNextOpen(t *testing.T) {
+	t.Parallel()
 	configDir := t.TempDir()
 	rewriteConfigByHand(t, configDir, `{"content_collection_enabled":false}`)
 	h, src := resendFixture(t, configDir, nil, nil)
@@ -127,6 +130,7 @@ func TestOpenBridge_AFailedContentCollectionNotifyIsResentAtTheNextOpen(t *testi
 }
 
 func TestOpenBridge_AMissedPushIsHeldOverAnUnreadableDocumentAndResentOnceItParses(t *testing.T) {
+	t.Parallel()
 	configDir := t.TempDir()
 	h, src := resendFixture(t, configDir, nil, nil)
 	openChat(t, h, "c1")
@@ -152,6 +156,7 @@ func TestOpenBridge_AMissedPushIsHeldOverAnUnreadableDocumentAndResentOnceItPars
 
 // The engine starts on the resolved value, which initialize carries, so a start sends no notification.
 func TestEngineSpawn_StartsOnTheResolvedContentCollection(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		body string

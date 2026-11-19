@@ -50,6 +50,7 @@ func liveEngine(t *testing.T, configDir string) (*Runtime, *fakeBridge) {
 
 // A settings write sends the ignore list once, on the engine, however many sessions are open.
 func TestSettingsWrite_SendsTheIgnoreListOnceOnTheEngine(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	h, lane := liveEngine(t, dir)
 	writeIgnoreFiles(t, dir, []string{".gitignore"})
@@ -104,6 +105,7 @@ func policyErrors(h *Runtime) []marotte.PolicyErrorItem {
 
 // The broadcast shows the reader why their edit did nothing, and what an engine started before the fix enforces.
 func TestSettingsWrite_TellsTheClientWhatARestartWouldEnforce(t *testing.T) {
+	t.Parallel()
 	const keeps = "keeps enforcing its previous list"
 	last := "enforces the last list marotte read"
 	floor := "enforces only " + settings.AgentIgnoreFloor
@@ -235,6 +237,7 @@ func TestSpawnIgnoreFiles_LogsTheFloorOnlyWhenTheFloorIsSent(t *testing.T) {
 
 // The one engine build carries the ignore-list resolver, read at send time with the floor leading.
 func TestResolveEngine_CarriesTheIgnoreListResolver(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeIgnoreFiles(t, dir, []string{".gitignore"})
 	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil),

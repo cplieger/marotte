@@ -173,6 +173,7 @@ const kasPowersListReply = `{"powers":[
 ],"errors":[]}`
 
 func TestHandlePowersList_MergesTheCatalogueWithWhatKASReports(t *testing.T) {
+	t.Parallel()
 	backend := &fakePowers{catalog: []powers.Entry{
 		{Name: "postman", DisplayName: "API Testing", PublisherTier: "Official"},
 		{Name: "figma", DisplayName: "Figma"},
@@ -216,6 +217,7 @@ func TestHandlePowersList_MergesTheCatalogueWithWhatKASReports(t *testing.T) {
 }
 
 func TestHandlePowersList_EachHalfFailsAlone(t *testing.T) {
+	t.Parallel()
 	backend := &fakePowers{catalogErr: errors.New("offline")}
 	h, br := newPowersHub(t, backend)
 	br.setCallResult(methodKiroPowersList, json.RawMessage(kasPowersListReply))
@@ -244,6 +246,7 @@ func TestHandlePowersList_EachHalfFailsAlone(t *testing.T) {
 }
 
 func TestHandlePowersList_AFailedPowerMakesTheInstalledHalfPartialAndCarriesKASReason(t *testing.T) {
+	t.Parallel()
 	var errs strings.Builder
 	for i := range maxPowerLoadErrors + 5 {
 		if i > 0 {
@@ -285,6 +288,7 @@ func installReq(method, path, name string) *http.Request {
 }
 
 func TestHandlePowerInstall_RunsTheVerbRefreshesTheEngineAndBroadcasts(t *testing.T) {
+	t.Parallel()
 	backend := &fakePowers{}
 	h, engine := newPowersHub(t, backend)
 
@@ -342,6 +346,7 @@ func TestHandlePowerInstall_OutlivesTheRequestButNotShutdown(t *testing.T) {
 
 // An install tells the running engine to rescan, once for every session.
 func TestHandlePowerInstall_RefreshesTheRunningEngine(t *testing.T) {
+	t.Parallel()
 	h, engine := newPowersHub(t, &fakePowers{})
 	rec := httptest.NewRecorder()
 	h.powers.handleInstall(rec, installReq(http.MethodPost, "/api/powers/postman/install", "postman"))
@@ -351,6 +356,7 @@ func TestHandlePowerInstall_RefreshesTheRunningEngine(t *testing.T) {
 }
 
 func TestHandlePowerInstall_Refusals(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		err      error
 		name     string
@@ -382,6 +388,7 @@ func TestHandlePowerInstall_Refusals(t *testing.T) {
 }
 
 func TestHandlePowerVerbs_ARenderFailureStillConvergesAndSaysTheChangeWasMade(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		method  string
@@ -422,6 +429,7 @@ func TestHandlePowerVerbs_ARenderFailureStillConvergesAndSaysTheChangeWasMade(t 
 }
 
 func TestPowersRoutes_AnswerUnavailableWithNoBackend(t *testing.T) {
+	t.Parallel()
 	h, _ := newColdTestHub()
 	h.powers.backend = nil
 	for _, tc := range []struct {
@@ -442,6 +450,7 @@ func TestPowersRoutes_AnswerUnavailableWithNoBackend(t *testing.T) {
 }
 
 func TestPowers_AnAdministratorLockRefusesInstallAndLeavesRemoval(t *testing.T) {
+	t.Parallel()
 	backend := &fakePowers{}
 	h, br := newPowersHub(t, backend)
 	h.powers.locks = func() map[string]marotte.GovernanceLock {
@@ -476,6 +485,7 @@ func TestPowers_AnAdministratorLockRefusesInstallAndLeavesRemoval(t *testing.T) 
 }
 
 func TestPowers_ALockLandingAfterThePrecheckStillRefusesTheInstall(t *testing.T) {
+	t.Parallel()
 	backend := &fakePowers{}
 	h, _ := newPowersHub(t, backend)
 	var reads atomic.Int32
@@ -500,6 +510,7 @@ func TestPowers_ALockLandingAfterThePrecheckStillRefusesTheInstall(t *testing.T)
 }
 
 func TestHandlePowerServers_NamesTheDeclaredServers(t *testing.T) {
+	t.Parallel()
 	h, _ := newPowersHub(t, &fakePowers{})
 	rec := httptest.NewRecorder()
 	h.powers.handleServers(rec, installReq(http.MethodGet, "/api/powers/postman/servers", "postman"))
@@ -521,6 +532,7 @@ func itemsChangedMsg(status string) *marotte.RPCResponse {
 }
 
 func TestPowersItemsChanged_FromAChatSessionSyncsAndBroadcasts(t *testing.T) {
+	t.Parallel()
 	backend := &fakePowers{}
 	h, _ := newPowersHub(t, backend)
 	h.translateACPEvent("c1", h.originOf("c1"), itemsChangedMsg("success"))
@@ -536,6 +548,7 @@ func TestPowersItemsChanged_FromAChatSessionSyncsAndBroadcasts(t *testing.T) {
 
 // items_changed is workspace-global: the one table claims it on an observer's or the engine's lane too.
 func TestPowersItemsChanged_FromAnyLane(t *testing.T) {
+	t.Parallel()
 	backend := &fakePowers{}
 	h, _ := newPowersHub(t, backend)
 	if !h.dispatchWorkspace(t.Context(), "", itemsChangedMsg("success")) {
@@ -548,6 +561,7 @@ func TestPowersItemsChanged_FromAnyLane(t *testing.T) {
 }
 
 func TestPowersItemsChanged_NeverWaitsOnASlowSyncAndCoalesces(t *testing.T) {
+	t.Parallel()
 	backend := &fakePowers{syncEntered: make(chan struct{}), syncRelease: make(chan struct{})}
 	h, _ := newPowersHub(t, backend)
 	h.powers.itemsChanged(t.Context(), json.RawMessage(`{"status":"success"}`))
@@ -575,6 +589,7 @@ func TestPowersItemsChanged_NeverWaitsOnASlowSyncAndCoalesces(t *testing.T) {
 }
 
 func TestPowers_TheLockKeepsInstalledServersOutOfEveryRender(t *testing.T) {
+	t.Parallel()
 	backend := &fakePowers{rendered: make(chan struct{}, 1)}
 	h, br := newPowersHub(t, backend)
 	var mu sync.Mutex
@@ -632,6 +647,7 @@ func TestPowers_TheLockKeepsInstalledServersOutOfEveryRender(t *testing.T) {
 }
 
 func TestPowers_ServersStayOffUntilTheAdministratorRulesResolve(t *testing.T) {
+	t.Parallel()
 	backend := &fakePowers{}
 	h, _ := newColdTestHub()
 	h.powers.backend = backend
@@ -657,6 +673,7 @@ func TestPowers_ServersStayOffUntilTheAdministratorRulesResolve(t *testing.T) {
 }
 
 func TestPowers_InstallWaitsForTheAdministratorRules(t *testing.T) {
+	t.Parallel()
 	backend := &fakePowers{}
 	h, br := newColdTestHub()
 	h.powers.backend = backend
@@ -692,6 +709,7 @@ func TestPowers_InstallWaitsForTheAdministratorRules(t *testing.T) {
 }
 
 func TestHandlePowersList_APowerWhoseServersCouldNotBeConfiguredIsALoadError(t *testing.T) {
+	t.Parallel()
 	backend := &fakePowers{syncErr: &powers.PartialError{Failed: []string{"broken", "both"}}}
 	h, br := newPowersHub(t, backend)
 	reply := `{"powers":[{"name":"postman"}],"errors":[{"name":"both","message":"kas could not load it"}]}`

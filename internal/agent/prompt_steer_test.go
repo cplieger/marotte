@@ -15,6 +15,7 @@ import (
 // A Send placed while the steer ahead of it waits for kiro-cli's answer is a steer too: it answers steered once
 // kiro-cli holds it, never queued, and reaches kiro-cli after the one ahead.
 func TestCmdPrompt_ASendBehindASteerInFlightIsSteeredAfterIt(t *testing.T) {
+	t.Parallel()
 	s, _, br := steerOpsHub(t)
 	k := kas320On(s.h, "c1", br)
 	id, _ := s.h.stagePromptTurn(t, "c1")
@@ -50,6 +51,7 @@ func TestCmdPrompt_ASendBehindASteerInFlightIsSteeredAfterIt(t *testing.T) {
 
 // A steer the agent reads before kiro-cli's answer to it folds is answered steered: the read is its outcome.
 func TestCmdPrompt_ASteerReadBeforeKiroCLIAnswersIsSteered(t *testing.T) {
+	t.Parallel()
 	s, _, br := steerOpsHub(t)
 	id, _ := s.h.stagePromptTurn(t, "c1")
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
@@ -71,6 +73,7 @@ func TestCmdPrompt_ASteerReadBeforeKiroCLIAnswersIsSteered(t *testing.T) {
 // own prompt, whose open leaves the composer alone: the steer's POST owed no composer settle, and the composer may
 // hold the user's next words by then.
 func TestCmdPrompt_ASteeredSendTakenLaterAsATurnLeavesTheComposer(t *testing.T) {
+	t.Parallel()
 	s, cs, _ := steerOpsHub(t)
 	id, _ := s.h.stagePromptTurn(t, "c1")
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))

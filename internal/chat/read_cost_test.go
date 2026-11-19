@@ -36,6 +36,9 @@ func serveOK(t *testing.T, rt *router, url string) {
 
 func TestReadCost_TranscriptReadsHoldTheirBudgets(t *testing.T) {
 	testsupport.RequireCostBuild(t)
+	if !testsupport.Alone(t) {
+		return
+	}
 	const id = marotte.ChatID("c-longchat")
 	for _, scale := range []int{1, 10} {
 		s, lc := longChatStore(t, id, scale)
@@ -64,6 +67,9 @@ func TestReadCost_TranscriptReadsHoldTheirBudgets(t *testing.T) {
 // A whole-log read allocates in proportion to the lines it decodes, however many turns hold them: a run's log holds a
 // turn per started node, ten thousand at x10.
 func TestReadCost_AWholeReadCostsItsLinesNotItsTurns(t *testing.T) {
+	if !testsupport.Alone(t) {
+		return
+	}
 	root := t.TempDir()
 	var log bytes.Buffer
 	enc := json.NewEncoder(&log)

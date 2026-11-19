@@ -36,6 +36,7 @@ func startTool(t *testing.T, log *turnlog.Turn, id string) {
 }
 
 func TestCompactionReap_TripsTheSilentTurn(t *testing.T) {
+	t.Parallel()
 	h, turnID, _, pctx := newCompactionReapFixture(t)
 	synctest.Test(t, func(t *testing.T) {
 		h.coord.CompactionFailed("c1", turnID, "compaction failed")
@@ -59,6 +60,7 @@ func TestCompactionReap_TripsTheSilentTurn(t *testing.T) {
 }
 
 func TestCompactionReap_ReArmsWhenTheBackendSpoke(t *testing.T) {
+	t.Parallel()
 	h, turnID, _, pctx := newCompactionReapFixture(t)
 	gen := h.coord.turns.attachForwardNow("c1").gen
 	synctest.Test(t, func(t *testing.T) {
@@ -78,6 +80,7 @@ func TestCompactionReap_ReArmsWhenTheBackendSpoke(t *testing.T) {
 }
 
 func TestCompactionReap_DoesNotRearmForAToolThatPredatesTheBudget(t *testing.T) {
+	t.Parallel()
 	h, turnID, log, pctx := newCompactionReapFixture(t)
 
 	synctest.Test(t, func(t *testing.T) {
@@ -95,6 +98,7 @@ func TestCompactionReap_DoesNotRearmForAToolThatPredatesTheBudget(t *testing.T) 
 }
 
 func TestCompactionReap_KeepsAToolThatStartedInsideTheBudgetAlive(t *testing.T) {
+	t.Parallel()
 	h, turnID, log, pctx := newCompactionReapFixture(t)
 
 	synctest.Test(t, func(t *testing.T) {
@@ -122,6 +126,7 @@ func TestCompactionReap_KeepsAToolThatStartedInsideTheBudgetAlive(t *testing.T) 
 }
 
 func TestCompactionReap_WithNoOpenTurnArmsNothing(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	h.coord.CompactionFailed("c1", "t-gone", "compaction failed")
 	if _, ok := h.coord.turns.lookup("c1"); ok {
@@ -131,6 +136,7 @@ func TestCompactionReap_WithNoOpenTurnArmsNothing(t *testing.T) {
 
 // A failure recorded in a turn that is no longer the chat's own arms nothing on the turn that is.
 func TestCompactionReap_ATurnNoLongerOwnArmsNothing(t *testing.T) {
+	t.Parallel()
 	h, turnID, _, _ := newCompactionReapFixture(t)
 	h.coord.CompactionFailed("c1", "t-closed-earlier", "compaction failed")
 	lc, _ := h.coord.turns.lookup("c1")
@@ -143,6 +149,7 @@ func TestCompactionReap_ATurnNoLongerOwnArmsNothing(t *testing.T) {
 }
 
 func TestCompactionReap_StoppedWhenTheTurnClosesNormally(t *testing.T) {
+	t.Parallel()
 	h, turnID, _, _ := newCompactionReapFixture(t)
 	h.coord.CompactionFailed("c1", turnID, "compaction failed")
 	turn, ok := h.coord.turns.claimTurn(t.Context(), "c1", turnID, nil)
@@ -174,6 +181,7 @@ func stallEngine(t *testing.T, h *Runtime, answers ...bool) {
 }
 
 func TestCompactionReap_WaitsOutAnEngineStall(t *testing.T) {
+	t.Parallel()
 	h, turnID, _, pctx := newCompactionReapFixture(t)
 	stallEngine(t, h, true, false)
 	synctest.Test(t, func(t *testing.T) {
@@ -192,6 +200,7 @@ func TestCompactionReap_WaitsOutAnEngineStall(t *testing.T) {
 }
 
 func TestCompactionReap_StopsWaitingAtTheStallCeiling(t *testing.T) {
+	t.Parallel()
 	h, turnID, _, pctx := newCompactionReapFixture(t)
 	stallEngine(t, h, true)
 	synctest.Test(t, func(t *testing.T) {
@@ -210,6 +219,7 @@ func TestCompactionReap_StopsWaitingAtTheStallCeiling(t *testing.T) {
 }
 
 func TestCompactionReap_AStallAfterTheTurnSpokeGetsAFreshCeiling(t *testing.T) {
+	t.Parallel()
 	h, turnID, _, pctx := newCompactionReapFixture(t)
 	gen := h.coord.turns.attachForwardNow("c1").gen
 	stallEngine(t, h, true)
@@ -270,6 +280,7 @@ func TestCompactionReap_AWakeTurnIsNotArmed(t *testing.T) {
 
 // A prompt call that returned inside the budget leaves the expiry nothing to cancel: it claims no cause.
 func TestCompactionReap_AnExpiryAfterThePromptCallEndedClaimsNothing(t *testing.T) {
+	t.Parallel()
 	h, turnID, _, pctx := newCompactionReapFixture(t)
 	synctest.Test(t, func(t *testing.T) {
 		h.coord.CompactionFailed("c1", turnID, "compaction failed")

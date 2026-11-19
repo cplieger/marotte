@@ -198,6 +198,7 @@ func noRuns(t *testing.T) json.RawMessage {
 // Every chain session is deleted with an engine call, before the chat's own session is closed, so KAS still holds the
 // session it deletes and SessionEnd fires there.
 func TestDeleteChatStateByChain_DeletesEveryChainSessionThroughTheEngine(t *testing.T) {
+	t.Parallel()
 	h, _, rig := newDeleteRig(t, noRuns(t))
 	owner := insertChatSession(t, h, rig, "c1", "sess_cur")
 	var mu sync.Mutex
@@ -233,6 +234,7 @@ func TestDeleteChatStateByChain_DeletesEveryChainSessionThroughTheEngine(t *test
 }
 
 func TestDeleteForSessions_DeletesEveryOwnedRunWhateverItsStatus(t *testing.T) {
+	t.Parallel()
 	h, _, rig := newDeleteRig(t, kasRuns(t,
 		map[string]any{"workflowId": "wf_done", "name": "r", "status": "completed", "parentSessionId": "sess_cur"},
 		map[string]any{"workflowId": "wf_live", "name": "r", "status": "running", "parentSessionId": "sess_old"},
@@ -259,6 +261,7 @@ func TestDeleteForSessions_DeletesEveryOwnedRunWhateverItsStatus(t *testing.T) {
 // A chat delete whose run list goes unanswered still deletes every run the chain launched, read off the run state KAS
 // keeps on disk: an unanswered list is not a chat that launched nothing.
 func TestDeleteForSessions_AnUnansweredRunListDeletesTheRunsKASKeepsOnDisk(t *testing.T) {
+	t.Parallel()
 	sessionsDir := t.TempDir()
 	writeKASRunState(t, sessionsDir, "wf_done", marotte.RunStatusCompleted, "sess_cur")
 	writeKASRunState(t, sessionsDir, "wf_live", marotte.RunStatusRunning, "sess_old")
@@ -274,6 +277,7 @@ func TestDeleteForSessions_AnUnansweredRunListDeletesTheRunsKASKeepsOnDisk(t *te
 }
 
 func TestDeleteChatStateByChain_DeletesRunsBeforeSessions(t *testing.T) {
+	t.Parallel()
 	h, _, rig := newDeleteRig(t, kasRuns(t,
 		map[string]any{"workflowId": "wf_1", "name": "r", "status": "paused", "parentSessionId": "sess_cur"},
 	))
@@ -293,6 +297,7 @@ func TestDeleteChatStateByChain_DeletesRunsBeforeSessions(t *testing.T) {
 }
 
 func TestDeleteChatStateByChain_ReapsWhenTheDeleteIsRefused(t *testing.T) {
+	t.Parallel()
 	sessionsDir := t.TempDir()
 	sessDir := filepath.Join(sessionsDir, "hash01", "sess_cur")
 	if err := os.MkdirAll(sessDir, 0o700); err != nil {
@@ -319,6 +324,7 @@ func TestDeleteChatStateByChain_ReapsWhenTheDeleteIsRefused(t *testing.T) {
 }
 
 func TestCloseChatState_DeletesNothing(t *testing.T) {
+	t.Parallel()
 	h, cs, rig := newDeleteRig(t, kasRuns(t,
 		map[string]any{"workflowId": "wf_1", "name": "r", "status": "running", "parentSessionId": "sess_cur"},
 	))

@@ -59,6 +59,7 @@ func TestObserverPass_InflightCoversFramesAfterThePassReturned(t *testing.T) {
 // Once Shutdown has begun an observer pass is refused at its door: no frame consumer would join inflight, so the
 // door's requests would wait out the handshake budget.
 func TestObserverPass_RefusedOnceShutdownBegan(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	var doors atomic.Int32

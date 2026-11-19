@@ -10,14 +10,15 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -31,6 +32,7 @@ type stepSteerParams struct {
 
 // Each request is sent through a method held in a local, the shape a source scan cannot follow.
 func TestRunWork_AnUnadmittedSendIsRefusedAtTheEngine(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 	eng, _ := h.engine.current()
@@ -153,9 +155,10 @@ var knownUnguarded = map[string][]string{
 // A method added to engineHandle or engineSession reaches the engine past guardRunWork through the guard's embedded
 // value, so it must be declared on the guard or classified as sending no run work.
 func TestRunWork_EveryEngineMethodIsGuardedOrClassified(t *testing.T) {
-	fset := token.NewFileSet()
+	t.Parallel()
 	declared := map[string]map[string]bool{"guardedEngine": {}, "guardedSession": {}}
-	for _, f := range parseAgentSources(t, fset) {
+	_, files := parseAgentSources(t)
+	for _, f := range files {
 		for _, decl := range f.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Recv == nil {
@@ -204,8 +207,8 @@ var guardOwners = map[string][]string{
 }
 
 func TestRunWork_TheGuardsProofIsMintedInOnePlace(t *testing.T) {
-	fset := token.NewFileSet()
-	files := parseAgentSources(t, fset)
+	t.Parallel()
+	fset, files := parseAgentSources(t)
 	runWorkVerbConsts := map[string]bool{}
 	for _, f := range files {
 		for _, decl := range f.Decls {
@@ -344,29 +347,44 @@ func isAdmissionField(e ast.Expr) bool {
 	return ok && (sel.Sel.Name == "admittedBy" || sel.Sel.Name == "admittedIn")
 }
 
-func parseAgentSources(t *testing.T, fset *token.FileSet) []*ast.File {
-	t.Helper()
-	names, err := filepath.Glob("*.go")
+// sourceSet is a directory's production files, parsed once per test binary into one FileSet; the census tests only
+// read the trees, so they share them.
+type sourceSet struct {
+	fset  *token.FileSet
+	files []*ast.File
+}
+
+func parseSources(dir string, mode parser.Mode) (sourceSet, error) {
+	names, err := filepath.Glob(filepath.Join(dir, "*.go"))
 	if err != nil {
-		t.Fatalf("glob: %v", err)
+		return sourceSet{}, fmt.Errorf("glob %s: %w", dir, err)
 	}
-	var files []*ast.File
+	set := sourceSet{fset: token.NewFileSet()}
 	for _, name := range names {
 		if strings.HasSuffix(name, "_test.go") {
 			continue
 		}
-		src, rErr := os.ReadFile(name)
-		if rErr != nil {
-			t.Fatalf("read %s: %v", name, rErr)
+		f, err := parser.ParseFile(set.fset, name, nil, mode)
+		if err != nil {
+			return sourceSet{}, fmt.Errorf("parse %s: %w", name, err)
 		}
-		f, pErr := parser.ParseFile(fset, name, src, parser.SkipObjectResolution)
-		if pErr != nil {
-			t.Fatalf("parse %s: %v", name, pErr)
-		}
-		files = append(files, f)
+		set.files = append(set.files, f)
 	}
-	if len(files) < gateSendFileFloor {
-		t.Fatalf("parsed %d production files, want at least %d", len(files), gateSendFileFloor)
+	return set, nil
+}
+
+var agentSources = sync.OnceValues(func() (sourceSet, error) { return parseSources(".", parser.SkipObjectResolution) })
+
+// parseAgentSources is the package's production files and their FileSet. A caller may append to the slice; one that
+// parses a fixture parses it into the returned FileSet.
+func parseAgentSources(t *testing.T) (*token.FileSet, []*ast.File) {
+	t.Helper()
+	set, err := agentSources()
+	if err != nil {
+		t.Fatalf("Setup: %v", err)
 	}
-	return files
+	if len(set.files) < gateSendFileFloor {
+		t.Fatalf("parsed %d production files, want at least %d", len(set.files), gateSendFileFloor)
+	}
+	return set.fset, slices.Clip(set.files)
 }

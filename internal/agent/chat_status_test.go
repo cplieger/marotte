@@ -23,6 +23,7 @@ func (c *chatStatusCache) Get(chatID marotte.ChatID) marotte.ChatStatusPayload {
 
 // TestChatStatusCache covers the status_snapshot input no message or replay supplies.
 func TestChatStatusCache(t *testing.T) {
+	t.Parallel()
 	c := newChatStatusCache()
 
 	if got := c.Get("nobody"); got.Status != "" {
@@ -103,6 +104,7 @@ func TestChatStatusCache(t *testing.T) {
 // A waiting_on_user the engine stated for the live turn's own ask goes with the turn, even when
 // marotte closes it without the engine's reverting frames.
 func TestClearAtTurnEnd_DropsEngineAskWaiting(t *testing.T) {
+	t.Parallel()
 	c := newChatStatusCache()
 	c.Merge("c1", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, TurnScoped: true})
 	c.clearAtTurnEnd("c1")
@@ -117,6 +119,7 @@ func TestClearAtTurnEnd_DropsEngineAskWaiting(t *testing.T) {
 // The newest status-bearing frame decides: the engine's turn-end restatement of a declaration
 // (turnActive false) is the agent's claim again and outlives the turn.
 func TestMerge_TurnEndRestatementRetainsDeclaration(t *testing.T) {
+	t.Parallel()
 	c := newChatStatusCache()
 	c.Merge("c1", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, TurnScoped: true})
 	c.Merge("c1", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
@@ -127,6 +130,7 @@ func TestMerge_TurnEndRestatementRetainsDeclaration(t *testing.T) {
 }
 
 func TestMerge_DescriptionOnlyKeepsTurnScoped(t *testing.T) {
+	t.Parallel()
 	c := newChatStatusCache()
 	c.Merge("c1", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, TurnScoped: true})
 	if got := c.Merge("c1", marotte.ChatStatusPayload{Description: "approve the curl call"}); !got.TurnScoped {
@@ -141,6 +145,7 @@ func TestMerge_DescriptionOnlyKeepsTurnScoped(t *testing.T) {
 // TestDischargeWaiting_BroadcastsTheClear pins that other devices need the empty chat_status frame,
 // published only when the claim actually went.
 func TestDischargeWaiting_BroadcastsTheClear(t *testing.T) {
+	t.Parallel()
 	t.Run("a retained claim is cleared and broadcast", func(t *testing.T) {
 		rt, _, _ := newTestHub()
 		rt.bus.chatStatus.Merge("c1", marotte.ChatStatusPayload{
@@ -194,6 +199,7 @@ func TestDischargeWaiting_BroadcastsTheClear(t *testing.T) {
 // TestChatStatusMerge_OmitIsUnchanged is exhaustive over the merge truth table, with distinct
 // values so every row shows which side supplied each field.
 func TestChatStatusMerge_OmitIsUnchanged(t *testing.T) {
+	t.Parallel()
 	const (
 		prevStatus = marotte.ChatStatusWaitingOnUser
 		prevDesc   = "d1"
@@ -281,6 +287,7 @@ func TestChatStatusMerge_OmitIsUnchanged(t *testing.T) {
 
 // TestEmitChatStatus_PublishesTheMergedPayload asserts the frame separately: the client replaces both fields from it.
 func TestEmitChatStatus_PublishesTheMergedPayload(t *testing.T) {
+	t.Parallel()
 	rt, _, _ := newTestHub()
 	rt.bus.chatStatus.Merge("c1", marotte.ChatStatusPayload{
 		Status:      marotte.ChatStatusWaitingOnUser,
@@ -305,6 +312,7 @@ func TestEmitChatStatus_PublishesTheMergedPayload(t *testing.T) {
 
 // TestEmitChatStatus_StatusOnlyKeepsTheDescription is the mirror, and pins that a real declaration discharges the dot.
 func TestEmitChatStatus_StatusOnlyKeepsTheDescription(t *testing.T) {
+	t.Parallel()
 	rt, _, _ := newTestHub()
 	rt.bus.chatStatus.Merge("c1", marotte.ChatStatusPayload{
 		Status:      marotte.ChatStatusWaitingOnUser,
@@ -334,6 +342,7 @@ func TestEmitChatStatus_StatusOnlyKeepsTheDescription(t *testing.T) {
 // TestEmitChatStatus_DoesNotStageAMergedDescription pins that Turn.statusDesc takes the raw declaration,
 // or a previous turn's words reach this turn's push.
 func TestEmitChatStatus_DoesNotStageAMergedDescription(t *testing.T) {
+	t.Parallel()
 	rt, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
 	rt.bus.chatStatus.Merge("c1", marotte.ChatStatusPayload{
@@ -381,6 +390,7 @@ func chatStatusFrames(t *testing.T, events []sse.ReplayEvent) []marotte.ChatStat
 }
 
 func TestOpenTurn_DischargesTheWaitingRetention(t *testing.T) {
+	t.Parallel()
 	waiting := marotte.ChatStatusPayload{
 		Status:      marotte.ChatStatusWaitingOnUser,
 		Description: "waiting on the user to disposition both proposals",

@@ -13,6 +13,7 @@ import (
 )
 
 func TestRunReadPosition(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		status marotte.RunStatus
 		turns  uint64
@@ -73,6 +74,7 @@ func servedPosition(t *testing.T, h *Runtime) uint64 {
 }
 
 func TestHandleRun_ServesTheReadPosition(t *testing.T) {
+	t.Parallel()
 	t.Run("a terminal run counts its log's turns plus one", func(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
 		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", marotte.RunStatusAborted, ""))
@@ -127,6 +129,7 @@ func unreadableRunLog(t *testing.T, h *Runtime) {
 // The ack clamp reads the run as the reply does, in any process: one restarted since the page read
 // the run, or one that never served it, still lets that page's acknowledgement land.
 func TestRunReadBound_IsTheRunsPositionNow(t *testing.T) {
+	t.Parallel()
 	t.Run("a terminal run never read in this process", func(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
 		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", marotte.RunStatusCompleted, ""))
@@ -166,6 +169,7 @@ func TestRunReadBound_IsTheRunsPositionNow(t *testing.T) {
 // A retry's step turn opening while the terminal state is being read must not pair with that state
 // into a position no reply describes, which a watching page would acknowledge ahead of the cue.
 func TestHandleRun_CountsTurnsBeforeReadingTheState(t *testing.T) {
+	t.Parallel()
 	h, br := seedChatParentedRun(t, true)
 	stepTurnsInRunLog(t, h, 2)
 	terminal := inspectReply(t, "wf_1", marotte.RunStatusFailed, "")

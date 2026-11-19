@@ -444,7 +444,7 @@ func (bc *bridgeCoordinator) sendMode(ctx context.Context, s *command.Submission
 
 // Submit places a sent message on the chat's run list (command.runQueue.Submit).
 func (bc *bridgeCoordinator) Submit(ctx context.Context, chatID marotte.ChatID, stamp uint64, s *command.Submission) (command.SubmitAnswer, error) {
-	lc, err := bc.runLife(ctx, chatID, stamp, cmp.Or(s.AdmitWait, command.AdmissionWait))
+	lc, err := bc.runLife(ctx, chatID, stamp, cmp.Or(s.AdmitWait, bc.lifecycle.admissionWait))
 	if err != nil {
 		return command.SubmitAnswer{}, err
 	}
@@ -467,7 +467,7 @@ func (bc *bridgeCoordinator) Submit(ctx context.Context, chatID marotte.ChatID, 
 		return out, err
 	}
 	testHookSubmitPlaced(chatID)
-	return lc.awaitLaunch(ctx, e, w)
+	return lc.awaitLaunch(ctx, e, w, bc.lifecycle.admissionWait)
 }
 
 // testHookSubmitPlaced runs once Submit has placed its entry and released the chat's lock, before it waits: the
@@ -623,9 +623,9 @@ func cappedRows(entries []marotte.RunEntry) []*marotte.QueuedPrompt {
 }
 
 // awaitLaunch waits on w, the first outcome of submit's own entry e (its turn open, kiro-cli holding its steer), up to
-// command.AdmissionWait; past it, one section answers queued unless the outcome answered first.
-func (lc *chatLifecycle) awaitLaunch(ctx context.Context, e *runEntry, w *launchWait) (command.SubmitAnswer, error) {
-	timer := time.NewTimer(command.AdmissionWait)
+// wait; past it, one section answers queued unless the outcome answered first.
+func (lc *chatLifecycle) awaitLaunch(ctx context.Context, e *runEntry, w *launchWait, wait time.Duration) (command.SubmitAnswer, error) {
+	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	select {
 	case <-w.ch:
@@ -708,9 +708,9 @@ func (lc *chatLifecycle) takeIdleLocked(e *runEntry, stamp uint64) (command.Idle
 
 // TakeIdle takes the chat for a revert or a summary, which run now or not at all (command.runQueue.TakeIdle).
 func (bc *bridgeCoordinator) TakeIdle(
-	ctx context.Context, chatID marotte.ChatID, kind command.IdleKind, stamp uint64, wait time.Duration,
+	ctx context.Context, chatID marotte.ChatID, kind command.IdleKind, stamp uint64,
 ) (command.IdleAdmission, command.Reservation, string) {
-	deadline, cancel := context.WithTimeout(ctx, wait)
+	deadline, cancel := context.WithTimeout(ctx, bc.lifecycle.admissionWait)
 	defer cancel()
 	lc, err := bc.turns.lifecycleAt(deadline, chatID, stamp)
 	switch {
@@ -761,7 +761,7 @@ func (bc *bridgeCoordinator) SummaryLaunched(chatID marotte.ChatID, entryID stri
 
 // SendNow moves a row to the front and stops the turn the press was drawn against (command.runQueue.SendNow).
 func (bc *bridgeCoordinator) SendNow(ctx context.Context, chatID marotte.ChatID, stamp uint64, id, stop string, hasStop bool) (command.RunStop, error) {
-	lc, err := bc.runLife(ctx, chatID, stamp, command.AdmissionWait)
+	lc, err := bc.runLife(ctx, chatID, stamp, bc.lifecycle.admissionWait)
 	if err != nil {
 		return command.RunStop{}, err
 	}
@@ -813,7 +813,7 @@ func (bc *bridgeCoordinator) leadSteer(chatID marotte.ChatID, id string) bool {
 
 // Unqueue removes a waiting row; an unknown id is success.
 func (bc *bridgeCoordinator) Unqueue(ctx context.Context, chatID marotte.ChatID, id string) error {
-	lc, err := bc.runLife(ctx, chatID, bc.LifeStamp(), command.AdmissionWait)
+	lc, err := bc.runLife(ctx, chatID, bc.LifeStamp(), bc.lifecycle.admissionWait)
 	if err != nil {
 		return err
 	}
@@ -832,7 +832,7 @@ func (bc *bridgeCoordinator) Unqueue(ctx context.Context, chatID marotte.ChatID,
 
 // Resume lets the rows a stop paused go in order (command.runQueue.Resume).
 func (bc *bridgeCoordinator) Resume(ctx context.Context, chatID marotte.ChatID, stamp uint64) error {
-	lc, err := bc.runLife(ctx, chatID, stamp, command.AdmissionWait)
+	lc, err := bc.runLife(ctx, chatID, stamp, bc.lifecycle.admissionWait)
 	if err != nil {
 		return err
 	}

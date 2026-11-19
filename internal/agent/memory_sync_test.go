@@ -23,6 +23,7 @@ func memorySyncView(value, compose, contributions, assertions string) json.RawMe
 }
 
 func TestMemorySyncChoiceDecode(t *testing.T) {
+	t.Parallel()
 	const none = `[{"layer":"replace-default","compose":"replace"}]`
 	cases := map[string]struct {
 		view json.RawMessage
@@ -74,6 +75,7 @@ func TestMemorySyncChoiceDecode(t *testing.T) {
 }
 
 func TestMemorySyncStatusDecode(t *testing.T) {
+	t.Parallel()
 	two := 2
 	cases := map[string]struct {
 		raw  string
@@ -102,6 +104,7 @@ func TestMemorySyncStatusDecode(t *testing.T) {
 }
 
 func TestMemorySyncGet_AnswersStatusAndChoice(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.setCallResult(methodKiroMemoryGetSyncStatus, json.RawMessage(`{"state":"synced","lastSyncAt":"2026-11-06T10:00:00.000Z","pending":0}`))
@@ -130,6 +133,7 @@ func putMemorySync(h *Runtime, body string) *httptest.ResponseRecorder {
 
 // kiro-cli 3.4.0 grants a client cloudMemory at user-synced only, so every PUT writes there.
 func TestMemorySyncPutWritesTheAccountLayer(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ body, value string }{
 		{`{"on":true}`, "on"},
 		{`{"on":false}`, "off"},
@@ -163,6 +167,7 @@ var configurationUnreadableRefusal = &marotte.RPCError{
 // KAS answers getState unreadable while the signed-in user is unnamed at engine start, and answers it once the
 // lookup resolves, so the read asks again rather than failing the Memories tab.
 func TestMemorySyncGet_AsksAgainWhileTheConfigurationIsUnreadable(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.setCallResult(methodKiroMemoryGetSyncStatus, json.RawMessage(`{"state":"off"}`))
@@ -189,6 +194,7 @@ func TestMemorySyncGet_AsksAgainWhileTheConfigurationIsUnreadable(t *testing.T) 
 
 // A read whose deadline ends while KAS still cannot read the configuration answers a retryable 503.
 func TestMemorySyncGet_AnUnreadableConfigurationAtTheDeadlineIsUnavailable(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.setCallResult(methodKiroMemoryGetSyncStatus, json.RawMessage(`{"state":"off"}`))
@@ -204,6 +210,7 @@ func TestMemorySyncGet_AnUnreadableConfigurationAtTheDeadlineIsUnavailable(t *te
 }
 
 func TestConfigurationRetryDelay(t *testing.T) {
+	t.Parallel()
 	for n, want := range map[int]time.Duration{1: time.Second, 2: 2 * time.Second, 3: 4 * time.Second, 4: 8 * time.Second, 9: 8 * time.Second} {
 		if got := configurationRetryDelay(n); got != want {
 			t.Errorf("configurationRetryDelay(%d) = %v, want %v", n, got, want)
@@ -214,6 +221,7 @@ func TestConfigurationRetryDelay(t *testing.T) {
 // A PUT naming a scope comes from a page that offered a per-device switch; KAS grants no such layer, and writing the
 // account's instead would flip a choice the click did not name.
 func TestMemorySyncPutRefusesAScope(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 
@@ -229,6 +237,7 @@ func TestMemorySyncPutRefusesAScope(t *testing.T) {
 
 // A PUT answering a locked choice names the lock from the connection's view, as the GET does.
 func TestMemorySyncPutNamesLock(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.setCallResult(methodKiroConfigurationSet, json.RawMessage(
@@ -245,6 +254,7 @@ func TestMemorySyncPutNamesLock(t *testing.T) {
 }
 
 func TestMemorySyncPutRefusals(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		err      *marotte.RPCError
 		body     string
@@ -292,6 +302,7 @@ func TestMemorySyncPutRefusals(t *testing.T) {
 
 // KAS pushes the sync state whenever it moves, so an open tab refetches it.
 func TestSyncStatusNotificationPublishes(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	before := len(eventsOfType(h, marotte.EventMemorySyncChanged))

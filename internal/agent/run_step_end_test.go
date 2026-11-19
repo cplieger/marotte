@@ -74,6 +74,7 @@ func endHub(t *testing.T, reply json.RawMessage) (*Runtime, *fakeBridge) {
 }
 
 func TestEndStep_TheAvailabilityTable(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile("testdata/step_end_cases.json")
 	if err != nil {
 		t.Fatalf("Setup: reading testdata/step_end_cases.json: %v", err)
@@ -98,6 +99,7 @@ func TestEndStep_TheAvailabilityTable(t *testing.T) {
 }
 
 func TestEndStepSendsUpdateStatusWithNodeID(t *testing.T) {
+	t.Parallel()
 	for _, status := range []string{runStepCompleted, runStepFailed} {
 		t.Run(status, func(t *testing.T) {
 			h, br := endHub(t, stepEndTree(t, &stepEndCase{Run: "paused", Node: "paused", Type: stepNodeType}))
@@ -117,6 +119,7 @@ func TestEndStepSendsUpdateStatusWithNodeID(t *testing.T) {
 }
 
 func TestEndStepRefusesUnpausedStep(t *testing.T) {
+	t.Parallel()
 	for _, node := range []string{"running", "completed"} {
 		t.Run(node, func(t *testing.T) {
 			h, br := endHub(t, stepEndTree(t, &stepEndCase{Run: "running", Node: node, Type: stepNodeType}))
@@ -132,6 +135,7 @@ func TestEndStepRefusesUnpausedStep(t *testing.T) {
 }
 
 func TestEndStepRefusesAPathTheRunDoesNotHold(t *testing.T) {
+	t.Parallel()
 	h, br := endHub(t, stepEndTree(t, &stepEndCase{Run: "paused", Node: "paused", Type: stepNodeType}))
 	err := h.runs.endStep(t.Context(), "wf_1", workflow.PathKey([]string{"root", "other"}), runStepCompleted)
 	if err == nil || countCalls(br, methodKiroWorkflowUpdate) != 0 {
@@ -141,6 +145,7 @@ func TestEndStepRefusesAPathTheRunDoesNotHold(t *testing.T) {
 }
 
 func TestEndStepRefusesDuplicatePausedNodeID(t *testing.T) {
+	t.Parallel()
 	h, br := endHub(t, stepEndTree(t, &stepEndCase{Run: "paused", Node: "paused", Type: stepNodeType, Twin: "paused"}))
 	err := h.runs.endStep(t.Context(), "wf_1", targetPath, runStepCompleted)
 	if got := personAnswer(err); got != string(marotte.RunStepEndUnnamed) {
@@ -152,6 +157,7 @@ func TestEndStepRefusesDuplicatePausedNodeID(t *testing.T) {
 }
 
 func TestEndStepRunsWhileASiblingRuns(t *testing.T) {
+	t.Parallel()
 	h, br := endHub(t, stepEndTree(t, &stepEndCase{Run: "running", Node: "paused", Type: stepNodeType, Sibling: "running"}))
 	if err := h.runs.endStep(t.Context(), "wf_1", targetPath, runStepFailed); err != nil {
 		t.Fatalf("end = %v, want nil", err)
@@ -162,6 +168,7 @@ func TestEndStepRunsWhileASiblingRuns(t *testing.T) {
 }
 
 func TestEndStepMapsKASDecline(t *testing.T) {
+	t.Parallel()
 	h, br := endHub(t, stepEndTree(t, &stepEndCase{Run: "running", Node: "paused", Type: stepNodeType}))
 	const decline = "Cannot update node 'target': step 'target' is running, not paused; only a paused step can be ended with a nodeId."
 	br.setCallResult(methodKiroWorkflowUpdate, json.RawMessage(`{"workflowId":"wf_1","updated":false,"message":"`+decline+`"}`))
@@ -179,6 +186,7 @@ func TestEndStepMapsKASDecline(t *testing.T) {
 }
 
 func TestEndStep_TheRouteRefusesAStatusKASRefuses(t *testing.T) {
+	t.Parallel()
 	for _, body := range []string{`{"status":"running"}`, `{}`} {
 		t.Run(body, func(t *testing.T) {
 			h, br := endHub(t, stepEndTree(t, &stepEndCase{Run: "paused", Node: "paused", Type: stepNodeType}))
@@ -198,6 +206,7 @@ func TestEndStep_TheRouteRefusesAStatusKASRefuses(t *testing.T) {
 
 // An end goes out behind marotte's own sends to the run: refused while an answer is in flight or a stop is queued.
 func TestEndStep_WaitsOnTheRunsOwnSends(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		hold func(ctx context.Context, h *Runtime, c *askCell)
 		name string
@@ -229,6 +238,7 @@ func TestEndStep_WaitsOnTheRunsOwnSends(t *testing.T) {
 // A resume that reaches the run while a person's end of its step is between its read and its write reads the run
 // after the end: the two never interleave under the run's resume lock.
 func TestEndStep_AResumeWaitsForTheEnd(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, br := endHub(t, stepEndTree(t, &stepEndCase{Run: "paused", Node: "paused", Type: stepNodeType}))
 		br.setCallResult(methodKiroWorkflowResume, json.RawMessage(`{}`))
@@ -261,6 +271,7 @@ func TestEndStep_AResumeWaitsForTheEnd(t *testing.T) {
 // An end whose answer could not be read may have re-driven the run, so the run is bounded as an end that took; an
 // end KAS refused leaves it as it was.
 func TestEndStep_AnAnswerThatCouldNotBeReadBoundsTheRun(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		arm     func(br *fakeBridge)
 		bounded bool

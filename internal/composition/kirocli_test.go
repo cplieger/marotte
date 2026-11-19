@@ -12,6 +12,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/marotte/internal/filemode"
 	"github.com/cplieger/marotte/internal/signin"
 	"github.com/cplieger/toolbelt/v3/pin"
 )
@@ -355,7 +356,7 @@ func waitKiroReason(t *testing.T, kiro *kiroRuntime, want pin.Reason) {
 // ships; the engine's backend must be among them, or the engine spawns with no sign-in.
 func TestCompiledBackends_AreUnique(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	vault := signin.Open(ctx, t.TempDir(), signinBackends()...)
+	vault := signin.Open(ctx, t.TempDir(), filemode.OS(), signinBackends()...)
 	t.Cleanup(func() {
 		cancel()
 		vault.Wait()

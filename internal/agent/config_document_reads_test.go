@@ -17,6 +17,7 @@ import (
 // The agent's config document is one more reader of config.json's one rule: a read the rule holds answers the applied
 // document, and bytes the rule refuses are unreadable however they parse.
 func TestLastReadable_ReadsThroughTheOwnedFileRule(t *testing.T) {
+	t.Parallel()
 	read := func(l *lastReadable, dir string) (configDocument, docSource) {
 		return l.read(t.Context(), dir, readConfigDocument)
 	}
@@ -88,6 +89,7 @@ func pollConfigOnce(t *testing.T, dir string) {
 // A runtime with a restart queued reads config.json through the one rule: a held read answers the applied document,
 // and a refused one, or an absence held over it, keeps the last readable values and holds the restart.
 func TestRuntimeConfigDocument_ReadsThroughTheOwnedFileRule(t *testing.T) {
+	t.Parallel()
 	const truncated = `{"engine_heap_mib":`
 	remove := func(t *testing.T, dir string) {
 		t.Helper()

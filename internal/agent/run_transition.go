@@ -246,7 +246,7 @@ func (rs *Runs) lockRun(ctx context.Context, workflowID string, req *runRequest)
 	if req.want.actor != byPerson {
 		return rs.resumes.Lock(ctx, workflowID)
 	}
-	req.answerBy = answerDeadline()
+	req.answerBy = rs.lifecycle.answerDeadline()
 	lctx, cancel := context.WithDeadline(ctx, req.answerBy)
 	defer cancel()
 	release, err := rs.resumes.Lock(lctx, workflowID)
@@ -500,6 +500,11 @@ func (rs *Runs) holdPause(ctx context.Context, workflowID string) error {
 	}
 	slog.Info("sign-in gate: paused a running run until the agent's sign-in can be answered",
 		"workflow_id", workflowID, "answerability", m.to.String())
+	// An opening edge while the pause was in flight listed the run as running, so its finder skipped it.
+	if open, moved := rs.gate.now(); open {
+		rs.applyGateMove(moved)
+		rs.startRelease(workflowID, "", moved.opening)
+	}
 	return nil
 }
 

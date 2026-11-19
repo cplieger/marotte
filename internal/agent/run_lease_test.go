@@ -33,6 +33,7 @@ func launchableRecipe(br *fakeBridge, workflowID string) {
 // TestLaunchRun_GrantsTheRunsEnvelope pins what a launch records per origin, on one record because they
 // are read together: recipe, origin and schedule id, slot, unattended mark.
 func TestLaunchRun_GrantsTheRunsEnvelope(t *testing.T) {
+	t.Parallel()
 	slot := time.Now().Add(30 * time.Minute)
 
 	t.Run("a manual launch is attended and has no slot", func(t *testing.T) {
@@ -95,6 +96,7 @@ func TestLaunchRun_GrantsTheRunsEnvelope(t *testing.T) {
 // TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot pins that a manual run must yield to its recipe's
 // next slot, derived through schedule.NextRunFrom so it cannot drift from the runner and REST row.
 func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_manual")
 
@@ -159,6 +161,7 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 
 // TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun pins that another recipe's schedule must not bound this run.
 func TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun(t *testing.T) {
+	t.Parallel()
 	for name, rule := range map[string]struct {
 		source  string
 		enabled bool
@@ -201,6 +204,7 @@ func TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun(t *testing.T) {
 
 // TestLaunchRun_ReleasesTheLeaseWhenInvokeFails pins that a leftover lease makes the recipe look busy and arms an idle run.
 func TestLaunchRun_ReleasesTheLeaseWhenInvokeFails(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_1")
 	delete(br.callResults, methodKiroWorkflowInvoke)
@@ -228,6 +232,7 @@ func nightlyLaunch(t *testing.T) (*Runtime, *fakeBridge, *launchrule.Store, laun
 // A scheduled launch whose caller stops waiting once workflow/new has answered still starts the run and names it: the
 // row already reads that run, and a launch reported as nothing would let the next start fire the slot again.
 func TestLaunchScheduled_ACallerCancelOnceTheRunExistsStillLaunchesIt(t *testing.T) {
+	t.Parallel()
 	h, br, st, entry := nightlyLaunch(t)
 	br.refuseCancelled = true
 	ctx, cancel := context.WithCancel(t.Context())
@@ -320,6 +325,7 @@ func TestLaunchScheduled_ACallerCancelOnceTheRunExistsKeepsTheLaunchDeadline(t *
 // A run created but never invoked is named with its failure, so the runner records the slot it tried as failed with
 // that run rather than as a launch that created nothing.
 func TestLaunchScheduled_AFailedInvokeNamesTheRunWithItsFailure(t *testing.T) {
+	t.Parallel()
 	h, br, st, entry := nightlyLaunch(t)
 	delete(br.callResults, methodKiroWorkflowInvoke)
 	br.callErrs = map[string]error{methodKiroWorkflowInvoke: errHoldFault}
@@ -342,6 +348,7 @@ func TestLaunchScheduled_AFailedInvokeNamesTheRunWithItsFailure(t *testing.T) {
 // TestObserveRunComplete_ReleasesTheLeaseOfATerminalRun pins that the one site every origin reaches, including an
 // agent run with no bridge of its own.
 func TestObserveRunComplete_ReleasesTheLeaseOfATerminalRun(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		status    string
 		stillHeld bool
@@ -455,6 +462,7 @@ func TestCancelRun_ACancelledContextEndsTheWait(t *testing.T) {
 
 // LiveRuns answers leased runs; released or unknown ids are not live.
 func TestLiveRuns_NamesTheHeldLeasesAndNoOthers(t *testing.T) {
+	t.Parallel()
 	h, _ := heldRun(t, "wf_held", "code-review")
 	h.runs.grantLease(t.Context(), "wf_released", "publish", manualLaunch(), hostSec())
 	h.runs.releaseLease(t.Context(), "wf_released")
@@ -546,6 +554,7 @@ func TestReleaseLease_ReportsAReleaseItCouldNotWrite(t *testing.T) {
 // A schedule deleted and added again while its launch waits on the engine gets nothing from that launch: the run's
 // lease names the deleted rule, so neither its start nor its ending lands on the new one.
 func TestLaunchScheduled_ARunOfARecreatedScheduleLeavesTheNewRowAlone(t *testing.T) {
+	t.Parallel()
 	h, br, st, entry := nightlyLaunch(t)
 	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 		if method == methodKiroWorkflowNew {
@@ -578,6 +587,7 @@ func eventLaunch() launchOrigin {
 // A triggered launch's lease is granted between workflow/new and invoke, and the event counts as launched only on the
 // run's run_start: the grant confirms nothing.
 func TestGrantLeaseDoesNotConfirmEvent(t *testing.T) {
+	t.Parallel()
 	fc := &fakeConfirmer{}
 	h, _, br := newTestHub(WithTriggerConfirmer(fc))
 	launchableRecipe(br, "wf_1")
@@ -604,6 +614,7 @@ func TestGrantLeaseDoesNotConfirmEvent(t *testing.T) {
 
 // The coalesce key is written on every triggered lease and survives a restart; nothing in this release reads it.
 func TestTriggeredGrantStoresCoalesceKey(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	st, err := runlease.NewStore(dir)
 	if err != nil {
@@ -630,6 +641,7 @@ func TestTriggeredGrantStoresCoalesceKey(t *testing.T) {
 // A triggered run's row start is written by its confirmation, so the grant leaves the rule's row alone; a scheduled
 // grant still records the start.
 func TestTriggeredGrantWritesNoRowStart(t *testing.T) {
+	t.Parallel()
 	t.Run("triggered", func(t *testing.T) {
 		h, _, st, entry := scheduledHub(t)
 		o := triggeredLaunch(entry.ID, "github.com/o/r/run/7/success", "github.com/o/r/run/7", "run 7")
@@ -654,6 +666,7 @@ func TestTriggeredGrantWritesNoRowStart(t *testing.T) {
 // A triggered run is named after its event, which the lease alone carries: RunLabel and the run's display name read
 // the label the launch sent KAS.
 func TestTriggeredRunLabel(t *testing.T) {
+	t.Parallel()
 	h := &Runs{chats: newTestChatStore()}
 	h.grantLease(t.Context(), "wf_1", "publish", eventLaunch(), hostSec())
 
@@ -669,6 +682,7 @@ func TestTriggeredRunLabel(t *testing.T) {
 // After a restart the label comes from the persisted lease, since nothing else can rebuild an event's label; a lease
 // written before leases kept the label still rebuilds a scheduled run's.
 func TestTriggeredRunLabelSurvivesRestart(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	st, err := runlease.NewStore(dir)
 	if err != nil {

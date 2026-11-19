@@ -59,6 +59,7 @@ func heldCleanClose(t *testing.T) (h *Runtime, cs *testChatStore, br *fakeBridge
 // One row per head and event: each states the answer, the order the header lists after it and the
 // session calls kiro-cli received.
 func TestRunOrder_Table(t *testing.T) {
+	t.Parallel()
 	inBubble(t, "a prompt during a clean close's hold queues behind the closing turn, unsteered", func(t *testing.T) {
 		h, cs, br, turnID := heldCleanClose(t)
 
@@ -370,8 +371,7 @@ func TestRunOrder_Table(t *testing.T) {
 	})
 
 	inBubble(t, "the composer settles once, at the answer, when the take's open is held", func(t *testing.T) {
-		shrinkAdmissionWait(t, 60*time.Millisecond)
-		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work", withAdmissionWait(60*time.Millisecond))
 		br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
 		entered, releaseOpen := make(chan struct{}), make(chan struct{})
 		var once atomic.Bool

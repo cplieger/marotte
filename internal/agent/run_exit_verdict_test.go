@@ -26,6 +26,7 @@ func unwrittenExit() error {
 }
 
 func TestVerdictOf_AnEngineEndIsUnconfirmedOnlyForAWrittenRequest(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		err  error
 		want kasVerdict
@@ -49,6 +50,7 @@ func TestVerdictOf_AnEngineEndIsUnconfirmedOnlyForAWrittenRequest(t *testing.T) 
 // An invoke the engine ended under keeps the run when it was written, since the run survives paused, and gives it
 // back when it never reached KAS.
 func TestLaunch_AnEngineEndUnderInvokeKeepsTheRunOnlyIfWritten(t *testing.T) {
+	t.Parallel()
 	t.Run("written, on the launch route", func(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_1")
@@ -88,6 +90,7 @@ func TestLaunch_AnEngineEndUnderInvokeKeepsTheRunOnlyIfWritten(t *testing.T) {
 
 // A workflow/new the engine ended under may have created a run only if it was written.
 func TestLaunch_AnEngineEndUnderNewSendsTheReaderToHistoryOnlyIfWritten(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		err     error
 		history bool
@@ -115,6 +118,7 @@ func TestLaunch_AnEngineEndUnderNewSendsTheReaderToHistoryOnlyIfWritten(t *testi
 // A retry the engine ended under follows launch's rule: written keeps the minted lease and re-arms, unwritten gives
 // it back.
 func TestHandleRetry_AnEngineEndKeepsTheLeaseOnlyIfWritten(t *testing.T) {
+	t.Parallel()
 	t.Run("written", func(t *testing.T) {
 		h, br := seedChatParentedRun(t, true, "final-verify")
 		br.setCallErr(methodKiroWorkflowRetry, writtenExit())
@@ -151,6 +155,7 @@ func TestHandleRetry_AnEngineEndKeepsTheLeaseOnlyIfWritten(t *testing.T) {
 
 // A write the engine ended before is settled at once, so it never holds the run in the interrupted set.
 func TestWrite_AnUnwrittenRequestLeavesNoMutation(t *testing.T) {
+	t.Parallel()
 	h, br := seedChatParentedRun(t, true, "final-verify")
 	br.setCallErr(methodKiroWorkflowRetry, unwrittenExit())
 	host, err := h.runs.residentReleased(t.Context(), "wf_1")

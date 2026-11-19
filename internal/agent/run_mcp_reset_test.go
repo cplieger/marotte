@@ -46,6 +46,7 @@ func shortenLaunchResetBound(t *testing.T, d time.Duration) {
 
 // The reset precedes the host session's door: KAS's reset after the host's acquire would connect twice.
 func TestLaunchScheduled_ResetsAFailedMCPServerBeforeTheHostDoor(t *testing.T) {
+	t.Parallel()
 	h, br := resetHub(t, "everything")
 	reportMCP(t, h, "sess_chat", failedMCP("everything", marotte.MCPSource{}, "spawn ENOENT"))
 	resetsAtDoor := atomic.Int32{}
@@ -78,6 +79,7 @@ func TestLaunchScheduled_ResetsAFailedMCPServerBeforeTheHostDoor(t *testing.T) {
 // A server one session has connected and another failed is reset in the failed session, which the run's host session
 // would otherwise inherit failed; the connected session keeps its connection.
 func TestLaunchScheduled_ResetsTheSessionWhereTheServerFailed(t *testing.T) {
+	t.Parallel()
 	h, br := resetHub(t, "everything")
 	reportMCP(t, h, "sess_a", connectedMCP("everything", marotte.MCPSource{}))
 	reportMCP(t, h, "sess_b", failedMCP("everything", marotte.MCPSource{}, "spawn ENOENT"))
@@ -94,6 +96,7 @@ func TestLaunchScheduled_ResetsTheSessionWhereTheServerFailed(t *testing.T) {
 
 // A manual run's user is present and has the Reconnect button.
 func TestLaunch_AManualRunResetsNoMCPServer(t *testing.T) {
+	t.Parallel()
 	h, br := resetHub(t, "everything")
 	reportMCP(t, h, "sess_chat", failedMCP("everything", marotte.MCPSource{}, "spawn ENOENT"))
 
@@ -108,6 +111,7 @@ func TestLaunch_AManualRunResetsNoMCPServer(t *testing.T) {
 
 // A reset re-mints a pending sign-in's URL under a paste in progress, and a disabled server is not live.
 func TestLaunchScheduled_ResetsNoServerAwaitingSignInOrDisabled(t *testing.T) {
+	t.Parallel()
 	h, br := resetHub(t, "remote")
 	reportMCP(t, h, "sess_chat",
 		oauthMCP("remote", "https://auth.example/a"),
@@ -134,6 +138,7 @@ func TestLaunchScheduled_ResetsNoServerAwaitingSignInOrDisabled(t *testing.T) {
 
 // Three automatic resets per server between connects: a connect or the user's Reconnect re-arms them.
 func TestLaunchScheduled_CapsResetsUntilTheServerConnects(t *testing.T) {
+	t.Parallel()
 	failed := failedMCP("everything", marotte.MCPSource{}, "spawn ENOENT")
 
 	t.Run("a connect re-arms the cap", func(t *testing.T) {

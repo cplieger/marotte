@@ -201,6 +201,7 @@ func TestCloseChatState_WithoutAPersonStopsNothing(t *testing.T) {
 
 // A run none of whose launching chats has an open tab is not retried: a person's close stopped it.
 func TestRefuseClosedLauncher_RefusesARunWhoseLaunchingChatIsClosed(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	open := map[marotte.ChatID]bool{"c-open": true}
 	h.coord.chatHasTab = func(id marotte.ChatID) bool { return open[id] }
@@ -370,6 +371,7 @@ func TestStopChatRuns_AReopenedChatDropsTheStop(t *testing.T) {
 
 // An inspect whose pauseDetail drifted in type still reads a terminal status as the stop confirmed.
 func TestRunReadTerminal_KeepsTheStatusWhenAFieldDrifts(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	const drifted = `{"workflowId":"wf_1","state":{"workflowId":"wf_1","pauseDetail":"transient-error","status":"cancelled"}}`
 	br.setCallResult(methodKiroWorkflowInspect, json.RawMessage(drifted))
@@ -381,6 +383,7 @@ func TestRunReadTerminal_KeepsTheStatusWhenAFieldDrifts(t *testing.T) {
 
 // A retry is refused when the run's launcher is closed, even while a chat its lease keeps only in doubt has a tab.
 func TestRetryHolders_ADoubtHolderIsNotTheLauncher(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	h.coord.chatHasTab = func(id marotte.ChatID) bool { return id == "c-doubt" }
 	leaseRun(t, h, runlease.Lease{

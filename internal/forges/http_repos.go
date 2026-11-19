@@ -219,9 +219,6 @@ const (
 	// codeMergeInvalid answers a body that is not JSON of the merge's shape, or
 	// whose intent is not one of the library's spellings.
 	codeMergeInvalid = "merge_invalid"
-	// codeStrategyRequired answers a merge naming no strategy on a family whose
-	// default intent is a merge commit.
-	codeStrategyRequired = "strategy_required"
 )
 
 type mergeBody struct {
@@ -258,7 +255,7 @@ func (h *HTTPHandler) handleMerge(w http.ResponseWriter, r *http.Request, rh *re
 		httpserver.WriteJSON(w, mergeStatusWire(&status))
 		return
 	}
-	req, ok := mergeRequestOf(w, r, rh.family)
+	req, ok := mergeRequestOf(w, r)
 	if !ok {
 		return
 	}
@@ -272,9 +269,9 @@ func (h *HTTPHandler) handleMerge(w http.ResponseWriter, r *http.Request, rh *re
 }
 
 // mergeRequestOf reads the merge body, answering the refusal itself and false
-// when the body does not say what to merge. The head pin and the strategy's
-// spelling are the library's to check.
-func mergeRequestOf(w http.ResponseWriter, r *http.Request, family forgeapi.Family) (forgeapi.MergeRequest, bool) {
+// when the body does not say what to merge. The head pin, the strategy's
+// spelling and whether the repository needs one named are the library's to check.
+func mergeRequestOf(w http.ResponseWriter, r *http.Request) (forgeapi.MergeRequest, bool) {
 	var body mergeBody
 	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -285,13 +282,6 @@ func mergeRequestOf(w http.ResponseWriter, r *http.Request, family forgeapi.Fami
 	i := slices.IndexFunc(mergeIntents, func(in forgeapi.MergeIntent) bool { return in.String() == body.Intent })
 	if i < 0 {
 		writeMergeRefusal(w, http.StatusBadRequest, codeMergeInvalid, "intent must be default, squash or no_squash")
-		return forgeapi.MergeRequest{}, false
-	}
-	// The default intent is a merge commit on GitHub and the Gitea family, so a
-	// merge there always names its strategy rather than inheriting one.
-	if family != forgeapi.FamilyGitLab && body.Strategy == "" {
-		writeMergeRefusal(w, http.StatusBadRequest, codeStrategyRequired,
-			"a merge on this forge must name its strategy (squash, merge or rebase)")
 		return forgeapi.MergeRequest{}, false
 	}
 	return forgeapi.MergeRequest{

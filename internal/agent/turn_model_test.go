@@ -51,6 +51,7 @@ func closeModel(t *testing.T, cs *testChatStore, chatID marotte.ChatID) string {
 }
 
 func TestTurnModel_StampedOnThePersistedCloseAndOnTheSSE(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -76,6 +77,7 @@ func TestTurnModel_StampedOnThePersistedCloseAndOnTheSSE(t *testing.T) {
 }
 
 func TestTurnModel_AbsentWhenTheChatNamesNoModel(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -101,6 +103,7 @@ func TestTurnModel_AbsentWhenTheChatNamesNoModel(t *testing.T) {
 // TestTurnModel_LatchedAtTurnStartNotAtTurnEnd pins that reading the chat at turn end would attribute the turn to the model
 // current when it finished.
 func TestTurnModel_LatchedAtTurnStartNotAtTurnEnd(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -131,6 +134,7 @@ func TestTurnModel_LatchedAtTurnStartNotAtTurnEnd(t *testing.T) {
 // TestTurnModel_SwitchBeforeTheFirstFrameKeepsTheDispatchedModel pins that a switch while the prompt is in flight is parked
 // as pending_model and applied by the closer, so the dispatched model holds for the whole turn.
 func TestTurnModel_SwitchBeforeTheFirstFrameKeepsTheDispatchedModel(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	// The session door writes the session's model back onto the chat, so the fixture must agree with the seeded model.
 	br.modelID = "model-b-4"
@@ -205,6 +209,7 @@ func waitForCall(t *testing.T, br *fakeBridge, method string) {
 
 // TestTurnModel_AbandonedTurnCarriesItToo pins that every closer runs the one turn end rule, abandon included.
 func TestTurnModel_AbandonedTurnCarriesItToo(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"

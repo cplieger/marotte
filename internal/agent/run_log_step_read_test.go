@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/translate"
 )
 
@@ -32,6 +33,9 @@ func stepReadLog(t *testing.T, r *runLog, steps, perStep int) string {
 // A step read decodes the step's turns, not the run's log: its cost is the same on a run of one
 // step and on a run of 200.
 func TestRunLog_AStepReadCostsTheStepNotTheRun(t *testing.T) {
+	if !testsupport.Alone(t) {
+		return
+	}
 	small := newRunLog(t.TempDir())
 	path := stepReadLog(t, small, 1, 40)
 	large := newRunLog(t.TempDir())

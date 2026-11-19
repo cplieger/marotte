@@ -12,6 +12,7 @@ func newTestBridgeManager() *bridgeManager { return newBridgeManager() }
 
 // removeIfSame removes only when the stored bridge is the given one.
 func TestBridgeManager_RemoveIfSame(t *testing.T) {
+	t.Parallel()
 	bm := newTestBridgeManager()
 	sb1, _ := bm.orInsertNow("c1")
 	sb2, _ := bm.orInsertNow("c2")
@@ -33,6 +34,7 @@ func TestBridgeManager_RemoveIfSame(t *testing.T) {
 
 // removeIfBridge removes only when the stored session instance matches.
 func TestBridgeManager_RemoveIfBridge(t *testing.T) {
+	t.Parallel()
 	bm := newTestBridgeManager()
 	sb, _ := bm.orInsertNow("c1")
 	stored := newFakeBridge()

@@ -31,6 +31,7 @@ func rewindTo(t *testing.T, h *Runtime, messageID string) *httptest.ResponseReco
 // A close's drain holds the chat's slot while it looks for a queued prompt, with no turn running; a rewind landing in
 // that window waits for the slot as a prompt does, and reverts.
 func TestRewindChat_WaitsOutAReservationThatOpensNoTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	openChat(t, h, "c1")
@@ -54,9 +55,9 @@ func TestRewindChat_WaitsOutAReservationThatOpensNoTurn(t *testing.T) {
 
 // A rewind while a turn runs is refused at once, with a reason the client can tell apart.
 func TestRewindChat_ARunningTurnRefusesAtOnceWithItsReason(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		shrinkAdmissionWait(t, 5*time.Second)
-		h, _, _ := newTestHub()
+		h, _, _ := newTestHub(withAdmissionWait(5 * time.Second))
 		t.Cleanup(func() { shutdownHub(t, h) })
 		openChat(t, h, "c1")
 		h.stagePromptTurn(t, "c1")
@@ -75,8 +76,8 @@ func TestRewindChat_ARunningTurnRefusesAtOnceWithItsReason(t *testing.T) {
 
 // A slot held past the wait refuses with its own reason, not as a running turn.
 func TestRewindChat_ASlotHeldPastTheWaitRefusesAsBusy(t *testing.T) {
-	shrinkAdmissionWait(t, 60*time.Millisecond)
-	h, cs, _ := newTestHub()
+	t.Parallel()
+	h, cs, _ := newTestHub(withAdmissionWait(60 * time.Millisecond))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	openChat(t, h, "c1")
 	runPrompt(t, h, cs, "c1", "m-1")

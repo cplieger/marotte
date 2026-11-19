@@ -26,6 +26,7 @@ func awaitOpenTurns(t *testing.T, h *Runtime, want int) {
 // Frames the session queued before its release are folded before the teardown closes the chat's turns: a chunk
 // lands in the open turn, which then closes once, and a turn KAS started at the release is closed too.
 func TestCloseBridge_ReleasesThenWaitsForTheForwardThenClosesTheTurns(t *testing.T) {
+	t.Parallel()
 	t.Run("a chunk queued at the release folds into the open turn", func(t *testing.T) {
 		h, cs, br, tab := closeTabHub(t)
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -102,6 +103,7 @@ func withSessionID(t *testing.T, msg *marotte.RPCResponse, sessionID string) *ma
 // lands in the chat: no lifecycle is minted, the log does not grow, an ask is answered cancelled on the engine lane
 // with nothing pending for the chat, and the reopened chat's turn starts with KAS's activity unread.
 func TestCloseTab_TheOldSessionsFramesNeverReachTheReopenedChat(t *testing.T) {
+	t.Parallel()
 	h, cs, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
@@ -171,6 +173,7 @@ func isCancelledOutcome(result any) bool {
 // A turn KAS starts while a reload's session/close waits for its answer is closed once the session's stream ends,
 // and the prompt whose open asked for the reload, not yet sent, stays open for the reloaded session.
 func TestReloadIfMarked_AWireTurnOpenedDuringItsCloseIsClosed(t *testing.T) {
+	t.Parallel()
 	h, _ := reopenFixture(t)
 	first, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
@@ -229,6 +232,7 @@ func TestReloadIfMarked_AWireTurnOpenedDuringItsCloseIsClosed(t *testing.T) {
 // A turn KAS starts while the release check's session/close waits for its answer is closed once the session's
 // stream ends.
 func TestReleaseCheck_AWireTurnOpenedDuringItsCloseIsClosed(t *testing.T) {
+	t.Parallel()
 	h, _, sb := releaseFixture(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br := fakeOf(sb)

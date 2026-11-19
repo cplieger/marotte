@@ -6,6 +6,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/cplieger/marotte/internal/filemode"
 )
 
 // The backend-neutral seam: callbackFake and otherFake declare different host callbacks, refresh
@@ -54,7 +56,7 @@ func TestOpen_PanicsOnADuplicateDeclaration(t *testing.T) {
 			var v *Vault
 			panicked := func() (p bool) {
 				defer func() { p = recover() != nil }()
-				v = Open(ctx, t.TempDir(), tc.backends()...)
+				v = Open(ctx, t.TempDir(), filemode.OS(), tc.backends()...)
 				return false
 			}()
 			if panicked != tc.wantPanic {

@@ -60,6 +60,7 @@ func wantTrigger(t *testing.T, c *hookTriggers, id, want string) {
 }
 
 func TestHookTriggers_ListBecomesCanonicalMap(t *testing.T) {
+	t.Parallel()
 	f := &fakeHookList{hooks: []kasHook{
 		listedHook("/w/.kiro/hooks/guard.json#hook-0", "PreToolUse"),
 		listedHook("/w/.kiro/hooks/stop.json#hook-0", "agentStop"),
@@ -73,6 +74,7 @@ func TestHookTriggers_ListBecomesCanonicalMap(t *testing.T) {
 }
 
 func TestHookTriggers_MissRefreshesOnceUntilTheNextChange(t *testing.T) {
+	t.Parallel()
 	f := &fakeHookList{hooks: []kasHook{listedHook("a#hook-0", "PreToolUse")}}
 	c := newInlineHookTriggers(f)
 	// The first frame's lookup misses, since nothing was listed yet, and starts the list.
@@ -86,6 +88,7 @@ func TestHookTriggers_MissRefreshesOnceUntilTheNextChange(t *testing.T) {
 }
 
 func TestHookTriggers_DidChangeReplacesTheList(t *testing.T) {
+	t.Parallel()
 	f := &fakeHookList{hooks: []kasHook{listedHook("old#hook-0", "PreToolUse")}}
 	c := newInlineHookTriggers(f)
 	c.refresh()
@@ -98,6 +101,7 @@ func TestHookTriggers_DidChangeReplacesTheList(t *testing.T) {
 }
 
 func TestHookTriggers_FailedListKeepsTheLastMap(t *testing.T) {
+	t.Parallel()
 	f := &fakeHookList{hooks: []kasHook{listedHook("a#hook-0", "PreToolUse")}}
 	c := newInlineHookTriggers(f)
 	c.refresh()
@@ -107,6 +111,7 @@ func TestHookTriggers_FailedListKeepsTheLastMap(t *testing.T) {
 }
 
 func TestHookTriggers_MalformedDidChangeStillRelists(t *testing.T) {
+	t.Parallel()
 	f := &fakeHookList{}
 	c := newInlineHookTriggers(f)
 	c.refresh()
@@ -116,6 +121,7 @@ func TestHookTriggers_MalformedDidChangeStillRelists(t *testing.T) {
 }
 
 func TestHookTriggers_FailedFirstListRelistsOnTheNextMiss(t *testing.T) {
+	t.Parallel()
 	f := &fakeHookList{err: errors.New("engine starting")}
 	c := newInlineHookTriggers(f)
 	c.refresh()

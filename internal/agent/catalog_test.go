@@ -10,6 +10,7 @@ import (
 )
 
 func TestCatalog_AnEmptyListIsNotAnEmptyCatalog(t *testing.T) {
+	t.Parallel()
 	// session/load omits the catalog routinely and modes have no repair channel, so empty must not overwrite.
 	seededModes := []marotte.SessionMode{{ID: "spec", Name: "Spec"}}
 	seededModels := []marotte.SessionModel{{ID: "m1", Name: "One"}}
@@ -38,6 +39,7 @@ func TestCatalog_AnEmptyListIsNotAnEmptyCatalog(t *testing.T) {
 }
 
 func TestCatalog_ReportsAChangeOnlyWhenSomethingChanged(t *testing.T) {
+	t.Parallel()
 	// The chat store persists and broadcasts only on change, so a repeated frame answers false.
 	modes := []marotte.SessionMode{{ID: "spec", Name: "Spec"}}
 	c := &catalog{}
@@ -54,6 +56,7 @@ func TestCatalog_ReportsAChangeOnlyWhenSomethingChanged(t *testing.T) {
 }
 
 func TestCatalog_ReturnsACopy(t *testing.T) {
+	t.Parallel()
 	// A reader must not reach the holder's slice; SessionMode holds only strings.
 	c := &catalog{}
 	c.setModes([]marotte.SessionMode{{ID: "spec", Name: "Spec"}})
@@ -68,6 +71,7 @@ func TestCatalog_ReturnsACopy(t *testing.T) {
 }
 
 func TestCatalog_SeedingIsNotSharedWithTheCaller(t *testing.T) {
+	t.Parallel()
 	// The holder must not alias the slice it was handed.
 	modes := []marotte.SessionMode{{ID: "spec", Name: "Spec"}}
 	c := &catalog{}
@@ -83,6 +87,7 @@ func TestCatalog_SeedingIsNotSharedWithTheCaller(t *testing.T) {
 
 // tiersOf tells a model no session has reported from one reported with no tiers.
 func TestCatalog_TiersOf(t *testing.T) {
+	t.Parallel()
 	c := &catalog{}
 	c.SetModels([]marotte.SessionModel{
 		{ID: "m1", DefaultEffortLevel: "high", EffortTiers: []string{"low", "high"}},
@@ -103,6 +108,7 @@ func TestCatalog_TiersOf(t *testing.T) {
 }
 
 func TestCatalog_ConcurrentReadersAndWriters(t *testing.T) {
+	t.Parallel()
 	// One holder, many bridges publishing while /api/config-template reads.
 	c := &catalog{}
 	var wg sync.WaitGroup

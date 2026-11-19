@@ -11,6 +11,7 @@ import (
 // E14 drops a row in every live state, and only a row with no entry yet is handed
 // back for the close path's note.
 func TestSteerTables_ATeardownDropsEveryLiveState(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.bind()
 	var want []string
@@ -43,6 +44,7 @@ func TestSteerTables_ATeardownDropsEveryLiveState(t *testing.T) {
 // E10 closes the channel only for the chat's own turn: another turn's end leaves
 // every channel state as it was.
 func TestSteerTables_OnlyTheOwnTurnsEndClosesTheChannel(t *testing.T) {
+	t.Parallel()
 	for c := range nChannelStates {
 		for _, own := range []bool{true, false} {
 			t.Run(c.name()+map[bool]string{true: "-own", false: "-other"}[own], func(t *testing.T) {
@@ -71,6 +73,7 @@ func TestSteerTables_OnlyTheOwnTurnsEndClosesTheChannel(t *testing.T) {
 // Every delete event's row cell is the one beginRemoveLocked applies: an idle or
 // waiting row leaves at once, a row KAS holds waits for the clear.
 func TestSteerTables_ADeleteFollowsItsCell(t *testing.T) {
+	t.Parallel()
 	for st := range rowRead {
 		t.Run(st.name(), func(t *testing.T) {
 			s := newSteerHarness(t)

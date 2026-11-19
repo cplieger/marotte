@@ -8,6 +8,7 @@ import (
 )
 
 func TestChatGates_AStampBeforeACloseIsRefusedAfterIt(t *testing.T) {
+	t.Parallel()
 	g := newChatGates()
 	before := g.stamp()
 	h := g.hold("c1")
@@ -44,6 +45,7 @@ func TestChatGates_AStampTakenDuringAHoldWaitsAndIsAdmittedAfterTheRelease(t *te
 }
 
 func TestChatGates_TwoHoldsReleaseOnlyAtTheSecond(t *testing.T) {
+	t.Parallel()
 	g := newChatGates()
 	a, b := g.hold("c1"), g.hold("c1")
 	a.release()
@@ -58,6 +60,7 @@ func TestChatGates_TwoHoldsReleaseOnlyAtTheSecond(t *testing.T) {
 }
 
 func TestChatGates_AnUncommittedReleaseLeavesLastUnchanged(t *testing.T) {
+	t.Parallel()
 	g := newChatGates()
 	s := g.stamp()
 	h := g.hold("c1")
@@ -97,6 +100,7 @@ func TestChatGates_AStampFromBeforeADeleteIsRefusedAfterItsJob(t *testing.T) {
 }
 
 func TestChatGates_AwaitNoCloseWaitsForTheHold(t *testing.T) {
+	t.Parallel()
 	g := newChatGates()
 	t.Run("no hold", func(t *testing.T) {
 		waited, err := g.awaitNoClose(t.Context(), "c1")

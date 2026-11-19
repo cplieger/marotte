@@ -481,6 +481,7 @@ func waitForWithin(t *testing.T, budget time.Duration, cond func() bool) {
 // projection of KAS's replay of that session agree: a replay of a completely recorded session
 // adds nothing, and an entry the record lost comes back looking as it did live.
 func TestKASCorpus_LiveAndReplayAgree(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"steer", "compact", "compact_inturn", "delegate"} {
 		t.Run(name, func(t *testing.T) {
 			c := loadKASCorpusFile(t, name)

@@ -858,6 +858,6 @@ func TestRetention_KeepState(t *testing.T) {
 // takeIdle takes chatID for a revert, as a test's stand-in for a turn holding the chat's slot.
 func takeIdle(t *testing.T, h *agent.Runtime, chatID marotte.ChatID) (command.Reservation, bool) {
 	t.Helper()
-	out, res, _ := h.TakeIdle(t.Context(), chatID, command.IdleRevert, h.LifeStamp(), time.Second)
+	out, res, _ := h.TakeIdle(t.Context(), chatID, command.IdleRevert, h.LifeStamp())
 	return res, out == command.IdleAcquired
 }

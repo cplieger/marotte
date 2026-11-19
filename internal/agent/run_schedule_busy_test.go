@@ -16,6 +16,7 @@ import (
 // A scheduled launch the engine did not answer before the run was created is the engine being busy, which the runner
 // retries until the next slot; once workflow/new is sent a run may exist, so a failure there is never retried.
 func TestLaunchScheduled_TellsABusyEngineFromAFailure(t *testing.T) {
+	t.Parallel()
 	deadline := fmt.Errorf("engine call: %w", context.DeadlineExceeded)
 	notReady := fmt.Errorf("%w: the agent engine is not ready", marotte.ErrBridgeExited)
 	cases := []struct {
@@ -67,6 +68,7 @@ func TestLaunchScheduled_TellsABusyEngineFromAFailure(t *testing.T) {
 
 // The row's wait reaches the client as status.waiting_for, and only while there is one.
 func TestLaunchRuleView_CarriesTheWaitOnTheEngine(t *testing.T) {
+	t.Parallel()
 	due := time.Date(2026, time.August, 4, 2, 0, 0, 0, time.UTC)
 	r := launchrule.Rule{
 		Source: "bundled://nightly", Enabled: true,

@@ -30,6 +30,7 @@ func stepTurnEnd(t *testing.T, session string) *marotte.RPCResponse {
 // run's host session or the launching chat's bridge: turn_start moves the ask's id and settles an
 // answer marotte sent, and turn_end fixes the warning that turn sent as the question.
 func TestRunAsks_TurnBracketsArriveThroughEitherDoor(t *testing.T) {
+	t.Parallel()
 	doors := map[string]func(*testing.T) (h *Runtime, door marotte.ChatID, workflowID, session string){
 		"a parentless run's host session": func(t *testing.T) (*Runtime, marotte.ChatID, string, string) {
 			h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))

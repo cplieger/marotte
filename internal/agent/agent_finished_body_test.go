@@ -10,6 +10,7 @@ import (
 
 // emit() clears the chat's status as turn_closed goes out, so the push must not read it at the push site.
 func TestPushTurnOutcome_PushBodyCarriesAgentText(t *testing.T) {
+	t.Parallel()
 	cs := newTestChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
 	h := newRuntimeOn(context.Background(), "/tmp/push-desc", fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs, WithPush(fp))
@@ -45,6 +46,7 @@ func TestPushTurnOutcome_PushBodyCarriesAgentText(t *testing.T) {
 // A failed turn must not push the agent's description. Bodies are hardcoded: an
 // expectation computed by the code under test passes for any mapping.
 func TestPushTurnOutcome_PushReadsTheSeverity(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		stop   marotte.StopReason
@@ -104,6 +106,7 @@ func TestPushTurnOutcome_PushReadsTheSeverity(t *testing.T) {
 // declared during the ending turn, not a retained claim from the previous one. Turn N+1 is
 // wire-started: a prompt-class source would empty the cache and the case could never go red.
 func TestPushBody_CarriesOnlyThisTurnsDescription(t *testing.T) {
+	t.Parallel()
 	newFixture := func(t *testing.T) (*Runtime, *recordingPush) {
 		t.Helper()
 		cs := newTestChatStore()
@@ -169,6 +172,7 @@ func TestPushBody_CarriesOnlyThisTurnsDescription(t *testing.T) {
 
 // A chat notification travels as a chat SUBJECT, or it loses the per-chat coalescing tag.
 func TestPushTurnOutcome_PushSubjectIsTheChat(t *testing.T) {
+	t.Parallel()
 	cs := newTestChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
 	h := newRuntimeOn(context.Background(), "/tmp/push-subject", fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs, WithPush(fp))

@@ -83,6 +83,7 @@ func TestBotSetupRoute_AnswersTheBotsSetup(t *testing.T) {
 }
 
 func TestBotSetupRoute_AnswersThePickTheNextTurnRunsOn(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	seedSetupBot(t, cs, false)
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -100,6 +101,7 @@ func TestBotSetupRoute_AnswersThePickTheNextTurnRunsOn(t *testing.T) {
 }
 
 func TestBotSetupRoute_AnswersThinkingOffAsTheSwitchsOffStop(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	seedSetupBot(t, cs, false)
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -117,6 +119,7 @@ func TestBotSetupRoute_AnswersThinkingOffAsTheSwitchsOffStop(t *testing.T) {
 }
 
 func TestBotSetupRoute_StatesNoMemoryWhileItIsOff(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	seedSetupBot(t, cs, false)
 
@@ -131,6 +134,7 @@ func TestBotSetupRoute_StatesNoMemoryWhileItIsOff(t *testing.T) {
 }
 
 func TestBotRoutes_RefuseAChatThatIsNoBot(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	seedChain(t, cs, "c-plain", "sess_a")
 	for _, path := range []string{"/api/bots/c-plain", "/api/bots/c-plain/memory", "/api/bots/c-gone", "/api/bots/c-gone/memory"} {
@@ -147,6 +151,7 @@ func TestBotRoutes_RefuseAChatThatIsNoBot(t *testing.T) {
 }
 
 func TestBotRoutes_RefuseAnIDThatIsNoChatID(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	for _, path := range []string{"/api/bots/C%20BAD", "/api/bots/C%20BAD/memory"} {
 		if rec := getRoute(t, h, path); rec.Code != http.StatusBadRequest {

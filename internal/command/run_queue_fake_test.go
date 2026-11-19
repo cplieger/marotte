@@ -154,16 +154,16 @@ func (q *launchingRun) steerMode(s *Submission) bool {
 	return q.steer || cmp.Or(s.Mode, q.mode) != marotte.InterruptQueue
 }
 
-func (q *launchingRun) TakeIdle(ctx context.Context, chatID marotte.ChatID, kind IdleKind, stamp uint64, wait time.Duration) (IdleAdmission, Reservation, string) {
+func (q *launchingRun) TakeIdle(ctx context.Context, chatID marotte.ChatID, kind IdleKind, stamp uint64) (IdleAdmission, Reservation, string) {
 	r, ok := q.roles.admission.(idleReserver)
 	if !ok {
 		return IdleAcquired, testReservation(chatID, true), "idle-1"
 	}
 	if kind == IdleRevert {
-		out, res := r.ReserveIdleTurn(ctx, chatID, marotte.TurnSourceRevert, stamp, wait)
+		out, res := r.ReserveIdleTurn(ctx, chatID, marotte.TurnSourceRevert, stamp, AdmissionWait)
 		return out, res, "revert-1"
 	}
-	out, res := r.ReserveTurn(ctx, chatID, marotte.TurnSourcePrompt, stamp, wait)
+	out, res := r.ReserveTurn(ctx, chatID, marotte.TurnSourcePrompt, stamp, AdmissionWait)
 	return out, res, "summary-1"
 }
 

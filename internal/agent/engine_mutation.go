@@ -11,9 +11,9 @@ import (
 	"github.com/cplieger/marotte/internal/httpreply"
 )
 
-// clientAnswerBudget is how long a mutating handler waits on the engine before it answers still_applying: below
-// clientRequestBudget, so the browser reads the answer instead of aborting. A var for tests.
-var clientAnswerBudget = clientRequestBudget - 5*time.Second
+// defaultAnswerBudget is how long a mutating handler waits on the engine before it answers still_applying: below
+// clientRequestBudget, so the browser reads the answer instead of aborting. lifetime.answerBudget carries it.
+const defaultAnswerBudget = clientRequestBudget - 5*time.Second
 
 // stillApplyingCode marks a 504 for a change the engine has not answered yet and may still apply.
 const stillApplyingCode = "still_applying"
@@ -40,7 +40,7 @@ type engineReply struct {
 }
 
 // answerEngineMutation runs m.call off the request and answers with its reply, or with 504 still_applying once
-// clientAnswerBudget passes first after m.sent closed. m.changed runs when the call applied the change or answered after the 504,
+// lt.answerBudget passes first after m.sent closed. m.changed runs when the call applied the change or answered after the 504,
 // whatever it answered, so a list the UI re-reads settles the outcome either way.
 func (lt *lifetime) answerEngineMutation(w http.ResponseWriter, r *http.Request, m engineMutation) {
 	var (
@@ -73,7 +73,7 @@ func (lt *lifetime) answerEngineMutation(w http.ResponseWriter, r *http.Request,
 		writeShuttingDown(w)
 		return
 	}
-	rep, answered, left := awaitReply(r.Context(), done, m.sent)
+	rep, answered, left := awaitReply(r.Context(), lt.answerBudget, done, m.sent)
 	if answered {
 		rep.write(w)
 		return
@@ -99,10 +99,10 @@ func (lt *lifetime) answerEngineMutation(w http.ResponseWriter, r *http.Request,
 	))
 }
 
-// awaitReply waits for the call's reply until clientAnswerBudget has passed with the change written (sent closed or
-// nil), or until the client leaves (left); answered is false when the reply did not come first.
-func awaitReply(ctx context.Context, done <-chan engineReply, sent <-chan struct{}) (rep engineReply, answered, left bool) {
-	timer := time.NewTimer(clientAnswerBudget)
+// awaitReply waits for the call's reply until wait has passed with the change written (sent closed or nil), or
+// until the client leaves (left); answered is false when the reply did not come first.
+func awaitReply(ctx context.Context, wait time.Duration, done <-chan engineReply, sent <-chan struct{}) (rep engineReply, answered, left bool) {
+	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	budget, expired := timer.C, false
 	for {

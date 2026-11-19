@@ -10,6 +10,7 @@ import (
 // A record still in its door holds no session: every forward refuses rather than dereferencing it, and the command
 // layer sees no bridge.
 func TestSharedBridge_BeforeItsDoorAttachesEveryForwardRefuses(t *testing.T) {
+	t.Parallel()
 	sb := newSharedBridge(admitAllLife{})
 	ctx := t.Context()
 	if _, err := sb.Call(ctx, marotte.MethodPrompt, nil); !errors.Is(err, marotte.ErrSessionClosed) {

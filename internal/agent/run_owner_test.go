@@ -18,6 +18,7 @@ import (
 )
 
 func TestRunHolders_NamesEveryChainOwnerAndTheLeasesHolders(t *testing.T) {
+	t.Parallel()
 	owners := chat.SessionOwners{"sess_a": {"c-a"}, "sess_shared": {"c-a", "c-b"}}
 	cases := []struct {
 		name      string
@@ -59,6 +60,7 @@ func newOwnerRig(t *testing.T, results map[string]json.RawMessage, rpcErrs map[s
 }
 
 func TestRunOwner_AnswersOneVerdictPerSource(t *testing.T) {
+	t.Parallel()
 	inspect := func(parent string) json.RawMessage {
 		raw, _ := json.Marshal(map[string]any{"workflowId": "wf_1", "state": map[string]any{
 			"workflowId": "wf_1", "status": "paused", "parentSessionId": parent,
@@ -136,6 +138,7 @@ func TestRunOwner_AnswersOneVerdictPerSource(t *testing.T) {
 // A read of the run kiro-cli did not answer leaves its owners unknown: an error, never the RunUnknown verdict a
 // keep-state round settles on.
 func TestRunOwner_AnUnansweredReadIsAnError(t *testing.T) {
+	t.Parallel()
 	h, rig := newEngineRig(t, map[string]json.RawMessage{}, nil, nil)
 	rig.setAnswer(func(method string, _ map[string]any) (json.RawMessage, bool, error) {
 		if method != methodKiroWorkflowInspect {
@@ -152,6 +155,7 @@ func TestRunOwner_AnUnansweredReadIsAnError(t *testing.T) {
 }
 
 func TestRunOwner_AnIncompleteScanWithNoHolderIsAnError(t *testing.T) {
+	t.Parallel()
 	h := newOwnerRig(t, map[string]json.RawMessage{
 		methodKiroWorkflowList: purgeRuns(t, purgeRow("wf_1", "completed", "sess_unread", time.Now())),
 	}, nil)
@@ -169,6 +173,7 @@ func TestRunOwner_AnIncompleteScanWithNoHolderIsAnError(t *testing.T) {
 
 // The purge teardown deletes exactly the runs whose keep facts RunHolders puts on the purged chat.
 func TestDeleteForSessions_DeletesExactlyTheRunsRunHoldersAttributesToTheChat(t *testing.T) {
+	t.Parallel()
 	rows := purgeRuns(t,
 		purgeRow("wf_own", "paused", "sess_launcher", time.Now()),
 		purgeRow("wf_retired", "completed", "sess_retired", time.Now()),
@@ -196,6 +201,7 @@ func TestDeleteForSessions_DeletesExactlyTheRunsRunHoldersAttributesToTheChat(t 
 }
 
 func TestRunsParentedBy_NamesLiveAndShownCandidates(t *testing.T) {
+	t.Parallel()
 	rows := purgeRuns(t,
 		purgeRow("wf_running", "running", "sess_s", time.Now()),
 		purgeRow("wf_done", "completed", "sess_s", time.Now()),
@@ -226,6 +232,7 @@ func TestRunsParentedBy_NamesLiveAndShownCandidates(t *testing.T) {
 }
 
 func TestRunsParentedBy_AnUnreadLeaseFileIsAnError(t *testing.T) {
+	t.Parallel()
 	h, _ := newPurgeRigScan(t, purgeRuns(t), nil)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, runlease.FileName), []byte("{not json"), 0o600); err != nil {

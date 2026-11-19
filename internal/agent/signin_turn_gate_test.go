@@ -11,6 +11,7 @@ import (
 // A prompt that meets a known outage is blocked only while one bounded reprobe also finds the provider down; a
 // provider that came back runs the prompt at once, without waiting for the vault's next background reprobe.
 func TestTurnBlocked_ReprobesAKnownOutageOnce(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s := newHealthHub(t)
 		s.signIn(t)

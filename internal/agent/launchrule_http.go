@@ -222,10 +222,10 @@ func readRuleBody(w http.ResponseWriter, r *http.Request, withConfirm bool) (lau
 // prepareRule validates rule for a save and fills it from its recipe, answering the refusal itself. The source is
 // checked against a live recipe listing, never the held catalog: no engine check stands behind a save, as KAS's
 // workflow/new does behind a launch, so no arbitrary file can be scheduled; so is the model pick. An event rule's
-// forge is read unless the save leaves prev's when as it was. Every read shares clientAnswerBudget, so one the engine
+// forge is read unless the save leaves prev's when as it was. Every read shares lifetime.answerBudget, so one the engine
 // leaves unanswered is a 503 the browser reads before its own request budget runs out.
 func (rr *runRoutes) prepareRule(ctx context.Context, w http.ResponseWriter, rule, prev *launchrule.Rule) bool {
-	ctx, cancel := context.WithTimeout(ctx, clientAnswerBudget)
+	ctx, cancel := context.WithTimeout(ctx, rr.runs.lifecycle.answerBudget)
 	defer cancel()
 	if err := rule.Normalize(); err != nil {
 		httpreply.BadRequest(w, err.Error())

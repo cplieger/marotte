@@ -31,12 +31,9 @@ func (r *turnRegistry) tryReserve(chatID marotte.ChatID, source marotte.TurnOpen
 	return a.res, a.res.Token != 0
 }
 
-// Not parallel-safe.
-func shrinkAdmissionWait(t *testing.T, d time.Duration) {
-	t.Helper()
-	prev := command.AdmissionWait
-	command.AdmissionWait = d
-	t.Cleanup(func() { command.AdmissionWait = prev })
+// withAdmissionWait sets how long the runtime's run-list work waits out a contended chat slot (lifetime.admissionWait).
+func withAdmissionWait(d time.Duration) Option {
+	return func(h *Runtime) { h.lifecycle.admissionWait = d }
 }
 
 // setCancelGrace sets the cancel grace short to drive expiry or long to keep it from firing. Not parallel-safe.
@@ -57,8 +54,8 @@ func seedChat(t *testing.T, cs *testChatStore, id marotte.ChatID) {
 // A prompt against a revert-held chat answers within the budget as queued behind it, and writes nothing: the
 // press never waits out the hold.
 func TestPrompt_BehindARevertHeldSlotAnswersQueuedAndWritesNothing(t *testing.T) {
-	shrinkAdmissionWait(t, 60*time.Millisecond)
-	h, cs, _ := newTestHub()
+	t.Parallel()
+	h, cs, _ := newTestHub(withAdmissionWait(60 * time.Millisecond))
 	seedChat(t, cs, "c1")
 	if !h.coord.tryReserveNow("c1", marotte.TurnSourceRevert) {
 		t.Fatal("setup: the admission slot was already held")
@@ -123,6 +120,7 @@ func waitForTurnClosed(t *testing.T, h *Runtime, want int) []marotte.EntryTurnCl
 
 // The model is stamped at StartTurn with the bridge live; credits are the turn's own frames, so session-open-window spend never reaches its close.
 func TestPromptTurn_MeteringAndModelStampAtStartTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1") // cold: no model on the record yet
 	entered, gate := gateSessionOpen(h)
@@ -156,6 +154,7 @@ func TestPromptTurn_MeteringAndModelStampAtStartTurn(t *testing.T) {
 // The recovery arbitrates on the captured result: an empty wire-ended turn closes `empty` and re-prompts on a fresh
 // session. ReleaseTurn before AwaitTurn would blind it.
 func TestPromptTurn_EmptyWireEndedTurnRecoversThroughTheRealRegistry(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		cs := newTestChatStore()
 		gate := make(chan struct{})
@@ -240,6 +239,7 @@ func TestPromptTurn_EmptyWireEndedTurnRecoversThroughTheRealRegistry(t *testing.
 
 // Shutdown mid-Call: the prompt unwinds, the turn finalizes, inflight drains and Shutdown returns.
 func TestPromptTurn_ShutdownMidCallDrainsTheTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	seedChat(t, cs, "c1")
 	gate := make(chan struct{})
@@ -263,6 +263,7 @@ func TestPromptTurn_ShutdownMidCallDrainsTheTurn(t *testing.T) {
 
 // Shutdown right after the ack: the in-flight registration precedes the ack, so Shutdown waits for the turn.
 func TestPromptTurn_ShutdownPreGoroutineStillDrainsTheTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
 	entered, gate := gateSessionOpen(h)
@@ -293,6 +294,7 @@ func TestPromptTurn_ShutdownPreGoroutineStillDrainsTheTurn(t *testing.T) {
 // A cancel while the admitted prompt's session opens answers 200 and keeps the prompt unsent: its turn closes
 // cancelled with no session/prompt, and the chat accepts the next prompt.
 func TestPromptTurn_CancelInTheSessionOpenKeepsThePromptUnsent(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	seedChat(t, cs, "c1")
 	entered, gate := gateSessionOpen(h)
@@ -451,6 +453,7 @@ func shutdownMidPrompt(t *testing.T, arm func(h *Runtime)) *testChatStore {
 // TestShutdown_TheCutTurnNamesTheRestartAsItsCause: the reader cancelled nothing, so
 // the footer must not say they did.
 func TestShutdown_TheCutTurnNamesTheRestartAsItsCause(t *testing.T) {
+	t.Parallel()
 	cs := shutdownMidPrompt(t, nil)
 
 	closes := closesOf(t, logOf(t, cs, "c1"))
@@ -466,6 +469,7 @@ func TestShutdown_TheCutTurnNamesTheRestartAsItsCause(t *testing.T) {
 // TestShutdown_AUserCancelCauseOutranksTheShutdownCause: the cause is first-wins, so
 // one already claimed keeps its word.
 func TestShutdown_AUserCancelCauseOutranksTheShutdownCause(t *testing.T) {
+	t.Parallel()
 	const earlier marotte.InterruptCause = "an earlier cause"
 	cs := shutdownMidPrompt(t, func(h *Runtime) {
 		own, ok := ownID(h, "c1")
@@ -486,6 +490,7 @@ func TestShutdown_AUserCancelCauseOutranksTheShutdownCause(t *testing.T) {
 // A reserve refuses beside a turn KAS bracketed, since each one sends a session/prompt or opens a turn; beside a
 // fold-opened wire turn only the idle reserve, which reads every holder, refuses.
 func TestTryReserve_BesideAWireTurn(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		open     func(t *testing.T, h *Runtime)
@@ -543,6 +548,7 @@ func wakeTurnHub(t *testing.T) (*Runtime, *testChatStore, *fakeBridge) {
 // The composer's Send beside an agent-initiated turn is steered into it: no turn of its own opens and no
 // session/prompt reaches KAS, which would abort that turn.
 func TestCmdPrompt_BesideAWireTurnIsSteeredAndOpensNoTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, br := wakeTurnHub(t)
 	opens := len(opensOf(t, logOf(t, cs, "c1")))
 
@@ -575,6 +581,7 @@ func TestCmdPrompt_BesideAWireTurnIsSteeredAndOpensNoTurn(t *testing.T) {
 // A prompt steered into the running turn is a dock row under the id KAS stamps on it, `steer-<messageId>`
 // (handleSessionSteer), so KAS's steering_queued for it updates that row instead of adding a second one.
 func TestCmdPrompt_ASteeredPromptsRowIsKeyedByTheIDKASStampsOnIt(t *testing.T) {
+	t.Parallel()
 	s, _, _ := steerOpsHub(t)
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnStartMsg())
 
@@ -598,6 +605,7 @@ func TestCmdPrompt_ASteeredPromptsRowIsKeyedByTheIDKASStampsOnIt(t *testing.T) {
 // A Send bound for the running turn as a steer while the unread steers already fill kiro-cli's buffer budget is refused
 // 409 full, so the client keeps the text: it is neither steered nor queued as a row.
 func TestCmdPrompt_ASteerPastTheSteerBudgetIsRefusedFull(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		text string
@@ -642,6 +650,7 @@ func TestCmdPrompt_ASteerPastTheSteerBudgetIsRefusedFull(t *testing.T) {
 // A prompt that reads as a KAS notification is never steered: KAS would file it under a notify- id no row
 // carries. It waits for the running turn's end instead.
 func TestCmdPrompt_NotificationShapedTextBesideATurnIsQueuedNotSteered(t *testing.T) {
+	t.Parallel()
 	h, _, br := wakeTurnHub(t)
 
 	rec := postCmd(t, h, marotte.ClientCommand{
@@ -689,6 +698,7 @@ func mergeCmd(tangent marotte.ChatID) marotte.ClientCommand {
 // Merging a tangent while KAS runs a turn of its own there is refused as busy, like any running turn: the summary
 // prompt would abort it.
 func TestMergeTangent_ATangentRunningAWakeTurnIsRefusedBusy(t *testing.T) {
+	t.Parallel()
 	h, _, calls := mergeHub(t)
 	h.translateACPEvent("c-tangent", h.originOf("c-tangent"), newTurnStartMsg())
 
@@ -704,6 +714,7 @@ func TestMergeTangent_ATangentRunningAWakeTurnIsRefusedBusy(t *testing.T) {
 
 // The findings for a parent running a turn KAS started are queued behind it, never prompted into it.
 func TestMergeTangent_QueuesTheFindingsBehindAParentsWakeTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, calls := mergeHub(t)
 	h.translateACPEvent("c1", h.originOf("c1"), newTurnStartMsg())
 
@@ -733,6 +744,7 @@ func TestMergeTangent_QueuesTheFindingsBehindAParentsWakeTurn(t *testing.T) {
 // A steer while the chat's session door is still opening has no running turn to join: it is refused no_turn, which
 // the client answers by sending the words as a prompt, and nothing is left on the list for a later turn.
 func TestPromptTurn_SteerInTheSessionDoorWindowIsRefusedNoTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
 	entered, gate := gateSessionOpen(h)

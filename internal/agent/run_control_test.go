@@ -37,6 +37,7 @@ func runStatuses(t *testing.T) []marotte.RunStatus {
 
 // TestRunVerbGates pins each verb's `from` list; the rationale is run_affordance.go's. Cancel stays unrestricted: it is the tab-close gesture.
 func TestRunVerbGates(t *testing.T) {
+	t.Parallel()
 	all := runStatuses(t)
 
 	cases := map[string]struct {
@@ -65,6 +66,7 @@ func TestRunVerbGates(t *testing.T) {
 // TestRunVerbsAreWired pins that a verb with no issuer 200s doing nothing, one with no name logs as "", and a
 // restricted cancel errors on tab close.
 func TestRunVerbsAreWired(t *testing.T) {
+	t.Parallel()
 	for _, verb := range []runVerb{runVerbCancel, runVerbPause, runVerbResume, runVerbDelete} {
 		if verb.name == "" {
 			t.Error("a run verb has no name; its 409 and its log line would both be blank")
@@ -144,18 +146,10 @@ func inspectDriftedDetail(t *testing.T, workflowID, reason string) json.RawMessa
 func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T) {
 	const transient = "Transient connection error (EAI_AGAIN); the run is paused and can be resumed."
 
-	// Milliseconds instead of the 5s backoff. Restored by Cleanup: a defer skips a subtest's failure path.
-	fastHeal := func(t *testing.T) {
-		t.Helper()
-		prev := healBaseDelay
-		healBaseDelay = time.Millisecond
-		t.Cleanup(func() { healBaseDelay = prev })
-	}
-
-	// The callback's re-read must agree with the frame.
+	// The callback's re-read must agree with the frame. The heal waits milliseconds instead of the 5s backoff.
 	seedReply := func(t *testing.T, reply json.RawMessage) (*Runtime, *fakeBridge) {
 		t.Helper()
-		h, cs, br := newTestHub()
+		h, cs, br := newTestHub(withHealBaseDelay(time.Millisecond))
 		br.callResults = map[string]json.RawMessage{
 			methodKiroWorkflowInspect: reply,
 			methodKiroWorkflowResume:  json.RawMessage(`{}`),
@@ -196,7 +190,6 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 	}
 
 	t.Run("a transient network pause is resumed", func(t *testing.T) {
-		fastHeal(t)
 		h, br := seed(t, transient)
 		var forwarded bool
 		heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {
@@ -217,7 +210,6 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 	t.Run("a transient fault inside a parallel branch is resumed", func(t *testing.T) {
 		const wrapper = "Parallel 'phase1' is waiting on branch 'live-verify' " +
 			"(branch paused on transient error EAI_AGAIN)."
-		fastHeal(t)
 		h, br := seedReply(t, inspectPausedWithDetail(t, "wf_1", wrapper, transientDetail()))
 		heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
 		heal(t.Context(), "c1", pausedFrameWithDetail(t, "wf_1", wrapper, "transient-error", "EAI_AGAIN"))
@@ -230,7 +222,6 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 
 	// A drifted detail must pass both the frame gate and the inspect guard; only the branch population is lost.
 	t.Run("a detail whose wire shape drifted still heals off the reason", func(t *testing.T) {
-		fastHeal(t)
 		h, br := seedReply(t, inspectDriftedDetail(t, "wf_1", interruptedReason))
 		heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
 		heal(t.Context(), "c1", pausedDriftedDetail(t, "wf_1", interruptedReason))
@@ -243,7 +234,6 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 
 	// A plain step's interruption heals off its prose with no detail; dropping the reason arms would strand it.
 	t.Run("a plain-step interruption with no detail is still resumed", func(t *testing.T) {
-		fastHeal(t)
 		h, br := seed(t, interruptedReason)
 		heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
 		heal(t.Context(), "c1", pausedFrame(t, "wf_1", interruptedReason))
@@ -259,7 +249,6 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 		"a recorded failure":        "Run failed: the reviewer never approved",
 	} {
 		t.Run(name+" is left alone", func(t *testing.T) {
-			fastHeal(t)
 			h, br := seed(t, reason)
 			heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
 			heal(t.Context(), "c1", pausedFrame(t, "wf_1", reason))
@@ -278,7 +267,6 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 
 	// A run that left `paused` within the backoff must not be re-driven.
 	t.Run("a run that left the paused state inside the backoff is not resumed", func(t *testing.T) {
-		fastHeal(t)
 		h, br := seed(t, transient)
 		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "aborted", transient))
 		heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
@@ -292,7 +280,6 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 	// observePaused is silent on success, so a decline's line, and the reason it names, is the only trace.
 	t.Run("a declined pause names the reason it refused", func(t *testing.T) {
 		const parked = "Step requested user input via send_message."
-		fastHeal(t)
 		logs := captureLogs(t)
 		h, _ := seed(t, parked)
 		heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
@@ -310,7 +297,6 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 
 	// A line on every pause would bury the declines.
 	t.Run("a pause that IS resumed does not log a decline", func(t *testing.T) {
-		fastHeal(t)
 		logs := captureLogs(t)
 		h, br := seed(t, transient)
 		heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
@@ -326,7 +312,6 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 	})
 
 	t.Run("a frame with no chat id or no run id does nothing", func(t *testing.T) {
-		fastHeal(t)
 		h, br := seed(t, transient)
 		heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
 		heal(t.Context(), "", pausedFrame(t, "wf_1", transient))
@@ -344,6 +329,7 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 
 // TestHealBudget_BoundsThePauseHealLoopAndProgressRefillsIt pins that the budget stops a heal/pause loop and progress refills it.
 func TestHealBudget_BoundsThePauseHealLoopAndProgressRefillsIt(t *testing.T) {
+	t.Parallel()
 	t.Run("three attempts, then the run is left paused", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		for i := 1; i <= maxAutoHeals; i++ {

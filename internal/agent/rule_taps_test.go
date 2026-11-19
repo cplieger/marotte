@@ -81,6 +81,7 @@ func tapsHub(t *testing.T) (*Runtime, *tapRecorder) {
 // A rule's prompt opens its turn with the open tap carrying the turn_open id and the rule's caller, and the close tap
 // follows once the turn's end is in the header, with the same id and caller.
 func TestRuleTaps_ATurnReportsItsOpenAndItsCloseByTheTurnID(t *testing.T) {
+	t.Parallel()
 	h, taps := tapsHub(t)
 	from := &marotte.Caller{Kind: marotte.CallerKindRule, Label: "Tidy", Rule: "r1", Event: "every:t1:1", Depth: 1}
 
@@ -107,6 +108,7 @@ func TestRuleTaps_ATurnReportsItsOpenAndItsCloseByTheTurnID(t *testing.T) {
 
 // A turn no caller's prompt opened (the user's) taps with a nil caller.
 func TestRuleTaps_AUsersTurnTapsWithNoCaller(t *testing.T) {
+	t.Parallel()
 	h, taps := tapsHub(t)
 
 	id, _ := h.stagePromptTurn(t, "c1")
@@ -119,6 +121,7 @@ func TestRuleTaps_AUsersTurnTapsWithNoCaller(t *testing.T) {
 
 // With no engine wired a turn opens and closes as before.
 func TestRuleTaps_NoEngineTapsNothing(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")

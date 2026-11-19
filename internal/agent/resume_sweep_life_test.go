@@ -28,13 +28,10 @@ func awaitListCount(t *testing.T, br *fakeBridge, want int) {
 }
 
 // sweepHub is parkChat with one run its session launched that KAS still lists running, so the first sweep schedules
-// a later one, orphanResumeDelay shortened.
+// a later one, its re-read delay shortened.
 func sweepHub(t *testing.T) (*Runtime, *fakeBridge, *chatLifecycle) {
 	t.Helper()
-	prev := orphanResumeDelay
-	orphanResumeDelay = 20 * time.Millisecond
-	t.Cleanup(func() { orphanResumeDelay = prev })
-	h, br := agentRunOnChat(t, "wf_1")
+	h, br := agentRunOnChat(t, "wf_1", withOrphanResumeDelay(20*time.Millisecond))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.setCallResult(methodKiroWorkflowList, kasRuns(t, map[string]any{
 		"workflowId": "wf_1", "status": "running", "parentSessionId": parkSession,

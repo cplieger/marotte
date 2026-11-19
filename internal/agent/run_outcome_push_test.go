@@ -101,6 +101,7 @@ func awaitRunPush(t *testing.T, fp *runOutcomePush) runPushSent {
 
 // A run's outcome is notified under the run, titled by its name, in kiro-cli's workflow words.
 func TestObserveComplete_PushesTheRunsOutcome(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		status string
 		want   string
@@ -134,6 +135,7 @@ func TestObserveComplete_PushesTheRunsOutcome(t *testing.T) {
 
 // A run's failure detail is KAS's stop reason; a run launched from a chat names that chat.
 func TestObserveComplete_DetailIsTheStopReasonElseTheParent(t *testing.T) {
+	t.Parallel()
 	h, fp := newRunPushHub(t)
 	ctx := t.Context()
 	h.chatStore.(*testChatStore).seed(t, "c1", func(c *marotte.Chat) { c.Name = "Ship it" })
@@ -158,6 +160,7 @@ func TestObserveComplete_DetailIsTheStopReasonElseTheParent(t *testing.T) {
 // An onMaxIterations pause notifies only a parentless run: a run with a parent agent is the
 // parent's to resume.
 func TestObserveComplete_APauseNotifiesOnlyAParentlessRun(t *testing.T) {
+	t.Parallel()
 	pause := map[string]any{"pause": map[string]any{"kind": "maxIterations"}}
 	t.Run("parentless", func(t *testing.T) {
 		h, fp := newRunPushHub(t)
@@ -199,6 +202,7 @@ func TestObserveComplete_APauseNotifiesOnlyAParentlessRun(t *testing.T) {
 
 // run_complete's top-level workflowName is always empty, so the label comes from the lease.
 func TestObserveComplete_LabelFallsBackToTheLeasesRecipe(t *testing.T) {
+	t.Parallel()
 	h, fp := newRunPushHub(t)
 	ctx := t.Context()
 	h.runs.grantLease(ctx, "wf_1", "code-review", manualLaunch(), hostSec())
@@ -215,6 +219,7 @@ func TestObserveComplete_LabelFallsBackToTheLeasesRecipe(t *testing.T) {
 
 // KAS gives every prompt-built run one recipe name, so it names none of them: the notice falls back to the run's id.
 func TestObserveComplete_APromptBuiltRunIsNotTitledByTheGenericRecipe(t *testing.T) {
+	t.Parallel()
 	h, fp := newRunPushHub(t)
 	ctx := t.Context()
 	h.runs.grantLease(ctx, "wf_1", "workflow-from-prompt", manualLaunch(), hostSec())
@@ -231,6 +236,7 @@ func TestObserveComplete_APromptBuiltRunIsNotTitledByTheGenericRecipe(t *testing
 // A step's question is notified under its run, naming the step, tagged by its wait's position so a
 // re-park replaces the banner and two parked branches hold two.
 func TestRunAsks_NotifiesTheStepsQuestion(t *testing.T) {
+	t.Parallel()
 	h, fp := newRunPushHub(t)
 	h.runs.grantLease(t.Context(), "wf_1", "code-review", manualLaunch(), hostSec())
 	c := h.runs.cellFor("wf_1")

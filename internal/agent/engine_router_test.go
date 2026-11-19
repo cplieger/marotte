@@ -16,6 +16,7 @@ import (
 // TestRouter_StartJournalKeepsOnlyRunsStillGoing: a run the read loop saw start is in its generation's snapshot
 // until it completes or pauses, and a start after the pause journals it again.
 func TestRouter_StartJournalKeepsOnlyRunsStillGoing(t *testing.T) {
+	t.Parallel()
 	const gen = 1
 	frame := func(method, wf string) *bridge.FrameHead {
 		return &bridge.FrameHead{Method: method, WorkflowID: wf, SessionID: marotte.SessionID("sess_step_" + wf)}
@@ -40,6 +41,7 @@ func TestRouter_StartJournalKeepsOnlyRunsStillGoing(t *testing.T) {
 }
 
 func TestRouter_StepFramesOfAChatParentedRunReachThatChatsLane(t *testing.T) {
+	t.Parallel()
 	const chatSession, step marotte.SessionID = "sess_chat", "sess_step"
 	r := newEngineRouter()
 	if got := r.route(&bridge.FrameHead{Method: methodWFRunStart, WorkflowID: "wf_1", ParentSessionID: chatSession}, 1); got != chatSession {
@@ -59,6 +61,7 @@ func TestRouter_StepFramesOfAChatParentedRunReachThatChatsLane(t *testing.T) {
 }
 
 func TestRouter_OwnerlessRunFramesUseTheEngineLaneWithEmptyChat(t *testing.T) {
+	t.Parallel()
 	r := newEngineRouter()
 	for _, h := range []*bridge.FrameHead{
 		{Method: methodWFRunStart, WorkflowID: "wf_1"},
@@ -75,6 +78,7 @@ func TestRouter_OwnerlessRunFramesUseTheEngineLaneWithEmptyChat(t *testing.T) {
 }
 
 func TestRouter_AnUnknownDifferingSessionGoesToTheEngineLane(t *testing.T) {
+	t.Parallel()
 	r := newEngineRouter()
 	if got := r.route(&bridge.FrameHead{Method: marotte.MethodRequestPermission, SessionID: "sess_stranger"}, 1); got != "" {
 		t.Fatalf("a request naming no known session routed to %q, want the engine lane", got)
@@ -93,6 +97,7 @@ func TestRouter_AnUnknownDifferingSessionGoesToTheEngineLane(t *testing.T) {
 
 // Under -race: the router's tables are written by verbs while the read loop routes.
 func TestRouter_ConcurrentMutationAndRoute(t *testing.T) {
+	t.Parallel()
 	r := newEngineRouter()
 	var wg sync.WaitGroup
 	const n = 200
@@ -129,6 +134,7 @@ func TestRouter_ConcurrentMutationAndRoute(t *testing.T) {
 // launchAs makes the host session the run's owner before invoke is written, so a frame KAS emits the instant it
 // reads invoke routes to the host's lane.
 func TestRouter_OwnerRegisteredBeforeInvokeIsVisibleToItsFirstFrame(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	var routed atomic.Value

@@ -18,6 +18,7 @@ func seedPolicy(br *fakeBridge, list, explain string) {
 }
 
 func TestPolicyList(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br := oneObserver(t, h)
@@ -46,6 +47,7 @@ func TestPolicyList(t *testing.T) {
 
 // _kiro/permissions/list returns rules only; the skipped rules come from the same pass's door.
 func TestPolicyListingReturnsTheDoorsErrors(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br := oneObserver(t, h)
@@ -65,6 +67,7 @@ func TestPolicyListingReturnsTheDoorsErrors(t *testing.T) {
 }
 
 func TestPolicyListOmitsEmptyScope(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br := oneObserver(t, h)
@@ -78,6 +81,7 @@ func TestPolicyListOmitsEmptyScope(t *testing.T) {
 }
 
 func TestPolicyExplainMapsCamelCase(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br := oneObserver(t, h)
@@ -103,6 +107,7 @@ func TestPolicyExplainMapsCamelCase(t *testing.T) {
 }
 
 func TestPolicyExplainRequiresTarget(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br := oneObserver(t, h)

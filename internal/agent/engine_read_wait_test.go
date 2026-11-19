@@ -20,6 +20,7 @@ const readBudget = 2 * time.Second
 // A read marked WithoutEngineWait answers ErrBridgeExited at once while no engine is ready (starting, or down after a
 // failed start), instead of holding its request until its budget ends.
 func TestEngineCall_ReadWithoutEngineWaitAnswersAtOnce(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		setup func(src *fakeEngineSource)
 		name  string
@@ -49,6 +50,7 @@ func TestEngineCall_ReadWithoutEngineWaitAnswersAtOnce(t *testing.T) {
 // The recipe list's listing runs on the runtime's lifetime, not the request's, so the route itself answers a marked read
 // while no engine is ready, at once: the held catalog when there is one, else 503 recipe_list_slow with a Retry-After.
 func TestRecipesRoute_AReadWithoutEngineWaitAnswersAtOnceWhileTheEngineStarts(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		held     []marotte.Recipe
 		name     string
@@ -92,6 +94,7 @@ func TestRecipesRoute_AReadWithoutEngineWaitAnswersAtOnceWhileTheEngineStarts(t 
 // An unmarked caller (a command, a session door) still waits for the engine, and a marked read on a ready engine
 // takes its door as any other.
 func TestEngineCall_UnmarkedCallerStillWaitsForTheEngine(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
 		gate := make(chan struct{})

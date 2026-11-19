@@ -13,6 +13,7 @@ import (
 // A run outlives its parent chat's close: a step note that lands after a reopen goes into the reopened chat's open
 // turn, and one that lands after a delete writes nothing.
 func TestRunNote_AfterAReopenLandsInTheReopenedChat(t *testing.T) {
+	t.Parallel()
 	refused := stepClose{outcome: marotte.TurnOutcomeRefused, refusal: &marotte.RefusalInfo{Category: "policy"}}
 	path := []string{"wf_1", "build"}
 	lease := runlease.Lease{WorkflowID: "wf_1", ChatID: "c1", Origin: runlease.OriginAgent}

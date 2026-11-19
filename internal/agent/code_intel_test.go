@@ -14,6 +14,7 @@ import (
 // TestEnsureCodeIntelligence_Guards pins the three no-op paths; reaching an observer pass
 // would fail or hang, so returning cleanly is the assertion.
 func TestEnsureCodeIntelligence_Guards(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "lsp.json")
 

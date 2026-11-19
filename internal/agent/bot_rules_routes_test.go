@@ -101,6 +101,7 @@ func catalogSample(t *testing.T, kind rule.TriggerKind) map[string]any {
 
 // The setup carries each rule's spec and status and the engine's in-memory facts, and is never cached.
 func TestBotSetupRoute_CarriesTheRulesAndTheEngine(t *testing.T) {
+	t.Parallel()
 	since := time.UnixMilli(1_700_000_600_000)
 	ceiling := time.UnixMilli(1_700_000_900_000)
 	view := &fakeRuleView{status: map[marotte.ChatID]ruleengine.Status{"c1": {WriteFailingSince: since, CeilingUntil: ceiling}}}
@@ -142,6 +143,7 @@ func TestBotSetupRoute_CarriesTheRulesAndTheEngine(t *testing.T) {
 
 // The catalogue route answers the rule package's catalogue exactly, so the client mirrors no bound or phrase.
 func TestRuleCatalogRoute_AnswersTheCatalogue(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 
 	rec := getRoute(t, h, "/api/bots/rule-catalog")
@@ -194,6 +196,7 @@ func runTest(t *testing.T, h *Runtime, chat string, body testBody) *httptest.Res
 // A dry run of a sample answers the outcome, each state item's value, the wait and the exact text, and changes
 // nothing in the record.
 func TestRuleTestRoute_DryRunsASampleAndWritesNothing(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	saved := everyRule("R1", "T1", 15)
 	seedRulesBot(t, cs, "c1", saved)
@@ -240,6 +243,7 @@ func TestRuleTestRoute_DryRunsASampleAndWritesNothing(t *testing.T) {
 
 // A rule whose condition holds says it would send now, or why and until when it would wait.
 func TestRuleTestRoute_SaysWhatWouldHappenNext(t *testing.T) {
+	t.Parallel()
 	spec := testSpec(nil, newEvery("T1", 15))
 	t.Run("a free Bot", func(t *testing.T) {
 		h, cs, _ := newTestHub()
@@ -279,6 +283,7 @@ func TestRuleTestRoute_SaysWhatWouldHappenNext(t *testing.T) {
 
 // use_last evaluates the trigger's stored last real event.
 func TestRuleTestRoute_UsesTheTriggersLastRealEvent(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	r := everyRule("R1", "T1", 15)
 	last, err := rule.NewEvent(map[string]any{"trigger": "every", "rule": "Tidy", "due_at": "2026-11-16T09:00:00+01:00", "late_by": "0s", "anchor": "last"})
@@ -302,6 +307,7 @@ func TestRuleTestRoute_UsesTheTriggersLastRealEvent(t *testing.T) {
 
 // A body breaking the request's rules answers 400 naming the field, and an invalid spec its fields.
 func TestRuleTestRoute_RefusesABadBody(t *testing.T) {
+	t.Parallel()
 	two := testSpec(nil, newEvery("T1", 15), newEvery("new:b", 30))
 	sample := map[string]any{"trigger": "every", "rule": "Tidy", "due_at": "x", "late_by": "0s", "anchor": "last"}
 	cases := []struct {
@@ -349,6 +355,7 @@ func TestRuleTestRoute_RefusesABadBody(t *testing.T) {
 
 // Each Bot has its own bucket of 30 tests a minute; past it the route answers 429 with the wait.
 func TestRuleTestRoute_LimitsEachBotToThirtyAMinute(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	now := time.Unix(1_700_000_000, 0)
 	h.ruleTests = keyedrate.New(keyedrate.Config{Burst: 30, Every: 2 * time.Second, Now: func() time.Time { return now }})

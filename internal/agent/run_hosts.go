@@ -105,9 +105,6 @@ func (rs *Runs) hostPresets(ctx context.Context, workflowID, session string) ([]
 // ensureResident for marotte's own verbs.
 type residentFn func(ctx context.Context, workflowID string) (host *drivenHost, release func(), err error)
 
-// answerDeadline is when a person's verb starting now must have answered. A var so a test can see when a verb takes it.
-var answerDeadline = func() time.Time { return time.Now().Add(clientAnswerBudget) }
-
 // residentUntil is ensureResident for a person's verb that must answer by answerBy. It answers errRunHostSlow once
 // answerBy passes first, or when the load ran out its own budget, so the browser reads a sentence rather than aborting.
 func (rs *Runs) residentUntil(answerBy time.Time) residentFn {

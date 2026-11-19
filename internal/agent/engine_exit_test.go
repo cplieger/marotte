@@ -14,6 +14,7 @@ import (
 // An engine end reaches every session it hosted: each chat's open turn closes, its pending ask is retired and the
 // terminals it created are released, each through that session's own forward tail.
 func TestEngineExit_ClosesEveryHostedSessionsTurnAndAsks(t *testing.T) {
+	t.Parallel()
 	h, _ := reopenFixture(t)
 	awaitBoot(h)
 	if _, err := h.chatStore.Mutate(t.Context(), "c2", func(c *marotte.Chat, _ bool) bool { c.Name = "B"; return true }); err != nil {

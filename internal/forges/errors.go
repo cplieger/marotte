@@ -26,7 +26,10 @@ var kindStatus = map[forgeapi.ErrorKind]int{
 }
 
 // localRefusals are the library's refusals of a request it never sent because
-// the caller's input was wrong.
+// the caller's input was wrong, which carry no kind. statusFor reads the kind
+// first, so a listed code the library also raises on a forge's answer
+// (strategy_not_allowed from a GitLab project that always squashes) answers
+// its kind's status.
 var localRefusals = map[string]bool{
 	forgeapi.CodeRepoRefInvalid:        true,
 	forgeapi.CodeRefInvalid:            true,

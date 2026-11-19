@@ -30,6 +30,7 @@ func TestReadBound_ARunReadPastItsDeadlineReadsZero(t *testing.T) {
 
 // A run notice whose bound read timed out is still raised, at position 0.
 func TestNotify_RaisesAtPositionZeroWhenTheRunBoundTimesOut(t *testing.T) {
+	t.Parallel()
 	h, fp := newRunPushHub(t)
 	h.coord.readBound = newReadBound(
 		func(context.Context, marotte.ChatID) (uint64, error) { return 0, nil },
