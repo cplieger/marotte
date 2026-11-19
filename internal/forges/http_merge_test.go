@@ -1,8 +1,8 @@
 package forges
 
 // Tests for the merge route and the merge-status read: the merge body reaching the
-// library, the family rules the route adds before it, and the outcome and status
-// answers. The library's own refusals are driven through a real family client.
+// library and the outcome and status answers. The library's own refusals are
+// driven through a real family client.
 
 import (
 	"context"
@@ -294,32 +294,32 @@ func TestMergeRoute_GitLabStrategyIsRefused400(t *testing.T) {
 	}
 }
 
-func TestMergeRoute_GitHubAndGiteaWithoutAStrategyAre400(t *testing.T) {
-	body := `{"intent":"squash","head_sha":"` + mergeHead + `"}`
+// A merge naming no strategy reaches the library on every family, which decides
+// whether the repository's record names one; its refusal answers 409.
+func TestMergeRoute_NoStrategyIsTheLibrarysToRefuse(t *testing.T) {
+	body := `{"intent":"default","head_sha":"` + mergeHead + `"}`
 	for name, row := range map[string]mergeRow{
-		"GitHub": githubMergeRow(), "Gitea": giteaMergeRow(), "Codeberg": codebergMergeRow(),
+		"GitHub": githubMergeRow(), "Gitea": giteaMergeRow(), "Codeberg": codebergMergeRow(), "GitLab": gitlabMergeRow(),
 	} {
 		t.Run(name, func(t *testing.T) {
-			core := &mergeCore{outcome: forgeapi.MergeOutcome{State: forgeapi.MergeOutcomeMerged}}
+			core := &mergeCore{err: &forgeapi.Error{
+				Op: "MergePR", Code: forgeapi.CodeStrategyRequired, Kind: forgeapi.KindNotMergeable,
+				Message: "the repository names no default merge style",
+			}}
 			mux := mergeMux(t, row, core)
 
 			rec := sendRoute(t, mux, http.MethodPost, row.mergePath("15"), body)
-			if got := decodeBody(t, rec); rec.Code != http.StatusBadRequest || got["code"] != "strategy_required" {
-				t.Errorf("POST merge %s on %s = %d %s, want 400 strategy_required", body, name, rec.Code, rec.Body)
+			got := decodeBody(t, rec)
+			if rec.Code != http.StatusConflict || got["code"] != forgeapi.CodeStrategyRequired || got["kind"] != "not_mergeable" {
+				t.Errorf("POST merge %s on %s = %d %s, want 409 %s kind not_mergeable",
+					body, name, rec.Code, rec.Body, forgeapi.CodeStrategyRequired)
 			}
-			if got := core.merges(); len(got) != 0 {
-				t.Errorf("the library was asked to merge %+v with no strategy named, want nothing", got)
+			want := []forgeapi.MergeRequest{{Intent: forgeapi.IntentDefault, HeadSHA: mergeHead}}
+			if merges := core.merges(); !reflect.DeepEqual(merges, want) {
+				t.Errorf("the library was asked to merge %+v, want %+v", merges, want)
 			}
 		})
 	}
-
-	t.Run("GitLab takes the intent alone", func(t *testing.T) {
-		core := &mergeCore{outcome: forgeapi.MergeOutcome{State: forgeapi.MergeOutcomeMerged}}
-		mux := mergeMux(t, gitlabMergeRow(), core)
-		if rec := sendRoute(t, mux, http.MethodPost, gitlabMergeRow().mergePath("11"), body); rec.Code != http.StatusOK {
-			t.Errorf("POST merge %s on GitLab = %d %s, want 200", body, rec.Code, rec.Body)
-		}
-	})
 }
 
 // The library arms each forge's own auto-merge on every family, so a

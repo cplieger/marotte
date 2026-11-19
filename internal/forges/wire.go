@@ -187,9 +187,8 @@ type Capabilities struct {
 	Grant      map[string]Affordance `json:"grant"`
 	// Account is the sign-in the answer was read through.
 	Account string `json:"account"`
-	// RerunWholeRun is whether this instance's re-run starts the whole finished
-	// run, its passed jobs included, rather than its failed jobs: forgeapi's
-	// Forgejo departure on RerunFailedChecks.
+	// RerunWholeRun is whether this connection's re-run starts the whole
+	// finished run, its passed jobs included, rather than its failed jobs.
 	RerunWholeRun bool `json:"rerun_whole_run"`
 }
 
@@ -538,7 +537,7 @@ func capabilitiesOf(conn forgeapi.ConnectionCaps, grant forgeapi.GrantCaps) Capa
 	return Capabilities{
 		Connection:    scopeOf(connectionScope, conn.Caps, conn.Ev),
 		Grant:         scopeOf(grantScope, grant.Caps, grant.Ev),
-		RerunWholeRun: conn.Product == forgeapi.ProductForgejo,
+		RerunWholeRun: conn.RerunScope == forgeapi.RerunScopeWholeRun,
 	}
 }
 

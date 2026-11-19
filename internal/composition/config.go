@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/go/envx"
+	"github.com/cplieger/go/envx/v2"
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/filebrowse"
@@ -266,7 +266,7 @@ func notifyGateFromEnv() (notify.Gate, error) {
 	case err != nil:
 		return notify.Gate{}, errors.New(key + "_FILE cannot be used: " + secretFileFailure(err))
 	}
-	return notify.ParseToken(value)
+	return notify.ParseToken(value.Reveal())
 }
 
 // secretFileFailure names an envx secret-file failure's class without its path.
