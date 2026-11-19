@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/kirosession"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 )
@@ -91,6 +95,80 @@ func TestObserverPass_ARefusedCloseDeletesTheSessionAndClosesIt(t *testing.T) {
 	}
 	if !sessionClosed(o) {
 		t.Error("the pass's session stayed open after its refused close")
+	}
+}
+
+// passFixture is a runtime whose observer passes all open as sessionID on one fake, with a reaper over sessionsDir.
+func passFixture(t *testing.T, sessionsDir, sessionID string) (*Runtime, *fakeBridge) {
+	t.Helper()
+	cs := newTestChatStore()
+	h := newRuntimeOn(t.Context(), testReaperWorkDir, fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs,
+		WithSessionReaper(kirosession.New(sessionsDir, testReaperWorkDir)))
+	cs.wire(h)
+	t.Cleanup(func() { shutdownHub(t, h) })
+	awaitBoot(h)
+	o := oneObserver(t, h)
+	o.mu.Lock()
+	o.sessionID = sessionID
+	o.mu.Unlock()
+	return h, o
+}
+
+// observeWritingState runs one pass that leaves KAS's on-disk state for its session at dir, as KAS does for every
+// session it opens.
+func observeWritingState(t *testing.T, h *Runtime, dir string) {
+	t.Helper()
+	err := h.observe(t.Context(), func(context.Context, engineSession) error {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+		writeSessionRecord(t, dir, testReaperWorkDir)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("observe: %v", err)
+	}
+}
+
+// Nothing loads a pass's session again, so a closed pass leaves no state on disk: left there, it is a session no
+// chat names, which the orphan sweep refuses to judge on an install that has no chat yet.
+func TestObserverPass_RemovesItsSessionStateOnceClosed(t *testing.T) {
+	sessionsDir := t.TempDir()
+	h, o := passFixture(t, sessionsDir, "sess_pass1")
+	dir := filepath.Join(sessionsDir, "hash01", "sess_pass1")
+
+	observeWritingState(t, h, dir)
+
+	if !sessionClosed(o) {
+		t.Fatal("Setup: the pass left its session open")
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("stat %s after the pass = %v, want not exist: the closed pass left its session state on disk", dir, err)
+	}
+}
+
+// A pass whose session neither closes nor deletes is still live in KAS, so its state stays.
+func TestObserverPass_KeepsTheStateOfASessionItCouldNotEnd(t *testing.T) {
+	sessionsDir := t.TempDir()
+	h, o := passFixture(t, sessionsDir, "sess_pass2")
+	o.mu.Lock()
+	o.closeErr = fmt.Errorf("ACP error -32603: %w", &marotte.RPCError{Code: marotte.RPCCodeInternal, Message: "a lifecycle operation is in progress"})
+	o.mu.Unlock()
+	src := fakeSourceOf(t, h)
+	src.mu.Lock()
+	src.callGate = func(_ context.Context, method string, resp *marotte.RPCResponse, err error) (*marotte.RPCResponse, error) {
+		if method == marotte.MethodSessionDelete {
+			return nil, &marotte.RPCError{Code: -32000, Message: "session owns live workflows"}
+		}
+		return resp, err
+	}
+	src.mu.Unlock()
+	dir := filepath.Join(sessionsDir, "hash01", "sess_pass2")
+
+	observeWritingState(t, h, dir)
+
+	if _, err := os.Stat(dir); err != nil {
+		t.Errorf("stat %s after the pass = %v, want it kept: KAS still holds the session", dir, err)
 	}
 }
 

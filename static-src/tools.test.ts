@@ -647,7 +647,26 @@ describe("add modal", () => {
     expect(apt.textContent).toContain("Search again in a moment");
   });
 
-  it("names the host when the engine reports apt unusable", async () => {
+  it("gives the engine's reason when it reports apt unusable", async () => {
+    initWith(listWith([]));
+    mocks.searchDispatch.mockResolvedValue({
+      results: [],
+      apt_available: false,
+      apt_state: "unavailable",
+      apt_reason: "apt packages need a writable root filesystem",
+      truncated: false,
+    });
+    byId<HTMLButtonElement>("tool-add-btn").click();
+    await flush();
+
+    const apt = byId("tool-shell-note-apt");
+    expect(apt.classList.contains("hidden")).toBe(false);
+    expect(apt.textContent).toBe(
+      " Debian packages are not searchable here: apt packages need a writable root filesystem.",
+    );
+  });
+
+  it("names the host when the engine reports apt unusable with no reason", async () => {
     initWith(listWith([]));
     mocks.searchDispatch.mockResolvedValue({
       results: [],

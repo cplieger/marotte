@@ -4217,8 +4217,9 @@ export interface SearchHit {
    */
   version?: string;
   /**
-   * Reason names the registry backend that defeated the compiler, and
-   * is set only alongside Unavailable.
+   * Reason says why the hit cannot be installed: the registry backend
+   * that defeated the compiler, or for a Debian package
+   * [toolbelt.AptUnavailableReason]. Set only alongside Unavailable.
    */
   reason?: string;
   /**
@@ -4270,6 +4271,12 @@ export interface SearchResponse {
    * predating the field, where AptAvailable is the whole answer.
    */
   apt_state?: string;
+  /**
+   * AptReason says why apt cannot install here, set only when AptState
+   * is unavailable, so a client can say why even when no Debian hit
+   * reaches the unavailable block.
+   */
+  apt_reason?: string;
   results: SearchHit[];
   /**
    * Matched is how many rows the query matched across the blocks

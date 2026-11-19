@@ -331,6 +331,7 @@ RUN ln -s /app/marotte /usr/bin/xclip
 
 # /opt is hidden from the file browser (internal/filebrowse/paths.go).
 COPY --chmod=755 entrypoint.sh /opt/marotte/entrypoint.sh
+COPY login-path.sh /etc/profile.d/10-marotte-path.sh
 COPY --from=builder /tmp/tool-catalog.json /opt/marotte/tool-catalog.json
 COPY bundled-tools.json /opt/marotte/bundled-tools.json
 
