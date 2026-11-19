@@ -328,6 +328,8 @@ func TestBotFloor_AnUnqueuedUserSteerKeepsTheMark(t *testing.T) {
 
 // A person's steer accepted after its turn ended reached that turn, not the rule's next one.
 func TestBotFloor_ASteerAcceptedAfterItsTurnEndedKeepsTheNextTurnsMark(t *testing.T) {
+	// The stubbed send records no hold in kiro-cli, so the POST answers queued only once the admission wait passed.
+	shrinkAdmissionWait(t, 50*time.Millisecond)
 	h, br := floorHub(t, map[string]any{})
 	openedWith(t, h, policyfile.ProfileTrusted)
 	first := openRuleTurn(t, h, 1)
