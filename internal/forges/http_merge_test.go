@@ -294,29 +294,39 @@ func TestMergeRoute_GitLabStrategyIsRefused400(t *testing.T) {
 	}
 }
 
-// A merge naming no strategy reaches the library on every family, which decides
-// whether the repository's record names one; its refusal answers 409.
+// A merge naming no strategy on GitHub or Gitea reaches the real client, which
+// reads the repository record (here naming no merge method) and refuses before
+// any write; the route answers that refusal 409.
 func TestMergeRoute_NoStrategyIsTheLibrarysToRefuse(t *testing.T) {
 	body := `{"intent":"default","head_sha":"` + mergeHead + `"}`
-	for name, row := range map[string]mergeRow{
-		"GitHub": githubMergeRow(), "Gitea": giteaMergeRow(), "Codeberg": codebergMergeRow(), "GitLab": gitlabMergeRow(),
-	} {
-		t.Run(name, func(t *testing.T) {
-			core := &mergeCore{err: &forgeapi.Error{
-				Op: "MergePR", Code: forgeapi.CodeStrategyRequired, Kind: forgeapi.KindNotMergeable,
-				Message: "the repository names no default merge style",
-			}}
-			mux := mergeMux(t, row, core)
+	cases := []struct {
+		name, host, token, user string
+		kind                    Kind
+	}{
+		{name: "GitHub", kind: KindGitHub, token: "ghp_secret", user: `{"login":"alice"}`},
+		{name: "Gitea", kind: KindGitea, host: "git.test:3000", token: "gitea-secret", user: `{"id":1,"login":"alice"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wire := &userWire{status: http.StatusOK, body: tc.user}
+			h := newConnectHarness(t, wire)
+			id := h.signedIn(t, tc.kind, tc.host, tc.token, "")
+			before := len(wire.requests())
 
-			rec := sendRoute(t, mux, http.MethodPost, row.mergePath("15"), body)
+			rec := h.do(t, http.MethodPost, "/api/forges/"+url.PathEscape(id)+"/repos/v1.6f2f72/prs/15/merge", body)
 			got := decodeBody(t, rec)
 			if rec.Code != http.StatusConflict || got["code"] != forgeapi.CodeStrategyRequired || got["kind"] != "not_mergeable" {
 				t.Errorf("POST merge %s on %s = %d %s, want 409 %s kind not_mergeable",
-					body, name, rec.Code, rec.Body, forgeapi.CodeStrategyRequired)
+					body, tc.name, rec.Code, rec.Body, forgeapi.CodeStrategyRequired)
 			}
-			want := []forgeapi.MergeRequest{{Intent: forgeapi.IntentDefault, HeadSHA: mergeHead}}
-			if merges := core.merges(); !reflect.DeepEqual(merges, want) {
-				t.Errorf("the library was asked to merge %+v, want %+v", merges, want)
+			seen := wire.requests()[before:]
+			if len(seen) == 0 {
+				t.Errorf("the forge saw no request, want the repository record read")
+			}
+			for _, r := range seen {
+				if r.Method != http.MethodGet {
+					t.Errorf("the forge saw %s %s for a refused merge, want reads only", r.Method, r.URL.Path)
+				}
 			}
 		})
 	}
