@@ -62,6 +62,9 @@ func TestCounters_EveryKnownValueIsOnThePageBeforeItsFirstEvent(t *testing.T) {
 		}
 		want = append(want, `marotte_unattended_approvals_total{origin="`+origin+`"} `)
 	}
+	for _, answer := range []string{"refused", "approved"} {
+		want = append(want, `marotte_bot_unattended_answers_total{answer="`+answer+`"} `)
+	}
 	for _, event := range []string{"launch_failed", "signin_held", "engine_busy"} {
 		want = append(want, `marotte_schedule_slots_not_started_total{event="`+event+`"} `)
 	}

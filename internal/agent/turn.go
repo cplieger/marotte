@@ -116,6 +116,9 @@ type activeTurn struct {
 	// finalizing is whether a closer holds this turn's claim: a second claim and a
 	// fold both treat a finalizing turn as absent.
 	finalizing bool
+	// unattended is whether nobody watches the turn (startsUnattended) and no user steer has reached it since: the
+	// Bot turn floor answers its asks (permissionWithBotFloor).
+	unattended bool
 }
 
 type chatLifecycle struct {
@@ -513,9 +516,10 @@ func (lc *chatLifecycle) openTurnLocked(
 	} else {
 		lc.own = t
 	}
+	wake := false
 	if source == marotte.TurnSourceWireTurnStart {
 		t.bracketed = bracketed
-		lc.takeWakeLocked()
+		wake = lc.takeWakeLocked()
 	}
 	of := openFacts{turnID: t.ID, admission: t.admission, seq: t.Seq, bracketed: bracketed}
 	of.wire = source == marotte.TurnSourceWireTurnStart
@@ -523,9 +527,11 @@ func (lc *chatLifecycle) openTurnLocked(
 		slog.Debug("run list: a turn opened that no entry was taken for", "chat_id", chatID, "turn", t.ID)
 	}
 	lc.setStateLocked(turnOpen)
+	leaseDepth := 0
 	if lc.reg != nil && lc.reg.rules != nil {
-		lc.reg.rules.TurnOpened(chatID, t.ID, from)
+		leaseDepth = lc.reg.rules.TurnOpened(chatID, t.ID, source, from, wake)
 	}
+	t.unattended = startsUnattended(from, wake, leaseDepth)
 	return t
 }
 

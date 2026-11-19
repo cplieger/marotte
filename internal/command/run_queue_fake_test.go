@@ -129,7 +129,8 @@ func doorID(s *Submission) string {
 // offerSteer offers s into the running turn as the agent's list does (Dispatcher.SteerEntry): a full steer record refuses
 // it, as the list's steer budget does, and a refusal for no turn takes it as a turn of its own.
 func (q *launchingRun) offerSteer(ctx context.Context, chatID marotte.ChatID, stamp uint64, s *Submission) (SubmitAnswer, error) {
-	switch steerEntry(ctx, q.roles, chatID, &EntrySteer{Entry: s.Row.ID, Text: s.Row.Text, Caller: s.Row.Caller}) {
+	refuse, _ := steerEntry(ctx, q.roles, chatID, &EntrySteer{Entry: s.Row.ID, Text: s.Row.Text, Caller: s.Row.Caller})
+	switch refuse {
 	case "":
 		return SubmitAnswer{As: SubmitSteered}, nil
 	case SteerRefuseFull:
