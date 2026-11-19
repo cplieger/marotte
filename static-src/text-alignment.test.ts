@@ -93,6 +93,9 @@ interface Site {
   readonly must: readonly RegExp[];
   /** A label's tolerance where the site's dev offset lies inside a centre's: the trimmed label's. */
   readonly labelTol?: number;
+  /** Holds a label's cap centre, not its cap-to-x band, to this tolerance: the band takes in a
+   *  label raised by a row font smaller than its own. */
+  readonly capTol?: number;
 }
 
 const SITES: readonly Site[] = [
@@ -322,6 +325,7 @@ const SITES: readonly Site[] = [
     frame: '[data-settings-panel="instructions"] .section-title-status-row',
     sizes: [1180, 390],
     must: [/^label: .*section-title-status-row > label\.section-title$/],
+    capTol: BASELINE_PX,
   },
   {
     id: "a workflow's schedule button",
@@ -382,8 +386,8 @@ function measureSite(site: Site): { what: string; delta: number; tol: number }[]
       .filter((l) => inside(l.el) && !l.lowered)
       .map((l) => ({
         what: `label: ${l.sel}`,
-        delta: labelOffset(l),
-        tol: site.labelTol ?? CENTRE_PX,
+        delta: site.capTol === undefined ? labelOffset(l) : l.capOff,
+        tol: site.capTol ?? site.labelTol ?? CENTRE_PX,
       })),
   ];
 }
