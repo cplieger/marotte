@@ -312,6 +312,13 @@ const SITES: readonly Site[] = [
     labelTol: BASELINE_PX,
   },
   {
+    id: "a live run's name",
+    surface: surface("the sidebar"),
+    frame: ".runs-row",
+    sizes: [1180, 390],
+    must: [/^label: .*runs-row-name$/],
+  },
+  {
     id: "a setting's label and value",
     surface: surface("Settings, General"),
     frame: ".section-title-status-row",

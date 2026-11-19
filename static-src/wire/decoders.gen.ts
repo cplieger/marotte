@@ -2670,6 +2670,7 @@ export const decodeLiveRun: Decoder<LiveRun> = (v) => {
     workflow_id: reqStr(o, "workflow_id", "$.live_run"),
     chat_id: reqStr(o, "chat_id", "$.live_run"),
     executing: reqBool(o, "executing", "$.live_run"),
+    started_at: reqNum(o, "started_at", "$.live_run"),
   };
   return out;
 };
@@ -2681,6 +2682,7 @@ export const decodeLiveRunPayload: Decoder<LiveRunPayload> = (v) => {
     chat_id: reqStr(o, "chat_id", "$.live_run_payload"),
     live: reqBool(o, "live", "$.live_run_payload"),
     executing: reqBool(o, "executing", "$.live_run_payload"),
+    started_at: reqNum(o, "started_at", "$.live_run_payload"),
   };
   return out;
 };

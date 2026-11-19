@@ -417,6 +417,11 @@ function mountBottomBar(): void {
   mountHoldingArea(area);
 }
 
+/** Park focus on the shown run's page, its scroller, for a door whose own control the open took away. */
+export function focusRunPage(): void {
+  queryEl<HTMLElement>("[id='run-view'] > .page-content")?.focus();
+}
+
 function mountFollower(): void {
   if (follower !== undefined) {
     return;

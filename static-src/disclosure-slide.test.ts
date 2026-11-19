@@ -542,6 +542,46 @@ describe("slideBox", () => {
     expect(box.scrollTop, "the open height's own limit").toBe(100);
   });
 
+  it("slides a box whose open state holds a floor over a lower cap smoothly both ways", async () => {
+    // Runs' shape on a short screen: open, the content would be 150px, the cap 62px and the floor 87px, which wins.
+    const box = mount(document.createElement("div"));
+    const content = document.createElement("div");
+    box.append(content);
+    const apply = (o: boolean): void => {
+      content.style.blockSize = o ? "150px" : "40px";
+      box.style.minBlockSize = o ? "87px" : "";
+      box.style.maxBlockSize = o ? "62px" : "";
+    };
+    const sampled = (open: boolean): void => {
+      slideBox(box, open, apply);
+      const [slide] = heightSlides(box);
+      const fx = slide?.effect;
+      if (slide === undefined || !(fx instanceof KeyframeEffect)) {
+        throw new Error("no slide");
+      }
+      const { from, to } = slideOn(box);
+      expect([from, to]).toEqual(open ? [40, 87] : [87, 40]);
+      slide.pause();
+      for (const at of [0.1, 0.5, 0.9]) {
+        slide.currentTime = at * Number(fx.getTiming().duration);
+        const eased = fx.getComputedTiming().progress ?? Number.NaN;
+        const h = box.getBoundingClientRect().height;
+        expect(
+          Math.abs(h - (from + (to - from) * eased)),
+          `${String(at)} of the way`,
+        ).toBeLessThanOrEqual(1);
+      }
+    };
+    apply(false);
+
+    sampled(true);
+    await finish(box);
+    expect(box.getBoundingClientRect().height).toBe(87);
+    sampled(false);
+    await finish(box);
+    expect(box.getBoundingClientRect().height).toBe(40);
+  });
+
   it("slides with no fade unless asked", () => {
     const box = mount(document.createElement("div"));
     const apply = (o: boolean): void => {

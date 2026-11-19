@@ -1,1 +1,1 @@
-{"route":"GET /api/whoami","url":"/api/whoami","decoder":"WhoamiResponse","body":{"health":{"state":"ok","version":{"boot_ms":1794924986401,"seq":0}},"state":"signed_in","auth":"API key (KIRO_API_KEY)","apiKey":true}}
+{"route":"GET /api/whoami","url":"/api/whoami","decoder":"WhoamiResponse","body":{"health":{"state":"ok","version":{"boot_ms":1795026761841,"seq":0}},"state":"signed_in","auth":"API key (KIRO_API_KEY)","apiKey":true}}

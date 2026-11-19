@@ -16,8 +16,8 @@ github.com/cplieger/go/httpclient v1.2.0 h1:E+lbIpiNkUkcq3fxdMDYn116cwx6tU1XWmn4
 github.com/cplieger/go/httpclient v1.2.0/go.mod h1:couTQSCNdgNwOotbaQREGcM4CjUKZJ4Bdb7FSkNwL8U=
 github.com/cplieger/go/httpserver v1.5.0 h1:z4ji5vpyd6mhR+FnFtzFBe9Mv6nOuVPWhcFv33YJL/o=
 github.com/cplieger/go/httpserver v1.5.0/go.mod h1:MuZxKRRjQG6DAJBO88cTGhVdhSCmBu2PMeA/DWRbiTQ=
-github.com/cplieger/go/httpserver/v2 v2.0.0-dev.7 h1:6Bca+TrHBagiHxuLQmKEqcMgeahJBfijWAql7IEL12g=
-github.com/cplieger/go/httpserver/v2 v2.0.0-dev.7/go.mod h1:MBXpBuVO/zdiyXOcq5eRMRJVmdryzDfH7DFo+olLF88=
+github.com/cplieger/go/httpserver/v2 v2.0.0-dev.9 h1:1tu6QwPi6eQuMX5mqI+q1yOe6Lqzmlw8Lgf/PS481To=
+github.com/cplieger/go/httpserver/v2 v2.0.0-dev.9/go.mod h1:MBXpBuVO/zdiyXOcq5eRMRJVmdryzDfH7DFo+olLF88=
 github.com/cplieger/go/jsonx v1.1.0 h1:/XBHr3vJVqKYVDteO8cZEMAdTgmT3Df/SeyNw1pdak8=
 github.com/cplieger/go/jsonx v1.1.0/go.mod h1:ry6co0JYAadIhjHtkktBSK3to4YdtEak1P7mdmQlr7U=
 github.com/cplieger/go/keyenc v1.3.0 h1:v0zvHSY4ZOZapGNYGAkghEXPz1SeifT/Trg0b9A8IBU=
@@ -32,8 +32,8 @@ github.com/cplieger/go/scheduler v1.1.0 h1:AzmRDvZ/wEEwK7Ab5Uz0Pa5Xx67oWndalpVkn
 github.com/cplieger/go/scheduler v1.1.0/go.mod h1:PEVHRl8YalcfFnicvMQdoWQKM16Ddrby9GPlG1oxyQI=
 github.com/cplieger/go/slogx v1.1.0 h1:whWmZcNmLuWGFM33SYFR+alUTfEodzBjKju44DHNgPY=
 github.com/cplieger/go/slogx v1.1.0/go.mod h1:N88y5LJZ1aVp++cLFqzEV4WsalaX5YKXoRtXT29Ngkw=
-github.com/cplieger/go/sse/v2 v2.3.0-dev.15 h1:3EBTbJoOd96ZA6jumB7g+DsTC5zOlytTZNN0dOlK7l8=
-github.com/cplieger/go/sse/v2 v2.3.0-dev.15/go.mod h1:IozZ+wee7FkvWlpG5WP3JNmv6Tn7rfptusqSI9xJ2Vw=
+github.com/cplieger/go/sse/v2 v2.3.0-dev.16 h1:QLzRRJG27otnmStvsrWk//1ccnqlIWMT9agD9vCUDpY=
+github.com/cplieger/go/sse/v2 v2.3.0-dev.16/go.mod h1:lYqTTQFKffXJhj3CNBtnydiPKEb2JZnPztw0WQ2TBUo=
 github.com/cplieger/go/ssrf v1.1.0 h1:gyP7pYm1415RkHmIdod1YCvuX+I1xD1dXiRa8tvz8Bg=
 github.com/cplieger/go/ssrf v1.1.0/go.mod h1:95hUJ04+tP4FHFyd9Vp+egJpNDuf8d+jtgvcxzf7Mkw=
 github.com/cplieger/go/textsafe v1.1.0 h1:D+p7ZDBQmABv/empI2TNMZfvhMXNlfii8E2e5V+dUWE=

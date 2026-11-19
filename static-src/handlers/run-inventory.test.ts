@@ -107,7 +107,7 @@ function answerRead(ids: readonly string[], version: string): void {
     throw new Error("no inventory read is open");
   }
   resolve({
-    runs: ids.map((id) => ({ workflow_id: id, chat_id: "c1", executing: true })),
+    runs: ids.map((id) => ({ workflow_id: id, chat_id: "c1", executing: true, started_at: 1 })),
     subject: { kind: "runs", ref: "", version },
   });
 }

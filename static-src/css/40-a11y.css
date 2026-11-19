@@ -45,9 +45,9 @@
   outline-offset: var(--focus-offset);
 }
 
-/* The transcript scroller holds focus (tabindex -1) only so a tap, a scroll key or a script can park it
- * there; it is not a control, so it never rings, whatever focused it. */
-[id="messages-wrap"]:focus {
+/* The chat's and the run's scrollers hold focus (tabindex -1) only so a tap, a scroll key or a script
+ * can park it there; neither is a control, so neither rings, whatever focused it. */
+:is([id="messages-wrap"], [id="run-view"] > .page-content):focus {
   outline: none;
 }
 
