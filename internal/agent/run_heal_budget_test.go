@@ -263,6 +263,14 @@ func TestHealBudget_ThrottlesWithNoProgressStopAutoResumeWithNoPause(t *testing.
 	}
 }
 
+// joinAfterHealRead is joinInflight once the heal timer has re-read the run (inspects past before): the timer's body
+// Adds to inflight, and a Wait beside that Add races.
+func (g *throttleRig) joinAfterHealRead(t *testing.T, before int32) {
+	t.Helper()
+	waitUntil(t, "the heal's re-read of the run", func() bool { return g.inspects.Load() > before })
+	joinInflight(g.h)
+}
+
 // awaitStepAnswers is awaitResumes for the rig's answers to the review step.
 func awaitStepAnswers(t *testing.T, g *throttleRig, want int32) {
 	t.Helper()
@@ -289,8 +297,9 @@ func TestHealPaused_AThrottleReportedAsAQuestionIsResumed(t *testing.T) {
 	})
 	t.Run("after a turn that ended asking", func(t *testing.T) {
 		g := newThrottleRig(t, nil)
+		before := g.inspects.Load()
 		g.throttledAsk(t, askTurn{answered: true})
-		joinInflight(g.h)
+		g.joinAfterHealRead(t, before)
 		awaitStepAnswers(t, g, 0)
 		if n := g.h.runs.healsSpent(gateRunID); n != 0 {
 			t.Errorf("heals spent = %d, want none for an open question", n)
@@ -300,9 +309,7 @@ func TestHealPaused_AThrottleReportedAsAQuestionIsResumed(t *testing.T) {
 		g := newThrottleRig(t, nil)
 		before := g.inspects.Load()
 		g.throttledAsk(t, askTurn{failed: true})
-		// joinInflight may run only once the heal timer, which Adds to inflight, has fired: its re-read of the run.
-		waitUntil(t, "the heal's re-read of the run", func() bool { return g.inspects.Load() > before })
-		joinInflight(g.h)
+		g.joinAfterHealRead(t, before)
 		awaitStepAnswers(t, g, 0)
 		awaitResumes(t, &g.resumes, 0)
 		if n := g.h.runs.healsSpent(gateRunID); n != 0 {
@@ -321,9 +328,7 @@ func TestHealPaused_AThrottleReportedAsAQuestionIsResumed(t *testing.T) {
 		healBaseDelay = 50 * time.Millisecond
 		before := g.inspects.Load()
 		g.throttledAsk(t, askTurn{answered: true, pauseFirst: true})
-		// joinInflight may run only once the heal timer, which Adds to inflight, has fired: its re-read of the run.
-		waitUntil(t, "the heal's re-read of the run", func() bool { return g.inspects.Load() > before })
-		joinInflight(g.h)
+		g.joinAfterHealRead(t, before)
 		awaitStepAnswers(t, g, 0)
 		if n := g.h.runs.healsSpent(gateRunID); n != 0 {
 			t.Errorf("heals spent = %d, want none for an open question", n)
