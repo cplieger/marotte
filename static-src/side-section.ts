@@ -29,7 +29,7 @@ type SectionFocus =
   | { readonly ref: string; readonly control: number; readonly order: readonly string[] }
   | { readonly at: HTMLElement };
 
-export interface SideSectionOptions {
+interface SideSectionOptions {
   readonly key: string;
   /** The fold a browser that never pressed the header sees. */
   readonly foldedByDefault: boolean;
