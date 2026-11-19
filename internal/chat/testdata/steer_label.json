@@ -51,9 +51,9 @@
       "reason": "restart",
       "label": "Workflow result not delivered · the session restarted",
       "sites": [
-        "internal/agent/bridge_coord.go:1984",
+        "internal/agent/bridge_coord.go:1991",
         "internal/agent/entry_merge.go:609",
-        "internal/agent/runtime.go:843"
+        "internal/agent/runtime.go:845"
       ]
     },
     {
@@ -211,7 +211,7 @@
       "label": "Not read · the session restarted",
       "sites": [
         "internal/agent/entry_merge.go:609",
-        "internal/agent/runtime.go:837"
+        "internal/agent/runtime.go:839"
       ]
     },
     {
@@ -239,7 +239,7 @@
   ],
   "sites": [
     {
-      "site": "internal/agent/bridge_coord.go:1984",
+      "site": "internal/agent/bridge_coord.go:1991",
       "form": "literal",
       "origin": "agent",
       "state": "dropped",
@@ -295,14 +295,14 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/runtime.go:837",
+      "site": "internal/agent/runtime.go:839",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/runtime.go:843",
+      "site": "internal/agent/runtime.go:845",
       "form": "mutation",
       "origin": "agent",
       "state": "dropped",

@@ -150,13 +150,18 @@ func (reg *mcpRegistry) identityProviderStatus(ctx context.Context, cfg *mcp.Ide
 			cancel()
 		}
 	}
-	reg.mu.RLock()
-	p := reg.idp.served
-	version, _ := reg.versions.Current(subject.KindMCPIdentityProvider, "")
-	reg.mu.RUnlock()
+	p, version := reg.identityProviderStamped()
 	stamp := marotte.NewSubjectStamp(string(subject.KindMCPIdentityProvider), "", version)
 	stamp.Epoch = reg.epoch()
 	return p, stamp
+}
+
+// identityProviderStamped is the served status with the version it was served at, read under one lock.
+func (reg *mcpRegistry) identityProviderStamped() (p marotte.MCPIdentityProviderPayload, version string) {
+	reg.mu.RLock()
+	defer reg.mu.RUnlock()
+	version, _ = reg.versions.Current(subject.KindMCPIdentityProvider, "")
+	return reg.idp.served, version
 }
 
 // idpConfigKey identifies a configured provider as KAS keys its session, "" for none.
