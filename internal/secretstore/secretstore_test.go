@@ -525,25 +525,29 @@ func storedKeys(t *testing.T, dir string) []string {
 	return slices.Sorted(maps.Keys(f.Secrets))
 }
 
-// TestOnlyClientAndTokensPersist pins that the file holds the grant and nothing else: KAS reads the verifier and the
+// TestOnlyTheGrantPersists pins that the file holds the grant and nothing else: KAS reads the verifier and the
 // discovery state from storage only on a new connection object, so persisting them carries a spent verifier and a
 // stale authorization server across restarts.
-func TestOnlyClientAndTokensPersist(t *testing.T) {
+func TestOnlyTheGrantPersists(t *testing.T) {
 	dir := t.TempDir()
 	s, err := New(dir)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 	ctx := t.Context()
-	keys := []string{keyOf("client"), keyOf("tokens"), keyOf("verifier"), keyOf("discovery"), "kiro.mcp.deadbeef.tokens"}
+	keys := []string{
+		keyOf("client"), keyOf("kiro-path-client"), keyOf("tokens"), keyOf("verifier"), keyOf("discovery"),
+		"kiro.mcp.deadbeef.tokens",
+	}
 	for _, k := range keys {
 		if err := s.Set(ctx, k, "v-"+k); err != nil {
 			t.Fatalf("Set(%q) error = %v", k, err)
 		}
 	}
 
-	if got, want := storedKeys(t, dir), []string{keyOf("client"), keyOf("tokens")}; !slices.Equal(got, want) {
-		t.Errorf("file keys = %v, want only %v", got, want)
+	grant := []string{keyOf("client"), keyOf("kiro-path-client"), keyOf("tokens")}
+	if got := storedKeys(t, dir); !slices.Equal(got, grant) {
+		t.Errorf("file keys = %v, want only %v", got, grant)
 	}
 	reopened, err := New(dir)
 	if err != nil {
@@ -551,7 +555,7 @@ func TestOnlyClientAndTokensPersist(t *testing.T) {
 	}
 	for _, k := range keys {
 		_, ok := reopened.Get(k)
-		if want := k == keyOf("client") || k == keyOf("tokens"); ok != want {
+		if want := slices.Contains(grant, k); ok != want {
 			t.Errorf("after a reopen Get(%q) ok = %v, want %v", k, ok, want)
 		}
 	}
@@ -582,7 +586,7 @@ func TestSignInStateServesWithinTheStore(t *testing.T) {
 func TestForgetSignInStateKeepsTheGrant(t *testing.T) {
 	s := newStore(t)
 	ctx := t.Context()
-	for _, k := range []string{keyOf("client"), keyOf("tokens"), keyOf("verifier"), keyOf("discovery")} {
+	for _, k := range []string{keyOf("client"), keyOf("kiro-path-client"), keyOf("tokens"), keyOf("verifier"), keyOf("discovery")} {
 		if err := s.Set(ctx, k, "v"); err != nil {
 			t.Fatalf("Set(%q) error = %v", k, err)
 		}
@@ -595,7 +599,7 @@ func TestForgetSignInStateKeepsTheGrant(t *testing.T) {
 			t.Errorf("Get(%q) ok = true after ForgetSignInState, want false", k)
 		}
 	}
-	for _, k := range []string{keyOf("client"), keyOf("tokens")} {
+	for _, k := range []string{keyOf("client"), keyOf("kiro-path-client"), keyOf("tokens")} {
 		if _, ok := s.Get(k); !ok {
 			t.Errorf("Get(%q) ok = false after ForgetSignInState, want the grant kept", k)
 		}
