@@ -357,8 +357,7 @@ func TestBotFloor_ASteerAcceptedAfterItsTurnEndedKeepsTheNextTurnsMark(t *testin
 // The mark is read when the floor answers, so a person who steers in after the ask keeps it.
 func TestBotFloor_AUserSteerAfterTheAskKeepsItForThem(t *testing.T) {
 	t.Parallel()
-	h, br := floorHub(t, map[string]any{settings.KeyBotAutoApprove: true})
-	h.runs.unattendedAskBudget = time.Hour
+	h, br := floorHub(t, map[string]any{settings.KeyBotAutoApprove: true}, withUnattendedAskBudget(time.Hour))
 	openedWith(t, h, policyfile.ProfileTrusted)
 	openRuleTurn(t, h, 1)
 	sendFloorAsk(t, h, 7014, floorPolicyAsk)
@@ -383,8 +382,7 @@ func TestBotFloor_AUserSteerAfterTheAskKeepsItForThem(t *testing.T) {
 
 // A person who steers in while the floor reads its settings keeps the ask: the mark is read right before the claim.
 func TestBotFloor_AUserSteerDuringTheSettingsReadKeepsItForThem(t *testing.T) {
-	h, br := floorHub(t, map[string]any{settings.KeyBotAutoApprove: true})
-	h.runs.unattendedAskBudget = time.Hour
+	h, br := floorHub(t, map[string]any{settings.KeyBotAutoApprove: true}, withUnattendedAskBudget(time.Hour))
 	openedWith(t, h, policyfile.ProfileTrusted)
 	openRuleTurn(t, h, 1)
 	sendFloorAsk(t, h, 7019, floorPolicyAsk)

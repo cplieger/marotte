@@ -326,8 +326,7 @@ func TestHealPaused_AThrottleReportedAsAQuestionIsResumed(t *testing.T) {
 		awaitResumes(t, &g.resumes, 0)
 	})
 	t.Run("a pause frame ahead of a turn that ended asking", func(t *testing.T) {
-		g := newThrottleRig(t, nil)
-		g.h.runs.healBaseDelay = 50 * time.Millisecond
+		g := newThrottleRig(t, nil, withHealBaseDelay(50*time.Millisecond))
 		before := g.inspects.Load()
 		g.throttledAsk(t, askTurn{answered: true, pauseFirst: true})
 		g.joinAfterHealRead(t, before)
