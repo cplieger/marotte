@@ -45,6 +45,7 @@ func holdCatalog(t *testing.T, h *Runtime) {
 // until KAS reports the change; after recipes_changed the launch reads the renamed recipe live and meets its live
 // run under the one-live-run rule.
 func TestLaunch_ReadsTheRenamedRecipeLiveAfterACatalogChange(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_second")
 	holdCatalog(t, h)
@@ -68,8 +69,8 @@ func TestLaunch_ReadsTheRenamedRecipeLiveAfterACatalogChange(t *testing.T) {
 // A launch whose recipe the held catalog names sends workflow/new without waiting on a listing: KAS's own launch
 // check resolves the one recipe, while a whole-catalog walk can queue behind KAS's other catalog work.
 func TestLaunch_SendsWorkflowNewFromTheHeldCatalogWhileAListingIsHeld(t *testing.T) {
-	answerBudgetOf(t, time.Second)
-	h, br, mux := runDefaultsHub(t)
+	t.Parallel()
+	h, br, mux := runDefaultsHub(t, withAnswerBudget(time.Second))
 	holdCatalog(t, h)
 	holdCall(t, br, methodKiroWorkflowListRecipes)
 
@@ -87,6 +88,7 @@ func TestLaunch_SendsWorkflowNewFromTheHeldCatalogWhileAListingIsHeld(t *testing
 // A source the held catalog names but KAS no longer has in force is refused by KAS's workflow/new, and the launch
 // answers 400 with KAS's sentence. A launch rule save reads live, so it refuses the source itself.
 func TestRecipeRoutes_RefuseASourceGoneSinceTheHold(t *testing.T) {
+	t.Parallel()
 	const gone = "_kiro/workflow/new: the workflow recipe at 'bundled://publish' is not available in this session's configuration."
 	t.Run("a launch", func(t *testing.T) {
 		h, br, mux := runDefaultsHub(t)
@@ -116,8 +118,8 @@ func TestRecipeRoutes_RefuseASourceGoneSinceTheHold(t *testing.T) {
 // A launch rule save waits on a fresh listing no longer than the answer budget: an unanswered one is 503 with a
 // Retry-After, which the browser reads before its own request budget aborts the save.
 func TestLaunchRuleSave_AnUnansweredListingAnswersWithinTheAnswerBudget(t *testing.T) {
-	answerBudgetOf(t, 50*time.Millisecond)
-	_, br, mux := runDefaultsHub(t)
+	t.Parallel()
+	_, br, mux := runDefaultsHub(t, withAnswerBudget(50*time.Millisecond))
 	holdCall(t, br, methodKiroWorkflowListRecipes)
 	const rule = `{"source":"bundled://publish","when":{"clock":{"freq":"daily","hour":2,"minute":0}},"enabled":true}`
 
@@ -136,6 +138,7 @@ func TestLaunchRuleSave_AnUnansweredListingAnswersWithinTheAnswerBudget(t *testi
 // The held catalog answers a launch only when its recipe declares every input the launch names; otherwise a live
 // listing decides, so a schedule's input the recipe gained since the hold reaches workflow/new.
 func TestLaunch_AHeldRecipeMissingANamedInputIsReadLive(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_sched")
 	holdCatalog(t, h)
@@ -155,10 +158,10 @@ func TestLaunch_AHeldRecipeMissingANamedInputIsReadLive(t *testing.T) {
 // A launch whose engine does not answer before workflow/new (the recipe listing, the run list for the one-live-run
 // rule) has created nothing: 503 engine_slow with a Retry-After at the answer budget, never 504 still_applying.
 func TestLaunch_AnUnansweredPrepareAnswers503NotStillApplying(t *testing.T) {
+	t.Parallel()
 	for _, held := range []string{methodKiroWorkflowListRecipes, methodKiroWorkflowList} {
 		t.Run(held, func(t *testing.T) {
-			answerBudgetOf(t, 50*time.Millisecond)
-			_, br, mux := runDefaultsHub(t)
+			_, br, mux := runDefaultsHub(t, withAnswerBudget(50*time.Millisecond))
 			holdCall(t, br, held)
 			rec := answeredWithin(t, func(w http.ResponseWriter) {
 				mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/runs",
@@ -176,8 +179,8 @@ func TestLaunch_AnUnansweredPrepareAnswers503NotStillApplying(t *testing.T) {
 
 // A launch whose workflow/new KAS has not answered may have created a run: 504 still_applying at the answer budget.
 func TestLaunch_AnUnansweredWorkflowNewIsStillApplying(t *testing.T) {
-	answerBudgetOf(t, 50*time.Millisecond)
-	_, br, mux := runDefaultsHub(t)
+	t.Parallel()
+	_, br, mux := runDefaultsHub(t, withAnswerBudget(50*time.Millisecond))
 	holdCall(t, br, methodKiroWorkflowNew)
 	rec := answeredWithin(t, func(w http.ResponseWriter) {
 		mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(`{"source":"bundled://publish"}`)))
@@ -188,6 +191,7 @@ func TestLaunch_AnUnansweredWorkflowNewIsStillApplying(t *testing.T) {
 // Lookups arriving while a listing runs share it: KAS admits every recipe file per call, so overlapping walks are
 // what stretched the 2026-11-02 listing past its deadline.
 func TestListRecipes_ConcurrentReadersShareOneListing(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, _, br := newTestHub()
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -224,6 +228,7 @@ func TestListRecipes_ConcurrentReadersShareOneListing(t *testing.T) {
 
 // One reader walking away leaves the shared listing running for the others.
 func TestListRecipes_AReaderWalkingAwayDoesNotFailTheOthers(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, _, br := newTestHub()
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -270,6 +275,7 @@ func getRecipes(mux *http.ServeMux) *httptest.ResponseRecorder {
 
 // KAS's recipes_changed and the engine's end each drop the held catalog, so a slow listing has no stale list to show.
 func TestRecipesRoute_ACatalogChangeOrEngineEndDropsTheHold(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		drop func(h *Runtime)
 		name string
@@ -295,6 +301,7 @@ func TestRecipesRoute_ACatalogChangeOrEngineEndDropsTheHold(t *testing.T) {
 // A listing that began before a catalog change never becomes the held catalog, since its answer may predate the
 // change, and a lookup after the change starts a listing of its own.
 func TestRecipeCatalog_AListingOverlappingAChangeIsNeitherHeldNorJoined(t *testing.T) {
+	t.Parallel()
 	h, br, mux := runDefaultsHub(t)
 	release := make(chan struct{})
 	br.blockOn = map[string]chan struct{}{methodKiroWorkflowListRecipes: release}
@@ -337,6 +344,7 @@ var unansweredListings = []struct {
 // A listing the engine does not answer, past its deadline or because it exited, is the engine being busy: every
 // route reading it answers 503 with a Retry-After, never a 400 that blames the user's input or a bare 500.
 func TestRecipeRoutes_AnUnansweredListingAnswers503WithARetryHint(t *testing.T) {
+	t.Parallel()
 	routes := []struct {
 		name, method, target, body string
 	}{
@@ -384,6 +392,7 @@ func answersRetryLater(t *testing.T, mux *http.ServeMux, method, target, body st
 // A launch the engine leaves unanswered past the recipe listing (its run list, or an engine not ready) is the engine
 // being busy too: 503 with a Retry-After, never a 400 that blames the user's input.
 func TestLaunch_AnEngineDeadlineAnswers503WithARetryHint(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		fail error
 		name string
@@ -421,6 +430,7 @@ func addedRecipe(br *fakeBridge) {
 // KAS reports a catalog change only through a session with workflows on, so a recipe added while none is live leaves
 // the held catalog behind: a launch or a save of its source finds it in a live listing.
 func TestRecipeLookup_FindsARecipeAddedSinceTheCatalogWasHeld(t *testing.T) {
+	t.Parallel()
 	t.Run("a launch", func(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_added")
@@ -448,6 +458,7 @@ func TestRecipeLookup_FindsARecipeAddedSinceTheCatalogWasHeld(t *testing.T) {
 
 // A source no listing names is refused after one listing, held catalog or not.
 func TestRecipeLookup_RefusesAnUnknownSourceAfterOneListing(t *testing.T) {
+	t.Parallel()
 	for _, held := range []bool{false, true} {
 		t.Run(fmt.Sprintf("held=%v", held), func(t *testing.T) {
 			h, _, br := newTestHub()
@@ -469,6 +480,7 @@ func TestRecipeLookup_RefusesAnUnknownSourceAfterOneListing(t *testing.T) {
 
 // The recipe list a person opens lists afresh, so it shows a recipe added with no catalog change reported.
 func TestRecipesRoute_ListsAfreshOverAHeldCatalog(t *testing.T) {
+	t.Parallel()
 	h, br, mux := runDefaultsHub(t)
 	holdCatalog(t, h)
 	addedRecipe(br)
@@ -501,6 +513,7 @@ func TestRecipesRoute_AnswersTheHeldCatalogWhileAListingIsSlow(t *testing.T) {
 // A listing the engine did not answer shows the held catalog on the recipe list a person opens, whichever way it
 // went unanswered.
 func TestRecipesRoute_AnswersTheHeldCatalogWhenAListingGoesUnanswered(t *testing.T) {
+	t.Parallel()
 	for _, lf := range unansweredListings {
 		t.Run(lf.name, func(t *testing.T) {
 			h, br, mux := runDefaultsHub(t)
@@ -517,6 +530,7 @@ func TestRecipesRoute_AnswersTheHeldCatalogWhenAListingGoesUnanswered(t *testing
 
 // A launch rule save tells a source the catalog lacks (400) from a catalog it could not read (500).
 func TestLaunchRuleSave_TellsAnUnknownSourceFromAnUnreadableCatalog(t *testing.T) {
+	t.Parallel()
 	t.Run("unknown source", func(t *testing.T) {
 		_, _, mux := runDefaultsHub(t)
 		rec := postRoute(t, mux, "/api/launch-rules",

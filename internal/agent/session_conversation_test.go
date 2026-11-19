@@ -9,6 +9,7 @@ import (
 )
 
 func TestListedConversation_AnswersInAStepHeavyWorkspace(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	stepHeavyKAS(br, json.RawMessage(`{"sessions":[{"sessionId":"sess_chat","title":"Fix the rail"}]}`))
 
@@ -23,6 +24,7 @@ func TestListedConversation_AnswersInAStepHeavyWorkspace(t *testing.T) {
 // The rows are trimmed from a kiro-cli 2.29.1 session/list, the shape KAS answers when it drops the step filter:
 // the step row carries `_meta.kiro.workflow`, the parent row does not.
 func TestListedConversation_RefusesAStepRowTheFilterLetThrough(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.setCallResult(marotte.MethodSessionList, json.RawMessage(`{"sessions":[
 		{"sessionId":"sess_parent","title":"New Session","_meta":{"kiro":{"status":"waiting_on_user"}}},
@@ -39,6 +41,7 @@ func TestListedConversation_RefusesAStepRowTheFilterLetThrough(t *testing.T) {
 }
 
 func TestListedConversation_AnUnreadableListIsAnError(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callErrs = map[string]error{marotte.MethodSessionList: errors.New("kas gone")}
 

@@ -21,6 +21,9 @@ var listCosts = map[string]testsupport.Cost{
 
 func TestListCost_FolderAnswerHoldsItsBudget(t *testing.T) {
 	testsupport.RequireCostBuild(t)
+	if !testsupport.Alone(t) {
+		return
+	}
 	for _, scale := range []int{1, 10} {
 		op := fmt.Sprintf("folder answer x%d", scale)
 		t.Run(op, func(t *testing.T) {

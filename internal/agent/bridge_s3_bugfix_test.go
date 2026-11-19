@@ -83,6 +83,7 @@ func (b *ctxAwareBridge) Respond(ctx context.Context, _ int64, result any, err e
 
 // fs/read_text_file must still answer after the per-event ctx is cancelled.
 func TestTranslateACPEvent_FSReadRespondsAfterEventCtxCancel_C1(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	if err := os.WriteFile(filepath.Join(work, "c1.txt"), []byte("C1-content\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -117,6 +118,7 @@ func TestTranslateACPEvent_FSReadRespondsAfterEventCtxCancel_C1(t *testing.T) {
 
 // fs/write_text_file must still answer and persist after the per-event ctx is cancelled.
 func TestTranslateACPEvent_FSWriteRespondsAfterEventCtxCancel_C1(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	br := newCtxAwareBridge()
 	h := hubWithBridge(t, work, br)
@@ -244,6 +246,7 @@ func waitClosed(t *testing.T, ch <-chan struct{}, what string) {
 
 // A terminal/create command must survive translateACPEvent returning (exit 0, marker written).
 func TestTranslateACPEvent_TerminalSurvivesEventCtxCancel_C2(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	br := newRecordingTermBridge()
 	h := hubWithBridge(t, work, br)
@@ -271,6 +274,7 @@ func TestTranslateACPEvent_TerminalSurvivesEventCtxCancel_C2(t *testing.T) {
 
 // A signal-killed terminal reports the signal and omits exitCode: KAS requires exitCode>=0.
 func TestTerminalSignalDeath_ReportsSignalNotExitCodeMinus1_H1(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	br := newRecordingTermBridge()
 	h := hubWithBridge(t, work, br)
@@ -311,6 +315,7 @@ func TestTerminalSignalDeath_ReportsSignalNotExitCodeMinus1_H1(t *testing.T) {
 
 // terminal/output for an unknown id answers an error through the real chatID.
 func TestTranslateACPEvent_TermOutputUnknownID_RespondsError_H2(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	br := newRecordingTermBridge()
 	h := hubWithBridge(t, work, br)
@@ -343,6 +348,7 @@ func TestTranslateACPEvent_TermOutputUnknownID_RespondsError_H2(t *testing.T) {
 
 // terminal/create populates cmd.Env from the ACP `env` array.
 func TestTerminalEnv_PopulatesCommandEnv_M1(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	br := newRecordingTermBridge()
 	h := hubWithBridge(t, work, br)
@@ -366,6 +372,7 @@ func TestTerminalEnv_PopulatesCommandEnv_M1(t *testing.T) {
 // TestTermCreate_PassesKASEnvVerbatim sends KAS's captured env plus a pager name and
 // requires every pair to reach the command unrefused.
 func TestTermCreate_PassesKASEnvVerbatim(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	br := newRecordingTermBridge()
 	h := hubWithBridge(t, work, br)
@@ -430,6 +437,7 @@ func lastValueFor(env []string, name string) string {
 
 // TestTermEnv_LocalePinBeatsAnAgentSuppliedLocale pins ordering, not membership.
 func TestTermEnv_LocalePinBeatsAnAgentSuppliedLocale(t *testing.T) {
+	t.Parallel()
 	env := termEnv([]termEnvVar{{Name: termLocaleEnvVar, Value: "hostile"}})
 
 	want := termLocaleEnv()[0]

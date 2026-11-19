@@ -177,6 +177,7 @@ var placedIDs = []string{"m-a", "x", "x2", "x3", "u", "v", "y", "t-w"}
 // chat's whole queue, every sender's rows alike, and nothing launches by itself after it; one caller has at most one
 // waiting row.
 func TestRunList_RowStates(t *testing.T) {
+	t.Parallel()
 	type cell struct {
 		sender, state, event string
 		// want is the list after the event (a row put back under a new id reads "copy"); cut the steers a restart or
@@ -298,6 +299,7 @@ func TestRunList_RowStates(t *testing.T) {
 
 // A row put back by a stop keeps its sender and words, so its paused row says who sent what.
 func TestRunList_AStoppedUnsentRowKeepsItsCallerAndWords(t *testing.T) {
+	t.Parallel()
 	for _, s := range senders[1:] {
 		t.Run(s.name, func(t *testing.T) {
 			w := stateSetups["unsent"](t, s)
@@ -320,6 +322,7 @@ func TestRunList_AStoppedUnsentRowKeepsItsCallerAndWords(t *testing.T) {
 // The cells that need a second row beside the stopped one: a user row waiting, the caller's second wake, another
 // caller's wake, a wire turn the stop names, or the chat's close inside the stopped turn's close window.
 func TestRunList_RowStatesWithASecondRow(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		run      func(t *testing.T, w *tableWorld)
@@ -1040,6 +1043,7 @@ func stoppedWakeReopened(t *testing.T, w *tableWorld) {
 // No path takes or steers a row while the reader's stop holds the queue, whatever left it pending: a retry listed
 // behind the paused rows, or a returned row beside a turn kiro-cli runs.
 func TestRunList_NothingIsTakenOrSteeredWhileAStopHoldsTheQueue(t *testing.T) {
+	t.Parallel()
 	held := func(t *testing.T) *tableWorld {
 		t.Helper()
 		w := newTableWorld()

@@ -128,6 +128,7 @@ func shutdownWithin(h *Runtime, d time.Duration) <-chan struct{} {
 // A shutdown between a resend's open and its retire leaves each steer exactly one destination, the resend. The
 // resend's launch runs on inflight, so the shutdown waits on the parked open.
 func TestShutdown_AResendOpenedBeforeTheTakeHasOneDestination(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, ps, drained := handoffHub(t)
 		<-ps.paused
@@ -248,6 +249,7 @@ func TestShutdown_ARowPickedBeforeTheOpenNeverOpens(t *testing.T) {
 // A teardown landing between a drain's pick and its open starts no new turn, for a
 // close (the record survives) and for a delete.
 func TestTeardown_ARowPickedBeforeTheOpenNeverOpens(t *testing.T) {
+	t.Parallel()
 	for _, keep := range []bool{true, false} {
 		name := "close"
 		if !keep {

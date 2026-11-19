@@ -107,6 +107,19 @@ type Runs struct {
 	// cancelRetryBase is the refused-cancel ladder's first wait (retryTermination), a field because untracked
 	// timers can outlive whoever set a package var. Zero means defaultCancelRetryBase.
 	cancelRetryBase time.Duration
+	// sweepRetryBase, releaseRetryBase and orphanResumeDelay are the gate's retry gaps and the resume sweep's re-read
+	// delay (defaultSweepRetryBase, defaultReleaseRetryBase, defaultOrphanResumeDelay), per runtime so a test's
+	// shortened gaps reach its runtime alone.
+	sweepRetryBase    time.Duration
+	releaseRetryBase  time.Duration
+	orphanResumeDelay time.Duration
+	// healBaseDelay is the heal ladder's first delay (defaultHealBaseDelay), unattendedAskBudget the floor's wait on
+	// one ask, and unattendedPauseBudget how long a scheduled run may sit paused with no resume before it is ended
+	// (endUnattended), which also outlasts the three heals' backoff; both waits are unattendedApprovalBudget. Per
+	// runtime as the gaps above.
+	healBaseDelay         time.Duration
+	unattendedAskBudget   time.Duration
+	unattendedPauseBudget time.Duration
 	// revs mints every run read's revision (run_rev.go).
 	revs revMint
 	mu   sync.Mutex

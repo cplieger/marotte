@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/filemode"
 	"github.com/cplieger/marotte/internal/signin"
 )
 
@@ -226,7 +227,7 @@ func newVaultHarness(t *testing.T, account string) *vaultHarness {
 	h.b = backendFor(h.aws)
 	ctx, cancel := context.WithCancel(context.Background())
 	h.cancel = cancel
-	h.v = signin.Open(ctx, t.TempDir(), h.b)
+	h.v = signin.Open(ctx, t.TempDir(), filemode.OS(), h.b)
 	t.Cleanup(func() {
 		cancel()
 		h.v.Wait()

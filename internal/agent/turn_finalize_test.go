@@ -86,6 +86,7 @@ func streamingPromptTurn(t *testing.T, h *Runtime, chatID marotte.ChatID, text s
 
 // TestCloseTurnOnBridgeDeath_ClosesAnOpenTurn pins that with the bridge dead nothing else closes the turn.
 func TestCloseTurnOnBridgeDeath_ClosesAnOpenTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	const partial = "the model got this far before the pipe died"
 	streamingPromptTurn(t, h, "c1", partial)
@@ -114,6 +115,7 @@ func TestCloseTurnOnBridgeDeath_ClosesAnOpenTurn(t *testing.T) {
 
 // TestCloseTurnOnBridgeDeath_IgnoresAChatWithNoOpenTurn pins that opening a turn to close it would invent an interruption on every exit.
 func TestCloseTurnOnBridgeDeath_IgnoresAChatWithNoOpenTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.Name = "A" })
 
@@ -129,6 +131,7 @@ func TestCloseTurnOnBridgeDeath_IgnoresAChatWithNoOpenTurn(t *testing.T) {
 
 // TestCloseTurnOnBridgeDeath_ACancelledOutcomeConcludesCancelled pins that a stop the reader caused is not BROKEN.
 func TestCloseTurnOnBridgeDeath_ACancelledOutcomeConcludesCancelled(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	streamingPromptTurn(t, h, "c1", "half an answer")
 
@@ -146,6 +149,7 @@ func TestCloseTurnOnBridgeDeath_ACancelledOutcomeConcludesCancelled(t *testing.T
 // TestCloseTurnOnBridgeDeath_RecordsOneTextlessSteerPerKASQueuedRow pins that one empty-text steer per agent row KAS queued
 // and never delivered, which the resume reconcile reads. Text is dropped on purpose; user rows are the steer record's.
 func TestCloseTurnOnBridgeDeath_RecordsOneTextlessSteerPerKASQueuedRow(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	streamingPromptTurn(t, h, "c1", "the model was mid-reply when the pipe died")
 	h.bus.steers.SteerWaiting("c1", &marotte.SteerQueuedPayload{
@@ -188,6 +192,7 @@ func TestCloseTurnOnBridgeDeath_RecordsOneTextlessSteerPerKASQueuedRow(t *testin
 
 // TestFinalizeTurn_ALostClaimAmendsNothing pins that two closers produce one turn_close, and the loser's account never reaches it.
 func TestFinalizeTurn_ALostClaimAmendsNothing(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	id, _ := streamingPromptTurn(t, h, "c1", "half an answer")
 
@@ -208,6 +213,7 @@ func TestFinalizeTurn_ALostClaimAmendsNothing(t *testing.T) {
 
 // TestWireTurnEnd_StampsTheOutcomeAndTheRawStop pins that the graded outcome, the raw stop, and the outcome's own sentence.
 func TestWireTurnEnd_StampsTheOutcomeAndTheRawStop(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	streamingPromptTurn(t, h, "c1", "half an answer")
 
@@ -227,6 +233,7 @@ func TestWireTurnEnd_StampsTheOutcomeAndTheRawStop(t *testing.T) {
 
 // TestPromptFailure_TheFailureReasonIsSanitizedAndBounded pins that upstream text, capped and stripped of control sequences.
 func TestPromptFailure_TheFailureReasonIsSanitizedAndBounded(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	id, _ := streamingPromptTurn(t, h, "c1", "half an answer")
 	// A literal: a bound derived from maxReasonBytes cannot see the constant move.
@@ -252,6 +259,7 @@ func TestPromptFailure_TheFailureReasonIsSanitizedAndBounded(t *testing.T) {
 
 // TestWireTurnEnd_TruncationCompletesRatherThanFails pins that a turn cut at its token bound finished its allowed work.
 func TestWireTurnEnd_TruncationCompletesRatherThanFails(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	streamingPromptTurn(t, h, "c1", "half an answer")
 
@@ -274,6 +282,7 @@ func TestWireTurnEnd_TruncationCompletesRatherThanFails(t *testing.T) {
 // kiro-cli 3.1.0 ends a turn its iteration limit stopped with max_turn_requests (resolveTurnStopReason); a limit path
 // that does not mark the execution still ends on the model's tool_use.
 func TestWireTurnEnd_AToolUseStopNamesTheModelCallLimit(t *testing.T) {
+	t.Parallel()
 	for _, stop := range []marotte.StopReason{marotte.StopReasonToolUse, marotte.StopReasonMaxTurnRequests} {
 		t.Run(string(stop), func(t *testing.T) {
 			h, cs, _ := newTestHub()
@@ -298,6 +307,7 @@ func TestWireTurnEnd_AToolUseStopNamesTheModelCallLimit(t *testing.T) {
 
 // TestFinalizeTurn_ATurnWithNoContentReportsEmittedNothing feeds the empty-turn check; a turn with content is never recreated.
 func TestFinalizeTurn_ATurnWithNoContentReportsEmittedNothing(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	id, _ := h.stagePromptTurn(t, "c1")
 
@@ -319,6 +329,7 @@ func TestFinalizeTurn_ATurnWithNoContentReportsEmittedNothing(t *testing.T) {
 // TestFinalizeTurn_MeasuresEmittedAfterReleasingTheCarry pins that a reply ending in `[` sits in the steering filter's carry, so
 // measuring before the release would re-prompt an answered question.
 func TestFinalizeTurn_MeasuresEmittedAfterReleasingTheCarry(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	id, log := h.stagePromptTurn(t, "c1")
 	const reply = "see the note in ["
@@ -341,6 +352,7 @@ func TestFinalizeTurn_MeasuresEmittedAfterReleasingTheCarry(t *testing.T) {
 
 // TestAwaitTurn_HandleOutlivesTheFinalizeAndDropsOnRelease pins retention by handle.
 func TestAwaitTurn_HandleOutlivesTheFinalizeAndDropsOnRelease(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	id, _ := h.stagePromptTurn(t, "c1")
@@ -366,6 +378,7 @@ func TestAwaitTurn_HandleOutlivesTheFinalizeAndDropsOnRelease(t *testing.T) {
 
 // TestAwaitTurn_UnknownTurnReportsNoSuchTurn pins that only an id the chat never held answers ErrNoSuchTurn.
 func TestAwaitTurn_UnknownTurnReportsNoSuchTurn(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	if _, err := h.coord.awaitTurn(t.Context(), "c1", "t-never-opened"); !errors.Is(err, marotte.ErrNoSuchTurn) {
 		t.Errorf("AwaitTurn on an unknown turn = %v, want ErrNoSuchTurn", err)
@@ -374,6 +387,7 @@ func TestAwaitTurn_UnknownTurnReportsNoSuchTurn(t *testing.T) {
 
 // TestAwaitTurn_DeadContextReturnsRatherThanParking, leaving the lifecycle usable.
 func TestAwaitTurn_DeadContextReturnsRatherThanParking(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	id, _ := h.stagePromptTurn(t, "c1")
@@ -392,6 +406,7 @@ func TestAwaitTurn_DeadContextReturnsRatherThanParking(t *testing.T) {
 // An id-scoped closer handed an empty id closes nothing: openTurn's refusal is empty too, and taking whatever is open
 // let a failed prompt close an agent turn. Own spells that intent.
 func TestAbandonInFlightTurn_WithNoTurnIDClosesNothing(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.Name = "A" })
 	// An engine-started streaming turn holds no reservation.
@@ -419,6 +434,7 @@ func TestAbandonInFlightTurn_WithNoTurnIDClosesNothing(t *testing.T) {
 
 // TestAbandonInFlightTurn_AnUnsetStopNormalizesToInterrupted pins that never `unknown` for a prompt failure.
 func TestAbandonInFlightTurn_AnUnsetStopNormalizesToInterrupted(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	id, _ := h.stagePromptTurn(t, "c1")
 
@@ -438,6 +454,7 @@ func TestAbandonInFlightTurn_AnUnsetStopNormalizesToInterrupted(t *testing.T) {
 
 // The closer seals under the accumulator's mutex, so an in-flight fold cannot tear the text (-race).
 func TestCloseTurn_ConcurrentFoldDoesNotRaceTheSeal(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	id, log := streamingPromptTurn(t, h, "c1", "the first delta")
 
@@ -483,6 +500,7 @@ func TestCloseTurn_ConcurrentFoldDoesNotRaceTheSeal(t *testing.T) {
 // TestFinalizeTurn_PersistsOnACancelledContext pins that a restart once lost a 46-minute stream when the store refused the
 // close on the shutdown-cancelled context.
 func TestFinalizeTurn_PersistsOnACancelledContext(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	const partial = "the model got this far before the container restarted"
 	id, _ := streamingPromptTurn(t, h, "c1", partial)
@@ -507,6 +525,7 @@ func TestFinalizeTurn_PersistsOnACancelledContext(t *testing.T) {
 // TestFinalizeTurn_DoesNotDetachThePositionWait pins that the detach sits below awaitPosition, whose only timed exit is
 // ctx.Done(); above it a wedged kiro-cli hangs shutdown, hence the elapsed-time assertion.
 func TestFinalizeTurn_DoesNotDetachThePositionWait(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, _ := newTestHub()
 		t.Cleanup(func() { shutdownHub(t, h) })

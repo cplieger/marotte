@@ -39,10 +39,7 @@ type throttleRig struct {
 
 func newThrottleRig(t *testing.T, leases *runlease.Store, opts ...Option) *throttleRig {
 	t.Helper()
-	prev := healBaseDelay
-	healBaseDelay = time.Millisecond
-	t.Cleanup(func() { healBaseDelay = prev })
-	h, br := agentRunOnChat(t, gateRunID, opts...)
+	h, br := agentRunOnChat(t, gateRunID, append([]Option{withHealBaseDelay(time.Millisecond)}, opts...)...)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if leases != nil {
 		h.runs.leases = leases
@@ -227,6 +224,7 @@ func autoResumeStoppedAt(t *testing.T, h *Runtime) string {
 
 // A long step that keeps making progress between throttles is resumed after every one of them.
 func TestHealBudget_ProgressBetweenThrottlesResumesEveryOne(t *testing.T) {
+	t.Parallel()
 	g := newThrottleRig(t, nil)
 	for i := range int32(maxAutoHeals + 1) {
 		g.throttled(t)
@@ -242,6 +240,7 @@ func TestHealBudget_ProgressBetweenThrottlesResumesEveryOne(t *testing.T) {
 // Throttles with no model output between them stop the automatic resumes after the budget, with no pause written:
 // a pause marotte writes reads as the user's. A usage frame is not output.
 func TestHealBudget_ThrottlesWithNoProgressStopAutoResumeWithNoPause(t *testing.T) {
+	t.Parallel()
 	g := newThrottleRig(t, nil)
 	for i := range int32(maxAutoHeals) {
 		g.throttled(t)
@@ -250,6 +249,8 @@ func TestHealBudget_ThrottlesWithNoProgressStopAutoResumeWithNoPause(t *testing.
 	}
 	g.throttled(t)
 	g.throttled(t)
+	// The read past the budget records the stop off the frame's path.
+	waitUntil(t, "the run's stop recorded", func() bool { return autoResumeStoppedAt(t, g.h) != "" })
 	awaitResumes(t, &g.resumes, maxAutoHeals)
 	if p := g.pauseParams(); len(p) != 0 {
 		t.Errorf("stopping the automatic resumes wrote pauses %v; KAS records each as the user's", p)
@@ -261,6 +262,14 @@ func TestHealBudget_ThrottlesWithNoProgressStopAutoResumeWithNoPause(t *testing.
 	if !slices.Contains(read.Controls.Verbs, runVerbResume.name) {
 		t.Errorf("the stopped run offers verbs %v, want %q among them", read.Controls.Verbs, runVerbResume.name)
 	}
+}
+
+// joinAfterHealRead is joinInflight once the heal timer has re-read the run (inspects past before): the timer's body
+// Adds to inflight, and a Wait beside that Add races.
+func (g *throttleRig) joinAfterHealRead(t *testing.T, before int32) {
+	t.Helper()
+	waitUntil(t, "the heal's re-read of the run", func() bool { return g.inspects.Load() > before })
+	joinInflight(g.h)
 }
 
 // awaitStepAnswers is awaitResumes for the rig's answers to the review step.
@@ -278,6 +287,7 @@ func awaitStepAnswers(t *testing.T, g *throttleRig, want int32) {
 // KAS's frame of a throttled turn's stale question names only the question (KAS 3.1.0), so the heal is scheduled
 // from the run log's record that the step's turn failed on the throttle, and answers the question.
 func TestHealPaused_AThrottleReportedAsAQuestionIsResumed(t *testing.T) {
+	t.Parallel()
 	t.Run("after a throttled turn", func(t *testing.T) {
 		g := newThrottleRig(t, nil)
 		g.throttledAsk(t, throttledAnsweredAsk)
@@ -289,8 +299,9 @@ func TestHealPaused_AThrottleReportedAsAQuestionIsResumed(t *testing.T) {
 	})
 	t.Run("after a turn that ended asking", func(t *testing.T) {
 		g := newThrottleRig(t, nil)
+		before := g.inspects.Load()
 		g.throttledAsk(t, askTurn{answered: true})
-		joinInflight(g.h)
+		g.joinAfterHealRead(t, before)
 		awaitStepAnswers(t, g, 0)
 		if n := g.h.runs.healsSpent(gateRunID); n != 0 {
 			t.Errorf("heals spent = %d, want none for an open question", n)
@@ -298,8 +309,9 @@ func TestHealPaused_AThrottleReportedAsAQuestionIsResumed(t *testing.T) {
 	})
 	t.Run("after a throttled turn whose question nobody answered", func(t *testing.T) {
 		g := newThrottleRig(t, nil)
+		before := g.inspects.Load()
 		g.throttledAsk(t, askTurn{failed: true})
-		joinInflight(g.h)
+		g.joinAfterHealRead(t, before)
 		awaitStepAnswers(t, g, 0)
 		awaitResumes(t, &g.resumes, 0)
 		if n := g.h.runs.healsSpent(gateRunID); n != 0 {
@@ -314,13 +326,10 @@ func TestHealPaused_AThrottleReportedAsAQuestionIsResumed(t *testing.T) {
 		awaitResumes(t, &g.resumes, 0)
 	})
 	t.Run("a pause frame ahead of a turn that ended asking", func(t *testing.T) {
-		g := newThrottleRig(t, nil)
-		healBaseDelay = 50 * time.Millisecond
+		g := newThrottleRig(t, nil, withHealBaseDelay(50*time.Millisecond))
 		before := g.inspects.Load()
 		g.throttledAsk(t, askTurn{answered: true, pauseFirst: true})
-		// joinInflight may run only once the heal timer, which Adds to inflight, has fired: its re-read of the run.
-		waitUntil(t, "the heal's re-read of the run", func() bool { return g.inspects.Load() > before })
-		joinInflight(g.h)
+		g.joinAfterHealRead(t, before)
 		awaitStepAnswers(t, g, 0)
 		if n := g.h.runs.healsSpent(gateRunID); n != 0 {
 			t.Errorf("heals spent = %d, want none for an open question", n)
@@ -333,6 +342,7 @@ func TestHealPaused_AThrottleReportedAsAQuestionIsResumed(t *testing.T) {
 // The step's frames and the parent's pause frame travel on different sessions, so the last one's turn end can land
 // after its pause frame.
 func TestHealBudget_ThrottledAsksWithNoProgressStopWithTheThrottleRecord(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		last askTurn
@@ -411,6 +421,7 @@ func TestHealBudget_FailedResumeWritesStopAutoResumeLoudly(t *testing.T) {
 // The stop is marotte's own record, so a marotte restart, which forgets the in-memory heal count, neither resumes
 // the run nor forgets why it waits.
 func TestHealBudget_TheStopSurvivesARestart(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	before, err := runlease.NewStore(dir)
 	if err != nil {
@@ -474,6 +485,7 @@ func watchStopFrames(g *throttleRig) *stopFrames {
 // The stop lands after KAS's pause frame, so the run's chat gets a run-level `paused` frame once it is recorded: the
 // run view reads the run again on it and shows marotte's stop instead of KAS's wording.
 func TestHealBudget_TheStopIsAnnouncedOnceRecorded(t *testing.T) {
+	t.Parallel()
 	g := newThrottleRig(t, nil)
 	frames := watchStopFrames(g)
 	g.spend(t)
@@ -504,6 +516,7 @@ func TestHealBudget_AStopTheDiskRefusedIsStillAnnounced(t *testing.T) {
 // clear is announced too. Called below the page's route, whose status gate refuses a pause of a run it reads paused:
 // this is the pause whose gate read the run running just before the stop.
 func TestHealBudget_APauseByHandOfAStoppedRunIsAnnouncedOnceCleared(t *testing.T) {
+	t.Parallel()
 	g := newThrottleRig(t, nil)
 	frames := watchStopFrames(g)
 	g.spend(t)
@@ -523,6 +536,7 @@ func TestHealBudget_APauseByHandOfAStoppedRunIsAnnouncedOnceCleared(t *testing.T
 
 // A person's resume ends the stop: the run read drops it, and the next throttle is resumed automatically again.
 func TestHealBudget_AResumeByHandClearsTheStop(t *testing.T) {
+	t.Parallel()
 	g := newThrottleRig(t, nil)
 	g.spend(t)
 
@@ -547,6 +561,7 @@ func TestHealBudget_AResumeByHandClearsTheStop(t *testing.T) {
 // A heal's resume whose answer could not be read may have re-driven the run: it is bounded as a resume that took,
 // and the write is not counted among marotte's failed ones.
 func TestHealBudget_AResumeWhoseAnswerWasUnreadBoundsTheRun(t *testing.T) {
+	t.Parallel()
 	g := newThrottleRig(t, nil)
 	g.br.setCallErr(methodKiroWorkflowResume, undecodedReply())
 

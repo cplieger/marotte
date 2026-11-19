@@ -67,6 +67,7 @@ func foldOpen(t *testing.T, cs *testChatStore, br *fakeBridge) {
 // Every path that opens, folds, closes or reports a turn, with the entry it becomes, how that entry ends and what
 // Cancel writes for it.
 func TestRunOrder_TurnPaths(t *testing.T) {
+	t.Parallel()
 	t.Run("a taken entry's prompt turn", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		open := promptGates(t, br)
@@ -266,7 +267,11 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 	t.Run("the life's end keeps only rows", func(t *testing.T) {
 		for _, shape := range []string{"kiro-cli's turn with a row behind it", "a taken row answered queued"} {
 			t.Run(shape, func(t *testing.T) {
-				h, cs, br, tab := closeTabHub(t)
+				var opts []Option
+				if shape == "a taken row answered queued" {
+					opts = append(opts, withAdmissionWait(60*time.Millisecond))
+				}
+				h, cs, br, tab := closeTabHub(t, opts...)
 				t.Cleanup(func() { shutdownHub(t, h) })
 				br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
 				runPrompt(t, h, cs, "c1", "m-first")
@@ -275,7 +280,6 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 					wireOpen(t, cs, br)
 					queueDuring(t, h, "m-q1")
 				default:
-					shrinkAdmissionWait(t, 60*time.Millisecond)
 					h.coord.turns.openHook = func() { time.Sleep(300 * time.Millisecond) }
 					if got := ackAs(t, postCmd(t, h, promptCmd("m-x", "slow open"))); got != "queued" {
 						t.Fatalf("Setup: the slow open answered %s, want queued", got)

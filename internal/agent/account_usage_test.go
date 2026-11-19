@@ -7,6 +7,7 @@ import (
 )
 
 func TestParseAccountUsage(t *testing.T) {
+	t.Parallel()
 	// Real KAS getUsage shape captured from a live v3 probe.
 	success := `{"success":true,"message":"Plan: KIRO POWER | 1 usage breakdowns",` +
 		`"data":{"planName":"KIRO POWER","billingCycleReset":"2026-08-01",` +
@@ -88,6 +89,7 @@ func TestParseAccountUsage(t *testing.T) {
 // TestAccountUsage_HandsBackWhatTheBridgeReported pins that both fetch outcomes reach the
 // caller: a nil snapshot with a nil error would silently empty the footer.
 func TestAccountUsage_HandsBackWhatTheBridgeReported(t *testing.T) {
+	t.Parallel()
 	t.Run("a plan reply becomes the snapshot", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{

@@ -23,6 +23,7 @@ func kiroFSMsg(t *testing.T, id int64, method, path string) *marotte.RPCResponse
 }
 
 func TestKiroFSStat(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	if err := os.WriteFile(filepath.Join(work, "f.txt"), []byte("12345"), 0o600); err != nil {
 		t.Fatal(err)
@@ -62,6 +63,7 @@ func TestKiroFSStat(t *testing.T) {
 
 // TestKiroFSStatWireShapeCarriesSize pins `size`: isFSStatCapabilityResponse throws without it.
 func TestKiroFSStatWireShapeCarriesSize(t *testing.T) {
+	t.Parallel()
 	data, err := json.Marshal(kiroStatBody{Type: fsTypeFile, Size: 0})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -78,6 +80,7 @@ func TestKiroFSStatWireShapeCarriesSize(t *testing.T) {
 }
 
 func TestKiroFSStatConfinesPath(t *testing.T) {
+	t.Parallel()
 	// The target must exist outside the work dir; an ENOENT path errors with or without confinement.
 	outside := t.TempDir()
 	target := filepath.Join(outside, "real.txt")
@@ -93,6 +96,7 @@ func TestKiroFSStatConfinesPath(t *testing.T) {
 }
 
 func TestKiroFSReadDirectory(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	if err := os.WriteFile(filepath.Join(work, "a.txt"), []byte("a"), 0o600); err != nil {
 		t.Fatal(err)
@@ -128,6 +132,7 @@ func TestKiroFSReadDirectory(t *testing.T) {
 // TestKiroFSReadDirectoryFiltersNothing pins the accepted residual: KAS's ignore evaluators
 // judge the listed directory, not entry names, and marotte adds no matcher of its own.
 func TestKiroFSReadDirectoryFiltersNothing(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	for _, name := range []string{"keep.txt", ".env.dec", ".kiroignore"} {
 		if err := os.WriteFile(filepath.Join(work, name), []byte("x"), 0o600); err != nil {
@@ -159,6 +164,7 @@ func TestKiroFSReadDirectoryFiltersNothing(t *testing.T) {
 
 // TestKiroFSReadDirectoryMissingIsEmptyNotError matches KAS's NodeFileSystem, which returns [] on ENOENT.
 func TestKiroFSReadDirectoryMissingIsEmptyNotError(t *testing.T) {
+	t.Parallel()
 	h, br := hubForFSTest(t, t.TempDir())
 	h.inbound.respondKiroFSReadDirectory(t.Context(), "c1", h.originOf("c1"), kiroFSMsg(t, 1, methodKiroFSReadDirectory, "no-such-dir"))
 	<-br.done
@@ -176,6 +182,7 @@ func TestKiroFSReadDirectoryMissingIsEmptyNotError(t *testing.T) {
 
 // TestKiroFSReadDirectoryEmptyMarshalsAsArray pins `[]`: KAS calls .map on `entries`.
 func TestKiroFSReadDirectoryEmptyMarshalsAsArray(t *testing.T) {
+	t.Parallel()
 	data, err := json.Marshal(kiroReadDirBody{Entries: []kiroDirEntry{}})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -186,6 +193,7 @@ func TestKiroFSReadDirectoryEmptyMarshalsAsArray(t *testing.T) {
 }
 
 func TestKiroFSDeleteFile(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	target := filepath.Join(work, "gone.txt")
 	if err := os.WriteFile(target, []byte("x"), 0o600); err != nil {
@@ -204,6 +212,7 @@ func TestKiroFSDeleteFile(t *testing.T) {
 
 // KAS's revert of a create whose file is already gone succeeds only on its not-found dialect.
 func TestKiroFSDeleteMissingPathSaysPathDoesNotExist(t *testing.T) {
+	t.Parallel()
 	for _, path := range []string{"ghost.txt", "nodir/ghost.txt"} {
 		err := deleteThrough(t, t.TempDir(), path)
 		if err == nil || !strings.HasPrefix(err.Error(), kasNotFoundPrefix) {
@@ -222,6 +231,7 @@ func deleteThrough(t *testing.T, work, path string) error {
 
 // TestKiroFSDeleteRefusesDirectory pins the undo invariant: no snapshot can hold a directory.
 func TestKiroFSDeleteRefusesDirectory(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	nested := filepath.Join(work, "tree", "nested", "f")
 	if err := os.MkdirAll(filepath.Dir(nested), 0o700); err != nil {
@@ -239,6 +249,7 @@ func TestKiroFSDeleteRefusesDirectory(t *testing.T) {
 }
 
 func TestKiroFSDeleteRefusesFileOverReadCap(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	big := filepath.Join(work, "big.bin")
 	if err := os.WriteFile(big, nil, 0o600); err != nil {
@@ -257,6 +268,7 @@ func TestKiroFSDeleteRefusesFileOverReadCap(t *testing.T) {
 
 // TestKiroFSDeleteAtReadCapDeletes pins the boundary: fs/read_text_file serves exactly fsReadCap bytes.
 func TestKiroFSDeleteAtReadCapDeletes(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	edge := filepath.Join(work, "edge.bin")
 	if err := os.WriteFile(edge, nil, 0o600); err != nil {
@@ -276,6 +288,7 @@ func TestKiroFSDeleteAtReadCapDeletes(t *testing.T) {
 // TestKiroFSDeleteUnlinksLiveSymlinks pins that a delete removes the link KAS names, matching
 // KAS's own fs.rm, and never the file or directory it points at, inside the workspace or not.
 func TestKiroFSDeleteUnlinksLiveSymlinks(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	outside := t.TempDir()
 	for _, f := range []string{filepath.Join(work, "dir", "f"), filepath.Join(work, "file"), filepath.Join(outside, "f")} {
@@ -311,6 +324,7 @@ func TestKiroFSDeleteUnlinksLiveSymlinks(t *testing.T) {
 
 // TestKiroFSDeleteUnlinksDanglingSymlink pins that the guard judges the link, never a target.
 func TestKiroFSDeleteUnlinksDanglingSymlink(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	link := filepath.Join(work, "link")
 	if err := os.Symlink(filepath.Join(work, "missing"), link); err != nil {
@@ -325,6 +339,7 @@ func TestKiroFSDeleteUnlinksDanglingSymlink(t *testing.T) {
 }
 
 func TestKiroFSDeleteUnlinksFIFO(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	fifo := filepath.Join(work, "pipe")
 	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
@@ -340,6 +355,7 @@ func TestKiroFSDeleteUnlinksFIFO(t *testing.T) {
 
 // TestKiroFSDeleteRefusesWorkDirRoot pins the refusal of a root itself.
 func TestKiroFSDeleteRefusesWorkDirRoot(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	if err := os.WriteFile(filepath.Join(work, "keep.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
@@ -357,6 +373,7 @@ func TestKiroFSDeleteRefusesWorkDirRoot(t *testing.T) {
 }
 
 func TestKiroFSDeleteConfinesPath(t *testing.T) {
+	t.Parallel()
 	outside := t.TempDir()
 	victim := filepath.Join(outside, "victim.txt")
 	if err := os.WriteFile(victim, []byte("x"), 0o600); err != nil {
@@ -375,6 +392,7 @@ func TestKiroFSDeleteConfinesPath(t *testing.T) {
 
 // TestKiroFSDeleteSuccessCarriesNoMessage pins the reply: KAS throws a non-empty `message` as an error.
 func TestKiroFSDeleteSuccessCarriesNoMessage(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	if err := os.WriteFile(filepath.Join(work, "f"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
@@ -394,6 +412,7 @@ func TestKiroFSDeleteSuccessCarriesNoMessage(t *testing.T) {
 // TestKiroFSDeleteDoesNotStage pins "no second gate": KAS restores a rejected delete through
 // fs/write_text_file, and a gate would intercept that restore.
 func TestKiroFSDeleteDoesNotStage(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	target := filepath.Join(work, "f")
 	if err := os.WriteFile(target, []byte("x"), 0o600); err != nil {
@@ -416,6 +435,7 @@ func TestKiroFSDeleteDoesNotStage(t *testing.T) {
 }
 
 func TestHandleKiroFSRequestClaimsOnlyItsOwnMethods(t *testing.T) {
+	t.Parallel()
 	h, _ := hubForFSTest(t, t.TempDir())
 	cases := []struct {
 		method string

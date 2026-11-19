@@ -97,6 +97,7 @@ func signingInOnLane(t *testing.T) (*Runtime, *fakeBridge) {
 
 // A later consent URL, another server's re-auth, takes no standing Sign in's slot: it is shown on every page.
 func TestEngineLane_AConsentURLAfterTheSignInsOwnIsShownEverywhere(t *testing.T) {
+	t.Parallel()
 	lA := newCallbackListener(t, http.StatusOK)
 	lB := newCallbackListener(t, http.StatusOK)
 	h, _, lane := newTestHub()
@@ -144,6 +145,7 @@ func TestEngineLane_AConsentURLAfterTheSignInsOwnIsShownEverywhere(t *testing.T)
 
 // A URL with no state could never be relayed, so it must not take the standing Sign in's slot from the real one.
 func TestEngineLane_AConsentURLWithoutAStateLeavesTheSignInWaiting(t *testing.T) {
+	t.Parallel()
 	lA := newCallbackListener(t, http.StatusOK)
 	h, lane := signingInOnLane(t)
 	connectPage(t, h)
@@ -169,6 +171,7 @@ func TestEngineLane_AConsentURLWithoutAStateLeavesTheSignInWaiting(t *testing.T)
 
 // A state already anchored is answered as seen, even with no page left to show it: KAS's attempt keeps waiting.
 func TestEngineLane_AnAnchoredURLSeenAgainWithNoPageIsAnswered(t *testing.T) {
+	t.Parallel()
 	lL := newCallbackListener(t, http.StatusOK)
 	h, _, lane := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -197,6 +200,7 @@ func TestEngineLane_AnAnchoredURLSeenAgainWithNoPageIsAnswered(t *testing.T) {
 // A consent URL seen again keeps its attribution and shows nothing new: no second sign-in-open resets the row's
 // relayed state on the pages.
 func TestEngineLane_AConsentURLSeenAgainKeepsItsAttribution(t *testing.T) {
+	t.Parallel()
 	lA := newCallbackListener(t, http.StatusOK)
 	h, lane := signingInOnLane(t)
 	connectPage(t, h)
@@ -223,6 +227,7 @@ func TestEngineLane_AConsentURLSeenAgainKeepsItsAttribution(t *testing.T) {
 
 // An unclaimed URL is shown on every page and anchored for the relay by its state.
 func TestEngineLane_OpenExternalURLWithAPageConnectedIsShownEverywhere(t *testing.T) {
+	t.Parallel()
 	const consent = "https://auth.example.com/authorize?state=s1&redirect_uri=http%3A%2F%2F127.0.0.1%3A4000%2Foauth%2Fcallback"
 	h, _, lane := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -268,6 +273,7 @@ func TestEngineLane_OpenExternalURLWithAPageConnectedIsShownEverywhere(t *testin
 
 // With no page connected nobody can open the URL, so KAS is told at once rather than waiting 300 s.
 func TestEngineLane_OpenExternalURLWithNoPageConnectedIsRefused(t *testing.T) {
+	t.Parallel()
 	h, _, lane := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	before := h.bus.fanout.Position().Head
@@ -295,6 +301,7 @@ func TestEngineLane_OpenExternalURLWithNoPageConnectedIsRefused(t *testing.T) {
 }
 
 func TestEngineLane_OpenExternalURLUnsafeSchemeIsRefusedWithInvalidParams(t *testing.T) {
+	t.Parallel()
 	h, _, lane := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	connectPage(t, h)
@@ -316,6 +323,7 @@ func TestEngineLane_OpenExternalURLUnsafeSchemeIsRefusedWithInvalidParams(t *tes
 }
 
 func TestHandleKiroClientRequest_DoesNotClaimGetAccessToken(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	id := int64(3)
 	tests := map[string]struct {
@@ -362,6 +370,7 @@ func bannerOf(t *testing.T, h *Runtime, before uint64) marotte.OpenExternalURLPa
 
 // A Google consent page is shown asking for offline access, and its state and redirect still match the listener.
 func TestEngineLane_OpenExternalURLGoogleConsentIsShownWithOfflineAccess(t *testing.T) {
+	t.Parallel()
 	const redirect = "redirect_uri=http%3A%2F%2F127.0.0.1%3A4000%2Foauth%2Fcallback"
 	const consent = "https://accounts.google.com/o/oauth2/v2/auth?client_id=c&" + redirect + "&state=s1&access_type=online"
 	h, _, lane := newTestHub()
@@ -423,6 +432,7 @@ func closedSince(t *testing.T, h *Runtime, before uint64) []marotte.MCPSignInClo
 
 // A mid-session re-auth KAS ends without a token closes its banner as failed at once, and a late paste finds no flow.
 func TestEngineLane_OAuthCompletedFailureEndsTheLazySignIn(t *testing.T) {
+	t.Parallel()
 	h, _, lane := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	connectPage(t, h)
@@ -446,6 +456,7 @@ func TestEngineLane_OAuthCompletedFailureEndsTheLazySignIn(t *testing.T) {
 // A success closes its own flow's banner; a completion naming a flow no anchor carries publishes nothing and leaves
 // every anchor, a connect's included.
 func TestEngineLane_OAuthCompletedSuccessAndUnknownFlow(t *testing.T) {
+	t.Parallel()
 	h, _, lane := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	connectPage(t, h)
@@ -476,6 +487,7 @@ func TestEngineLane_OAuthCompletedSuccessAndUnknownFlow(t *testing.T) {
 
 // The cap counts only anchors no Sign in took: each standing Sign in's anchor survives any number of banners.
 func TestAddAnchor_CapCountsOnlyUnattributed(t *testing.T) {
+	t.Parallel()
 	reg := &mcpRegistry{}
 	reg.anchors = []*signInAnchor{{state: "row-1", attempt: 1}, {state: "old"}, {state: "row-2", attempt: 2}}
 	for i := range maxConsentAnchors {

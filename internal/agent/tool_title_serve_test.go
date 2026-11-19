@@ -53,6 +53,7 @@ func checkLandCard(t *testing.T, entries []marotte.Entry, kind marotte.EntryKind
 }
 
 func TestStepTranscript_ServesTheCardTitle(t *testing.T) {
+	t.Parallel()
 	const id = "wf1"
 	nodePath := workflow.PathKey([]string{id, "build"})
 	h, _, _ := runLoggingHub(t)
@@ -77,6 +78,7 @@ func TestStepTranscript_ServesTheCardTitle(t *testing.T) {
 }
 
 func TestStepTranscript_ServesAReplayedCallsCardTitle(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
@@ -98,6 +100,7 @@ func TestStepTranscript_ServesAReplayedCallsCardTitle(t *testing.T) {
 
 // A repair read past the call titles the result from the call the read does not serve.
 func TestRunTurnRange_StampsAResultWhoseCallPrecedesAfter(t *testing.T) {
+	t.Parallel()
 	r := newRunLog(t.TempDir())
 	turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: "root/step", SessionID: "sess-a"}, "c-1")
 	if err != nil {

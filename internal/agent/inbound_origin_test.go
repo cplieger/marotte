@@ -14,6 +14,7 @@ import (
 // registered under the chat: KAS settles a response by its per-connection id, so an answer on
 // the successor would resolve whatever that connection has pending under the same id.
 func TestInboundRequest_AnswersOnTheBridgeItArrivedOn(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		msg  func(t *testing.T, id int64) *marotte.RPCResponse
 		name string
@@ -71,6 +72,7 @@ func TestInboundRequest_AnswersOnTheBridgeItArrivedOn(t *testing.T) {
 // A process-lifetime terminal/wait_for_exit is answered on the bridge it arrived on, not on a
 // successor registered under the chat while the process ran.
 func TestTerminalWaitForExit_AnswersOnTheBridgeItArrivedOn(t *testing.T) {
+	t.Parallel()
 	first := newRecordingTermBridge()
 	h := hubWithBridge(t, t.TempDir(), first)
 	termID, term := spawnSleeper(t, h, "c1", first, 1)
@@ -94,6 +96,7 @@ func TestTerminalWaitForExit_AnswersOnTheBridgeItArrivedOn(t *testing.T) {
 // A bridge's end releases the terminals it created and only those: KAS's own dispose cannot
 // reach a closed connection, and no later bridge can see, read or stop them.
 func TestBridgeEnd_ReleasesTheTerminalsItCreated(t *testing.T) {
+	t.Parallel()
 	ending := newRecordingTermBridge()
 	h := hubWithBridge(t, t.TempDir(), ending)
 	other := newRecordingTermBridge()

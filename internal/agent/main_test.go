@@ -1,16 +1,16 @@
 package agent
 
 import (
+	"log/slog"
 	"os"
 	"testing"
 	"time"
 )
 
-// The heal ladder is parked past any test run: its untracked timer would outlive its test.
-// A test that needs it to fire lowers the base. A cold-governance fake pushes no profile, so its boot observer pass
-// gives up quickly rather than holding inflight work past joinInflight's bound.
+// A cold-governance fake pushes no profile, so its boot observer pass gives up quickly rather than holding inflight
+// work past joinInflight's bound. holdRouter is installed before m.Run, so no parallel test swaps the logger.
 func TestMain(m *testing.M) {
-	healBaseDelay = time.Hour
+	slog.SetDefault(slog.New(holdRouter))
 	governanceWarmTimeout = 100 * time.Millisecond
 	bootSeedTimeout = 100 * time.Millisecond
 	root, err := os.MkdirTemp("", "marotte-agent-chats-")

@@ -62,6 +62,8 @@ type lifetime struct {
 	shutdownCtx    context.Context
 	done           chan struct{}
 	shutdownCancel context.CancelFunc
+	// answerBy, when set, replaces answerDeadline's reading of the clock; tests only.
+	answerBy func() time.Time
 	// workRoot is the kernel-confined handle on workDir (lifetime.confine), never closed. nil when workDir could
 	// not be opened; the fs handlers then refuse.
 	workRoot       *os.Root
@@ -80,7 +82,19 @@ type lifetime struct {
 	// drainGate orders each goClaimed claim and its Add before Shutdown's draining flip: what a claim takes is waited
 	// for through inflight, and what a refused claim leaves is still there for Shutdown's own teardown.
 	drainGate sync.RWMutex
-	draining  atomic.Bool
+	// answerBudget is defaultAnswerBudget: a person's request waits on the engine this long before it is answered.
+	answerBudget time.Duration
+	// admissionWait is command.AdmissionWait: run-list work waits out a contended chat slot or a held close this long.
+	admissionWait time.Duration
+	draining      atomic.Bool
+}
+
+// answerDeadline is when a person's verb starting now must have answered.
+func (lt *lifetime) answerDeadline() time.Time {
+	if lt.answerBy != nil {
+		return lt.answerBy()
+	}
+	return time.Now().Add(lt.answerBudget)
 }
 
 // goUnlessDraining runs fn on inflight unless Shutdown has begun, reporting whether it did.
@@ -455,6 +469,8 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		done:           make(chan struct{}),
 		kiroTelemetry:  newCachedBoolField(kiroSettingsPath(), kiroTelemetryKey, kiroTelemetryDefault),
 		kiroHookStatus: newCachedBoolField(kiroSettingsPath(), marotte.KiroHookStatusKey, true),
+		answerBudget:   defaultAnswerBudget,
+		admissionWait:  command.AdmissionWait,
 	}
 	lc.shutdownCtx, lc.shutdownCancel = context.WithCancel(ctx)
 	// Best-effort: an unopenable workDir fails closed at the handlers, not at construction.
@@ -476,12 +492,18 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		perms:     sseP,
 		bus:       sseP,
 
-		cancelRetryBase: defaultCancelRetryBase,
-		mutations:       newRunMutations(),
-		hosts:           keylock.New(cmp.Compare[string]),
-		resumes:         keylock.New(cmp.Compare[string]),
-		launchLocks:     keylock.New(cmp.Compare[string]),
-		sweep:           gateSweep{turns: keylock.New(cmp.Compare[string])},
+		cancelRetryBase:       defaultCancelRetryBase,
+		sweepRetryBase:        defaultSweepRetryBase,
+		releaseRetryBase:      defaultReleaseRetryBase,
+		orphanResumeDelay:     defaultOrphanResumeDelay,
+		healBaseDelay:         defaultHealBaseDelay,
+		unattendedAskBudget:   unattendedApprovalBudget,
+		unattendedPauseBudget: unattendedApprovalBudget,
+		mutations:             newRunMutations(),
+		hosts:                 keylock.New(cmp.Compare[string]),
+		resumes:               keylock.New(cmp.Compare[string]),
+		launchLocks:           keylock.New(cmp.Compare[string]),
+		sweep:                 gateSweep{turns: keylock.New(cmp.Compare[string])},
 	}
 
 	h := &Runtime{

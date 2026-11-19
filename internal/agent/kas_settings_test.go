@@ -93,7 +93,7 @@ func TestEngineSpawn_TelemetryReachesTheEngineProcess(t *testing.T) {
 			t.Setenv(toolkitVar, "ambient")
 			engine := newEngineProcessFake(t)
 			cs := newTestChatStore()
-			h := New(context.Background(), t.TempDir(), engine, cs, WithConfigDir(t.TempDir()))
+			h := New(context.Background(), t.TempDir(), engine, cs, parkedHeals(), WithConfigDir(t.TempDir()))
 			cs.wire(h)
 			t.Cleanup(func() { shutdownHub(t, h) })
 			if tc.org != nil {
@@ -213,6 +213,7 @@ func writeCompactionSetting(t *testing.T, dir string, enabled bool, pct int) {
 }
 
 func TestAutoCompactionPolicy_ReadsTheSettingAndFailsToTheDefault(t *testing.T) {
+	t.Parallel()
 	policy := func(dir string) (bool, int) {
 		t.Helper()
 		doc, _, err := settings.Read(t.Context(), dir)
@@ -241,6 +242,7 @@ func TestAutoCompactionPolicy_ReadsTheSettingAndFailsToTheDefault(t *testing.T) 
 // Both compaction settings ride the chat door, so moving either changes the door's fingerprint and an open chat
 // reloads onto the new value at its next message.
 func TestCompactionSettings_ChangeTheChatDoorFingerprint(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cs := newTestChatStore()
 	h := newRuntimeOn(t.Context(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs,

@@ -34,6 +34,7 @@ func runTurnRangeFixture(t *testing.T) (*runLog, string) {
 }
 
 func TestRunTurnRange_AnswersTheTailAboveAfterAndStampsTheSeqItServed(t *testing.T) {
+	t.Parallel()
 	r, turn := runTurnRangeFixture(t)
 
 	entries, _, stamps, found, err := r.turnRange(t.Context(), "wf1", turn, 2)
@@ -57,6 +58,7 @@ func TestRunTurnRange_AnswersTheTailAboveAfterAndStampsTheSeqItServed(t *testing
 // A closed turn: after a gap the digest says `gone`, and this read must return
 // the tail with its turn_close and an empty subject so the client stops treating the step as live.
 func TestRunTurnRange_ServesAClosedTurnsTailWithNoStamp(t *testing.T) {
+	t.Parallel()
 	r, turn := runTurnRangeFixture(t)
 	if _, closed, err := r.closeNode(t.Context(), "wf1", "root/step", "completed", "", nil); err != nil || !closed {
 		t.Fatalf("CloseNode = closed %v, err %v; want the step's turn closed", closed, err)
@@ -80,6 +82,7 @@ func TestRunTurnRange_ServesAClosedTurnsTailWithNoStamp(t *testing.T) {
 }
 
 func TestRunTurnRange_AnEmptyTailStampsTheSeqTheCallerHeld(t *testing.T) {
+	t.Parallel()
 	r, turn := runTurnRangeFixture(t)
 
 	entries, _, stamps, found, err := r.turnRange(t.Context(), "wf1", turn, 3)
@@ -96,6 +99,7 @@ func TestRunTurnRange_AnEmptyTailStampsTheSeqTheCallerHeld(t *testing.T) {
 }
 
 func TestRunTurnRange_AnAbsentAfterAsksForTheWholeTurn(t *testing.T) {
+	t.Parallel()
 	r, turn := runTurnRangeFixture(t)
 
 	entries, _, _, found, err := r.turnRange(t.Context(), "wf1", turn, 0)
@@ -108,6 +112,7 @@ func TestRunTurnRange_AnAbsentAfterAsksForTheWholeTurn(t *testing.T) {
 }
 
 func TestRunTurnRange_AParallelRunsOtherOpenTurnIsNeitherServedNorStamped(t *testing.T) {
+	t.Parallel()
 	r, first := runTurnRangeFixture(t)
 	ctx := t.Context()
 	second, _, err := r.open(ctx, &translate.RunStep{RunID: "wf1", NodePath: "root/other", SessionID: "sess-b"}, "c-1")
@@ -158,6 +163,7 @@ func runTurnRangeUnreadableFixture(t *testing.T) (*runLog, string) {
 
 // An unreadable log is a 500; only a missing turn is the caller's 404.
 func TestRunTurnRange_AnUnreadableLogAnswersTheError(t *testing.T) {
+	t.Parallel()
 	r, turn := runTurnRangeUnreadableFixture(t)
 
 	_, _, _, found, err := r.turnRange(t.Context(), "wf1", turn, 0)
@@ -168,6 +174,7 @@ func TestRunTurnRange_AnUnreadableLogAnswersTheError(t *testing.T) {
 
 // The run route's half of that split; internal/chat drives the chat twin.
 func TestRunTurnRangeRoute_500sALogItCannotRead(t *testing.T) {
+	t.Parallel()
 	r, turn := runTurnRangeUnreadableFixture(t)
 	rr := &runRoutes{runs: &Runs{log: r}}
 
@@ -183,6 +190,7 @@ func TestRunTurnRangeRoute_500sALogItCannotRead(t *testing.T) {
 }
 
 func TestRunTurnRange_AnUnknownTurnAndAnUnknownRunAreBothNotFound(t *testing.T) {
+	t.Parallel()
 	r, _ := runTurnRangeFixture(t)
 
 	if _, _, _, found, err := r.turnRange(t.Context(), "wf1", "t-nothing-minted", 0); found || err != nil {
@@ -194,6 +202,7 @@ func TestRunTurnRange_AnUnknownTurnAndAnUnknownRunAreBothNotFound(t *testing.T) 
 }
 
 func TestRunTurnRangeRoute_ServesTheTailAnd404sAnUnknownTurn(t *testing.T) {
+	t.Parallel()
 	r, turn := runTurnRangeFixture(t)
 	rr := &runRoutes{runs: &Runs{log: r}}
 

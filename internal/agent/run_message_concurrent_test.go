@@ -102,7 +102,7 @@ type stepSend struct {
 func sendAsync(ctx context.Context, h *Runtime, text, messageID string) <-chan stepSend {
 	done := make(chan stepSend, 1)
 	go func() {
-		out, err := h.runs.messageStep(ctx, h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, text, messageID, "", nil)
+		out, err := h.runs.messageStep(ctx, h.runs.residentUntil(h.lifecycle.answerDeadline()), "wf_1", reviewPath, text, messageID, "", nil)
 		done <- stepSend{out: out, err: err}
 	}()
 	return done
@@ -119,6 +119,7 @@ func refusalCode(t *testing.T, h *Runtime, err error) string {
 // waiting behind it: the first one's send holds the run's message gate for as long as KAS takes, and
 // a send queued there would hold every stop behind it too. Once the first lands, a message decides again.
 func TestMessageStep_ASecondSendToAPausedStepIsRefusedWhileTheFirstIsInFlight(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -149,6 +150,7 @@ func TestMessageStep_ASecondSendToAPausedStepIsRefusedWhileTheFirstIsInFlight(t 
 // A step that completes while its steer is in flight waits for the send: the end then finds the row in
 // KAS and records it "not read", and no send follows the end.
 func TestMessageStep_ACompletionWaitsForAnInFlightSteer(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, br := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -185,6 +187,7 @@ func TestMessageStep_ACompletionWaitsForAnInFlightSteer(t *testing.T) {
 // A decision read before the step completed is made again once the send holds the run: the message is
 // refused as finished and nothing reaches the finished step.
 func TestMessageStep_AStepThatCompletesDuringTheReadIsRefusedFinished(t *testing.T) {
+	t.Parallel()
 	h, br := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
 	s := newStepScript(t, br, "running")
 	readIn, releaseRead := s.hold(methodKiroWorkflowInspect, 1)
@@ -207,6 +210,7 @@ func TestMessageStep_AStepThatCompletesDuringTheReadIsRefusedFinished(t *testing
 // A step that pauses after the decision but before the steer is routed takes no row: the send is refused
 // and the dock keeps nothing for a step whose execution stopped.
 func TestMessageStep_AStepThatPausesBeforeTheRouteKeepsNoRow(t *testing.T) {
+	t.Parallel()
 	h, br := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
 	s := newStepScript(t, br, "running")
 	unlockOps, err := h.runs.steers.queue.LockSteerOps(t.Context(), marotte.StepSteerKey("sess_step"))
@@ -248,12 +252,13 @@ func (r *stepEndOnRecord) RecordUserSteer(chatID marotte.ChatID, steerID string)
 // A step that completes after its steer was routed and before it was sent: the send does not reach KAS,
 // and the row is recorded "not read" in the step's turn.
 func TestMessageStep_AStepThatCompletesBeforeTheSendIsNotSteered(t *testing.T) {
+	t.Parallel()
 	h, br := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
 	h.runs.steers.ledger = &stepEndOnRecord{SteerRecorder: h.runs.steers.ledger, end: func() {
 		h.runs.RunNodeComplete(t.Context(), "wf_1", reviewSegments, "completed", "")
 	}}
 
-	_, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(answerDeadline()), "wf_1", reviewPath, "check the logs", "m-e", "", nil)
+	_, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(h.lifecycle.answerDeadline()), "wf_1", reviewPath, "check the logs", "m-e", "", nil)
 
 	if code := refusalCode(t, h, err); code != string(marotte.RunStepBusy) {
 		t.Errorf("MessageStep refusal = %q (%v), want busy", code, err)

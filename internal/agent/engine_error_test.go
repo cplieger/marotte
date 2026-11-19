@@ -10,6 +10,7 @@ import (
 // An engine fault reaches marotte as display_error, then turn_end{error}: the card
 // carries the engine's own sentence instead of the outcome's default.
 func TestWireTurnEnd_ABrokenTurnCarriesTheEngineSentence(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, log := streamingPromptTurn(t, h, "c1", "half an answer")
 	log.SetEngineError(marotte.EngineError{Message: "Your connection was interrupted. Please try again in a moment.", ErrorType: "ge"})
@@ -27,6 +28,7 @@ func TestWireTurnEnd_ABrokenTurnCarriesTheEngineSentence(t *testing.T) {
 
 // A display_error is not a verdict: a recovered retry or a sub-agent fault leaves a clean close clean.
 func TestWireTurnEnd_ACleanCloseIgnoresTheLatchedEngineError(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, log := streamingPromptTurn(t, h, "c1", "the answer")
 	log.SetEngineError(marotte.EngineError{Message: "Sub-agent stalled."})
@@ -42,6 +44,7 @@ func TestWireTurnEnd_ACleanCloseIgnoresTheLatchedEngineError(t *testing.T) {
 // The context overflow keeps its Compact remedy when the engine's own turn_end is
 // the closer that wins.
 func TestWireTurnEnd_ALatchedContextOverflowKeepsItsRemedy(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, log := streamingPromptTurn(t, h, "c1", "half an answer")
 	log.SetEngineError(marotte.EngineError{Message: "Context limit exceeded unexpectedly. Please try again.", ErrorType: "ContextWindowExceededError"})
@@ -63,6 +66,7 @@ func TestWireTurnEnd_ALatchedContextOverflowKeepsItsRemedy(t *testing.T) {
 // The model service's byte-cap refusal, which KAS types GenericValidationError, gets the same Compact remedy
 // with its own sentence and the request id KAS wrote into the message.
 func TestCloseTurn_RequestSizeCapIsAContextLimit(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, log := streamingPromptTurn(t, h, "c1", "half an answer")
 	log.SetEngineError(marotte.EngineError{
@@ -88,6 +92,7 @@ func TestCloseTurn_RequestSizeCapIsAContextLimit(t *testing.T) {
 
 // A model-call-limit stop names its own cause, so an earlier recovered display_error does not replace it.
 func TestWireTurnEnd_AModelCallLimitStopOutranksALatchedEngineError(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, log := streamingPromptTurn(t, h, "c1", "half an answer")
 	log.SetEngineError(marotte.EngineError{Message: "Your connection was interrupted. Please try again in a moment.", ErrorType: "ge"})
@@ -106,6 +111,7 @@ func TestWireTurnEnd_AModelCallLimitStopOutranksALatchedEngineError(t *testing.T
 
 // The failure closer waits on its reply's position only to follow a queued turn_end; a dead ctx must still close.
 func TestAbandonInFlightTurn_ClosesOnACancelledContextWithASeq(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	id, _ := streamingPromptTurn(t, h, "c1", "half an answer")
 	ctx, cancel := context.WithCancel(t.Context())
@@ -122,6 +128,7 @@ func TestAbandonInFlightTurn_ClosesOnACancelledContextWithASeq(t *testing.T) {
 // A prompt failing inside the execution gets a reply with no class, so the awaited result carries the class the
 // turn's display_error named, whichever closer wins.
 func TestCloseTurn_ResultCarriesTheLatchedEngineClass(t *testing.T) {
+	t.Parallel()
 	closers := map[string]func(h *Runtime, id string){
 		"wire turn_end": func(h *Runtime, _ string) {
 			h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonError)

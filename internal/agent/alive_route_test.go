@@ -49,6 +49,7 @@ func postAlive(rt *Runtime, tag string) *httptest.ResponseRecorder {
 }
 
 func TestHandleAlive_RecordsAValidTagAndAnswers204(t *testing.T) {
+	t.Parallel()
 	cs := newTestChatStore()
 	br := newFakeBridge()
 	table := &recordingPresence{}
@@ -69,6 +70,7 @@ func TestHandleAlive_RecordsAValidTagAndAnswers204(t *testing.T) {
 }
 
 func TestHandleAlive_RefusesAnAbsentOrMalformedTag(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		tag  string
@@ -106,6 +108,7 @@ func TestHandleAlive_RefusesAnAbsentOrMalformedTag(t *testing.T) {
 
 // A runtime with no table still answers ok and drops the receipt: fail-open.
 func TestHandleAlive_WithoutATableAcceptsAndDrops(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if rec := postAlive(h, "amxAEqwvwjG23476CxNmK6"); rec.Code != http.StatusNoContent {
@@ -115,6 +118,7 @@ func TestHandleAlive_WithoutATableAcceptsAndDrops(t *testing.T) {
 
 // The presence hook reaches the table with the connect's tag: one connected and one disconnected per connection.
 func TestPresenceHook_ForwardsConnectAndDisconnectWithTheTag(t *testing.T) {
+	t.Parallel()
 	cs := newTestChatStore()
 	br := newFakeBridge()
 	table := &recordingPresence{}

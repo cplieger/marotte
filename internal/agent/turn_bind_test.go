@@ -48,6 +48,7 @@ func openText(h *Runtime, chatID marotte.ChatID) string {
 // The turn_start echoing the prompt's tag binds its turn; otherwise each prompt makes two turns and its outcome lands
 // on the wrong one.
 func TestWireTurnStart_TheEchoedTagBindsThePrompt(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	id, _ := h.stagePromptTurn(t, chatID)
@@ -72,6 +73,7 @@ func TestWireTurnStart_TheEchoedTagBindsThePrompt(t *testing.T) {
 // A turn_start with a turn open and nothing pending means the previous end was lost: it closes `unknown` and a
 // wire turn opens, with no timer.
 func TestWireTurnStart_ClosesATurnWhoseEndNeverArrived(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	// streamingPromptTurn's turn_start acknowledges it, so the next bracket finds nothing pending.
@@ -98,6 +100,7 @@ func TestWireTurnStart_ClosesATurnWhoseEndNeverArrived(t *testing.T) {
 // A turn_start that does not echo the waiting prompt's tag is a turn KAS started itself: it opens a wire turn,
 // and the prompt stays pending for its own bracket.
 func TestWireTurnStart_ABracketWithoutThePromptsTagOpensTheAgentsTurn(t *testing.T) {
+	t.Parallel()
 	for name, start := range map[string]*marotte.RPCResponse{
 		"no tag":       newTurnStartMsg(),
 		"a minted tag": newSessionInfoMsg(map[string]any{"kind": "turn_start", "turnStart": true, "userMessageTag": "prompt_0b8f1c2e-4a5d-4e6f-9a7b-1c2d3e4f5a6b"}),
@@ -150,6 +153,7 @@ func TestWireTurnStart_ABracketWithoutThePromptsTagOpensTheAgentsTurn(t *testing
 // An agent run KAS aborts on reading the prompt can end with no content frame: its cancelled turn_end closes the
 // agent's turn, never the prompt's, which goes on to hold its reply.
 func TestWireTurnStart_AnAgentRunAbortedBeforeContentLeavesThePromptOpen(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	prompt, _ := h.stagePromptTurn(t, chatID)
@@ -183,6 +187,7 @@ func TestWireTurnStart_AnAgentRunAbortedBeforeContentLeavesThePromptOpen(t *test
 // A locally failed prompt turn is retired, or the next prompt's bracket binds the dead turn and its own closes
 // on end_turn or cancelled, persisting refusals as `completed`.
 func TestPreOpen_IsRetiredWhenItFinalizes(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	failed, _ := h.stagePromptTurn(t, chatID)
@@ -211,6 +216,7 @@ func TestPreOpen_IsRetiredWhenItFinalizes(t *testing.T) {
 
 // A turn_end with no open turn records nothing; otherwise a locally closed turn's late bracket makes a phantom.
 func TestWireTurnEnd_WithNoOpenTurnPersistsNothing(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	cs.seed(t, chatID, func(c *marotte.Chat) { c.Name = "A" })
@@ -230,6 +236,7 @@ func TestWireTurnEnd_WithNoOpenTurnPersistsNothing(t *testing.T) {
 
 // A replayed turn_end closes no live turn, or a resume closes the turn it runs during.
 func TestWireTurnEnd_ReplayedBracketClosesNoLiveTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	id, _ := streamingPromptTurn(t, h, chatID, "a live reply")
@@ -246,6 +253,7 @@ func TestWireTurnEnd_ReplayedBracketClosesNoLiveTurn(t *testing.T) {
 
 // A fold with no open turn opens one, or its content has no record or end.
 func TestFold_WithNoOpenTurnOpensAWireTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	cs.seed(t, chatID, func(c *marotte.Chat) { c.Name = "A" })

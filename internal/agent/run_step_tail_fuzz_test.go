@@ -33,6 +33,7 @@ func FuzzDockText_readsAsTheWholeTextWhateverFollows(f *testing.F) {
 
 // A long streamed reply is carried from its newest finished line that prints, not whole.
 func TestDockText_KeepsTheEndALineReads(t *testing.T) {
+	t.Parallel()
 	long := ""
 	for range 1000 {
 		long += "a line of the reply\n"

@@ -37,6 +37,7 @@ func chatOf(t *testing.T, h *Runtime, id marotte.ChatID) *marotte.Chat {
 // A session change kiro-cli applies after the browser stops waiting is answered still_applying in time, and lands on
 // the chat when kiro-cli answers: today's 30 s abort would report a change kiro-cli then made as failed.
 func TestSessionChanges_AStalledEngineAnswersStillApplyingAndTheChangeLands(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		method  string
@@ -70,8 +71,7 @@ func TestSessionChanges_AStalledEngineAnswersStillApplyingAndTheChangeLands(t *t
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			answerBudgetOf(t, 50*time.Millisecond)
-			h, _, br := newTestHub()
+			h, _, br := newTestHub(withAnswerBudget(50 * time.Millisecond))
 			t.Cleanup(func() { shutdownHub(t, h) })
 			openChat(t, h, "c1")
 			release := holdCall(t, br, tc.method)
@@ -90,12 +90,12 @@ func TestSessionChanges_AStalledEngineAnswersStillApplyingAndTheChangeLands(t *t
 // A tangent kiro-cli forks after the browser stops waiting opens bound to that forked session, never as an unbound
 // tangent beside an orphaned one.
 func TestForkChat_AStalledEngineAnswersStillApplyingAndTheTangentBindsTheFork(t *testing.T) {
-	answerBudgetOf(t, 50*time.Millisecond)
+	t.Parallel()
 	st, err := tabs.NewStore(t.TempDir(), settings.DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("tabs.NewStore: %v", err)
 	}
-	h, _, br := newTestHub(WithTabs(st))
+	h, _, br := newTestHub(withAnswerBudget(50*time.Millisecond), WithTabs(st))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	openChat(t, h, "c1")
 	br.setCallResult(marotte.MethodSessionFork, json.RawMessage(`{"sessionId":"sess_forked"}`))
@@ -117,8 +117,8 @@ func TestForkChat_AStalledEngineAnswersStillApplyingAndTheTangentBindsTheFork(t 
 // A checkpoint revert kiro-cli applies after the browser stops waiting is recorded on the chat, so the transcript
 // matches the files kiro-cli wrote back.
 func TestRewindChat_AStalledEngineAnswersStillApplyingAndTheRevertIsRecorded(t *testing.T) {
-	answerBudgetOf(t, 50*time.Millisecond)
-	h, cs, br := newTestHub()
+	t.Parallel()
+	h, cs, br := newTestHub(withAnswerBudget(50 * time.Millisecond))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	openChat(t, h, "c1")
 	// The close's tail keeps the turn's entry on the run list, which the rewind's idle take would read as a turn
@@ -151,8 +151,8 @@ func TestRewindChat_AStalledEngineAnswersStillApplyingAndTheRevertIsRecorded(t *
 // A model switch whose tier stop kiro-cli applies after the browser stops waiting is answered still_applying, and
 // the stop lands with the switch: the stop runs inside the switch, so only the switch's request may answer for it.
 func TestSwitchModel_AStalledEngineAnswersStillApplyingAndTheStopLands(t *testing.T) {
-	answerBudgetOf(t, 50*time.Millisecond)
-	d, h := switchFixture(t)
+	t.Parallel()
+	d, h := switchFixture(t, withAnswerBudget(50*time.Millisecond))
 	release := holdCall(t, fakeOf(h.coord.bridgeFor("c1")), marotte.MethodSetConfigOption)
 
 	res := postCmdWithin(t, h, marotte.ClientCommand{
@@ -168,8 +168,8 @@ func TestSwitchModel_AStalledEngineAnswersStillApplyingAndTheStopLands(t *testin
 
 // A refusal kiro-cli answers in time stays the error it is, with nothing persisted.
 func TestSetMode_AnOnTimeRefusalStaysAnError(t *testing.T) {
-	answerBudgetOf(t, 5*time.Second)
-	h, _, br := newTestHub()
+	t.Parallel()
+	h, _, br := newTestHub(withAnswerBudget(5 * time.Second))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	openChat(t, h, "c1")
 	br.setCallErr(marotte.MethodSetMode, errors.New("ACP error -32602: no such mode"))

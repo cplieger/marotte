@@ -29,6 +29,7 @@ func launchReq(t *testing.T) *http.Request {
 // An invoke whose answer arrived unread may have started the run, so the run keeps its lease and its deadline,
 // the schedule row is not marked failed, and the launch answers 502.
 func TestLaunch_AnInvokeWhoseAnswerWasUnreadKeepsItsLease(t *testing.T) {
+	t.Parallel()
 	unread := map[string]error{
 		"an undecoded answer": undecodedReply(),
 		"an oversize answer":  &marotte.TransportError{Err: marotte.ErrFrameTooLarge},
@@ -109,6 +110,7 @@ func TestLaunch_AnInvokeWhoseAnswerWasUnreadKeepsItsLease(t *testing.T) {
 // A workflow/new whose answer was unread, or named no run, may have created one: 502 sending the reader to History,
 // and a schedule records the slot failed rather than relaunching into a second run.
 func TestLaunch_ANewWhoseAnswerWasUnreadSendsTheReaderToHistory(t *testing.T) {
+	t.Parallel()
 	cases := map[string]func(br *fakeBridge){
 		"an undecoded answer": func(br *fakeBridge) { br.setCallErr(methodKiroWorkflowNew, undecodedReply()) },
 		"an oversize answer": func(br *fakeBridge) {

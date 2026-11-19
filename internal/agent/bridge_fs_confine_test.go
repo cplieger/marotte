@@ -90,6 +90,7 @@ func canonDir(t *testing.T, dir string) string {
 
 // A root-confined read is refused after an ancestor swap; ambient os.ReadFile leaks the outside file.
 func TestConfinedRead_RefusesAncestorSwap(t *testing.T) {
+	t.Parallel()
 	st := stageAncestorSwap(t)
 
 	// Red check: the ambient path escapes.
@@ -114,6 +115,7 @@ func TestConfinedRead_RefusesAncestorSwap(t *testing.T) {
 
 // A root-confined write is refused after an ancestor swap. O_NOFOLLOW guards only the final component, so it does not help.
 func TestConfinedWrite_RefusesAncestorSwap(t *testing.T) {
+	t.Parallel()
 	st := stageAncestorSwap(t)
 	outsideFile := filepath.Join(st.outside, "f.txt")
 
@@ -154,6 +156,7 @@ func TestConfinedWrite_RefusesAncestorSwap(t *testing.T) {
 
 // A delete through the pinned parent is refused after an ancestor swap; ambient Lstat + Remove unlinks the outside file.
 func TestConfinedDelete_RefusesAncestorSwap(t *testing.T) {
+	t.Parallel()
 	st := stageAncestorSwap(t)
 	outsideFile := filepath.Join(st.outside, "f.txt")
 
@@ -187,6 +190,7 @@ func TestConfinedDelete_RefusesAncestorSwap(t *testing.T) {
 
 // A root-confined listing is refused after an ancestor swap; os.ReadDir enumerates outside.
 func TestConfinedReadDir_RefusesAncestorSwap(t *testing.T) {
+	t.Parallel()
 	st := stageAncestorSwap(t)
 	absDir := filepath.Dir(st.abs)
 
@@ -202,6 +206,7 @@ func TestConfinedReadDir_RefusesAncestorSwap(t *testing.T) {
 // A FIFO at a read target must be refused: open(2) blocks, and a KAS Call with no timeout
 // wedges the turn. A regression hangs rather than fails.
 func TestConfinedRead_RefusesFIFO(t *testing.T) {
+	t.Parallel()
 	work := canonDir(t, t.TempDir())
 	fifo := filepath.Join(work, "pipe")
 	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
@@ -222,6 +227,7 @@ func TestConfinedRead_RefusesFIFO(t *testing.T) {
 
 // A FIFO at a write target must be refused too.
 func TestConfinedWrite_RefusesFIFO(t *testing.T) {
+	t.Parallel()
 	work := canonDir(t, t.TempDir())
 	fifo := filepath.Join(work, "pipe")
 	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
@@ -251,6 +257,7 @@ func TestConfinedWrite_RefusesFIFO(t *testing.T) {
 // A symlink planted at the target after confinement must not carry the write to its victim.
 // rename(2) replaces the link rather than following it.
 func TestConfinedWrite_SymlinkPlantedAfterConfineDoesNotReachVictim(t *testing.T) {
+	t.Parallel()
 	work := canonDir(t, t.TempDir())
 	victim := filepath.Join(work, "victim.txt")
 	if err := os.WriteFile(victim, []byte("keep me"), 0o600); err != nil {
@@ -301,6 +308,7 @@ func TestConfinedWrite_SymlinkPlantedAfterConfineDoesNotReachVictim(t *testing.T
 
 // With no workspace root the handlers refuse rather than fall back to ambient os calls.
 func TestConfine_RefusesWithoutRoot(t *testing.T) {
+	t.Parallel()
 	lt := &lifetime{workDir: t.TempDir()}
 	if _, err := lt.confine(t.Context(), "f.txt", fsWrite); !errors.Is(err, errNoWorkRoot) {
 		t.Errorf("confine with nil workRoot err = %v, want errNoWorkRoot", err)

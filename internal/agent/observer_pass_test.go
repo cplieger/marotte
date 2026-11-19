@@ -20,6 +20,7 @@ import (
 // An observer pass opens a session with the profile's presets as they are now and nothing else, answers every tool
 // or permission request on it with a refusal, and closes the session when its reads return.
 func TestObserverPass_OpensWithTheCurrentPresetsRefusesToolRequestsAndCloses(t *testing.T) {
+	t.Parallel()
 	h, dir := reopenFixture(t)
 	awaitBoot(h)
 	writeSetting(t, dir, settings.KeySecurityProfile, "unrestricted")
@@ -66,6 +67,7 @@ func TestObserverPass_OpensWithTheCurrentPresetsRefusesToolRequestsAndCloses(t *
 // A pass whose close KAS refuses deletes the session on the engine, so KAS drops it, and then closes it, so marotte's
 // lane for it ends: nothing is left live.
 func TestObserverPass_ARefusedCloseDeletesTheSessionAndClosesIt(t *testing.T) {
+	t.Parallel()
 	h, _ := reopenFixture(t)
 	awaitBoot(h)
 	o := oneObserver(t, h)
@@ -133,6 +135,7 @@ func observeWritingState(t *testing.T, h *Runtime, dir string) {
 // Nothing loads a pass's session again, so a closed pass leaves no state on disk: left there, it is a session no
 // chat names, which the orphan sweep refuses to judge on an install that has no chat yet.
 func TestObserverPass_RemovesItsSessionStateOnceClosed(t *testing.T) {
+	t.Parallel()
 	sessionsDir := t.TempDir()
 	h, o := passFixture(t, sessionsDir, "sess_pass1")
 	dir := filepath.Join(sessionsDir, "hash01", "sess_pass1")
@@ -149,6 +152,7 @@ func TestObserverPass_RemovesItsSessionStateOnceClosed(t *testing.T) {
 
 // A pass whose session neither closes nor deletes is still live in KAS, so its state stays.
 func TestObserverPass_KeepsTheStateOfASessionItCouldNotEnd(t *testing.T) {
+	t.Parallel()
 	sessionsDir := t.TempDir()
 	h, o := passFixture(t, sessionsDir, "sess_pass2")
 	o.mu.Lock()

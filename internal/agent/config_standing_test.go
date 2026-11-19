@@ -69,6 +69,7 @@ func (f *standingFixture) refetch() {
 }
 
 func TestConfigStanding_RefetchesOnPushAndBroadcastsOnChange(t *testing.T) {
+	t.Parallel()
 	f := newStandingFixture(t)
 	f.answer(standingReply("/work/.kiro/agents/reviewer.json"))
 	f.refetch()
@@ -90,6 +91,7 @@ func TestConfigStanding_RefetchesOnPushAndBroadcastsOnChange(t *testing.T) {
 }
 
 func TestConfigStanding_RootsAreWorkDirOnly(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	h.standing.refetch(t.Context())
@@ -105,6 +107,7 @@ func TestConfigStanding_RootsAreWorkDirOnly(t *testing.T) {
 
 // Same-named agents in two repositories: the standing names the file it was read from, so only that row is badged.
 func TestConfigStanding_AgentStandingJoinsOnlyItsOwnRow(t *testing.T) {
+	t.Parallel()
 	f := newStandingFixture(t)
 	f.answer(standingReply("/work/repo-a/.kiro/agents/reviewer.json"))
 	f.refetch()
@@ -126,6 +129,7 @@ func agentLoadErrorFrame(path string) *marotte.RPCResponse {
 }
 
 func TestConfigStanding_AgentLoadErrorClearsWhenTheFileChanges(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "reviewer.json")
 	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
@@ -147,6 +151,7 @@ func TestConfigStanding_AgentLoadErrorClearsWhenTheFileChanges(t *testing.T) {
 }
 
 func TestAgentLoadErrors_KeyIsTheDocsRowPath(t *testing.T) {
+	t.Parallel()
 	f := newStandingFixture(t)
 	f.c.lstat = func(string) (fs.FileInfo, error) { return nil, fs.ErrNotExist }
 	f.c.noteAgentFrame(agentLoadErrorFrame("/work/repo/.kiro/agents/reviewer.json"))
@@ -166,6 +171,7 @@ func TestAgentLoadErrors_KeyIsTheDocsRowPath(t *testing.T) {
 }
 
 func TestAgentLoadErrors_ClearOnlyTheChangedFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	a, b := filepath.Join(dir, "a.json"), filepath.Join(dir, "b.json")
 	for _, p := range []string{a, b} {

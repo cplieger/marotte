@@ -16,6 +16,7 @@ func writeAgentSettings(t *testing.T, dir, body string) {
 }
 
 func TestFeatures_TakesValidValuesAndDefaultsTheRest(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeAgentSettings(t, dir, `{
 		"spec_planning": "quick",
@@ -52,6 +53,7 @@ func TestFeatures_TakesValidValuesAndDefaultsTheRest(t *testing.T) {
 }
 
 func TestFeatures_WorkflowsFollowsTheToggle(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		body string
 		want bool
@@ -70,6 +72,7 @@ func TestFeatures_WorkflowsFollowsTheToggle(t *testing.T) {
 
 // Messages between chats is off unless the user turns it on, kiro-cli's own sessionToolsMessaging default.
 func TestFeatures_MessagingFollowsTheToggle(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		body string
@@ -92,6 +95,7 @@ func TestFeatures_MessagingFollowsTheToggle(t *testing.T) {
 
 // Model fallback defaults on, as in kiro-cli, so an absent or invalid value spawns the engine with it on.
 func TestEngineFeatures_ModelFallbackDefaultsOn(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		body string
 		want bool
@@ -110,6 +114,7 @@ func TestEngineFeatures_ModelFallbackDefaultsOn(t *testing.T) {
 
 // Search other chats is off unless the user turns it on, kiro-cli's own sessionToolsAwareness default.
 func TestFeatures_AwarenessFollowsTheToggle(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		body string
@@ -132,6 +137,7 @@ func TestFeatures_AwarenessFollowsTheToggle(t *testing.T) {
 
 // The planning effort reaches a session only while workflows are on, so a change with them off reloads no chat.
 func TestSessionFeatures_CreatorEffortOnlyWithWorkflows(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		body string
@@ -154,6 +160,7 @@ func TestSessionFeatures_CreatorEffortOnlyWithWorkflows(t *testing.T) {
 
 // The search method reaches a session only while Search other chats is on, and only from KAS's vocabulary.
 func TestSessionFeatures_AwarenessModeOnlyWithAwareness(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		body string
@@ -176,6 +183,7 @@ func TestSessionFeatures_AwarenessModeOnlyWithAwareness(t *testing.T) {
 
 // The delivery limit reaches the engine only away from kiro-cli's own 50, so saving the default restarts nothing.
 func TestEngineFeatures_MessageDeliveryLimitWithholdsTheDefault(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		body string
@@ -201,6 +209,7 @@ func TestEngineFeatures_MessageDeliveryLimitWithholdsTheDefault(t *testing.T) {
 // The Knowledge base indexing rows reach the engine only away from kiro-cli's own values (best, every file, 10000
 // files, 512/128 words), and a value KAS would not build with is withheld rather than sent.
 func TestEngineFeatures_KnowledgeTuningWithholdsDefaultsAndInvalid(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		body string
@@ -240,6 +249,7 @@ func TestEngineFeatures_KnowledgeTuningWithholdsDefaultsAndInvalid(t *testing.T)
 
 // The CloudFormation check's fourth choice, enforce, reaches the engine as itself.
 func TestEngineFeatures_CloudFormationTakesEnforce(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeAgentSettings(t, dir, `{"cloudformation_safety_check": "enforce"}`)
 	if got := engineFeatures(docAt(t, dir)).InfraSafety; got != settings.FeatureEnforce {
@@ -248,6 +258,7 @@ func TestEngineFeatures_CloudFormationTakesEnforce(t *testing.T) {
 }
 
 func TestSessionFeatures_WorkflowLaunchFollowsTheSetting(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		body string
@@ -269,6 +280,7 @@ func TestSessionFeatures_WorkflowLaunchFollowsTheSetting(t *testing.T) {
 }
 
 func TestFeatures_SpecPlanningOffSendsNoWorkflow(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeAgentSettings(t, dir, `{"spec_planning": "off"}`)
 

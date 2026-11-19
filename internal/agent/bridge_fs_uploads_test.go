@@ -25,6 +25,7 @@ func uploadsHub(t *testing.T) (h *Runtime, br *respondingBridge, uploads, paste 
 // The agent's read tool on an attachment marotte handed it: it failed with "path escapes
 // workspace" while the agent's shell `cat` of the same path succeeded.
 func TestRespondFSRead_ReadsAnUploadedAttachment(t *testing.T) {
+	t.Parallel()
 	h, br, _, paste := uploadsHub(t)
 	id := int64(1)
 	h.inbound.respondFSRead(t.Context(), "c1", h.originOf("c1"), &marotte.RPCResponse{
@@ -41,6 +42,7 @@ func TestRespondFSRead_ReadsAnUploadedAttachment(t *testing.T) {
 }
 
 func TestKiroFSStatAndReadDirectory_SeeTheUploadsFolder(t *testing.T) {
+	t.Parallel()
 	h, br, _, paste := uploadsHub(t)
 	h.inbound.respondKiroFSStat(t.Context(), "c1", h.originOf("c1"), kiroFSMsg(t, 1, methodKiroFSStat, paste))
 	<-br.done
@@ -59,6 +61,7 @@ func TestKiroFSStatAndReadDirectory_SeeTheUploadsFolder(t *testing.T) {
 
 // The uploads folder is a READ grant: a write or a delete there still escapes the workspace.
 func TestUploadsFolder_RefusesWriteAndDelete(t *testing.T) {
+	t.Parallel()
 	h, br, _, paste := uploadsHub(t)
 	id := int64(3)
 	h.inbound.respondFSWrite(t.Context(), "c1", h.originOf("c1"), &marotte.RPCResponse{
@@ -84,6 +87,7 @@ func TestUploadsFolder_RefusesWriteAndDelete(t *testing.T) {
 // A path outside both roots, or a relative one, still escapes; a symlink in the uploads
 // folder pointing out of it is refused like one in the workspace.
 func TestUploadsFolder_ConfinesLikeTheWorkspace(t *testing.T) {
+	t.Parallel()
 	outside := canonDir(t, t.TempDir())
 	secret := filepath.Join(outside, "secret.txt")
 	if err := os.WriteFile(secret, []byte(outsideSecret), 0o600); err != nil {

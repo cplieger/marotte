@@ -26,6 +26,7 @@ func endTurnResponse() *marotte.RPCResponse {
 // execution, so no turn_start, chunk or tool call reached marotte before KAS answered the prompt end_turn. The record
 // says KAS sent none of the run, never that the agent answered with nothing.
 func TestPromptTurn_AnUnbracketedSilentEndIsNotGradedEmpty(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	defer shutdownHub(t, h)
 	turnID, _ := h.stagePromptTurn(t, "c1")
@@ -45,6 +46,7 @@ func TestPromptTurn_AnUnbracketedSilentEndIsNotGradedEmpty(t *testing.T) {
 
 // The contrast: a bracketed turn KAS ended with nothing is the agent's empty answer.
 func TestPromptTurn_ABracketedSilentEndIsGradedEmpty(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	defer shutdownHub(t, h)
 	turnID, _ := h.stagePromptTurn(t, "c1")
@@ -100,6 +102,7 @@ func gateFirstClose(h *Runtime) (entered, release chan struct{}) {
 // session (its re-wake of the cleared notifications held it busy), and marotte sent the carried steer 6 ms later,
 // which KAS queued beside its re-wake and orphaned. The drain waits until KAS reports the session idle.
 func TestAfterTurnClose_AGraceClosedPromptsDrainWaitsForKASToGoIdle(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, _, _ := newTestHub()
 		defer shutdownHub(t, h)
@@ -123,6 +126,7 @@ func TestAfterTurnClose_AGraceClosedPromptsDrainWaitsForKASToGoIdle(t *testing.T
 
 // The contrast: a grace close while KAS last reported the session idle drains at once.
 func TestAfterTurnClose_AGraceClosedPromptDrainsAtOnceWhenKASIsIdle(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, _, _ := newTestHub()
 		defer shutdownHub(t, h)
@@ -173,6 +177,7 @@ func TestAfterTurnClose_AGraceClosedPromptsDrainNeverFiresOnElapsedTime(t *testi
 
 // The bridge's forward ending means no execution of that session can still stream, so the hold ends and the drain runs.
 func TestAfterTurnClose_TheForwardExitingEndsAGraceClosedPromptsWait(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, _, _ := newTestHub()
 		defer shutdownHub(t, h)
@@ -197,6 +202,7 @@ func TestAfterTurnClose_TheForwardExitingEndsAGraceClosedPromptsWait(t *testing.
 // A teardown re-fences the chat: its session is going, so the hold ends with no drain. KAS's last report still
 // stands until the session's forward exits, and then the next session admits.
 func TestAfterTurnClose_ATeardownEndsAGraceClosedPromptsHoldWithoutADrain(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, _, _ := newTestHub()
 		defer shutdownHub(t, h)
@@ -228,6 +234,7 @@ func TestAfterTurnClose_ATeardownEndsAGraceClosedPromptsHoldWithoutADrain(t *tes
 
 // A model switch and a compaction are session calls too, so they wait for KAS to go idle like the drain does.
 func TestAfterTurnClose_AGraceClosedPromptsModelSwitchWaitsForKASToGoIdle(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, _, _ := newTestHub()
 		defer shutdownHub(t, h)
@@ -253,6 +260,7 @@ func TestAfterTurnClose_AGraceClosedPromptsModelSwitchWaitsForKASToGoIdle(t *tes
 
 // Shutdown ends the wait at once: the close pipeline runs on inflight, which Shutdown joins.
 func TestAfterTurnClose_ShutdownEndsAGraceClosedPromptsWait(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, _, _ := newTestHub()
 		drained := countDrains(h)
@@ -274,6 +282,7 @@ func TestAfterTurnClose_ShutdownEndsAGraceClosedPromptsWait(t *testing.T) {
 
 // A wire turn KAS opens (its re-wake) ends the wait without a drain: that turn holds admission, and its own close drains.
 func TestAfterTurnClose_AGraceClosedPromptsWaitEndsAtTheNextWireTurn(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, _, _ := newTestHub()
 		defer shutdownHub(t, h)
@@ -302,6 +311,7 @@ func TestAfterTurnClose_AGraceClosedPromptsWaitEndsAtTheNextWireTurn(t *testing.
 // while KAS still ran the session, it answers at once as queued and reaches kiro-cli only once KAS reports the session
 // idle, exactly once, as written.
 func TestCmdPrompt_AfterAGraceCloseQueuesUntilKASGoesIdle(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, br := newTestHub()
 		defer shutdownHub(t, h)
@@ -356,6 +366,7 @@ func TestCmdPrompt_AfterAGraceCloseQueuesUntilKASGoesIdle(t *testing.T) {
 // A prompt KAS stays busy past the admission wait is refused as starting, which hands its text back, never as the
 // plain busy the client would steer into a turn that is not open.
 func TestReserveTurnForPrompt_AKASHoldAnswersStartingAtTheBudget(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, _, _ := newTestHub()
 		defer shutdownHub(t, h)
@@ -396,6 +407,7 @@ func promptCalls(br *fakeBridge) func() []string {
 // The cancel grace closing a turn KAS started frees bracketedWireLocked at the claim, and closing it takes durable
 // writes and broadcasts: a prompt sent in that window queues until KAS goes idle like one sent after the close.
 func TestCmdPrompt_DuringAWireTurnsGraceCloseQueuesUntilKASGoesIdle(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, br := newTestHub()
 		defer shutdownHub(t, h)
@@ -446,6 +458,7 @@ func TestCmdPrompt_DuringAWireTurnsGraceCloseQueuesUntilKASGoesIdle(t *testing.T
 // still ran it, is held off the session until KAS reports idle and then sent exactly once. A row queued before the
 // stop waits as after any stop.
 func TestCmdQueuePrompt_DuringAKASHoldIsSentOnceKASGoesIdle(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, br := newTestHub()
 		defer shutdownHub(t, h)
@@ -493,6 +506,7 @@ func TestCmdQueuePrompt_DuringAKASHoldIsSentOnceKASGoesIdle(t *testing.T) {
 // A tangent's findings for a parent under a KAS hold are queued, never failed, and taken once KAS goes idle, as a row
 // the stop does not hold back.
 func TestMergeTangent_TheFindingsAreTakenOnceKASGoesIdle(t *testing.T) {
+	t.Parallel()
 	h, cs, calls := mergeHub(t)
 	turnID, _ := h.stagePromptTurn(t, "c1")
 	h.coord.WireTurnActivity("c1", true)
@@ -527,6 +541,7 @@ func TestMergeTangent_TheFindingsAreTakenOnceKASGoesIdle(t *testing.T) {
 // KAS's report of the cancelled run can still be in the read loop when the grace claims the turn: a run reported
 // during the close holds a prompt queued like one reported before it, until KAS reports idle.
 func TestCmdPrompt_ARunReportedDuringAGraceCloseHoldsThePromptQueued(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, br := newTestHub()
 		defer shutdownHub(t, h)
@@ -608,6 +623,7 @@ func heldPrompt(t *testing.T, h *Runtime, br *fakeBridge, record func(string)) c
 // A prompt waiting out the hold must not reach the session before the model switch parked during it lands: it would
 // run on the old model, and the switch would stay parked behind it.
 func TestAfterTurnClose_AWaitingPromptFollowsTheParkedModelSwitch(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, _, br := newTestHub()
 		defer shutdownHub(t, h)
@@ -649,6 +665,7 @@ func TestAfterTurnClose_AWaitingPromptFollowsTheParkedModelSwitch(t *testing.T) 
 }
 
 func TestAfterTurnClose_Order(t *testing.T) {
+	t.Parallel()
 	var mu sync.Mutex
 	var order []string
 	record := func(step string) {
@@ -677,6 +694,7 @@ func TestAfterTurnClose_Order(t *testing.T) {
 // Each grace close owns its own hold: the first close's wait, ended by KAS's own turn opening, must not lift the hold
 // that turn's grace close started while KAS still runs.
 func TestAfterTurnClose_AnEarlierGraceClosesWaitLeavesALaterHoldInPlace(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, _, _ := newTestHub()
 		defer shutdownHub(t, h)
@@ -708,6 +726,7 @@ func TestAfterTurnClose_AnEarlierGraceClosesWaitLeavesALaterHoldInPlace(t *testi
 // Every close waits out a run KAS still reports before its drain, a clean one too: a drain sent then is refused
 // admission, and the queued row would stay with no close left to send it.
 func TestAfterTurnClose_ACleanClosesDrainWaitsForKASToGoIdle(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, br := newTestHub()
 		defer shutdownHub(t, h)
@@ -796,6 +815,7 @@ func wantHeldRowKeptPaused(t *testing.T, h *Runtime, cs *testChatStore, prompted
 // A row queued under one grace close's hold is kept when KAS's own turn, stopped by the reader, closes on its grace
 // and takes the hold over before the first closer stands down.
 func TestCmdQueuePrompt_AHeldRowIsKeptThroughALaterGraceClosesHold(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, prompted := heldRowHub(t)
 		entered, release := gateFirstClose(h)
@@ -815,6 +835,7 @@ func TestCmdQueuePrompt_AHeldRowIsKeptThroughALaterGraceClosesHold(t *testing.T)
 // The other order: KAS's own turn opens while the first closer waits, which stands that closer down, and that turn
 // then closes on its grace. The row is still kept.
 func TestCmdQueuePrompt_AHeldRowIsKeptWhenKASsTurnOpensBeforeItsGraceClose(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, prompted := heldRowHub(t)
 		turnID, _ := h.stagePromptTurn(t, "c1")

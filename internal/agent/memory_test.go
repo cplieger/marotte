@@ -13,6 +13,7 @@ import (
 )
 
 func TestHandleMemoryCollection_ListsTheStoreWithoutASession(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.callResults = map[string]json.RawMessage{methodKiroMemoryList: json.RawMessage(`{"memories":[` +
@@ -48,6 +49,7 @@ func TestHandleMemoryCollection_ListsTheStoreWithoutASession(t *testing.T) {
 }
 
 func TestHandleMemoryOne_AddressesByIDAndMapsTheEdit(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.callResults = map[string]json.RawMessage{methodKiroMemoryUpdate: json.RawMessage(
@@ -74,6 +76,7 @@ func TestHandleMemoryOne_AddressesByIDAndMapsTheEdit(t *testing.T) {
 }
 
 func TestHandleMemoryOne_DeleteByID(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.callResults = map[string]json.RawMessage{methodKiroMemoryDelete: json.RawMessage(`{"id":"m9","title":"x"}`)}
@@ -90,6 +93,7 @@ func TestHandleMemoryOne_DeleteByID(t *testing.T) {
 }
 
 func TestHandleMemoryOne_DeleteOfAGoneIDIsDone(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		refusal  *marotte.RPCError
@@ -126,6 +130,7 @@ func TestHandleMemoryOne_DeleteOfAGoneIDIsDone(t *testing.T) {
 }
 
 func TestWriteMemoryErr_ClassifiesTheFailure(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		err      error
@@ -186,6 +191,7 @@ func TestWriteMemoryErr_ClassifiesTheFailure(t *testing.T) {
 // TestHandleMemoryOne_AStalledEngineAnswersStillApplying pins that an edit or delete the engine has not answered within
 // the browser's budget is reported as still applying, never as failed, and that the late answer refreshes the list.
 func TestHandleMemoryOne_AStalledEngineAnswersStillApplying(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		method, kasMethod, body, reply string
 	}{
@@ -193,8 +199,7 @@ func TestHandleMemoryOne_AStalledEngineAnswersStillApplying(t *testing.T) {
 		{http.MethodDelete, methodKiroMemoryDelete, ``, `{"id":"m1","title":"x"}`},
 	} {
 		t.Run(tc.method, func(t *testing.T) {
-			answerBudgetOf(t, 50*time.Millisecond)
-			h, _, br := newTestHub()
+			h, _, br := newTestHub(withAnswerBudget(50 * time.Millisecond))
 			t.Cleanup(func() { shutdownHub(t, h) })
 			br.setCallResult(tc.kasMethod, json.RawMessage(tc.reply))
 			release := holdCall(t, br, tc.kasMethod)
@@ -214,6 +219,7 @@ func TestHandleMemoryOne_AStalledEngineAnswersStillApplying(t *testing.T) {
 // KAS tells the client after any change to the store, the agent's own writes included, so an open Memories tab
 // refetches without a marotte write.
 func TestMemoryChangedNotification_BroadcastsRefetch(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	before := len(eventsOfType(h, marotte.EventMemoriesChanged))
@@ -227,6 +233,7 @@ func TestMemoryChangedNotification_BroadcastsRefetch(t *testing.T) {
 
 // A record the cloud has not taken yet carries KAS's pending mark to the tab.
 func TestMemoryListCarriesCloudState(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.setCallResult(methodKiroMemoryList, json.RawMessage(`{"memories":[`+

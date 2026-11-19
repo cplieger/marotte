@@ -49,6 +49,7 @@ func seedChain(t *testing.T, cs *testChatStore, chatID marotte.ChatID, sessions 
 }
 
 func TestTangentParent_FollowsKASsParentLinkOverTheChain(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		parents map[string]string
 		seed    func(*testing.T, *testChatStore)
@@ -101,6 +102,7 @@ func TestTangentParent_FollowsKASsParentLinkOverTheChain(t *testing.T) {
 }
 
 func TestTangentParent_ResolvesInAStepHeavyWorkspace(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	seedChain(t, cs, "c-parent", "s-parent")
 	seedChain(t, cs, "c-tangent", "s-fork")
@@ -113,6 +115,7 @@ func TestTangentParent_ResolvesInAStepHeavyWorkspace(t *testing.T) {
 }
 
 func TestTangentParent_AnUnreadableListIsNeitherAnswer(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	seedChain(t, cs, "c-tangent", "s-fork")
 	br.callErrs = map[string]error{marotte.MethodSessionList: errors.New("kas gone")}
@@ -125,6 +128,7 @@ func TestTangentParent_AnUnreadableListIsNeitherAnswer(t *testing.T) {
 
 // A chat whose file cannot be read may hold the forked-from session, so its parent is neither gone nor found.
 func TestTangentParent_AnUnreadableChatFileIsNeitherAnswer(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	seedChain(t, cs, "c-tangent", "s-fork")
 	unreadableChat(t, cs, "c-parent")
@@ -139,6 +143,7 @@ func TestTangentParent_AnUnreadableChatFileIsNeitherAnswer(t *testing.T) {
 }
 
 func TestTurnReply_JoinsTheMainLaneSays(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	opened, err := cs.OpenTurn(ctx, "c1", &chat.TurnSpec{

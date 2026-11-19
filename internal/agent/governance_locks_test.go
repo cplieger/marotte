@@ -30,6 +30,7 @@ func adminRule(capability, effect string, match ...string) marotte.PolicyRule {
 }
 
 func TestComposeLocks(t *testing.T) {
+	t.Parallel()
 	personal := sampleGovernance()
 	tests := []struct {
 		profile *marotte.GovernanceStatePayload
@@ -99,6 +100,7 @@ func TestComposeLocks(t *testing.T) {
 }
 
 func TestReduceAdminRules_AnyRuleRestricts(t *testing.T) {
+	t.Parallel()
 	if p := reduceAdminRules([]marotte.PolicyRule{adminRule("shell", "ask", "rm *")}); !p.any {
 		t.Error("an administration ask rule did not set any: the picker hint would not show")
 	}
@@ -139,6 +141,7 @@ func (r *govRecorder) settle() (events []marotte.GovernanceStatePayload, hooks i
 }
 
 func TestSettingsGovernance_PublishesComposedStateOnChangeOnly(t *testing.T) {
+	t.Parallel()
 	r := newGovRecorder(t)
 	r.st.SetGovernance(t.Context(), *enterpriseProfile())
 	r.st.SetGovernance(t.Context(), *enterpriseProfile())
@@ -177,6 +180,7 @@ func TestSettingsGovernance_PublishesComposedStateOnChangeOnly(t *testing.T) {
 }
 
 func TestGovernanceLocks_ColdCacheCarriesAdminLocks(t *testing.T) {
+	t.Parallel()
 	r := newGovRecorder(t)
 	r.st.publishGovernance(t.Context(), r.st.governance.setAdmin(reduceAdminRules([]marotte.PolicyRule{adminRule("power", "deny")})))
 	if _, ok := r.st.GovernanceLocks()[marotte.LockPowers]; !ok {
@@ -189,6 +193,7 @@ func TestGovernanceLocks_ColdCacheCarriesAdminLocks(t *testing.T) {
 
 // Once the managed file fails to load, the lock map fails closed until a reload reports it healthy.
 func TestPolicyChanged_FatalAdministrationErrorFailsClosed(t *testing.T) {
+	t.Parallel()
 	fatal := []marotte.PolicyErrorItem{{Scope: "administration", Message: "parse", Fatal: true}}
 	allLocked := []string{marotte.LockWorkflows, marotte.LockWebTools, marotte.LockPowers, marotte.LockMCP}
 	assertFailedClosed := func(t *testing.T, st *Settings) {
@@ -247,6 +252,7 @@ func writeSettings(t *testing.T, body string) string {
 }
 
 func TestContentCollectionEnabled(t *testing.T) {
+	t.Parallel()
 	pinned := map[string]marotte.GovernanceLock{marotte.LockContentCollection: {Value: false}}
 	tests := []struct {
 		locks        map[string]marotte.GovernanceLock
@@ -278,6 +284,7 @@ func TestContentCollectionEnabled(t *testing.T) {
 }
 
 func TestAgentFeatures_SubagentLockWins(t *testing.T) {
+	t.Parallel()
 	dir := writeSettings(t, `{"workflows_enabled":true}`)
 	h := reopenFixtureIn(t, dir, nil)
 	if got := h.readSessionSettings(t.Context()).Features; !got.Workflows {

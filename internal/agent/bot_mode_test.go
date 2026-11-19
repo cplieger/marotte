@@ -122,6 +122,7 @@ func modeErrorsSince(t *testing.T, h *Runtime, since uint64) []string {
 // TestApplyLoadedSessionFacts_HoldsTheBotRole pins the load's writer through AdoptMode: a Bot's record stays on its
 // role whatever the load reports, and a regular chat (a Bot's tangent) never takes it.
 func TestApplyLoadedSessionFacts_HoldsTheBotRole(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		chat     marotte.Chat

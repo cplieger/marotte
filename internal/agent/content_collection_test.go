@@ -31,6 +31,7 @@ func contentCollectionWrites(b *fakeBridge) []bool {
 // A lock change reaches the engine whatever config.json holds: the lock is the answer, and every session shares the
 // one process KAS holds the value in, so the running engine is notified once, or a restart's initialize carries it.
 func TestGovernanceLockChange_ReachesTheEngineReadableOrNot(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		document string

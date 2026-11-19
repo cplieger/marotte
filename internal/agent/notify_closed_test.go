@@ -15,6 +15,7 @@ import (
 )
 
 func TestNotifyRoute_AChatTheUserClosedAnswers410AndStaysClosed(t *testing.T) {
+	t.Parallel()
 	h, cs, _, tab := closeTabHub(t)
 	route := notifyRoute(t, h, cs)
 	if code := postCloseTab(t, h, tab); code != http.StatusOK {
@@ -45,6 +46,7 @@ func TestNotifyRoute_AChatTheUserClosedAnswers410AndStaysClosed(t *testing.T) {
 }
 
 func TestNotifyRoute_AChatWithItsTabOpenIsAccepted(t *testing.T) {
+	t.Parallel()
 	h, cs, _, _ := closeTabHub(t)
 	route := notifyRoute(t, h, cs)
 
@@ -62,6 +64,7 @@ func postAPICmd(t *testing.T, h *Runtime, cmd marotte.ClientCommand) *httptest.R
 
 // A closed chat keeps its paused rows; an API caller's resume_queue or send_queued_now must not send them.
 func TestQueueCommands_FromAnAPICallerIntoAChatTheUserClosedSendNothing(t *testing.T) {
+	t.Parallel()
 	for _, cmd := range []marotte.ClientCommand{
 		{Type: marotte.CmdResumeQueue, ChatID: "c1"},
 		{Type: marotte.CmdSendQueuedNow, ChatID: "c1", Payload: json.RawMessage(`{"message_id":"m-q1"}`)},

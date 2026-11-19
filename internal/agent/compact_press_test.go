@@ -119,6 +119,7 @@ func modelReadingMsg(pct float64) *marotte.RPCResponse {
 // The press is answered while its summary runs: KAS takes minutes to answer _kiro/session/compact, and a press held
 // that long reaches the command budget and answers the page an error for a compaction still running.
 func TestCompactPress_AnswersWhileTheCallRuns(t *testing.T) {
+	t.Parallel()
 	h, _, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	release := holdCall(t, br, marotte.MethodSessionCompact)
 
@@ -134,6 +135,7 @@ func TestCompactPress_AnswersWhileTheCallRuns(t *testing.T) {
 // One press is one call and one outcome: a refusal is one toast, no compaction_failed row, and no later turn end
 // calls again, however full the context reads.
 func TestCompactPress_ARefusalIsOneCallAndOneToast(t *testing.T) {
+	t.Parallel()
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	br.setCallResult(marotte.MethodSessionCompact, json.RawMessage(`{"success":false}`))
 	storeReading(t, cs, 95)
@@ -159,6 +161,7 @@ func TestCompactPress_ARefusalIsOneCallAndOneToast(t *testing.T) {
 // A second press while the first one's call runs sends no second call and is refused at once, in words the page
 // shows.
 func TestCompactPress_ASecondPressWhileOneRunsSendsNoSecondCall(t *testing.T) {
+	t.Parallel()
 	h, _, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	release := holdCall(t, br, marotte.MethodSessionCompact)
 	first := pressCompact(t, h)
@@ -177,6 +180,7 @@ func TestCompactPress_ASecondPressWhileOneRunsSendsNoSecondCall(t *testing.T) {
 
 // A prompt sent while the press's call runs goes to kiro-cli at once: nothing holds a send behind a compaction.
 func TestCompactPress_APromptSentWhileTheCallRunsIsSentAtOnce(t *testing.T) {
+	t.Parallel()
 	h, _, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	release := holdCall(t, br, marotte.MethodSessionCompact)
 	pressCompact(t, h)
@@ -194,6 +198,7 @@ func TestCompactPress_APromptSentWhileTheCallRunsIsSentAtOnce(t *testing.T) {
 // The chat's header says a compaction runs for exactly as long as the press's call does, whatever it answers, so a
 // reload keeps the dock's row and no row outlives the call.
 func TestCompactPress_TheHeaderShowsTheCallWhileItRuns(t *testing.T) {
+	t.Parallel()
 	for _, answer := range []string{`{"success":true}`, `{"success":false}`} {
 		t.Run(answer, func(t *testing.T) {
 			h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
@@ -219,6 +224,7 @@ func TestCompactPress_TheHeaderShowsTheCallWhileItRuns(t *testing.T) {
 // failure frame, so the report comes from a wake turn's own summary while the press's call runs: turn_start, the
 // failed summarization frame, turn_end, then the call answers success false. The refusal after it adds no toast.
 func TestCompactPress_KiroCLIsFailureReportIsTheOneOutcome(t *testing.T) {
+	t.Parallel()
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	br.setCallResult(marotte.MethodSessionCompact, json.RawMessage(`{"success":false}`))
 	release := holdCall(t, br, marotte.MethodSessionCompact)
@@ -244,6 +250,7 @@ func TestCompactPress_KiroCLIsFailureReportIsTheOneOutcome(t *testing.T) {
 // kiro-cli's own in-turn summary shows in the header between its running frame and its outcome, and a turn that
 // closes with no outcome frame leaves no mark behind.
 func TestCompaction_KiroCLIsInTurnSummaryShowsWhileItRuns(t *testing.T) {
+	t.Parallel()
 	t.Run("running then landed", func(t *testing.T) {
 		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 		send(t, h, newTurnStartMsg(), newSessionInfoMsg(map[string]any{
@@ -272,6 +279,7 @@ func TestCompaction_KiroCLIsInTurnSummaryShowsWhileItRuns(t *testing.T) {
 // A press while kiro-cli's own summary runs sends no call and is refused in the page's words: KAS answers one with
 // {success: false} before its summary lands. The header keeps the summary's mark until its outcome.
 func TestCompactPress_DuringKiroCLIsSummaryIsRefused(t *testing.T) {
+	t.Parallel()
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	send(t, h, newTurnStartMsg(), newSessionInfoMsg(map[string]any{
 		"kind": "summarization_started", "summarization": map[string]any{"status": "running"},
@@ -295,6 +303,7 @@ func TestCompactPress_DuringKiroCLIsSummaryIsRefused(t *testing.T) {
 // A summary that keeps failing across wake turns is shown once, and a press refused during that streak still tells
 // the reader its own outcome: the suppressed failure is not the press's account.
 func TestCompaction_AFailingStreakShowsOnceAndAPressStillToasts(t *testing.T) {
+	t.Parallel()
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	failedTurn := []*marotte.RPCResponse{
 		newTurnStartMsg(),
@@ -325,6 +334,7 @@ func TestCompaction_AFailingStreakShowsOnceAndAPressStillToasts(t *testing.T) {
 // Deleting a chat ends its summary-failure streak, so the process keeps no state for a chat that is gone. The test
 // store keeps the record the delete's membership step would have erased, so a later failure shows what was kept.
 func TestCompaction_DeletingAChatEndsItsFailingStreak(t *testing.T) {
+	t.Parallel()
 	h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 	send(t, h, newTurnStartMsg(),
 		newSessionInfoMsg(map[string]any{"summarization": map[string]any{"status": "model error"}}),
@@ -343,6 +353,7 @@ func TestCompaction_DeletingAChatEndsItsFailingStreak(t *testing.T) {
 // A summary mark whose header write was lost still ends with its turn: the press after it is accepted, not refused
 // for a compaction nothing on screen shows.
 func TestCompaction_ALostRunningMarkStillEndsWithItsTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, br, tails := idleAfterFirstTurn(t, "/tmp/work")
 	send(t, h, newTurnStartMsg())
 	fault := errors.New("disk full")
@@ -366,6 +377,7 @@ func TestCompaction_ALostRunningMarkStillEndsWithItsTurn(t *testing.T) {
 // A press whose call ends while kiro-cli's own summary runs leaves the summary's mark, and the summary's outcome
 // leaves a running press's mark: the header clears only once both ended.
 func TestCompaction_TheMarkOutlivesWhicheverEndsFirst(t *testing.T) {
+	t.Parallel()
 	summaryRunning := newSessionInfoMsg(map[string]any{
 		"kind": "summarization_started", "summarization": map[string]any{"status": "running"},
 	})
@@ -407,6 +419,7 @@ func TestCompaction_TheMarkOutlivesWhicheverEndsFirst(t *testing.T) {
 // 96%, from a response that called a tool, calls _kiro/session/compact or stops the turn. kiro-cli compacts inside
 // the turn at its own threshold.
 func TestCompaction_MarotteStartsNone(t *testing.T) {
+	t.Parallel()
 	t.Run("turn ends over a full stored reading", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		storeReading(t, cs, 99)
@@ -451,6 +464,7 @@ func TestCompaction_MarotteStartsNone(t *testing.T) {
 
 // A press on a chat with no live session compacts nothing.
 func TestCompactRequest_NoSessionCompactsNothing(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	if out, err := h.RequestCompact(t.Context(), "c-none"); err != nil || out != command.CompactNoSession {
 		t.Errorf("press with no session = (%v, %v), want no session", out, err)

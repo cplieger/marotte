@@ -91,6 +91,7 @@ const nonDefaultLiveValues = `{"agent_ignore_files":[".gitignore"],"terminal_com
 	`"content_collection_enabled":true,"mcp_wait_for_ready":true,"debug_logs":true,"notify_pr_status":true}`
 
 func TestReconcileSessionSettings_ACancelledCallerStillDeliversTheMoveItFound(t *testing.T) {
+	t.Parallel()
 	render := &fakeMCPRender{render: writesTrue}
 	h, configDir := reopenFixture(t, WithKASMCPRenderer(render))
 	writeSetting(t, configDir, settings.KeyMCPWaitForReady, true)
@@ -126,6 +127,7 @@ func TestReconcileSessionSettings_ACancelledCallerSeesNoMoveOverNonDefaultValues
 }
 
 func TestReconcileSessionSettings_TwoPushesOfOneSurfaceLandInWriteOrder(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		var mu sync.Mutex
 		var delivered []bool
@@ -168,6 +170,7 @@ func TestReconcileSessionSettings_TwoPushesOfOneSurfaceLandInWriteOrder(t *testi
 }
 
 func TestReconcileSessionSettings_AFailedMCPRenderIsRetriedWithNoFurtherEdit(t *testing.T) {
+	t.Parallel()
 	render := &fakeMCPRender{render: func(ctx context.Context, n int) (bool, error) {
 		if n == 1 {
 			return false, errKASUnwritable
@@ -215,6 +218,7 @@ func TestReconcileSessionSettings_AnUnreadableDocumentPushesNoDefaults(t *testin
 }
 
 func TestReconcileSessionSettings_AnMCPRenderOfAnotherWaitValueIsRetried(t *testing.T) {
+	t.Parallel()
 	render := &fakeMCPRender{render: func(_ context.Context, n int) (bool, error) { return n > 1, nil }}
 	h, configDir := reopenFixture(t, WithKASMCPRenderer(render))
 	writeSetting(t, configDir, settings.KeyMCPWaitForReady, true)
@@ -308,6 +312,7 @@ func returnsWithin(t *testing.T, name string, limit time.Duration, fn func()) ti
 }
 
 func TestReconcileSessions_QueuedBehindAHeldProcessSyncWaitsOnlyThePushBound(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		render := &fakeMCPRender{render: func(context.Context, int) (bool, error) { return true, nil }}
 		h, configDir := reopenFixture(t, WithKASMCPRenderer(render))
@@ -336,6 +341,7 @@ func TestReconcileSessions_QueuedBehindAHeldProcessSyncWaitsOnlyThePushBound(t *
 }
 
 func TestOpenBridge_QueuedBehindAHeldProcessSyncWaitsOnlyThePushBound(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, _ := reopenFixture(t)
 		if !h.processLive.lock.lock(t.Context()) {
@@ -351,6 +357,7 @@ func TestOpenBridge_QueuedBehindAHeldProcessSyncWaitsOnlyThePushBound(t *testing
 }
 
 func TestReconcileSessions_ARenderAfterAWaitForTheSyncLockGetsOnlyWhatIsLeftOfTheBound(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		render := &fakeMCPRender{render: func(ctx context.Context, _ int) (bool, error) {
 			<-ctx.Done()
@@ -424,6 +431,7 @@ func TestProcessSync_ACallerWhoLeftWhileQueuedLogsNothing(t *testing.T) {
 }
 
 func TestOpenBridge_ReloadingAMarkedChatWithTheMCPStoreHeldWaitsOnlyThePushBound(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		storeHeld := make(chan struct{})
 		release := sync.OnceFunc(func() { close(storeHeld) })

@@ -96,6 +96,7 @@ func snapshotNames(h *Runtime) []string {
 }
 
 func TestMCPRegistry_AConnectedServerPopulatesTheSnapshot(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, nil)
 	reportMCP(t, h, "s1", connectedMCP("github", marotte.MCPSource{}))
 	snap := h.mcpRegistry.snapshot()
@@ -108,6 +109,7 @@ func TestMCPRegistry_AConnectedServerPopulatesTheSnapshot(t *testing.T) {
 }
 
 func TestMCPRegistry_ASignInPromptOverridesTheState(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, nil)
 	reportMCP(t, h, "s1", connectedMCP("linear", marotte.MCPSource{}))
 	reportMCP(t, h, "s1", oauthMCP("linear", "https://oauth.example/auth"))
@@ -122,6 +124,7 @@ func TestMCPRegistry_ASignInPromptOverridesTheState(t *testing.T) {
 }
 
 func TestMCPRegistry_AFailureRecordsItsError(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, nil)
 	before := h.bus.fanout.Position().Head
 	reportMCP(t, h, "s1", failedMCP("broken", marotte.MCPSource{}, "connection refused"))
@@ -144,6 +147,7 @@ func TestMCPRegistry_AFailureRecordsItsError(t *testing.T) {
 }
 
 func TestMCPRegistry_ClearAllEmitsDisconnect(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, nil)
 	reportMCP(t, h, "s1", connectedMCP("a", marotte.MCPSource{}), connectedMCP("b", marotte.MCPSource{}))
 
@@ -165,6 +169,7 @@ func TestMCPRegistry_ClearAllEmitsDisconnect(t *testing.T) {
 }
 
 func TestMCPRegistry_ClearAllOnEmptyNoEvents(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, nil)
 	before := h.bus.fanout.Position().Head
 	h.mcpRegistry.clearAll()
@@ -175,6 +180,7 @@ func TestMCPRegistry_ClearAllOnEmptyNoEvents(t *testing.T) {
 
 // TestMCPRegistry_RecordsUnconfiguredServerWithOrigin pins that an unconfigured server is recorded with KAS's origin.
 func TestMCPRegistry_RecordsUnconfiguredServerWithOrigin(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		src        marotte.MCPSource
 		wantOrigin marotte.Origin
@@ -234,6 +240,7 @@ func TestMCPRegistry_RecordsUnconfiguredServerWithOrigin(t *testing.T) {
 // TestMCPRegistry_WireOriginBeatsTheName pins that a workspace definition can override marotte's name, so the
 // status says workspace and marks the shadowing.
 func TestMCPRegistry_WireOriginBeatsTheName(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, enabledConfig("github"))
 	src := marotte.MCPSource{Origin: "workspace", Root: "/workspace/app"}
 	reportMCP(t, h, "s1", connectedMCP("github", src))
@@ -249,6 +256,7 @@ func TestMCPRegistry_WireOriginBeatsTheName(t *testing.T) {
 
 // TestMCPRegistry_RecordsAWorkspaceServerShadowingADisabledOne pins a foreign row for a workspace server reusing a disabled name.
 func TestMCPRegistry_RecordsAWorkspaceServerShadowingADisabledOne(t *testing.T) {
+	t.Parallel()
 	cfg := enabledConfig()
 	cfg.configured["github"] = struct{}{}
 	h := newHubWithMCPConfig(t, cfg)
@@ -266,6 +274,7 @@ func TestMCPRegistry_RecordsAWorkspaceServerShadowingADisabledOne(t *testing.T) 
 
 // TestMCPRegistry_UserStampOnADisabledOwnedNameIsMarottes pins ownership, not enablement, as the attribution.
 func TestMCPRegistry_UserStampOnADisabledOwnedNameIsMarottes(t *testing.T) {
+	t.Parallel()
 	for name, src := range map[string]marotte.MCPSource{
 		"user stamp": {Origin: "user"},
 		"no stamp":   {},
@@ -290,6 +299,7 @@ func TestMCPRegistry_UserStampOnADisabledOwnedNameIsMarottes(t *testing.T) {
 
 // TestMCPRegistry_NoMetaFallsBackToTheName pins the fallback for an unstamped entry.
 func TestMCPRegistry_NoMetaFallsBackToTheName(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, enabledConfig("github"))
 	reportMCP(t, h, "s1", connectedMCP("github", marotte.MCPSource{}))
 
@@ -301,6 +311,7 @@ func TestMCPRegistry_NoMetaFallsBackToTheName(t *testing.T) {
 
 // TestMCPRegistry_UserStampOnlyAttributesANameMarotteHolds pins the spoof case.
 func TestMCPRegistry_UserStampOnlyAttributesANameMarotteHolds(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		server string
 		want   marotte.Origin
@@ -325,6 +336,7 @@ func TestMCPRegistry_UserStampOnlyAttributesANameMarotteHolds(t *testing.T) {
 
 // TestMCPRegistry_StampsUserOriginOnConfiguredServers pins that the user's own server never claims a foreign origin.
 func TestMCPRegistry_StampsUserOriginOnConfiguredServers(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, enabledConfig("github"))
 	ctx := t.Context()
 	h.mcpRegistry.RecordSessionStatus(ctx, "s1", translate.MCPSessionStatus{Servers: []translate.MCPServerReport{connectedMCP("github", marotte.MCPSource{})}})
@@ -340,6 +352,7 @@ func TestMCPRegistry_StampsUserOriginOnConfiguredServers(t *testing.T) {
 
 // TestMCPRegistry_ADisabledServer pins a read-only row for a foreign disabled server and a discard for marotte's own.
 func TestMCPRegistry_ADisabledServer(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		cfg        func() *fakeMCPConfig
 		src        marotte.MCPSource
@@ -395,6 +408,7 @@ func TestMCPRegistry_ADisabledServer(t *testing.T) {
 
 // TestMCPRegistry_StatusJSONCarriesOrigin pins origin on the wire, never omitted.
 func TestMCPRegistry_StatusJSONCarriesOrigin(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, enabledConfig("mine"))
 	reportMCP(t, h, "s1", connectedMCP("mine", marotte.MCPSource{}), connectedMCP("theirs", marotte.MCPSource{Origin: "power", Power: "aws-docs"}))
 
@@ -419,6 +433,7 @@ func TestMCPRegistry_StatusJSONCarriesOrigin(t *testing.T) {
 
 // TestMCPStatus_CarriesProvenanceFields pins the workspace root, power name and shadow mark on the wire.
 func TestMCPStatus_CarriesProvenanceFields(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, enabledConfig("github"))
 	reportMCP(t, h, "s1",
 		connectedMCP("github", marotte.MCPSource{Origin: "workspace", Root: "/workspace/app"}),
@@ -450,6 +465,7 @@ func TestMCPStatus_CarriesProvenanceFields(t *testing.T) {
 }
 
 func TestMCPRegistry_SnapshotIsStableAlphabetically(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, nil)
 	reportMCP(t, h, "s1", connectedMCP("zulu", marotte.MCPSource{}), connectedMCP("alpha", marotte.MCPSource{}),
 		connectedMCP("mike", marotte.MCPSource{}))
@@ -461,6 +477,7 @@ func TestMCPRegistry_SnapshotIsStableAlphabetically(t *testing.T) {
 }
 
 func TestMCPRegistry_OnChangeFiresOutsideLock(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, nil)
 	var mu sync.Mutex
 	count := 0
@@ -504,6 +521,7 @@ drained:
 // A burst of mutations is one change: the subscriber is the steering generator, which rewrites
 // environment.md per call. The bubble's clock makes the window exact.
 func TestMCPRegistry_SignalsInsideOneWindowFireOneCallback(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h := newHubWithMCPConfig(t, nil)
 		// A defer, not t.Cleanup: Test waits for bubble goroutines before cleanups, so a cleanup close deadlocks.
@@ -535,6 +553,7 @@ func TestMCPRegistry_SignalsInsideOneWindowFireOneCallback(t *testing.T) {
 
 // The window coalesces a burst but never swallows a later edit.
 func TestMCPRegistry_SignalsBeyondTheWindowFireSeparateCallbacks(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h := newHubWithMCPConfig(t, nil)
 		defer close(h.lifecycle.done) // see the sibling test for why not t.Cleanup
@@ -560,6 +579,7 @@ func TestMCPRegistry_SignalsBeyondTheWindowFireSeparateCallbacks(t *testing.T) {
 }
 
 func TestMCPRegistry_HandleStatusReturnsJSON(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, nil)
 	reportMCP(t, h, "s1", connectedMCP("github", marotte.MCPSource{}), failedMCP("broken", marotte.MCPSource{}, "no auth"))
 
@@ -679,6 +699,7 @@ func stampVersion(t *testing.T, s *marotte.SubjectStamp) uint64 {
 // A client orders the MCP rows it copies by the `mcp_status` version: each row frame carries a version above the
 // last, and the inventory read carries the version of the last frame it already reflects.
 func TestMCPStatusFramesCarryIncreasingVersions(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, nil)
 	before := h.bus.fanout.Position().Head
 
@@ -719,6 +740,7 @@ func TestMCPStatusFramesCarryIncreasingVersions(t *testing.T) {
 // The relay latch changes the served row, so it moves the version and announces the row: a client holding the
 // earlier version would otherwise refuse the read that shows it.
 func TestRelayLatchMovesTheStatusVersion(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, nil)
 	reportMCP(t, h, "sess_a", oauthMCP("remote", "https://auth.example/passive"))
 	if _, err := h.mcpRegistry.claimSignIn(t.Context(), "remote"); err != nil {
@@ -810,6 +832,7 @@ func mcpStatusFrame(t *testing.T, sid marotte.SessionID, uris map[string]string)
 // Each session reports only its own servers, so the records are the union of the views, and a view's end takes the
 // servers only it listed.
 func TestMCPRegistry_UnionAcrossSessionViews(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, nil)
 	reportMCP(t, h, "sess_a", connectedMCP("github", marotte.MCPSource{}))
 	reportMCP(t, h, "sess_b", connectedMCP("linear", marotte.MCPSource{}), connectedMCP("github", marotte.MCPSource{}))
@@ -833,6 +856,7 @@ func TestMCPRegistry_UnionAcrossSessionViews(t *testing.T) {
 
 // A frame is the session's whole view: a server it no longer lists is no longer the session's.
 func TestMCPRegistry_RetiresAServerAWholeFrameOmits(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, nil)
 	reportMCP(t, h, "sess_a", connectedMCP("github", marotte.MCPSource{}), connectedMCP("docs", marotte.MCPSource{}))
 
@@ -850,6 +874,7 @@ func TestMCPRegistry_RetiresAServerAWholeFrameOmits(t *testing.T) {
 
 // marotte's own server switched off leaves the generated steering's connected integrations.
 func TestMCPRegistry_OwnDisabledServerLeavesTheSnapshot(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, enabledConfig("mine"))
 	reportMCP(t, h, "sess_a", connectedMCP("mine", marotte.MCPSource{Origin: "user"}))
 	if got := h.MCPSnapshot(); len(got) != 1 {
@@ -869,6 +894,7 @@ func TestMCPRegistry_OwnDisabledServerLeavesTheSnapshot(t *testing.T) {
 // Another session's sign-in prompt and the signing-in session's connecting report are not a new attempt: the
 // row's relay latch and the client's paste box both stand.
 func TestMCPRegistry_IdenticalFrameKeepsTheRelayLatch(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, nil)
 	reportMCP(t, h, "sess_a", oauthMCP("remote", "https://auth.example/passive"))
 	if _, err := h.mcpRegistry.claimSignIn(t.Context(), "remote"); err != nil {
@@ -895,6 +921,7 @@ func TestMCPRegistry_IdenticalFrameKeepsTheRelayLatch(t *testing.T) {
 
 // A server reported connecting keeps the session's previous entry until a settled state arrives.
 func TestMCPRegistry_AConnectingServerKeepsItsEntry(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, nil)
 	reportMCP(t, h, "sess_a", failedMCP("github", marotte.MCPSource{}, "boom"))
 
@@ -909,6 +936,7 @@ func TestMCPRegistry_AConnectingServerKeepsItsEntry(t *testing.T) {
 
 // The organization's registry block is the union of the views', and stands when the last view ends.
 func TestMCPRegistry_GovernanceIsTheUnionOfViews(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, nil)
 	reg := func(server, filtered string) *marotte.GovernanceMCPRegistry {
 		return &marotte.GovernanceMCPRegistry{
@@ -935,6 +963,7 @@ func TestMCPRegistry_GovernanceIsTheUnionOfViews(t *testing.T) {
 
 // The `#` menu reads the chat's own view once its session reported, and every view's union before that.
 func TestMCPPool_ChatViewElseUnion(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 		t.Fatalf("seed the chat: %v", err)
@@ -964,6 +993,7 @@ func TestMCPPool_ChatViewElseUnion(t *testing.T) {
 
 // A chat's view ends with its session's forward, unless a reload already serves the same session id.
 func TestBridgeExit_DropsTheChatView(t *testing.T) {
+	t.Parallel()
 	open := func(t *testing.T) (*Runtime, *fakeBridge) {
 		t.Helper()
 		h, cs, br := newTestHub()
@@ -1006,6 +1036,7 @@ func TestBridgeExit_DropsTheChatView(t *testing.T) {
 
 // A deleted run's step sessions take their views with them.
 func TestRunEnd_DropsStepViews(t *testing.T) {
+	t.Parallel()
 	h, _, rig := newDeleteRig(t, kasRuns(t,
 		map[string]any{"workflowId": "wf_1", "name": "r", "status": "completed", "parentSessionId": "sess_cur"},
 	))
@@ -1045,6 +1076,7 @@ func TestRunEnd_AnUnconfirmedDeleteOfAGoneRunDropsStepViews(t *testing.T) {
 
 // An engine end takes its MCP servers, and the pool with them.
 func TestMCPRegistry_AnEngineEndClearsThePool(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, nil)
 	reportMCP(t, h, "sess_a", resourceMCP("docs", "d://x"))
 
@@ -1058,6 +1090,7 @@ func TestMCPRegistry_AnEngineEndClearsThePool(t *testing.T) {
 // A pool replaced or cleared is announced, so a client holding pool rows re-reads
 // them even when no server changed state.
 func TestMCPRegistry_PoolChangesAreAnnounced(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, nil)
 	before := h.bus.fanout.Position().Head
 
@@ -1084,6 +1117,7 @@ func filterTypes(types []string, want string) []string {
 // A session where the server failed takes the row from one where it connected: the row reads failed with its error and
 // its failed row is announced, while "Connected integrations" still lists the server the connected session can use.
 func TestMCPRegistry_AFailedSessionTakesTheRowFromAConnectedOne(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, enabledConfig("linear"))
 	reportMCP(t, h, "sess-a", connectedMCP("linear", marotte.MCPSource{}))
 	before := h.bus.fanout.Position().Head
@@ -1105,6 +1139,7 @@ func TestMCPRegistry_AFailedSessionTakesTheRowFromAConnectedOne(t *testing.T) {
 // "Connected integrations" lists a server any session has connected, even while the row shows another session
 // waiting for, or in, a sign-in.
 func TestMCPRegistry_SnapshotListsAServerAnySessionConnected(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, enabledConfig("linear"))
 	reportMCP(t, h, "sess-a", connectedMCP("linear", marotte.MCPSource{}))
 	reportMCP(t, h, "sess-b", oauthMCP("linear", "https://p.example/passive"))
@@ -1134,6 +1169,7 @@ func TestMCPRegistry_SnapshotListsAServerAnySessionConnected(t *testing.T) {
 // resolveServers is the one answer every view reader takes: which session's report a name's row shows and its actions
 // address, whether any session has it connected, and a refused sign-in's reason.
 func TestResolveServers(t *testing.T) {
+	t.Parallel()
 	view := func(sid marotte.SessionID, servers ...translate.MCPServerReport) mcpView {
 		return mcpView{session: sid, servers: servers}
 	}

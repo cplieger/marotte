@@ -27,6 +27,7 @@ func nameSet(names ...string) map[string]struct{} {
 }
 
 func TestHandleMCPReconnect_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, enabledConfig("everything"))
 	req := httptest.NewRequest(http.MethodGet, "/api/mcp/reconnect", nil)
 	rec := httptest.NewRecorder()
@@ -37,6 +38,7 @@ func TestHandleMCPReconnect_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandleMCPReconnect_UnknownServer(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, enabledConfig("everything"))
 	rec := postJSON(h.mcpRegistry.handleReconnect, "/api/mcp/reconnect", `{"server":"nope"}`)
 	if rec.Code != http.StatusNotFound {
@@ -46,6 +48,7 @@ func TestHandleMCPReconnect_UnknownServer(t *testing.T) {
 
 // The reset addresses the oldest live session that binds the server, never every session holding the name.
 func TestMCPReconnect_SendsTheBindingSessionID(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, enabledConfig("everything"))
 	reportMCP(t, h, "sess_a", connectedMCP("other", marotte.MCPSource{}))
 	reportMCP(t, h, "sess_b", failedMCP("everything", marotte.MCPSource{}, "boom"))
@@ -68,6 +71,7 @@ func TestMCPReconnect_SendsTheBindingSessionID(t *testing.T) {
 
 // A server no live session binds has no instance to reset: the next session that binds it connects it.
 func TestHandleMCPReconnect_AServerNoSessionBindsIsAConflict(t *testing.T) {
+	t.Parallel()
 	for name, stage := range map[string]func(t *testing.T, h *Runtime){
 		"no view lists it": func(*testing.T, *Runtime) {},
 		"KAS says the session does not declare it": func(t *testing.T, h *Runtime) {
@@ -93,6 +97,7 @@ func TestHandleMCPReconnect_AServerNoSessionBindsIsAConflict(t *testing.T) {
 
 // A reset the engine refuses is a failed reconnect, never a success.
 func TestHandleMCPReconnect_ARefusedResetIsABadGateway(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, enabledConfig("everything"))
 	reportMCP(t, h, "sess_a", failedMCP("everything", marotte.MCPSource{}, "boom"))
 	fakeSourceOf(t, h).lane.setCallRPCErr(methodV3MCPResetServer, &marotte.RPCError{Code: -32603, Message: "no such server"})
@@ -107,6 +112,7 @@ func TestHandleMCPReconnect_ARefusedResetIsABadGateway(t *testing.T) {
 
 // With no engine running nothing can take the reset: the reconnect answers 503 and sends nothing.
 func TestHandleMCPReconnect_WithNoEngineIsUnavailable(t *testing.T) {
+	t.Parallel()
 	src := fakeEngineOf(func() engineSession { return newFakeBridge() }, nil)
 	src.startGate = make(chan struct{})
 	cs := newTestChatStore()
@@ -127,6 +133,7 @@ func TestHandleMCPReconnect_WithNoEngineIsUnavailable(t *testing.T) {
 
 // A reset in flight is a door: a restart requested meanwhile stops the engine only after the reset answered.
 func TestHandleMCPReconnect_ARestartWaitsForAResetInFlight(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, enabledConfig("everything"))
 	reportMCP(t, h, "sess_a", failedMCP("everything", marotte.MCPSource{}, "boom"))
 	src := fakeSourceOf(t, h)
@@ -173,6 +180,7 @@ func TestHandleMCPReconnect_ARestartWaitsForAResetInFlight(t *testing.T) {
 // TestHandleMCPReconnect_ReachesAServerKASReportsLive pins Reconnect for a live-reported workspace
 // server, and not for one KAS reports disabled.
 func TestHandleMCPReconnect_ReachesAServerKASReportsLive(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		report translate.MCPServerReport
 		want   int
@@ -204,6 +212,7 @@ func TestHandleMCPReconnect_ReachesAServerKASReportsLive(t *testing.T) {
 
 // TestMCPRegistry_AConnectedFrameStoresDiscovery pins connect-time prompts, resources and templates in /api/mcp/status.
 func TestMCPRegistry_AConnectedFrameStoresDiscovery(t *testing.T) {
+	t.Parallel()
 	h := newHubWithMCPConfig(t, nil)
 	prompts := []marotte.MCPPromptInfo{{Name: "Simple Prompt", Description: "no args"}}
 	resources := []marotte.MCPResourceInfo{{Name: "doc", URI: "demo://doc", MimeType: "text/markdown"}}
@@ -238,6 +247,7 @@ func postJSON(handler http.HandlerFunc, path, body string) *httptest.ResponseRec
 // Reconnect addresses the session the row shows: with one session connected and another waiting or failed, the row is
 // the other one's, so its reset goes there and the connected session keeps its connection.
 func TestReconnect_ResetsTheSessionTheRowShows(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		older, newer translate.MCPServerReport
 		want         marotte.SessionID

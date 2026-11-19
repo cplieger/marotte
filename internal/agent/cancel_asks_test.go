@@ -119,6 +119,7 @@ func decisionKindOf(event marotte.EventType) marotte.DecisionKind {
 }
 
 func TestCancel_AnswersEveryOpenAskWithItsKindsCancelBeforeSessionCancel(t *testing.T) {
+	t.Parallel()
 	h, sess := cancelFixture(t)
 	addAsk(t, h, sess, marotte.EventPermissionNeeded, 7, "")
 	addAsk(t, h, sess, marotte.EventElicitationNeeded, 8, "")
@@ -148,6 +149,7 @@ func TestCancel_AnswersEveryOpenAskWithItsKindsCancelBeforeSessionCancel(t *test
 
 // A cancelled ask was answered for nobody's decision, so no surface may read it as someone else's answer.
 func TestCancel_SettlesEachCancelledAskMoot(t *testing.T) {
+	t.Parallel()
 	for name, tc := range askFamilies() {
 		t.Run(name, func(t *testing.T) {
 			h, sess := cancelFixture(t)
@@ -166,6 +168,7 @@ func TestCancel_SettlesEachCancelledAskMoot(t *testing.T) {
 }
 
 func TestCancelPendingAsks_ChatScopeLeavesStepAsksPending(t *testing.T) {
+	t.Parallel()
 	for _, name := range slices.Sorted(maps.Keys(askFamilies())) {
 		tc := askFamilies()[name]
 		t.Run(name, func(t *testing.T) {
@@ -188,6 +191,7 @@ func TestCancelPendingAsks_ChatScopeLeavesStepAsksPending(t *testing.T) {
 }
 
 func TestCancelPendingAsks_ChatAndRunsScopeTakesBoth(t *testing.T) {
+	t.Parallel()
 	for name, tc := range askFamilies() {
 		t.Run(name, func(t *testing.T) {
 			h, _, _ := newTestHub()
@@ -209,6 +213,7 @@ func TestCancelPendingAsks_ChatAndRunsScopeTakesBoth(t *testing.T) {
 }
 
 func TestCancel_LeavesAChatParentedStepsAskPending(t *testing.T) {
+	t.Parallel()
 	h, sess := cancelFixture(t)
 	addPermission(t, h, sess, 7, "")
 	step := addAsk(t, h, sess, marotte.EventElicitationNeeded, 8, "wf_1")
@@ -228,6 +233,7 @@ func TestCancel_LeavesAChatParentedStepsAskPending(t *testing.T) {
 // A card answer whose take came first stands: the Stop writes no second answer for that id, and the card's own
 // answer is delivered rather than withdrawn.
 func TestCancel_ACardAnswerClaimedFirstWins(t *testing.T) {
+	t.Parallel()
 	for name, tc := range askFamilies() {
 		t.Run(name, func(t *testing.T) {
 			h, sess := cancelFixture(t)
@@ -255,6 +261,7 @@ func TestCancel_ACardAnswerClaimedFirstWins(t *testing.T) {
 }
 
 func TestCancel_CardAnswerAfterTheCancelsTakeIsWithdrawn(t *testing.T) {
+	t.Parallel()
 	for name, tc := range askFamilies() {
 		t.Run(name, func(t *testing.T) {
 			h, sess := cancelFixture(t)
@@ -275,6 +282,7 @@ func TestCancel_CardAnswerAfterTheCancelsTakeIsWithdrawn(t *testing.T) {
 }
 
 func TestCancel_AReopenedAnswerIsRetriedThenStopsBeforeSessionCancel(t *testing.T) {
+	t.Parallel()
 	for name, tc := range askFamilies() {
 		t.Run(name, func(t *testing.T) {
 			h, sess := cancelFixture(t)
@@ -298,6 +306,7 @@ func TestCancel_AReopenedAnswerIsRetriedThenStopsBeforeSessionCancel(t *testing.
 }
 
 func TestCancel_EngineEndDuringTheAnswersStopsWithNoSessionCancel(t *testing.T) {
+	t.Parallel()
 	h, sess := cancelFixture(t)
 	addPermission(t, h, sess, 7, "")
 	addAsk(t, h, sess, marotte.EventUserInputNeeded, 8, "")
@@ -316,6 +325,7 @@ func TestCancel_EngineEndDuringTheAnswersStopsWithNoSessionCancel(t *testing.T) 
 // A finished run's open asks get their kind's cancel answer on the session they arrived on, with no
 // decision_settled; a claimed one keeps its own answer, and the chat's own ask is not the run's to answer.
 func TestClearPendingPermsForRun_AnswersEachOpenAskWithItsKindsCancel(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	origin := newOrderedSession()
 	addAsk(t, h, origin, marotte.EventPermissionNeeded, 1, "wf_1")
@@ -354,6 +364,7 @@ func TestClearPendingPermsForRun_AnswersEachOpenAskWithItsKindsCancel(t *testing
 // An ask KAS sent before it read a Stop's session/cancel arrives after the Stop's answers: it gets its kind's cancel at
 // once and no card, or a reconnect would re-offer it with nothing left to answer it.
 func TestPendingPermsAdd_AnAskAfterAStopIsAnsweredWithItsKindsCancel(t *testing.T) {
+	t.Parallel()
 	for name, tc := range askFamilies() {
 		t.Run(name, func(t *testing.T) {
 			h, sess := cancelFixture(t)
@@ -387,6 +398,7 @@ func TestPendingPermsAdd_AnAskAfterAStopIsAnsweredWithItsKindsCancel(t *testing.
 // Only the stopped turn's own asks are answered: a chat-parented run's step goes on past a Stop, and a stop of an
 // earlier turn says nothing about the one now open.
 func TestPendingPermsAdd_FilesAnAskNoStopIsEnding(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		runID string

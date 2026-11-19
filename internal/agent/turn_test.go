@@ -35,6 +35,7 @@ func openTestTurn(t *testing.T, reg *turnRegistry, chatID marotte.ChatID) *activ
 // TestTurnRegistry_InterruptIsFirstWinsPerTurn pins that first-wins because an engine end, a shutdown and a compaction reap
 // all write the cause; id-scoped because on the bridge turn A's cause once survived into turn B.
 func TestTurnRegistry_InterruptIsFirstWinsPerTurn(t *testing.T) {
+	t.Parallel()
 	reg := newTurnRegistry(nopTurnRecords{})
 	turn := openTestTurn(t, reg, "c1")
 
@@ -137,6 +138,7 @@ func TestTurnRegistry_FinalizeWakesAParkedOpen(t *testing.T) {
 
 // TestTurnRegistry_OpenIsCancellable pins that a channel, unlike sync.Cond, lets a waiter give up on a wedged chat.
 func TestTurnRegistry_OpenIsCancellable(t *testing.T) {
+	t.Parallel()
 	reg := newTurnRegistry(nopTurnRecords{})
 	open := openTestTurn(t, reg, "c1")
 	if _, won := reg.claimTurn(t.Context(), "c1", open.ID, nil); !won {
@@ -160,6 +162,7 @@ func TestTurnRegistry_OpenIsCancellable(t *testing.T) {
 
 // TestTurnRegistry_ForgetDropsTheChat pins that a deleted chat's lifecycle must not be retained for the process's life.
 func TestTurnRegistry_ForgetDropsTheChat(t *testing.T) {
+	t.Parallel()
 	reg := newTurnRegistry(nopTurnRecords{})
 	openTestTurn(t, reg, "c1")
 
@@ -222,6 +225,7 @@ func TestMutateUsage_OtherErrorsStillLog(t *testing.T) {
 // A finish after forget settles the turn's OWN lifecycle: re-resolving a fresh one would leave the original in
 // turnFinalizing and park Forward forever.
 func TestForget_DoesNotStrandAnInFlightFinalizeOnAnotherLifecycle(t *testing.T) {
+	t.Parallel()
 	r := newTurnRegistry(nopTurnRecords{})
 	ctx := t.Context()
 	const chatID marotte.ChatID = "c1"
@@ -264,6 +268,7 @@ func TestForget_DoesNotStrandAnInFlightFinalizeOnAnotherLifecycle(t *testing.T) 
 // busyChatIDs covers an own turn, a pending turn owed its bracket and a held admission slot: the set a stale
 // thinking retraction is withheld from, shared by the handshake and the transcript GET.
 func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
+	t.Parallel()
 	busySet := func(t *testing.T, r *turnRegistry) map[marotte.ChatID]bool {
 		t.Helper()
 		out := map[marotte.ChatID]bool{}
@@ -312,6 +317,7 @@ func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 
 // A rewind's reservation reaches this set through the same predicate.
 func TestBusyChatIDs_NamesARewindHoldingTheSlot(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	if !h.coord.tryReserveNow("c1", marotte.TurnSourceRevert) {
 		t.Fatal("a fresh chat refused a revert reservation")
@@ -326,6 +332,7 @@ func TestBusyChatIDs_NamesARewindHoldingTheSlot(t *testing.T) {
 // TestTurnRegistry_StoppedAfterIsKeyedOnTheOpenSequence pins that a stop belongs to every turn open when it arrived, and it
 // outlives the finalize while a handle is held.
 func TestTurnRegistry_StoppedAfterIsKeyedOnTheOpenSequence(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	a, _ := h.stagePromptTurn(t, "c1")
@@ -354,6 +361,7 @@ func TestTurnRegistry_StoppedAfterIsKeyedOnTheOpenSequence(t *testing.T) {
 // a later stop of the same turns, whose clear may still be the teardown's; a stop after a newer turn opened records
 // its own.
 func TestTurnRegistry_AStopCauseIsTheIssuersAndATeardownsHoldsForItsTurns(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	a, _ := h.stagePromptTurn(t, "c1")

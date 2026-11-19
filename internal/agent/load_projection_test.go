@@ -108,6 +108,7 @@ func atExit() drainPoint { return drainPoint{gen: testFwdGen} }
 // TestReplayProjection_SettleBarrier pins both halves of the race guard: replay frames are
 // pushed before Start returns, but notifCh is buffered (256), so Forward may not have folded them.
 func TestReplayProjection_SettleBarrier(t *testing.T) {
+	t.Parallel()
 	const chatID marotte.ChatID = "c1"
 
 	t.Run("no settle before the load returns", func(t *testing.T) {
@@ -260,6 +261,7 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 // TestReplayProjection_ADrainedReplaySettlesWhenTheLoadReturns pins that a replay drained before the RPC
 // returned has no later frame to settle it, so the load's return must.
 func TestReplayProjection_ADrainedReplaySettlesWhenTheLoadReturns(t *testing.T) {
+	t.Parallel()
 	const chatID marotte.ChatID = "c1"
 	rp, rec := replayWithRecorder()
 	rp.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
@@ -288,6 +290,7 @@ func TestReplayProjection_ADrainedReplaySettlesWhenTheLoadReturns(t *testing.T) 
 
 // TestReplayProjection_DiscardOnFailedLoad pins that a surviving projection would let the fallback session/new adopt a partial transcript.
 func TestReplayProjection_DiscardOnFailedLoad(t *testing.T) {
+	t.Parallel()
 	const chatID marotte.ChatID = "c1"
 	rp, rec := replayWithRecorder()
 	rp.OpenReplayProjection(t.Context(), chatID, "old-acp", nil)
@@ -307,6 +310,7 @@ func TestReplayProjection_DiscardOnFailedLoad(t *testing.T) {
 
 // TestReplayProjection_FrameWithNoLoadIsRejected pins that a replay frame with no load in flight belongs nowhere.
 func TestReplayProjection_FrameWithNoLoadIsRejected(t *testing.T) {
+	t.Parallel()
 	rp, _ := replayWithRecorder()
 	if rp.ingestReplayFrame("nobody", marotte.ACPUpdateAgentChunk,
 		replayUpdate(t, marotte.ACPUpdateAgentChunk, "stray", "")) {
@@ -316,6 +320,7 @@ func TestReplayProjection_FrameWithNoLoadIsRejected(t *testing.T) {
 
 // TestReplayProjection_ReloadSupersedes pins that a second load starts clean.
 func TestReplayProjection_ReloadSupersedes(t *testing.T) {
+	t.Parallel()
 	const chatID marotte.ChatID = "c1"
 	rp, rec := replayWithRecorder()
 
@@ -337,6 +342,7 @@ func TestReplayProjection_ReloadSupersedes(t *testing.T) {
 // TestReplayProjection_OneProjectionPerChat pins that swapMerged's revert gate is sound only while a chat
 // holds at most one projection and a settle consumes it (NewestRevert is file order, which a rewrite can reorder).
 func TestReplayProjection_OneProjectionPerChat(t *testing.T) {
+	t.Parallel()
 	const chatID marotte.ChatID = "c1"
 
 	t.Run("a re-load supersedes and re-reads the provenance", func(t *testing.T) {
@@ -464,6 +470,7 @@ func awaitReplayedTurn(t *testing.T, cs *testChatStore, chatID marotte.ChatID, w
 // TestSessionLoad_AdoptsTheReplayedTranscript is the load path end to end: the projection opens
 // before Forward attaches, and the load's return is recorded.
 func TestSessionLoad_AdoptsTheReplayedTranscript(t *testing.T) {
+	t.Parallel()
 	// A fresh session per door, so the rehydrate sweep does not drain this replay.
 	cs := newTestChatStore()
 	h := newRuntimeOn(context.Background(), t.TempDir(), fakeEngineOf(func() engineSession {
@@ -504,6 +511,7 @@ func TestSessionLoad_AdoptsTheReplayedTranscript(t *testing.T) {
 // TestForward_ReportsEachFramesOwnPosition pins that Forward reports each frame's own Seq; the
 // load position is recorded first and the bridge never stopped, so no other door settles it.
 func TestForward_ReportsEachFramesOwnPosition(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	loadedChat(t, cs, chatID)
@@ -541,6 +549,7 @@ func TestForward_ReportsEachFramesOwnPosition(t *testing.T) {
 // TestForwardExit_SettlesALoadWhoseTrailingFramesNeverCame pins the seal at Forward's exit,
 // or the chat resumes empty and the rebuild leaks.
 func TestForwardExit_SettlesALoadWhoseTrailingFramesNeverCame(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	loadedChat(t, cs, chatID)
@@ -565,6 +574,7 @@ func TestForwardExit_SettlesALoadWhoseTrailingFramesNeverCame(t *testing.T) {
 // TestReplayProjection_ConcurrentLoadsAreIndependent pins per-chat keying: a restart with several
 // tabs loads several chats at once.
 func TestReplayProjection_ConcurrentLoadsAreIndependent(t *testing.T) {
+	t.Parallel()
 	rp, rec := replayWithRecorder()
 	const first marotte.ChatID = "c1"
 	const second marotte.ChatID = "c2"
@@ -654,6 +664,7 @@ func eventFor(t *testing.T, events []sse.ReplayEvent, want marotte.EventType) (m
 
 // TestSwapProjectedTranscript_AnnouncesTheReplacement pins the refetch with the rewrite's chat stamp.
 func TestSwapProjectedTranscript_AnnouncesTheReplacement(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	loadedChat(t, cs, chatID)
@@ -686,6 +697,7 @@ func TestSwapProjectedTranscript_AnnouncesTheReplacement(t *testing.T) {
 
 // TestSwapProjectedTranscript_AnnouncesNothingWhenTheSetIsUnchanged pins that no rewrite and no refetch.
 func TestSwapProjectedTranscript_AnnouncesNothingWhenTheSetIsUnchanged(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	loadedChat(t, cs, chatID)
@@ -707,6 +719,7 @@ func TestSwapProjectedTranscript_AnnouncesNothingWhenTheSetIsUnchanged(t *testin
 
 // TestSwapProjectedTranscript_WritesOnACancelledLifetime is the restart case: refusing at shutdown loses the turn.
 func TestSwapProjectedTranscript_WritesOnACancelledLifetime(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	loadedChat(t, cs, chatID)
@@ -724,6 +737,7 @@ func TestSwapProjectedTranscript_WritesOnACancelledLifetime(t *testing.T) {
 // TestSwapProjectedTranscript_MergesAChatARewindAlreadyTouched pins the provenance carried from
 // open into the swapRequest: an empty snapshot makes every resume of a rewound chat discard its projection.
 func TestSwapProjectedTranscript_MergesAChatARewindAlreadyTouched(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	loadedChat(t, cs, chatID)

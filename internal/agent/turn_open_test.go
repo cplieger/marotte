@@ -11,6 +11,7 @@ import (
 )
 
 func TestTurnLive_FalseOnAnIdleChat(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	if h.TurnLive("c1") {
 		t.Error("an idle chat reports a live turn; the record is final and should read as such")
@@ -18,6 +19,7 @@ func TestTurnLive_FalseOnAnIdleChat(t *testing.T) {
 }
 
 func TestTurnLive_TrueWhileATurnIsOpen(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	id, _ := h.stagePromptTurn(t, "c1")
 	t.Cleanup(func() { h.coord.releaseTurn("c1", id) })
@@ -33,6 +35,7 @@ func TestTurnLive_TrueWhileATurnIsOpen(t *testing.T) {
 
 // turnFinalizing counts as live: the turn_close and broadcast have not landed yet.
 func TestTurnLive_TrueWhileFinalizing(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	id, _ := h.stagePromptTurn(t, "c1")
 
@@ -54,6 +57,7 @@ func TestTurnLive_TrueWhileFinalizing(t *testing.T) {
 // The GET runs for every chat a reader opens, and lifecycleFor creates a lifecycle only teardown removes, so
 // reading through it leaks an entry per chat.
 func TestTurnLive_RecordsNothingAboutTheChatItWasAskedAbout(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	reg := h.coord.turns
 
@@ -86,6 +90,7 @@ func TestTurnLive_RecordsNothingAboutTheChatItWasAskedAbout(t *testing.T) {
 
 // An admitted prompt is persisted, broadcast and thinking-latched, so it is live before any turn is minted.
 func TestTurnLive_TrueForAnAdmittedPromptWithNoTurnMinted(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
 		t.Fatal("a fresh chat refused a prompt reservation")
@@ -100,6 +105,7 @@ func TestTurnLive_TrueForAnAdmittedPromptWithNoTurnMinted(t *testing.T) {
 
 // A rewind's reservation emits no deltas, so the client's one-chunk recovery cannot reach it.
 func TestTurnLive_TrueForARewindHoldingTheSlot(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	if !h.coord.tryReserveNow("c1", marotte.TurnSourceRevert) {
 		t.Fatal("a fresh chat refused a revert reservation")
@@ -113,6 +119,7 @@ func TestTurnLive_TrueForARewindHoldingTheSlot(t *testing.T) {
 
 // OpenTurns carries the text the own turn's lane is still coalescing, so a reader landing mid-reply sees it.
 func TestOpenTurns_CarriesTheCoalescingTail(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	id, log := streamingPromptTurn(t, h, "c1", "the reply so far")
 	t.Cleanup(func() { h.coord.releaseTurn("c1", id) })
@@ -135,6 +142,7 @@ func TestOpenTurns_CarriesTheCoalescingTail(t *testing.T) {
 
 // The connect busy set and the GET's live flag answer one question, so they share one predicate.
 func TestTurnLive_AgreesWithTheConnectBusySet(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		setUp func(t *testing.T, h *Runtime)

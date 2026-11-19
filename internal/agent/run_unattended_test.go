@@ -32,6 +32,7 @@ func TestUnattendedBudget_MatchesTheDisclaimer(t *testing.T) {
 // TestUnattendedOrigin_ReadsTheLeasesOrigin pins the `unattended` field's source: only the launch path can tell a
 // scheduled or triggered parentless run from a manual one, and the lease records it.
 func TestUnattendedOrigin_ReadsTheLeasesOrigin(t *testing.T) {
+	t.Parallel()
 	h := &Runs{chats: newTestChatStore()}
 
 	if got := h.UnattendedOrigin("wf_1"); got != "" {
@@ -60,6 +61,7 @@ func TestUnattendedOrigin_ReadsTheLeasesOrigin(t *testing.T) {
 }
 
 func TestRunLabel_RebuildsTheLaunchLabelFromTheLease(t *testing.T) {
+	t.Parallel()
 	h := &Runs{chats: newTestChatStore()}
 	h.grantLease(t.Context(), "wf_manual", "publish", manualLaunch(), hostSec())
 	h.grantLease(t.Context(), "wf_sched", "publish", scheduledLaunch(launchrule.Row{ID: "sched-1"}, time.Time{}), hostSec())
@@ -77,6 +79,7 @@ func TestRunLabel_RebuildsTheLaunchLabelFromTheLease(t *testing.T) {
 // TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart pins that the durable lease keeps the deny-fast budget across a
 // restart, or a parked scheduled run waits on a human and parks its recipe.
 func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	store, err := runlease.NewStore(dir)
 	if err != nil {
@@ -110,6 +113,7 @@ func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
 // TestUnattendedFloor_DelegatedLeaseRefusesAnUnclearedAsk pins that the floor reads the delegation from the presets the
 // run's lease recorded, and that a lease which recorded none fails closed.
 func TestUnattendedFloor_DelegatedLeaseRefusesAnUnclearedAsk(t *testing.T) {
+	t.Parallel()
 	delegated, ok := policyfile.ProfileFor(policyfile.ProfileDelegated)
 	if !ok {
 		t.Fatal("no Delegated profile")
@@ -118,9 +122,6 @@ func TestUnattendedFloor_DelegatedLeaseRefusesAnUnclearedAsk(t *testing.T) {
 	if !ok {
 		t.Fatal("no Trusted profile")
 	}
-	prev := unattendedAskBudget
-	unattendedAskBudget = 10 * time.Millisecond
-	t.Cleanup(func() { unattendedAskBudget = prev })
 	for _, tc := range []struct {
 		name       string
 		host       *runlease.HostSecurity
@@ -139,7 +140,7 @@ func TestUnattendedFloor_DelegatedLeaseRefusesAnUnclearedAsk(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, "config.json"), body, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir))
+			h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir), withUnattendedAskBudget(10*time.Millisecond))
 			chatID := runChatID("wf_floor")
 			h.insertBridgeNow(chatID, testBridge(br, bridgeReady))
 			h.runs.grantLease(t.Context(), "wf_floor", "nightly", scheduledLaunch(launchrule.Row{ID: "sched-1"}, time.Time{}), tc.host)
@@ -177,6 +178,7 @@ func TestUnattendedFloor_DelegatedLeaseRefusesAnUnclearedAsk(t *testing.T) {
 // TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk pins that the floor answers by request id, so an id-less ask must
 // not arm (it would dereference nothing); the ordinary handler still runs.
 func TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk(t *testing.T) {
+	t.Parallel()
 	rs := &Runs{chats: newTestChatStore()}
 	rs.grantLease(t.Context(), "wf_1", "nightly",
 		scheduledLaunch(launchrule.Row{ID: "sched-1"}, time.Now().Add(30*time.Second)), hostSec())
@@ -417,6 +419,7 @@ func TestOptionIDByKind_MatchesTheKindExactly(t *testing.T) {
 // TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption pins that answer with an offered choice. TakePendingPerm runs
 // before the response, since the floor races a human.
 func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		options     string
 		meta        string
@@ -494,6 +497,7 @@ func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 
 // TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove pins that KAS treats any allow_once as satisfying an administrator ask.
 func TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	body, err := json.Marshal(map[string]any{settings.KeyScheduledAutoApprove: true})
 	if err != nil {
@@ -536,6 +540,7 @@ func TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove(t *testing
 // asked. KAS stamps only a tripped breaker and an oversized action; under a delegated session every other implicit
 // tool ask (a failed or timed-out check, a sensitive path) reaches the floor unstamped and is refused too.
 func TestAnswerUnattended_RefusesClassifierHandedAsk(t *testing.T) {
+	t.Parallel()
 	const implicitWrite = `,"_meta":{"kiro":{"toolId":"fs_write","consent":{"askType":"implicit","capability":"fs_write"}}}`
 	for _, tc := range []struct {
 		name, meta, wantOption string
@@ -613,6 +618,7 @@ func TestAnswerUnattended_RefusesClassifierHandedAsk(t *testing.T) {
 // the account's safety rules, and "Allow anyway" with nobody watching would undo the block. The params are KAS's
 // requestSafetyOverridePermission shape (toolCall {toolCallId "safety-override-<uuid>", status, title}, no _meta).
 func TestAnswerUnattended_RefusesTheCloudFormationBlock(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	body, err := json.Marshal(map[string]any{settings.KeyScheduledAutoApprove: true})
 	if err != nil {
@@ -917,6 +923,7 @@ func TestUnattendedLineCarriesRuleID(t *testing.T) {
 
 // An administrator ask needs a person, for a triggered run as for a scheduled one.
 func TestTriggeredAdminAskStillRefused(t *testing.T) {
+	t.Parallel()
 	outcome, _ := answerTriggered(t, true, `{`+triggeredAskOptions+`,"_meta":{"kiro":{"consent":{"scope":"administration"}}}}`)
 	if outcome.Outcome.OptionID != "reject" {
 		t.Errorf("optionId = %q, want reject: an administrator ask was auto-approved in a triggered run",
@@ -926,6 +933,7 @@ func TestTriggeredAdminAskStillRefused(t *testing.T) {
 
 // The deny note is read by the step's agent, which a triggered run has as well: it must not call the run scheduled.
 func TestTriggeredDenyNoteNamesNoSchedule(t *testing.T) {
+	t.Parallel()
 	outcome, _ := answerTriggered(t, false, `{`+triggeredAskOptions+`}`)
 	var note string
 	if outcome.Meta != nil {
@@ -940,8 +948,7 @@ func TestTriggeredDenyNoteNamesNoSchedule(t *testing.T) {
 // rule it was.
 func TestTriggeredPauseEndsUnattended(t *testing.T) {
 	logs := captureLogs(t)
-	fastUnattendedPause(t)
-	h, _, br := newTestHub()
+	h, _, br := newTestHub(fastUnattendedPause())
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
 		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", stepQuestionReason),

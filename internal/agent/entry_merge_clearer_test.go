@@ -13,6 +13,7 @@ import (
 // arm on the rewrite branch: a bind naming the header's session files no session record; one
 // naming another session does.
 func TestSwapMerged_ABindForTheHeadersSessionFilesNoSessionRecord(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name         string
 		boundSession string

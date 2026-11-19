@@ -35,7 +35,8 @@ func RequireCostBuild(t testing.TB) {
 // AllocsPerRun reports no bytes: the mean of the cheaper half of n calls after a warm-up call. Noise only adds to a
 // call, at random: the -race build's sync.Pool drops a quarter of what it is given (sync/pool.go, Put), so a call now
 // and then regrows a large pooled buffer, and a plain mean moves with how many did. The collector stays off while f
-// runs and collects only between calls, because a collection empties every pool at a point the clock picks.
+// runs and collects only between calls, because a collection empties every pool at a point the clock picks. The
+// caller's test owns the process (Alone): the counts are the process's, and so are GOMAXPROCS and the collector.
 func MeasureCost(n int, f func()) Cost {
 	return MeasureCostAfter(n, func() {}, f)
 }

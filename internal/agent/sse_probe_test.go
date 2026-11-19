@@ -26,6 +26,7 @@ func dataFrames(t *testing.T, body string) []ssetest.Frame {
 }
 
 func TestSSEProbe_CountsConnectsByWireAndServedClients(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	if n := h.SSEClientCount(); n != 0 {
 		t.Errorf("SSEClientCount before any connect = %d, want 0", n)
@@ -41,6 +42,7 @@ func TestSSEProbe_CountsConnectsByWireAndServedClients(t *testing.T) {
 
 // The cut lands between frames n and n+1, and Serve returns before the peer's deadline.
 func TestCloseNextSSEAfter_CutsTheNextConnectionAfterNFrames(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, _, _ := newTestHub()
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -106,6 +108,7 @@ func TestCloseNextSSEAfter_KeepaliveSpendsNoBudget(t *testing.T) {
 }
 
 func TestCloseNextSSEAfter_ZeroDisarms(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	h.CloseNextSSEAfter(3)
 	h.CloseNextSSEAfter(0)

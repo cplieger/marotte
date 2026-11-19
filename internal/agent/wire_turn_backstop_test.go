@@ -173,6 +173,7 @@ func TestCmdCancel_AFoldOpenedWireTurnClosesAtTheGrace(t *testing.T) {
 
 // A turn KAS wrote into and then went idle without ending closes at the grace, saying why, and prompts admit again.
 func TestKASIdle_ClosesAWireTurnWhoseEndNeverCame(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := idleWakeHub(t, 20*time.Millisecond)
 	send(t, h, newSessionChunkMsg("", "reading the notification"), newActivityMsg(false))
 
@@ -195,6 +196,7 @@ func TestKASIdle_ClosesAWireTurnWhoseEndNeverCame(t *testing.T) {
 // A wake turn KAS still runs stays open past the grace however little it files: a retried model call and an
 // auto-compaction send frames that file nothing. A Steer beside it reaches KAS's buffer and never a prompt.
 func TestKASIdle_LeavesATurnKASStillRuns(t *testing.T) {
+	t.Parallel()
 	h, cs, br := idleWakeHub(t, 20*time.Millisecond)
 	send(t, h,
 		newSessionInfoMsg(map[string]any{"kind": "display_error", "displayError": map[string]any{
@@ -230,6 +232,7 @@ func TestKASIdle_LeavesATurnKASStillRuns(t *testing.T) {
 
 // KAS reporting a turn running again inside the grace stands the idle close down.
 func TestKASIdle_ARunningReportInsideTheGraceKeepsTheTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := idleWakeHub(t, 20*time.Millisecond)
 	send(t, h, newActivityMsg(false), newActivityMsg(true))
 
@@ -246,6 +249,7 @@ func TestKASIdle_ARunningReportInsideTheGraceKeepsTheTurn(t *testing.T) {
 // KAS reporting a run after the grace expired but before the idle close claims the turn still stands the close
 // down: the close decides on the state it claims.
 func TestKASIdle_ARunningReportAsTheGraceExpiresKeepsTheTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := idleWakeHub(t, 20*time.Millisecond)
 	var reported atomic.Bool
 	h.coord.turns.claimHook = func() {
@@ -268,6 +272,7 @@ func TestKASIdle_ARunningReportAsTheGraceExpiresKeepsTheTurn(t *testing.T) {
 
 // The ordinary end: KAS reports idle, then sends the turn_end; the grace then leaves the next turn KAS starts open.
 func TestKASIdle_ATurnEndInsideTheGraceLeavesTheNextTurnOpen(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := idleWakeHub(t, 20*time.Millisecond)
 	send(t, h, newActivityMsg(false), newTurnEndMsg("end_turn"), newTurnStartMsg())
 	next, open := ownID(h, "c1")
@@ -289,6 +294,7 @@ func TestKASIdle_ATurnEndInsideTheGraceLeavesTheNextTurnOpen(t *testing.T) {
 // A Steer-mode send beside a wake turn whose end is lost after KAS wrote into it reaches KAS's buffer, which nothing
 // reads once KAS is idle; the idle close clears it and sends the words as the next prompt, once.
 func TestKASIdle_SendsASteerSentBesideALostEndAsThePrompt(t *testing.T) {
+	t.Parallel()
 	h, cs, br := idleWakeHub(t, 50*time.Millisecond)
 	send(t, h, newSessionChunkMsg("", "reading the notification"))
 
@@ -322,6 +328,7 @@ func TestKASIdle_SendsASteerSentBesideALostEndAsThePrompt(t *testing.T) {
 // A Queue-mode send beside a wake turn whose end is lost after KAS wrote into it is queued behind it; the idle close
 // sends it, once.
 func TestKASIdle_SendsARowQueuedBesideALostEnd(t *testing.T) {
+	t.Parallel()
 	h, cs, br := idleWakeHub(t, 50*time.Millisecond)
 	send(t, h, newSessionChunkMsg("", "reading the notification"))
 
@@ -376,6 +383,7 @@ func unboundPrompt(h *Runtime, chatID marotte.ChatID) bool {
 // The lost end of a wake arriving after the idle close, while the Steer or Queue send it left behind is opening as
 // the next prompt, closes nothing: the words reach KAS once and their turn ends on its own bracket.
 func TestKASIdle_ALateEndLeavesTheDrainedPromptToReachKAS(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		cmd  marotte.ClientCommand
@@ -487,6 +495,7 @@ func TestWireTurnBackstop_ShutdownWaitsForACloseUnderway(t *testing.T) {
 }
 
 func TestWireTurnBackstop_ClosesNothingOnceShutdownBegan(t *testing.T) {
+	t.Parallel()
 	for _, tc := range wireBackstops {
 		t.Run(tc.name, func(t *testing.T) {
 			h, cs, _ := idleWakeHub(t, 20*time.Millisecond)

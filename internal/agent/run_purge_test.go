@@ -418,6 +418,7 @@ func failedAffordance(h *Runtime, workflowID string) *runAffordance {
 // landing between the list and the delete decides the outcome as it would had the purge listed the run after it. A
 // retry after the list marks the run before its row is judged; one during admission is seen only by the fresh read.
 func TestPurgeFinishedRuns_DeletesOnlyARunAFreshReadStillFindsPurgeable(t *testing.T) {
+	t.Parallel()
 	const window = 24 * time.Hour
 	type outcome struct {
 		deadline bool
@@ -515,6 +516,7 @@ func retryMarked(h *Runtime, workflowID string) bool {
 
 // Each pass drops the retry marks whose bound has passed, including those of runs it never judges.
 func TestPurgeFinishedRuns_SweepsLapsedRetryMarksOfRunsItDoesNotJudge(t *testing.T) {
+	t.Parallel()
 	kas := &purgedRun{id: "wf_1", parent: "sess_host", status: marotte.RunStatusRunning, updated: time.Now().Add(-time.Hour)}
 	h, _, _ := newPurgedRunRig(t, kas, nil, nil, 0)
 	h.runs.retries.mark("wf_lapsed", time.Now().Add(-retryInFlightBound))
@@ -533,6 +535,7 @@ func TestPurgeFinishedRuns_SweepsLapsedRetryMarksOfRunsItDoesNotJudge(t *testing
 // A lost retry keeps its run only for retryInFlightBound: past it, with KAS still showing the run unchanged, the
 // purge deletes the run.
 func TestPurgeFinishedRuns_PurgesARunOnceItsLostRetryLapses(t *testing.T) {
+	t.Parallel()
 	const window = 24 * time.Hour
 	kas := &purgedRun{
 		id: "wf_1", parent: "sess_host", status: marotte.RunStatusFailed, updated: time.Now().Add(-2 * window),
@@ -570,6 +573,7 @@ func lapseRetryMarks(h *Runtime) {
 // attempt KAS may still be running (a just-claimed refusal means one is). With KAS showing nothing since, the run is
 // kept until the bound.
 func TestPurgeFinishedRuns_KeepsARunWhoseRetryWasRefused(t *testing.T) {
+	t.Parallel()
 	const window = 24 * time.Hour
 	justClaimed := &marotte.RPCError{
 		Code: -32603, Message: "Internal error",
@@ -758,6 +762,7 @@ func TestRetryMarks_InFlightNeverDropsAMark(t *testing.T) {
 
 // While the purge holds a run for its re-read and delete, a retry is refused and sends no verb.
 func TestPurgeFinishedRuns_ARetryDuringTheDeleteIsRefused(t *testing.T) {
+	t.Parallel()
 	kas := &purgedRun{id: "wf_1", parent: "sess_host", status: marotte.RunStatusFailed, updated: time.Now().Add(-time.Hour)}
 	var h *Runtime
 	var retryErr error
@@ -789,6 +794,7 @@ func TestPurgeFinishedRuns_ARetryDuringTheDeleteIsRefused(t *testing.T) {
 
 // Only a fresh read that finds the run finished and past the window by its own last activity lets the purge delete it.
 func TestPurgeFinishedRuns_KeepsARunItsReReadDoesNotFindPurgeable(t *testing.T) {
+	t.Parallel()
 	const window = 24 * time.Hour
 	old := time.Now().Add(-30 * window)
 	list := purgeRuns(t, purgeRow("wf_1", "completed", "sess_host", old))
@@ -838,6 +844,7 @@ func TestPurgeFinishedRuns_KeepsARunItsReReadDoesNotFindPurgeable(t *testing.T) 
 // A run KAS no longer finds, on the re-read or on the delete itself, leaves nothing to delete there, and no later list
 // names it, so the purge drops everything marotte keeps about it there and then.
 func TestPurgeFinishedRuns_DropsTheRecordOfARunKASNoLongerFinds(t *testing.T) {
+	t.Parallel()
 	list := purgeRuns(t, purgeRow("wf_1", "completed", "sess_host", time.Now().Add(-30*24*time.Hour)))
 	for name, method := range map[string]string{
 		"on the re-read": methodKiroWorkflowInspect,
@@ -878,6 +885,7 @@ func TestPurgeFinishedRuns_DropsTheRecordOfARunKASNoLongerFinds(t *testing.T) {
 
 // With a chat's runs left to the chat, only finished unclaimed runs past the window go.
 func TestPurgeFinishedRuns_DeletesOnlyFinishedUnclaimedRunsPastTheWindow(t *testing.T) {
+	t.Parallel()
 	old := time.Now().Add(-10 * 24 * time.Hour)
 	h, rig := newPurgeRig(t, purgeRuns(t), []string{"sess_chat"}, true)
 	serveRuns(rig, nil,
@@ -907,6 +915,7 @@ func TestPurgeFinishedRuns_DeletesOnlyFinishedUnclaimedRunsPastTheWindow(t *test
 }
 
 func TestPurgeFinishedRuns_PurgesNothingOnceShutdownBegan(t *testing.T) {
+	t.Parallel()
 	old := time.Now().Add(-10 * 24 * time.Hour)
 	h, rig := newPurgeRig(t, purgeRuns(t, purgeRow("wf_old_done", "completed", "sess_runbridge", old)), nil, true)
 	beginDraining(h)
@@ -922,6 +931,7 @@ func TestPurgeFinishedRuns_PurgesNothingOnceShutdownBegan(t *testing.T) {
 }
 
 func TestPurgeFinishedRuns_ZeroWindowSparesARunATabShows(t *testing.T) {
+	t.Parallel()
 	recent := time.Now().Add(-time.Minute)
 	runs := purgeRuns(t,
 		purgeRow("wf_open", "completed", "sess_a", recent),
@@ -944,6 +954,7 @@ func TestPurgeFinishedRuns_ZeroWindowSparesARunATabShows(t *testing.T) {
 
 // A run tab opening during the delete must not point at a run being removed; the open runs inside the RPC.
 func TestPurgeFinishedRuns_ARunTabCannotOpenWhileItsDeleteIsInFlight(t *testing.T) {
+	t.Parallel()
 	recent := time.Now().Add(-time.Minute)
 	h, rig := newPurgeRig(t, purgeRuns(t, purgeRow("wf_1", "completed", "sess_a", recent)), nil, true)
 	var openErr error
@@ -975,6 +986,7 @@ func resumeSession(opID, sessionID string) *command.ChatCreate {
 
 // A claim after the snapshot still spares the run; the order is fixed, not timed.
 func TestPurgeFinishedRuns_AClaimAfterTheSnapshotSparesTheRun(t *testing.T) {
+	t.Parallel()
 	recent := time.Now().Add(-time.Minute)
 	var h *Runtime
 	var claimErr error
@@ -1004,6 +1016,7 @@ func TestPurgeFinishedRuns_AClaimAfterTheSnapshotSparesTheRun(t *testing.T) {
 
 // A claim during the delete is refused, then lands after it.
 func TestPurgeFinishedRuns_AClaimDuringTheDeleteIsRefusedThenLands(t *testing.T) {
+	t.Parallel()
 	recent := time.Now().Add(-time.Minute)
 	h, rig := newPurgeRig(t, purgeRuns(t, purgeRow("wf_1", "completed", "sess_run", recent)), nil, true)
 	var claimErr error
@@ -1037,6 +1050,7 @@ func TestPurgeFinishedRuns_AClaimDuringTheDeleteIsRefusedThenLands(t *testing.T)
 }
 
 func TestPurgeFinishedRuns_AnIncompleteChatScanPurgesNothing(t *testing.T) {
+	t.Parallel()
 	old := time.Now().Add(-30 * 24 * time.Hour)
 	h, rig := newPurgeRig(t, purgeRuns(t, purgeRow("wf_old", "completed", "sess_x", old)), nil, false)
 
@@ -1048,6 +1062,7 @@ func TestPurgeFinishedRuns_AnIncompleteChatScanPurgesNothing(t *testing.T) {
 }
 
 func TestPurgeFinishedRuns_ARunWithNoReadableAgeIsKept(t *testing.T) {
+	t.Parallel()
 	runs := purgeRuns(t, map[string]string{"workflowId": "wf_noage", "status": "completed", "parentSessionId": "sess_x"})
 	h, rig := newPurgeRig(t, runs, nil, true)
 
@@ -1060,6 +1075,7 @@ func TestPurgeFinishedRuns_ARunWithNoReadableAgeIsKept(t *testing.T) {
 
 // A terminal run wakes the purge (purgeable at once with retention off); a pause does not.
 func TestObserveComplete_OnlyATerminalRunWakesRetention(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		status string
 		wakes  int
@@ -1085,6 +1101,7 @@ func TestObserveComplete_OnlyATerminalRunWakesRetention(t *testing.T) {
 }
 
 func TestPurgeFinishedRuns_ARunNamingNoValidLaunchingSessionIsKept(t *testing.T) {
+	t.Parallel()
 	old := time.Now().Add(-30 * 24 * time.Hour)
 	runs := purgeRuns(t,
 		purgeRow("wf_no_parent", "completed", "", old),
@@ -1104,6 +1121,7 @@ func TestPurgeFinishedRuns_ARunNamingNoValidLaunchingSessionIsKept(t *testing.T)
 }
 
 func TestPurgeFinishedRuns_DeletesNothingWhileTheArrangementIsUnread(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "tabs.json"), []byte("{not json"), 0o600); err != nil {
 		t.Fatalf("Setup: write tabs.json: %v", err)
@@ -1179,6 +1197,7 @@ func daysAgo(d int) time.Time { return time.Now().Add(-time.Duration(d) * 24 * t
 var fourteenDays = RunRetention{Window: 14 * 24 * time.Hour, Enabled: true, ChatRuns: true}
 
 func TestPurgeFinishedRuns_DeletesAnOldFinishedRunOfALiveChat(t *testing.T) {
+	t.Parallel()
 	h, rig := newPurgeRig(t, purgeRuns(t), []string{"sess_chat"}, true)
 	serveRuns(rig, nil, purgeRow("wf_chat", "completed", "sess_chat", daysAgo(20)))
 
@@ -1193,6 +1212,7 @@ func TestPurgeFinishedRuns_DeletesAnOldFinishedRunOfALiveChat(t *testing.T) {
 }
 
 func TestPurgeFinishedRuns_KeepsAYoungFinishedRunOfALiveChat(t *testing.T) {
+	t.Parallel()
 	h, rig := newPurgeRig(t, purgeRuns(t), []string{"sess_chat"}, true)
 	serveRuns(rig, nil,
 		purgeRow("wf_young", "completed", "sess_chat", daysAgo(2)),
@@ -1211,6 +1231,7 @@ func TestPurgeFinishedRuns_KeepsAYoungFinishedRunOfALiveChat(t *testing.T) {
 }
 
 func TestPurgeFinishedRuns_KeepsWhatEachExemptionNames(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		row   map[string]string
@@ -1268,6 +1289,7 @@ func TestPurgeFinishedRuns_KeepsWhatEachExemptionNames(t *testing.T) {
 }
 
 func TestPurgeFinishedRuns_KeepForeverDeletesNothing(t *testing.T) {
+	t.Parallel()
 	h, rig := newPurgeRig(t, purgeRuns(t), []string{"sess_chat"}, true)
 	serveRuns(rig, nil, purgeRow("wf_chat", "completed", "sess_chat", daysAgo(400)))
 	lists := len(rig.of(methodKiroWorkflowList))
@@ -1293,6 +1315,7 @@ func TestPurgeFinishedRuns_KeepForeverDeletesNothing(t *testing.T) {
 
 // Retention 0 deletes a closed chat at once; an open chat's runs stay, and parentless runs still go at once.
 func TestPurgeFinishedRuns_DeleteOnCloseKeepsALiveChatsRuns(t *testing.T) {
+	t.Parallel()
 	h, rig := newPurgeRig(t, purgeRuns(t), []string{"sess_chat"}, true)
 	serveRuns(rig, nil,
 		purgeRow("wf_chat", "completed", "sess_chat", daysAgo(20)),
@@ -1309,6 +1332,7 @@ func TestPurgeFinishedRuns_DeleteOnCloseKeepsALiveChatsRuns(t *testing.T) {
 }
 
 func TestPurgeFinishedRuns_DeletesOneRunPerPass(t *testing.T) {
+	t.Parallel()
 	h, rig := newPurgeRig(t, purgeRuns(t), []string{"sess_chat"}, true)
 	serveRuns(rig, nil,
 		purgeRow("wf_20d", "completed", "sess_chat", daysAgo(20)),
@@ -1339,6 +1363,7 @@ func TestPurgeFinishedRuns_DeletesOneRunPerPass(t *testing.T) {
 }
 
 func TestPurgeFinishedRuns_SkipsARunWhoseDeleteJustFailed(t *testing.T) {
+	t.Parallel()
 	h, rig := newPurgeRig(t, purgeRuns(t), nil, true)
 	serveRuns(rig, map[string]bool{"wf_stuck": true},
 		purgeRow("wf_stuck", "completed", "sess_a", daysAgo(30)),
@@ -1363,6 +1388,7 @@ func TestPurgeFinishedRuns_SkipsARunWhoseDeleteJustFailed(t *testing.T) {
 
 // Whatever wakes the purge sooner, a second delete waits runPurgePace after the first.
 func TestPurgeFinishedRuns_APassWithinThePaceOfADeleteDeletesNothing(t *testing.T) {
+	t.Parallel()
 	h, rig := newPurgeRig(t, purgeRuns(t), []string{"sess_chat"}, true)
 	serveRuns(rig, nil,
 		purgeRow("wf_30d", "completed", "sess_chat", daysAgo(30)),
@@ -1392,6 +1418,7 @@ func TestPurgeFinishedRuns_APassWithinThePaceOfADeleteDeletesNothing(t *testing.
 
 // A run a fresh read keeps sent no delete, so the same pass goes on to the next run.
 func TestPurgeFinishedRuns_ARunKeptOnTheReReadLeavesThePassItsDelete(t *testing.T) {
+	t.Parallel()
 	h, rig := newPurgeRig(t, purgeRuns(t), []string{"sess_chat"}, true)
 	list := purgeRuns(t,
 		purgeRow("wf_revived", "failed", "sess_chat", daysAgo(30)),

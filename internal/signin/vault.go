@@ -197,12 +197,12 @@ type config struct {
 	probeEvery   time.Duration
 }
 
-// Open reads <configDir>/signin.json and returns the vault. It never fails on the file: a refused,
+// Open reads <configDir>/signin.json on disk and returns the vault. It never fails on the file: a refused,
 // unreadable or malformed file is an unavailable Status, and the file is kept. It panics when two
 // backends share an id or a non-empty HostCallback, a programming error in the compiled set.
-func Open(lifetime context.Context, configDir string, backends ...Backend) *Vault {
+func Open(lifetime context.Context, configDir string, disk filemode.Disk, backends ...Backend) *Vault {
 	return open(lifetime, configDir, config{
-		disk:         filemode.OS(),
+		disk:         disk,
 		now:          time.Now,
 		retryBase:    time.Second,
 		renewBudget:  renewBudget,

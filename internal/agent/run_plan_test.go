@@ -15,6 +15,7 @@ import (
 )
 
 func TestRunPlanUpdate_TheRunReadCarriesTheRevisionThroughItsOutcome(t *testing.T) {
+	t.Parallel()
 	h, br := seedChatParentedRun(t, true)
 	br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
 	h.runs.log = newRunLog(t.TempDir())
@@ -46,6 +47,7 @@ func inspectQueued(t *testing.T, n int) json.RawMessage {
 }
 
 func TestRunPlanUpdate_AQueuedPlanKASKeptShowsWithNoFrame(t *testing.T) {
+	t.Parallel()
 	h, br := seedChatParentedRun(t, true)
 	br.setCallResult(methodKiroWorkflowInspect, inspectQueued(t, 2))
 
@@ -57,6 +59,7 @@ func TestRunPlanUpdate_AQueuedPlanKASKeptShowsWithNoFrame(t *testing.T) {
 }
 
 func TestRunPlanUpdate_AQueuedRevisionKASDroppedIsNotShown(t *testing.T) {
+	t.Parallel()
 	h, br := seedChatParentedRun(t, true)
 	br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
 
@@ -69,6 +72,7 @@ func TestRunPlanUpdate_AQueuedRevisionKASDroppedIsNotShown(t *testing.T) {
 }
 
 func TestRunPlanUpdate_AnUnreadableCountServesMemory(t *testing.T) {
+	t.Parallel()
 	h, br := seedChatParentedRun(t, true)
 	br.setCallResult(methodKiroWorkflowInspect,
 		json.RawMessage(`{"workflowId":"wf_1","state":{"status":"running"},"pendingSteps":{"steps":2}}`))
@@ -83,6 +87,7 @@ func TestRunPlanUpdate_AnUnreadableCountServesMemory(t *testing.T) {
 }
 
 func TestRunPlanUpdate_TheReplayedFrameKeepsTheStampedStep(t *testing.T) {
+	t.Parallel()
 	h, br := seedChatParentedRun(t, true)
 	br.setCallResult(methodKiroWorkflowInspect, inspectQueued(t, 3))
 	h.runs.log = newRunLog(t.TempDir())
@@ -101,6 +106,7 @@ func TestRunPlanUpdate_TheReplayedFrameKeepsTheStampedStep(t *testing.T) {
 }
 
 func TestRunPlanUpdate_ARejectionTellsTheLaunchingChat(t *testing.T) {
+	t.Parallel()
 	const chatID = marotte.ChatID("c1")
 	h, cs, _ := runLoggingHub(t)
 	seedChat(t, cs, chatID)
@@ -129,6 +135,7 @@ func wantRejectionID(kasID string) string {
 }
 
 func TestRunPlanRejection_NotesTheLaunchingChat(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, kasID, reason, want string }{
 		{"with a reason", kasRejectionID, "split step 2", "Plan edits requested: split step 2"},
 		{"without one", `["wf_1","create-workflow","tc_8"]`, "", "Plan rejected"},
@@ -167,6 +174,7 @@ func TestRunPlanRejection_ARunChatTellsNoOne(t *testing.T) {
 
 // The id is KAS's rejection id hashed, never a clock, so every Runs names one rejection alike.
 func TestRunPlanRejection_OneRejectionOneID(t *testing.T) {
+	t.Parallel()
 	const chatID = marotte.ChatID("c1")
 	ids := make([][]string, 2)
 	for i := range ids {

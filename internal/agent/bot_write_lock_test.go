@@ -20,7 +20,7 @@ func renameCmd(name string) marotte.ClientCommand {
 }
 
 // holdEffortPick posts set_effort high on c1 with its engine call held past the answer budget, so the command keeps
-// running after its 504 still_applying. The runtime was built under answerBudgetOf(lockTestBudget).
+// running after its 504 still_applying. The runtime was built with withAnswerBudget(lockTestBudget).
 func holdEffortPick(t *testing.T, h *Runtime, br *fakeBridge) (release func()) {
 	t.Helper()
 	release = holdCall(t, br, marotte.MethodSetConfigOption)
@@ -30,8 +30,8 @@ func holdEffortPick(t *testing.T, h *Runtime, br *fakeBridge) (release func()) {
 }
 
 func TestRenameChat_ARegularChatDoesNotWaitForAHeldEffortPick(t *testing.T) {
-	answerBudgetOf(t, lockTestBudget)
-	h, _, br := newTestHub()
+	t.Parallel()
+	h, _, br := newTestHub(withAnswerBudget(lockTestBudget))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	openChat(t, h, "c1")
 	holdEffortPick(t, h, br)
@@ -47,9 +47,8 @@ func TestRenameChat_ARegularChatDoesNotWaitForAHeldEffortPick(t *testing.T) {
 }
 
 func TestRenameChat_ABotsRenameBehindAHeldEffortPickAnswersOnceItLands(t *testing.T) {
-	answerBudgetOf(t, lockTestBudget)
 	br := reporting(marotte.BotRoleID, marotte.DefaultModeID, marotte.BotRoleID)
-	h, cs := botRuntime(t, br)
+	h, cs := botRuntimeWith(t, []Option{withAnswerBudget(lockTestBudget)}, br)
 	seedSpecBot(t, cs)
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: open the Bot's session: %v", err)

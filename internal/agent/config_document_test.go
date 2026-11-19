@@ -52,6 +52,7 @@ func restoreFile(t *testing.T, dir, body string) {
 }
 
 func TestLastReadable(t *testing.T) {
+	t.Parallel()
 	read := func(t *testing.T, l *lastReadable, ctx context.Context, dir string) (configDocument, docSource) {
 		t.Helper()
 		return l.read(ctx, dir, readConfigDocument)
@@ -130,6 +131,7 @@ func TestLastReadable(t *testing.T) {
 
 // No reader on the read path can reach the file: a reader that read it itself would meet a read error mid-decode.
 func TestConfigReads_TheReadersDecodeOnlyTheSnapshot(t *testing.T) {
+	t.Parallel()
 	const body = `{"engine_heap_mib":1024,"debug_logs":true,"agent_ignore_files":[".gitignore"],` +
 		`"terminal_command_timeout_ms":300000,"content_collection_enabled":true,"security_profile":"unrestricted",` +
 		`"additional_directories":["/data"],"memory_mode":"learn","auto_compaction_enabled":false,"auto_compact_pct":60,` +
@@ -169,6 +171,7 @@ func TestConfigReads_TheReadersDecodeOnlyTheSnapshot(t *testing.T) {
 
 // The cache's cell table: each state built by a settle sequence, then one arrival. Heaps mark the generations.
 func TestLastReadable_SettleTable(t *testing.T) {
+	t.Parallel()
 	type arrival struct {
 		gen      uint64
 		heap     int

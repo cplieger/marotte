@@ -13,6 +13,7 @@ import (
 // RunView.Send is the table's verb, and a plain send's Submit answer is that verb (prompt: its own take; steer: into
 // the running turn; queue: on the list).
 func TestSubmit_PlacesASendAsTheHeadersVerbSays(t *testing.T) {
+	t.Parallel()
 	running := func(id string, steerable bool) *runEntry {
 		return &runEntry{
 			id: id, kind: marotte.RunKindTurn, origin: marotte.RunFromWire, state: marotte.RunRunning,
@@ -102,6 +103,7 @@ func TestSubmit_PlacesASendAsTheHeadersVerbSays(t *testing.T) {
 // A prompt-only send (a saved prompt, a context reference) queues behind whatever runs, since its own turn resolves
 // it; only where the send would steer is it refused, because _session/steer resolves neither.
 func TestSubmit_APromptOnlySendQueuesUnlessItWouldSteer(t *testing.T) {
+	t.Parallel()
 	running := func(steerable bool) *runEntry {
 		return &runEntry{
 			id: "t-1", kind: marotte.RunKindTurn, origin: marotte.RunFromPrompt, state: marotte.RunRunning,
@@ -162,6 +164,7 @@ func TestSubmit_APromptOnlySendQueuesUnlessItWouldSteer(t *testing.T) {
 // Chat.RunVersion grows with every write of Chat.Run, whichever writer makes it (a held row an earlier process left,
 // then a live life's list), so a page holding the newest version never takes an older list.
 func TestRunVersion_GrowsAcrossWriters(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")

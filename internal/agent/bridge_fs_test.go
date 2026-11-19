@@ -179,6 +179,7 @@ func TestResolveInsideWorkDir(t *testing.T) {
 }
 
 func TestRespondFSRead_Success(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	if err := os.WriteFile(filepath.Join(work, "hello.txt"), []byte("hi\nworld\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -200,6 +201,7 @@ func TestRespondFSRead_Success(t *testing.T) {
 }
 
 func TestRespondFSRead_MissingPath(t *testing.T) {
+	t.Parallel()
 	h, br := hubForFSTest(t, t.TempDir())
 	id := int64(2)
 	msg := &marotte.RPCResponse{
@@ -216,6 +218,7 @@ func TestRespondFSRead_MissingPath(t *testing.T) {
 }
 
 func TestRespondFSRead_LineLimitWindow(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	if err := os.WriteFile(filepath.Join(work, "file.txt"), []byte("a\nb\nc\nd\ne\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -237,6 +240,7 @@ func TestRespondFSRead_LineLimitWindow(t *testing.T) {
 }
 
 func TestRespondFSRead_SizeCapRejects(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	huge := make([]byte, fsReadCap+1)
 	if err := os.WriteFile(filepath.Join(work, "big.txt"), huge, 0o644); err != nil {
@@ -260,6 +264,7 @@ func TestRespondFSRead_SizeCapRejects(t *testing.T) {
 
 // The cap is the largest write accepted, not the first refused.
 func TestRespondFSWrite_AcceptsAWriteExactlyAtTheCap(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	h, br := hubForFSTest(t, work)
 	id := int64(9)
@@ -291,6 +296,7 @@ func TestRespondFSWrite_AcceptsAWriteExactlyAtTheCap(t *testing.T) {
 }
 
 func TestRespondFSWrite_Success(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	h, br := hubForFSTest(t, work)
 	id := int64(5)
@@ -315,6 +321,7 @@ func TestRespondFSWrite_Success(t *testing.T) {
 }
 
 func TestRespondFSWrite_CreatesParentDirs(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	h, br := hubForFSTest(t, work)
 	id := int64(6)
@@ -335,6 +342,7 @@ func TestRespondFSWrite_CreatesParentDirs(t *testing.T) {
 }
 
 func TestRespondFSWrite_RejectsSymlinkEscape(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("symlinks need admin on windows")
 	}
@@ -372,6 +380,7 @@ func TestRespondFSWrite_RejectsSymlinkEscape(t *testing.T) {
 }
 
 func TestRespondFSWrite_CapRejects(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	h, br := hubForFSTest(t, work)
 	id := int64(8)
@@ -390,6 +399,7 @@ func TestRespondFSWrite_CapRejects(t *testing.T) {
 }
 
 func TestHandleFSRequest_ReturnsFalseForNonFSMethod(t *testing.T) {
+	t.Parallel()
 	h, _ := hubForFSTest(t, t.TempDir())
 	id := int64(9)
 	msg := &marotte.RPCResponse{ID: &id, Method: "session/update", Params: json.RawMessage(`{}`)}
@@ -399,6 +409,7 @@ func TestHandleFSRequest_ReturnsFalseForNonFSMethod(t *testing.T) {
 }
 
 func TestHandleFSRequest_DispatchesFSRead(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	if err := os.WriteFile(filepath.Join(work, "hi.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -421,6 +432,7 @@ func TestHandleFSRequest_DispatchesFSRead(t *testing.T) {
 
 // A missing file answers in KAS's not-found dialect, so a create's undo snapshot reads as empty.
 func TestRespondFSRead_MissingFileSaysPathDoesNotExist(t *testing.T) {
+	t.Parallel()
 	h, br := hubForFSTest(t, t.TempDir())
 	id := int64(901)
 	msg := &marotte.RPCResponse{
@@ -437,6 +449,7 @@ func TestRespondFSRead_MissingFileSaysPathDoesNotExist(t *testing.T) {
 
 // Exactly fsReadCap bytes reads successfully.
 func TestRespondFSRead_ExactCapBoundarySucceeds(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	data := bytes.Repeat([]byte("a"), fsReadCap)
 	if err := os.WriteFile(filepath.Join(work, "exact.txt"), data, 0o644); err != nil {
@@ -466,6 +479,7 @@ func TestRespondFSRead_ExactCapBoundarySucceeds(t *testing.T) {
 
 // respondFSWrite reports a write error (a directory at the target) and otherwise answers success.
 func TestRespondFSWrite_ErrCheck(t *testing.T) {
+	t.Parallel()
 	t.Run("write_failure_reports_error", func(t *testing.T) {
 		work := t.TempDir()
 		if err := os.Mkdir(filepath.Join(work, "dir-target"), 0o755); err != nil {

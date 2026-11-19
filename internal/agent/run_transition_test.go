@@ -378,6 +378,7 @@ func onTransitionReadErr(t *testing.T, h *Runtime, fn func(want runWant, seen ru
 // Every request, through the entry point its actor calls, against every state its read can find: what it writes,
 // what it answers, and the state it read.
 func TestRunTransitions_EveryRequestInEveryState(t *testing.T) {
+	t.Parallel()
 	for _, ask := range transitionAsks {
 		for _, st := range transitionStates {
 			t.Run(ask.name+" of "+st.name, func(t *testing.T) {
@@ -456,6 +457,7 @@ func heldTransition(t *testing.T, h *Runtime, first runWant) (release func(), re
 // Two resumes of one pause, either first, write one resume: the second reads the run after the first's write, a
 // person's answering that it is already running and an automatic one leaving it.
 func TestRunTransitions_TwoResumesOfOnePauseWriteOne(t *testing.T) {
+	t.Parallel()
 	person := func(ctx context.Context, rs *Runs) string { return personAnswer(rs.resume(ctx, gateRunID, callerPage)) }
 	heal := func(ctx context.Context, rs *Runs) string {
 		return healAnswer(rs.resumeIfInterrupted(ctx, parkChat, gateRunID))
@@ -516,6 +518,7 @@ func TestRunTransitions_TwoResumesOfOnePauseWriteOne(t *testing.T) {
 // A person's pause and the gate's, either first, leave the run paused by the person, so the gate's release resumes
 // nothing: the gate pauses only a running run, and a person's pause replaces the gate's.
 func TestRunTransitions_APersonsPauseAndTheGatesLeaveThePersonsPause(t *testing.T) {
+	t.Parallel()
 	person := func(ctx context.Context, rs *Runs) error { return rs.pause(ctx, gateRunID, callerPage) }
 	gate := func(ctx context.Context, rs *Runs) error { return rs.pauseHeld(ctx, gateRunID) }
 	for _, tc := range []struct {
@@ -609,8 +612,9 @@ var (
 // transition's actions, fails here, as does a hold of the gate's added or dropped outside it. The verbs' own
 // declarations and the run-work set name them too.
 func TestRunTransitions_EveryPauseAndResumeGoesThroughTheTransition(t *testing.T) {
-	fset := token.NewFileSet()
-	for _, f := range parseAgentSources(t, fset) {
+	t.Parallel()
+	fset, files := parseAgentSources(t)
+	for _, f := range files {
 		for _, decl := range f.Decls {
 			switch d := decl.(type) {
 			case *ast.GenDecl:
@@ -757,6 +761,7 @@ func stepTurnEnds(t *testing.T, h *Runtime, path []string, e marotte.EngineError
 // step only when a message resumes it (acp-server.js executeNode, KAS 3.1.0), so marotte answers the question instead
 // of resuming the run.
 func TestRunTransitions_AThrottledTurnWhoseAskWasAnsweredMidTurnIsHealed(t *testing.T) {
+	t.Parallel()
 	answered := func(t *testing.T, br *fakeBridge) {
 		t.Helper()
 		if got := stateWrites(br.callLog()); !slices.Equal(got, []string{marotte.MethodPrompt}) {

@@ -15,6 +15,7 @@ import (
 // The empty turn's close starts its drain, which holds the chat's slot a moment while it looks for a queued prompt;
 // the empty turn's retry waits that out rather than reading it as another turn admitted.
 func TestEmptyTurnRetry_WaitsOutTheClosesDrain(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		answerFirst := make(chan struct{})
 		var (
