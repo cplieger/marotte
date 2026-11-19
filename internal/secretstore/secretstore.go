@@ -249,8 +249,8 @@ func (s *Store) ForgetSignInState() {
 const identityProviderKeyPrefix = "kiro.mcp.idp."
 
 // ForgetIdentityProviderSessions deletes every organization provider key, persisted or in memory, for a provider
-// whose issuer or client id changed or that was removed: KAS can never read one again. A persist failure keeps them
-// all and is returned.
+// whose issuer or client id changed or that was removed: KAS can never read one again. A persist failure keeps the
+// persisted keys and is returned; the in-memory ones are dropped either way.
 func (s *Store) ForgetIdentityProviderSessions(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
