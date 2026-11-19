@@ -1943,7 +1943,7 @@ func (l *cellLog) errorsLacking(msg, attr string) [][]string {
 
 var _ slog.Handler = (*holdLogs)(nil)
 
-func (h *holdLogs) Enabled(_ context.Context, level slog.Level) bool { return level >= slog.LevelInfo }
+func (*holdLogs) Enabled(_ context.Context, level slog.Level) bool { return level >= slog.LevelInfo }
 
 func (h *holdLogs) Handle(ctx context.Context, rec slog.Record) error {
 	if h.live.Load() == 0 {
