@@ -51,6 +51,9 @@ type Deps struct {
 	// TurnLive reports a chat's turn live, admitted or held; Waiting its waiting_on_user claim.
 	TurnLive func(marotte.ChatID) bool
 	Waiting  func(marotte.ChatID) bool
+	// NotDelivered tells the user that the rule named ruleName had its prompt dropped after its last try, with the
+	// last refusal, once the drop is written; nil tells no one.
+	NotDelivered func(ctx context.Context, chatID marotte.ChatID, ruleName string, cause error)
 	// Logger defaults to slog.Default().
 	Logger *slog.Logger
 	// WakeHold is how long a run's end keeps its lease depth for the wake turn KAS owes its parent chat; zero keeps

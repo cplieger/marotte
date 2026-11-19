@@ -119,6 +119,9 @@ type activeTurn struct {
 	// unattended is whether nobody watches the turn (startsUnattended) and no user steer has reached it since: the
 	// Bot turn floor answers its asks (permissionWithBotFloor).
 	unattended bool
+	// automatic is startsUnattended at open, kept through a steer: the turn is still the one nobody started by hand,
+	// so its clean end notifies under bot_rule.
+	automatic bool
 }
 
 type chatLifecycle struct {
@@ -531,7 +534,8 @@ func (lc *chatLifecycle) openTurnLocked(
 	if lc.reg != nil && lc.reg.rules != nil {
 		leaseDepth = lc.reg.rules.TurnOpened(chatID, t.ID, source, from, wake)
 	}
-	t.unattended = startsUnattended(from, wake, leaseDepth)
+	t.automatic = startsUnattended(from, wake, leaseDepth)
+	t.unattended = t.automatic
 	return t
 }
 

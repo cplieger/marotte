@@ -415,6 +415,11 @@ func TestEngine_RetriesARefusalThatMayPassLater(t *testing.T) {
 							t.Errorf("after 3 tries the queue is %+v, want the event with tries 3", q)
 						}
 					}
+					if len(at) == 9 {
+						if got := h.undelivered(); len(got) != 0 {
+							t.Errorf("after 9 tries the engine pushed %+v, want nothing before the last try", got)
+						}
+					}
 					h.advance(time.Minute)
 				}
 				want := []int{0, 1, 3, 8, 18, 48, 78, 108, 138, 168}
@@ -430,6 +435,58 @@ func TestEngine_RetriesARefusalThatMayPassLater(t *testing.T) {
 				if len(r.Status.Queue) != 0 || r.Status.LastFailure == nil ||
 					!strings.HasPrefix(r.Status.LastFailure.Reason, "Could not deliver after 10 tries: ") {
 					t.Errorf("queue %v last failure %+v, want the event dropped with its failure", eventIDs(r.Status.Queue), r.Status.LastFailure)
+				}
+				if got := h.undelivered(); len(got) != 1 || got[0].chat != "b1" || got[0].rule != "Tidy" || !errors.Is(got[0].err, c.err) {
+					t.Errorf("pushes %+v, want one for b1's rule Tidy with the last refusal", got)
+				}
+			})
+		})
+	}
+}
+
+// The last try's push waits for its drop to be written: a write fault there pushes nothing until the retried drop
+// lands, then once, and a prompt already gone from the queue at its last try pushes nothing.
+func TestEngine_TheLastTryPushesOnceItsDropLands(t *testing.T) {
+	refusal := command.StatusError(http.StatusServiceUnavailable, errors.New("the engine is restarting"))
+	for _, c := range []struct {
+		atLastTry func(h *harness)
+		name      string
+		pushes    int
+	}{
+		{name: "a write fault at the drop", pushes: 1, atLastTry: func(h *harness) { h.fs.failsAfterApply.Store(true) }},
+		{name: "a prompt gone from the queue", atLastTry: func(h *harness) {
+			if _, err := h.store.Mutate(context.WithoutCancel(h.t.Context()), "b1", func(c *marotte.Chat, _ bool) bool {
+				c.Bot.Rules[0].Status.Queue = nil
+				return true
+			}); err != nil {
+				h.t.Errorf("clearing the queue: %v", err)
+			}
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				h := newHarness(t)
+				h.notes.place = func(n int) (placement, error) {
+					if n == maxTries-1 {
+						c.atLastTry(h)
+					}
+					return opensTurn, refusal
+				}
+				h.seedBot("b1", weekly(h))
+				h.scan()
+				h.start()
+				h.runNow("op-1")
+				h.advance(3 * time.Hour)
+				if got := h.undelivered(); len(got) != 0 {
+					t.Errorf("at the last try the engine pushed %+v, want nothing before the drop is written", got)
+				}
+				h.fs.failsAfterApply.Store(false)
+				h.advance(time.Hour)
+				if got := h.undelivered(); len(got) != c.pushes {
+					t.Errorf("pushes %+v, want %d", got, c.pushes)
+				}
+				if q := h.rule("b1", "r1").Status.Queue; len(q) != 0 {
+					t.Errorf("queue %v, want the prompt gone", eventIDs(q))
 				}
 			})
 		})
@@ -462,6 +519,9 @@ func TestEngine_DropsARefusalNoRetryCanPass(t *testing.T) {
 				if len(r.Status.Queue) != 0 || r.Status.Dropped != c.dropped || (r.Status.LastFailure != nil) != c.wantFailure {
 					t.Errorf("queue %v dropped %d last failure %+v, want empty, %d, failure %v",
 						eventIDs(r.Status.Queue), r.Status.Dropped, r.Status.LastFailure, c.dropped, c.wantFailure)
+				}
+				if got := h.undelivered(); len(got) != 0 {
+					t.Errorf("pushes %+v, want none: only a prompt that ran out of tries pushes", got)
 				}
 			})
 		})

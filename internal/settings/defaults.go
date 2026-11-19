@@ -38,6 +38,7 @@ const (
 	KeyNotifyPRStatus      = "notify_pr_status"
 	KeyNotifyRunOutcome    = "notify_run_outcome"
 	KeyNotifySignIn        = "notify_sign_in"
+	KeyNotifyBotRule       = "notify_bot_rule"
 	KeySupervisedDefault   = "supervised_default"
 
 	// KeySecurityProfile is the stored policyfile profile id new chats, observer passes and parentless run
@@ -216,6 +217,7 @@ var KnownKeys = map[string]struct{}{
 	KeyNotifyPRStatus:           {},
 	KeyNotifyRunOutcome:         {},
 	KeyNotifySignIn:             {},
+	KeyNotifyBotRule:            {},
 	KeySupervisedDefault:        {},
 	KeyScheduledAutoApprove:     {},
 	KeyBotAutoApprove:           {},

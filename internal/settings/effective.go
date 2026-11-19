@@ -59,13 +59,15 @@ func AutoCompactPctRange() marotte.PctRange {
 var errAutoCompactPctRange = fmt.Errorf("%s must be a whole number from %d to %d in steps of %d",
 	KeyAutoCompactPct, autoCompactPctMin, autoCompactPctMax, autoCompactPctStep)
 
-// DefaultNotifyPRStatus is OFF while its siblings are ON: a PR's CI verdict is already on the
-// forge, where the others report unobserved work or a sign-in that stops every chat and run.
+// DefaultNotifyPRStatus and DefaultNotifyBotRule are OFF while their siblings are ON: a PR's CI verdict is already
+// on the forge, and a Bot's rules may start a turn every few minutes, whose failures push under agent_finished. The
+// others report unobserved work or a sign-in that stops every chat and run.
 const (
 	DefaultNotifyAgentFinished = true
 	DefaultNotifyPRStatus      = false
 	DefaultNotifyRunOutcome    = true
 	DefaultNotifySignIn        = true
+	DefaultNotifyBotRule       = false
 )
 
 // defaultHighThroughput is ON because the flags carry 3 to 4 times the prompt load on one engine.
@@ -129,6 +131,7 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		NotifyPRStatus:      DefaultNotifyPRStatus,
 		NotifyRunOutcome:    DefaultNotifyRunOutcome,
 		NotifySignIn:        DefaultNotifySignIn,
+		NotifyBotRule:       DefaultNotifyBotRule,
 		// Everything else is its zero value deliberately (scheduled auto-approve fail-closed).
 	}
 }
@@ -216,6 +219,7 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 		KeyNotifyPRStatus:       func(r json.RawMessage) error { return decodeInto(&out.NotifyPRStatus, r) },
 		KeyNotifyRunOutcome:     func(r json.RawMessage) error { return decodeInto(&out.NotifyRunOutcome, r) },
 		KeyNotifySignIn:         func(r json.RawMessage) error { return decodeInto(&out.NotifySignIn, r) },
+		KeyNotifyBotRule:        func(r json.RawMessage) error { return decodeInto(&out.NotifyBotRule, r) },
 		KeySupervisedDefault:    func(r json.RawMessage) error { return decodeInto(&out.SupervisedDefault, r) },
 		KeyScheduledAutoApprove: func(r json.RawMessage) error { return decodeInto(&out.ScheduledAutoApprove, r) },
 		KeyBotAutoApprove:       func(r json.RawMessage) error { return decodeInto(&out.BotAutoApprove, r) },

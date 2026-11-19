@@ -92,7 +92,7 @@ func TestPushTurnOutcome_WithheldWhileALaunchedRunIsLive(t *testing.T) {
 				seedRunLease(t, h, "wf_1", "c1")
 			}
 
-			h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(tc.stop), "")
+			h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(tc.stop), "", nil, false)
 
 			if !tc.wantPush {
 				awaitNoPush(t, h, fp, tc.why)
@@ -116,7 +116,7 @@ func TestPushTurnOutcome_AnotherChatsRunDoesNotWithhold(t *testing.T) {
 	h, fp := newWithholdHub(t)
 	seedRunLease(t, h, "wf_1", "c2")
 
-	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonEndTurn), "")
+	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonEndTurn), "", nil, false)
 
 	select {
 	case got := <-fp.sent:
@@ -133,7 +133,7 @@ func TestPushTurnOutcome_AParentlessRunDoesNotWithhold(t *testing.T) {
 	h, fp := newWithholdHub(t)
 	seedRunLease(t, h, "wf_1", "")
 
-	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonEndTurn), "")
+	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonEndTurn), "", nil, false)
 
 	select {
 	case <-fp.sent:
@@ -148,7 +148,7 @@ func TestPushTurnOutcome_NilPredicateWithholdsNothing(t *testing.T) {
 	seedRunLease(t, h, "wf_1", "c1")
 	h.coord.chatHasLiveRun = nil
 
-	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonEndTurn), "")
+	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonEndTurn), "", nil, false)
 
 	select {
 	case <-fp.sent:
@@ -167,7 +167,7 @@ func TestPushTurnOutcome_ACancelPushesNothingEitherWay(t *testing.T) {
 			}
 
 			h.coord.pushTurnOutcome(t.Context(), "c1",
-				marotte.ConcludeStopReason(marotte.StopReasonCancelled), "")
+				marotte.ConcludeStopReason(marotte.StopReasonCancelled), "", nil, false)
 
 			awaitNoPush(t, h, fp, "a cancel is the reader's own gesture, so no severity arm notifies")
 		})
@@ -178,7 +178,7 @@ func TestPushTurnOutcome_ACancelPushesNothingEitherWay(t *testing.T) {
 func TestPushTurnOutcome_AModelCallLimitStopPushesItsOwnRemedy(t *testing.T) {
 	h, fp := newWithholdHub(t)
 
-	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonToolUse), "")
+	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonToolUse), "", nil, false)
 
 	select {
 	case got := <-fp.sent:

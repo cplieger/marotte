@@ -169,6 +169,7 @@ func TestOpenBridge_AHandEditPushesExactlyTheLiveSurfacesItMoved(t *testing.T) {
 			want: livePushesSeen{prefs: []map[marotte.PushKind]bool{{
 				marotte.PushKindAgentFinished: true, marotte.PushKindPermission: true,
 				marotte.PushKindPRStatus: true, marotte.PushKindRunOutcome: true, marotte.PushKindSignIn: true,
+				marotte.PushKindBotRule: false,
 			}}},
 		},
 		{name: "an_unrelated_key", body: `{"last_merge_method":"squash"}`},

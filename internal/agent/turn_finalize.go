@@ -468,7 +468,7 @@ func (bc *bridgeCoordinator) closeTurn(ctx context.Context, t *activeTurn, stop 
 	}
 	// The push reads the turn_close's outcome, so a silent end_turn graded `empty` is not a clean finish.
 	concluded := c.WithContent(t.Log.Emitted())
-	bc.pushTurnOutcome(ctx, chatID, concluded, statusDesc)
+	bc.pushTurnOutcome(ctx, chatID, concluded, statusDesc, t.caller, t.automatic)
 	var engineClass string
 	if e := t.Log.EngineError(); e != nil {
 		engineClass = e.ErrorType
@@ -547,25 +547,34 @@ func (bc *bridgeCoordinator) releaseFinish(ctx context.Context, chatID marotte.C
 
 // pushTurnOutcome parks a finished turn's notification in the chat's finish slot, reading the severity so it never
 // claims success, then releases the slot if nothing holds it. Every close releases, so a finish parked behind a turn
-// that closes under a live run or stopped is still raised.
+// that closes under a live run or stopped is still raised. caller is the opening prompt's caller; an automatic turn
+// (activeTurn.automatic) notifies a clean end under bot_rule.
 func (bc *bridgeCoordinator) pushTurnOutcome(
 	ctx context.Context,
 	chatID marotte.ChatID,
 	c marotte.TurnConclusion,
 	statusDesc string,
+	caller *marotte.Caller,
+	automatic bool,
 ) {
 	defer bc.releaseFinish(ctx, chatID)
+	severity := marotte.SeverityOf(c.Outcome)
 	// The turn ended but a run it launched is still on the wire (`run_workflow` returns at creation); the run's
-	// own `run_outcome` push covers it.
-	if bc.chatHasLiveRun != nil && bc.chatHasLiveRun(chatID) {
-		slog.Debug("withholding agent_finished: a run this chat launched is still live",
+	// own `run_outcome` push covers it. Not a Bot's broken turn: the run's push says nothing about the turn failing.
+	if bc.chatHasLiveRun != nil && bc.chatHasLiveRun(chatID) &&
+		(severity != marotte.TurnSeverityBroken || !bc.isBot(ctx, chatID)) {
+		slog.Debug("withholding the turn notification: a run this chat launched is still live",
 			"chat_id", chatID, "outcome", c.Outcome)
 		return
 	}
 	var n marotte.NotificationPayload
-	switch marotte.SeverityOf(c.Outcome) {
+	switch severity {
 	case marotte.TurnSeverityClean:
-		n = notice.TurnFinished(bc.NoticeTarget(ctx, chatID, ""), statusDesc)
+		if automatic {
+			n = notice.RuleTurnFinished(bc.NoticeTarget(ctx, chatID, ""), caller, statusDesc)
+		} else {
+			n = notice.TurnFinished(bc.NoticeTarget(ctx, chatID, ""), statusDesc)
+		}
 	case marotte.TurnSeverityBroken:
 		n = notice.TurnFailed(bc.NoticeTarget(ctx, chatID, ""), c.Reason)
 	case marotte.TurnSeverityStopped, marotte.TurnSeverityRunning:

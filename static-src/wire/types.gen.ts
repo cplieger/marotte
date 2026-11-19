@@ -72,7 +72,7 @@ export type PreviewHintSource = "meta" | "viewport";
 
 export type PreviewPreset = "phone" | "tablet" | "desktop";
 
-export type PushKind = "agent_finished" | "permission" | "pr_status" | "run_outcome" | "sign_in";
+export type PushKind = "agent_finished" | "permission" | "pr_status" | "run_outcome" | "sign_in" | "bot_rule";
 
 export type ReadState = "ready" | "unavailable";
 
@@ -1072,14 +1072,15 @@ export interface EffectiveSettings {
   /**
    * NotificationsEnabled is the push master switch, default off. The per-kind
    * switches below take their defaults from settings.Default*, and those are not
-   * uniform either: pr_status is OFF where its siblings are ON. That asymmetry is
-   * why the client must not guess any of them.
+   * uniform either: pr_status and bot_rule are OFF where their siblings are ON. That
+   * asymmetry is why the client must not guess any of them.
    */
   notifications_enabled: boolean;
   notify_agent_finished: boolean;
   notify_pr_status: boolean;
   notify_run_outcome: boolean;
   notify_sign_in: boolean;
+  notify_bot_rule: boolean;
   /**
    * SupervisedDefault seeds newly created chats; ScheduledAutoApprove decides an
    * unattended run's permission ask at its deadline and BotAutoApprove an automatic

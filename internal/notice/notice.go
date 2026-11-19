@@ -115,6 +115,26 @@ func TurnFinished(t Target, focus string) marotte.NotificationPayload {
 	return build(marotte.PushKindAgentFinished, t, phraseResponseComplete, focus)
 }
 
+// RuleTurnFinished is an automatic Bot turn that ended cleanly: a rule's prompt, or the wake after a run one
+// launched. from is the turn's caller, named only when it is a rule's (a wake turn has none); focus is the agent's
+// own description of what it was doing, and a blank focus is dropped.
+func RuleTurnFinished(t Target, from *marotte.Caller, focus string) marotte.NotificationPayload {
+	var parts []string
+	if from != nil && from.Kind == marotte.CallerKindRule {
+		parts = append(parts, from.SentBy())
+	}
+	if strings.TrimSpace(focus) != "" {
+		parts = append(parts, focus)
+	}
+	return build(marotte.PushKindBotRule, t, phraseResponseComplete, strings.Join(parts, separator))
+}
+
+// RuleNotDelivered is a Bot's rule whose prompt could not be handed to its chat after every try, with the last
+// refusal. It notifies under agent_finished: nobody watches an automatic prompt.
+func RuleNotDelivered(t Target, ruleName string, cause error) marotte.NotificationPayload {
+	return build(marotte.PushKindAgentFinished, t, "Rule could not run", stepped(ruleName, cause.Error()))
+}
+
 // TurnFailed is a chat turn that ended broken, with the reason its card shows.
 func TurnFailed(t Target, reason string) marotte.NotificationPayload {
 	return build(marotte.PushKindAgentFinished, t, phraseTurnFailed, reason)

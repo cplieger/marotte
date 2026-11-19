@@ -52,7 +52,11 @@ func (e *Engine) settle(ctx context.Context, chatID marotte.ChatID, c *marotte.C
 		e.settled[chatID] = true
 		return c, nil
 	}
-	apply, done := applyVerdicts(plan.verdicts, now), func() { e.settledBy(chatID, &plan, now) }
+	// The push may run later, when an owed write lands, so it outlives this pass's context.
+	pushCtx := context.WithoutCancel(ctx)
+	failed := map[openedPrompt]string{}
+	apply := applyVerdicts(plan.verdicts, now, failed)
+	done := func() { e.settledBy(pushCtx, chatID, &plan, failed, now) }
 	var after *marotte.Chat
 	var err error
 	if len(plan.resend) > 0 {
@@ -69,8 +73,9 @@ func (e *Engine) settle(ctx context.Context, chatID marotte.ChatID, c *marotte.C
 	return after, nil
 }
 
-// settledBy logs and counts what the settle's write recorded, and starts each relaunched event's retry wait.
-func (e *Engine) settledBy(chatID marotte.ChatID, plan *settlePlan, now time.Time) {
+// settledBy logs and counts what the settle's write recorded, starts each relaunched event's retry wait, and pushes
+// each event that write dropped after its last try, by its rule's name in failed.
+func (e *Engine) settledBy(ctx context.Context, chatID marotte.ChatID, plan *settlePlan, failed map[openedPrompt]string, now time.Time) {
 	for k, v := range plan.verdicts {
 		args := []any{keyChatID, chatID, keyRuleID, k.rule, keyEventID, k.event}
 		switch v {
@@ -89,6 +94,11 @@ func (e *Engine) settledBy(chatID marotte.ChatID, plan *settlePlan, now time.Tim
 			obs.RuleDelivery(obs.RuleDeliveryFailed)
 			e.log.Warn("rule delivery failed", append(args, "error", errLaunchFailed)...)
 		case keepEvent, resendEvent:
+		}
+	}
+	if e.deps.NotDelivered != nil {
+		for _, name := range failed {
+			e.deps.NotDelivered(ctx, chatID, name, errLaunchFailed)
 		}
 	}
 	e.settled[chatID] = true
@@ -180,9 +190,11 @@ func (e *Engine) restoreOpened(chatID marotte.ChatID, taps []openedPrompt) {
 	e.opened[chatID] = append(taps, e.opened[chatID]...)
 }
 
-// applyVerdicts is the settle's one write.
-func applyVerdicts(verdicts map[openedPrompt]verdict, now time.Time) func(c *marotte.Chat) bool {
+// applyVerdicts is the settle's one write. failed is refilled on each attempt with the rule name of every event it
+// drops after its last try.
+func applyVerdicts(verdicts map[openedPrompt]verdict, now time.Time, failed map[openedPrompt]string) func(c *marotte.Chat) bool {
 	return func(c *marotte.Chat) bool {
+		clear(failed)
 		at := time.Now()
 		changed := false
 		for i := range c.Bot.Rules {
@@ -190,7 +202,8 @@ func applyVerdicts(verdicts map[openedPrompt]verdict, now time.Time) func(c *mar
 			kept := r.Status.Queue[:0:0]
 			for j := range r.Status.Queue {
 				q := r.Status.Queue[j]
-				v, ok := verdicts[openedPrompt{rule: r.ID, event: q.EventID}]
+				k := openedPrompt{rule: r.ID, event: q.EventID}
+				v, ok := verdicts[k]
 				if !ok || q.Stage != rule.StageFired {
 					kept = append(kept, q)
 					continue
@@ -213,6 +226,7 @@ func applyVerdicts(verdicts map[openedPrompt]verdict, now time.Time) func(c *mar
 					changed = true
 				case launchFailedEvent:
 					r.Status.LastFailure = mark(r, &q, failedTriesPrefix+errLaunchFailed.Error(), now)
+					failed[k] = r.Spec.Name
 					changed = true
 					continue
 				case keepEvent:

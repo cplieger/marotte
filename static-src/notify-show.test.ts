@@ -101,6 +101,12 @@ describe("showNotice", () => {
     expect(reports()).toEqual([{ body: { id: n.id, outcome: "declined" }, tag: "tag-A" }]);
   });
 
+  it("declines an automatic Bot turn on a client that has not loaded settings: its switch defaults off", () => {
+    const n = noticeFor(chatTarget("c1"), "Response complete · Rule: Weekly questions", "bot_rule");
+    expect(notify.showNotice(n)).toBe(false);
+    expect(shown).toEqual([]);
+  });
+
   it("declines with the master switch off or without the OS permission", () => {
     notify.setNotificationsEnabled(false);
     const off = noticeFor(chatTarget("c1"), "ask");
