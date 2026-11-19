@@ -249,6 +249,8 @@ func TestHealBudget_ThrottlesWithNoProgressStopAutoResumeWithNoPause(t *testing.
 	}
 	g.throttled(t)
 	g.throttled(t)
+	// The read past the budget records the stop off the frame's path.
+	waitUntil(t, "the run's stop recorded", func() bool { return autoResumeStoppedAt(t, g.h) != "" })
 	awaitResumes(t, &g.resumes, maxAutoHeals)
 	if p := g.pauseParams(); len(p) != 0 {
 		t.Errorf("stopping the automatic resumes wrote pauses %v; KAS records each as the user's", p)
