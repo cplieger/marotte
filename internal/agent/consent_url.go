@@ -8,13 +8,10 @@ import (
 // consentRequest is _kiro/openExternalUrl's params. Server names the MCP server signing in. FlowID is set on a
 // connected server's mid-session re-auth (KAS's oauthCompletion "notification"), which ends with
 // _kiro/mcp/oauthCompleted; a connect carries none and ends with the server's next _kiro/mcp/status.
-// IdentityProviderSignIn marks the organization sign-in's page, which names no server and ends with the
-// identityProvider on _kiro/mcp/status or the signIn reply.
 type consentRequest struct {
-	URL                    string `json:"url"`
-	Server                 string `json:"serverName"`
-	FlowID                 string `json:"oauthFlowId"`
-	IdentityProviderSignIn bool   `json:"identityProviderSignIn"`
+	URL    string `json:"url"`
+	Server string `json:"serverName"`
+	FlowID string `json:"oauthFlowId"`
 }
 
 // googleConsentHost and googleConsentPath are Google's OAuth 2.0 authorization endpoint, the one Google's MCP grants

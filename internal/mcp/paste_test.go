@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -1202,102 +1201,6 @@ func TestImport_TopLevelScopesWinOverNested(t *testing.T) {
 				t.Errorf("stored = %+v, want oauth_scopes %q", raw, tc.want)
 			}
 		})
-	}
-}
-
-// A pasted oauth.mode is KAS's opt-in to the organization sign-in, so it reaches the record.
-func TestParseImportBody_OAuthMode(t *testing.T) {
-	s, mux := newRoutedStore(t)
-
-	got := decodeImport(t, postImport(t, mux, `{"mcpServers": {"corp": {"url":"https://mcp.corp.example/mcp","oauth":{"mode":"enterprise"}}}}`))
-	if len(got.Notes) != 0 {
-		t.Errorf("notes = %q, want none", noteLines(got.Notes))
-	}
-	if raw := s.enabledRaw(t.Context()); len(raw) != 1 || raw[0].OAuthMode != oauthModeEnterprise {
-		t.Errorf("stored = %+v, want oauth_mode enterprise", raw)
-	}
-
-	rec := postImport(t, mux, `{"mcpServers": {"other": {"url":"https://mcp.example/mcp","oauth":{"mode":"corporate"}}}}`)
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), fieldOAuthMode) {
-		t.Errorf("unknown mode = %d %s, want 400 naming oauth_mode", rec.Code, rec.Body.String())
-	}
-}
-
-// An organization's block may carry its identity provider beside the servers that use it; the import saves it.
-func TestParseImportBody_IdentityProvider(t *testing.T) {
-	s, mux := newRoutedStore(t)
-
-	got := decodeImport(t, postImport(t, mux, `{
-	  "identityProvider": {"issuer":"https://idp.example.com","clientId":"marotte","name":"Acme"},
-	  "mcpServers": {"corp": {"url":"https://mcp.corp.example/mcp","oauth":{"mode":"enterprise"}}}
-	}`))
-	if joined := noteLines(got.Notes); !strings.Contains(joined, "identityProvider: Organization sign-in now uses") || !strings.Contains(joined, "https://idp.example.com") {
-		t.Errorf("notes = %q, want one naming the provider's issuer", joined)
-	}
-	idp, ok := s.savedIdentityProvider()
-	if !ok || idp != (identityProvider{Issuer: "https://idp.example.com", ClientID: "marotte", Name: "Acme"}) {
-		t.Errorf("provider = %+v, %v; want the pasted one", idp, ok)
-	}
-
-	for _, tc := range []struct{ name, block, want string }{
-		{name: "refused by KAS's rule", block: `{"issuer":"http://idp.example.com","clientId":"x"}`, want: "issuer"},
-		{name: "a typo is named", block: `{"issuer":"https://idp.example.com","clientID":"x"}`, want: `did you mean \"clientId\"`},
-		{name: "not an object", block: `"https://idp.example.com"`, want: "identityProvider"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			s, mux := newRoutedStore(t)
-			rec := postImport(t, mux, `{"identityProvider": `+tc.block+`, "mcpServers": {"x": {"command":"npx"}}}`)
-			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), tc.want) {
-				t.Errorf("import = %d %s, want 400 containing %s", rec.Code, rec.Body.String(), tc.want)
-			}
-			if _, ok := s.savedIdentityProvider(); ok || len(s.list(t.Context())) != 0 {
-				t.Error("a refused paste saved something")
-			}
-		})
-	}
-}
-
-// A paste is one write: when the save fails, neither its servers nor its identity provider are kept.
-func TestImport_AFailedSaveKeepsNeitherTheServersNorTheProvider(t *testing.T) {
-	dir := t.TempDir()
-	kas := filepath.Join(dir, "kas-mcp.json")
-	s, err := New(t.Context(), dir, nil, withKASConfigPath(kas))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	mux := http.NewServeMux()
-	s.RegisterRoutes(mux)
-	writeKASFile(t, kas, "# not json\n")
-
-	rec := postImport(t, mux, `{
-	  "identityProvider": {"issuer":"https://idp.example.com","clientId":"marotte"},
-	  "mcpServers": {"corp": {"url":"https://mcp.corp.example/mcp","oauth":{"mode":"enterprise"}}}
-	}`)
-	if rec.Code < http.StatusBadRequest {
-		t.Fatalf("import over an unwritable KAS file = %d %s, want an error", rec.Code, rec.Body.String())
-	}
-	if _, ok := s.savedIdentityProvider(); ok {
-		t.Error("the failed paste saved its identity provider")
-	}
-	if got := s.list(t.Context()); len(got) != 0 {
-		t.Errorf("servers = %+v, want none after the failed paste", got)
-	}
-}
-
-// A paste whose servers are all already configured still saves a provider it changes.
-func TestImport_UnchangedServersStillSaveANewProvider(t *testing.T) {
-	s, mux := newRoutedStore(t)
-	block := func(issuer string) string {
-		return `{"identityProvider": {"issuer":"` + issuer + `","clientId":"marotte"},
-		  "mcpServers": {"corp": {"url":"https://mcp.corp.example/mcp","oauth":{"mode":"enterprise"}}}}`
-	}
-	decodeImport(t, postImport(t, mux, block("https://idp.example.com")))
-	got := decodeImport(t, postImport(t, mux, block("https://idp2.example.com")))
-	if len(got.Results) != 1 || got.Results[0].Outcome != importUnchanged {
-		t.Errorf("results = %+v, want corp unchanged", got.Results)
-	}
-	if idp, ok := s.savedIdentityProvider(); !ok || idp.Issuer != "https://idp2.example.com" {
-		t.Errorf("provider = %+v, %v; want the second paste's", idp, ok)
 	}
 }
 

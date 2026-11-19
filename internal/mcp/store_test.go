@@ -1204,7 +1204,7 @@ func TestImportServers_LogsTheCreatedCount(t *testing.T) {
 		{Name: "one", Transport: TransportStdio, Command: "x"},
 		{Name: "two", Transport: TransportStdio, Command: "y"},
 	}
-	if _, err := s.importServers(t.Context(), in, nil); err != nil {
+	if _, err := s.importServers(t.Context(), in); err != nil {
 		t.Fatalf("ImportServers: %v", err)
 	}
 	if !strings.Contains(logs.String(), "created=2") {
@@ -1224,7 +1224,7 @@ func TestImportServers_AcceptsExactlyTheCap(t *testing.T) {
 			Command:   "x",
 		})
 	}
-	results, err := s.importServers(t.Context(), in, nil)
+	results, err := s.importServers(t.Context(), in)
 	if err != nil {
 		t.Fatalf("ImportServers(%d servers): %v", maxImportServers, err)
 	}
@@ -1353,14 +1353,14 @@ func TestImport_UnchangedBlockReRendersADriftedFile(t *testing.T) {
 	entry := func() []*Server {
 		return []*Server{{Transport: TransportStdio, Name: "agent-mail", Command: "bash", Enabled: true}}
 	}
-	if _, err := s.importServers(t.Context(), entry(), nil); err != nil {
+	if _, err := s.importServers(t.Context(), entry()); err != nil {
 		t.Fatalf("import: %v", err)
 	}
 	if err := os.WriteFile(s.kasPath, []byte(`{"mcpServers": {}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	results, err := s.importServers(t.Context(), entry(), nil)
+	results, err := s.importServers(t.Context(), entry())
 	if err != nil {
 		t.Fatalf("re-import: %v", err)
 	}

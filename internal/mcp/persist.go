@@ -32,9 +32,8 @@ func (s *Server) UnmarshalJSON(data []byte) error {
 // file is the on-disk schema: versioned envelope + ordered list. Each entry is a Server, decoded
 // one at a time so one bad entry costs only itself (load).
 type file struct {
-	Servers          []json.RawMessage `json:"servers"`
-	IdentityProvider json.RawMessage   `json:"identity_provider,omitempty"`
-	Version          int               `json:"version"`
+	Servers []json.RawMessage `json:"servers"`
+	Version int               `json:"version"`
 }
 
 const fileVersion = 1
@@ -50,15 +49,7 @@ func (s *Store) marshalRecord() ([]byte, error) {
 		entries = append(entries, entry)
 	}
 	entries = append(entries, s.unreadable...)
-	rec := file{Version: fileVersion, Servers: entries, IdentityProvider: s.idpUnreadable}
-	if s.idp != nil {
-		idp, err := json.Marshal(s.idp)
-		if err != nil {
-			return nil, fmt.Errorf("%w mcp.json: %w", errPersistMarshal, err)
-		}
-		rec.IdentityProvider = idp
-	}
-	data, err := json.MarshalIndent(rec, "", "  ")
+	data, err := json.MarshalIndent(file{Version: fileVersion, Servers: entries}, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("%w mcp.json: %w", errPersistMarshal, err)
 	}

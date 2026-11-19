@@ -137,7 +137,6 @@ var (
 	errSignInConnected  = errors.New("this server is already connected, so signing in again would only discard its credentials")
 	errSignInInProgress = errors.New("a sign-in for this server is already in progress")
 	errSignInNotNeeded  = errors.New("this server is not waiting for a sign-in")
-	errSignInNeedsOrg   = errors.New("this server signs in through your organization, so use the organization sign-in")
 )
 
 // claimSignIn starts name's sign-in on the oldest view waiting for it. A server no view waits on is refused, connected
@@ -174,9 +173,6 @@ func (reg *mcpRegistry) fileSignInLocked(name string) (signInClaim, error) {
 		return signInClaim{}, errSignInInProgress
 	}
 	r, ok := reg.resolveLocked(name)
-	if rec := reg.servers[name]; rec != nil && rec.State == mcpStateNeedsOrgSignIn {
-		return signInClaim{}, errSignInNeedsOrg
-	}
 	if rec := reg.servers[name]; !ok || rec == nil || rec.State != mcpStateOAuth || r.report.State != translate.MCPReportNeedsAuth {
 		if r.connected {
 			return signInClaim{}, errSignInConnected

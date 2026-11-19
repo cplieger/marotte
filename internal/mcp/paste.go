@@ -57,13 +57,13 @@ const (
 // keyOAuthScopes is the scopes key both a server and its oauth object take.
 const keyOAuthScopes = "oauthScopes"
 
-// pasteOAuthKeys are the keys of a server's nested `oauth` object that KAS reads. A scope list may
+// pasteOAuthKeys are the keys of a server's nested `oauth` object that marotte stores. A scope list may
 // sit there (`oauthScopes`, else `scopes`) or in the sibling server key `oauthScopes`, which wins.
 //
 // The nested object needs its own classification pass: encoding/json drops a
 // key with no matching field, so without one a misspelt `clientIdd` would be
 // accepted and discarded silently.
-var pasteOAuthKeys = []string{"clientId", "clientMetadataUrl", "mode", keyOAuthScopes, "redirectUri", "scopes"}
+var pasteOAuthKeys = []string{"clientId", "clientMetadataUrl", keyOAuthScopes, "redirectUri", "scopes"}
 
 // pasteOAuthSecretKey is refused by name, before the typo pass: a confidential
 // client cannot authenticate through KAS, so the server would fail at its token
@@ -72,25 +72,19 @@ const pasteOAuthSecretKey = "clientSecret"
 
 const confidentialClientRefusal = "Kiro's v3 engine has no OAuth client secret, so it supports public pre-registered clients only"
 
-// Besides the wrapper, a block an organization hands out may carry its identity provider, which the import saves.
-// A single-server object is detected by the wrapper's absence.
-var pasteTopKeys = []string{kasIdentityProviderKey, kasServerKey}
-
-// pasteIdentityProviderKeys are the keys of a pasted identityProvider: KAS's schema.
-var pasteIdentityProviderKeys = []string{"authorizationEndpoint", "clientId", "issuer", "name", "tokenEndpoint"}
+// Only the wrapper is consumed; a single-server object is detected by the wrapper's absence.
+var pasteTopKeys = []string{kasServerKey}
 
 var pasteTopIgnored = map[string]string{
 	"$schema": noteSchemaPointer,
 	"inputs":  "Not stored: an editor's input-prompt list. Type the values into the form instead.",
 }
 
-// importRequest is one parsed paste: the records to create, the identity provider to save when the block
-// carries one, and the notes the translation produced (an unmodelled key, a name that had to be adjusted),
-// in the order their keys appear in the paste.
+// importRequest is one parsed paste: the records to create, and the notes the translation produced (an unmodelled
+// key, a name that had to be adjusted), in the order their keys appear in the paste.
 type importRequest struct {
-	identityProvider *identityProvider
-	servers          []*Server
-	notes            []importNote
+	servers []*Server
+	notes   []importNote
 }
 
 // importNote is one thing the import says about a pasted key, shown as the key then Text. Key is the key's path
@@ -153,7 +147,6 @@ type pasteOAuth struct {
 	ClientID          string   `json:"clientId"`
 	ClientMetadataURL string   `json:"clientMetadataUrl"`
 	RedirectURI       string   `json:"redirectUri"`
-	Mode              string   `json:"mode"`
 	OAuthScopes       []string `json:"oauthScopes"`
 	Scopes            []string `json:"scopes"`
 }
@@ -198,9 +191,6 @@ func parseImportBody(data []byte) (*importRequest, error) {
 	if err := classifyKeys("", root, doc, pasteTopKeys, pasteTopIgnored, req); err != nil {
 		return nil, err
 	}
-	if err := parseIdentityProvider(root, doc[kasIdentityProviderKey], req); err != nil {
-		return nil, err
-	}
 	return inPasteOrder(parseServerBlock(root.child(kasServerKey, block), block, req))
 }
 
@@ -211,36 +201,6 @@ func inPasteOrder(req *importRequest, err error) (*importRequest, error) {
 	}
 	slices.SortStableFunc(req.notes, func(a, b importNote) int { return slices.Compare(a.pos, b.pos) })
 	return req, nil
-}
-
-// parseIdentityProvider reads a block's identityProvider, refusing one KAS would refuse so the paste fails before
-// anything lands. A note says the import replaces the provider saved before it.
-func parseIdentityProvider(root noteScope, raw json.RawMessage, req *importRequest) error {
-	if len(raw) == 0 {
-		return nil
-	}
-	const where = kasIdentityProviderKey + ": "
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
-		return fmt.Errorf("%q must be a JSON object", kasIdentityProviderKey)
-	}
-	if err := classifyKeys(where, root.child(kasIdentityProviderKey, raw), obj, pasteIdentityProviderKeys, nil, req); err != nil {
-		return err
-	}
-	var p kasIdentityProvider
-	if err := json.Unmarshal(raw, &p); err != nil {
-		return fmt.Errorf("%s%w", where, err)
-	}
-	idp, err := normalizedIdentityProvider(&identityProvider{
-		Issuer: p.Issuer, ClientID: p.ClientID, Name: p.Name,
-		AuthorizationEndpoint: p.AuthorizationEndpoint, TokenEndpoint: p.TokenEndpoint,
-	})
-	if err != nil {
-		return fmt.Errorf("%s%w", where, err)
-	}
-	req.identityProvider = idp
-	req.note(root, kasIdentityProviderKey, fmt.Sprintf("Organization sign-in now uses %s.", idp.Issuer))
-	return nil
 }
 
 // parseSingleServer handles the one-object shape: the whole body is a server
@@ -381,7 +341,6 @@ func fillRemote(sv *Server, spec *pasteServer, where string, oauthScope noteScop
 		sv.OAuthClientID = strings.TrimSpace(spec.OAuth.ClientID)
 		sv.OAuthClientMetadataURL = strings.TrimSpace(spec.OAuth.ClientMetadataURL)
 		sv.OAuthRedirectURI = strings.TrimSpace(spec.OAuth.RedirectURI)
-		sv.OAuthMode = oauthMode(spec.OAuth.Mode)
 		scopes = nestedScopes(spec, oauthScope, req)
 	}
 	sv.OAuthScopes = trimmedScopes(scopes)

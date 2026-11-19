@@ -1094,29 +1094,3 @@ func TestRelayClientForAcceptsTheLowestUnprivilegedPort(t *testing.T) {
 		t.Errorf("relayClientFor(%q) error = %v, want a client at the port floor", raw, err)
 	}
 }
-
-// The organization sign-in's page names no server; its anchor's redirect_uri is KAS's localhost listener, and a
-// paste under that state reaches it like a server's.
-func TestOAuthRelay_IdentityProviderCallback(t *testing.T) {
-	l := newCallbackListener(t, http.StatusOK)
-	h, _, _ := orgHub(t)
-	postOrgSignIn(t, h)
-	lu, err := url.Parse(l.srv.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	consent := "https://idp.example.com/authorize?" + url.Values{
-		"redirect_uri": {"http://localhost:" + lu.Port() + "/oauth/callback"}, "state": {"org-st"},
-	}.Encode()
-	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: consent, IdentityProviderSignIn: true}, true); shown.how != consentOnCard {
-		t.Fatalf("anchorConsentURL = %+v, want on the card", shown)
-	}
-
-	pasted := "http://localhost:" + lu.Port() + "/oauth/callback?" + url.Values{"code": {"oc"}, "state": {"org-st"}}.Encode()
-	if rec := postRelay(t, h, "", pasted); rec.Code != http.StatusOK || l.gotCode != "oc" {
-		t.Fatalf("paste = %d %s, listener saw %q; want 200 delivering oc", rec.Code, rec.Body.String(), l.gotCode)
-	}
-	if got := servedOrg(t, h); !got.Relayed {
-		t.Errorf("served identity_provider = %+v, want the relay latch set", got)
-	}
-}

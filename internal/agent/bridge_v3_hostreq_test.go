@@ -490,29 +490,3 @@ func TestAddAnchor_CapCountsOnlyUnattributed(t *testing.T) {
 		t.Errorf("anchors = %v, want both rows kept, the oldest banner evicted and %d banners", states, maxConsentAnchors)
 	}
 }
-
-// KAS opens the organization sign-in's page with identityProviderSignIn and no serverName; while the user's own
-// sign-in stands it is answered as opened and shown on the card, never as a banner.
-func TestEngineLane_TheOrganizationSignInsPageIsOnTheCard(t *testing.T) {
-	h, lane, _ := orgHub(t)
-	postOrgSignIn(t, h)
-	connectPage(t, h)
-	before := h.bus.fanout.Position().Head
-	consent := orgConsent("o1").URL
-	id := int64(31)
-
-	h.engineFrame(fakeSourceOf(t, h).current(), &marotte.RPCResponse{
-		Method: methodKiroOpenExternalURL, ID: &id,
-		Params: mustJSON(t, map[string]any{"url": consent, "identityProviderSignIn": true}),
-	})
-
-	if answer := awaitLaneAnswer(t, lane, id); answer.err != nil {
-		t.Fatalf("answer error = %v, want success so KAS keeps its listener waiting", answer.err)
-	}
-	if got := servedOrg(t, h); got.SignInURL != consent {
-		t.Errorf("served identity_provider = %+v, want the page on the card", got)
-	}
-	if n := len(eventsSince(h, before, marotte.EventOpenExternalURL)); n != 0 {
-		t.Errorf("open_external_url events = %d, want none", n)
-	}
-}

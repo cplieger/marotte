@@ -176,10 +176,4 @@ describe("the ignored-keys line", () => {
       "no credentials · https://ex/mcp",
     );
   });
-
-  it("reads a server waiting on the organization sign-in as needing it, not as failed", () => {
-    expect(
-      renderMeta(server(), status({ state: "needs_org_sign_in" } as Partial<RuntimeStatus>)),
-    ).toBe("Needs your organization sign-in · no credentials · https://ex/mcp");
-  });
 });

@@ -18,7 +18,6 @@ const mockRenderOAuthRelay = vi.fn((server: string) => {
 vi.mock("../mcp-ui.js", () => ({
   renderOAuthRelay: (server: string) => mockRenderOAuthRelay(server),
 }));
-vi.mock("../mcp-state.js", () => ({ orgProviderName: () => "Acme" }));
 vi.mock("../bus.js", () => createBusMock());
 
 // Import after mocks so the handler registers against the bus mock.
@@ -160,46 +159,5 @@ describe("a sign-in KAS names its server and flow for", () => {
 
     expect(mockClearBannerCodes).not.toHaveBeenCalled();
     expect(mockShowBanner).not.toHaveBeenCalled();
-  });
-});
-
-describe("the organization sign-in a refused tool call started", () => {
-  const org = (): Record<string, unknown> => ({
-    ...signIn("https://idp.example.com/authorize?state=o1"),
-    identity_provider_sign_in: true,
-  });
-
-  it("names the organization, not an integration", () => {
-    fireSSE("open_external_url", "", org());
-    expect(mockShowBanner.mock.calls[0]?.[2]).toBe(
-      "Sign in to Acme to keep using its MCP servers.",
-    );
-    expect(mockShowBanner.mock.calls[0]?.[5]).toEqual({
-      label: "Open sign-in page",
-      href: "https://idp.example.com/authorize?state=o1",
-    });
-  });
-
-  it("closes once kiro-cli reports the sign-in over, and stops the countdown", () => {
-    fireSSE("open_external_url", "", org());
-    mockClearBannerCodes.mockClear();
-
-    fireSSE("mcp_identity_provider", "", { status: { reported: { state: "signing-in" } } });
-    expect(mockClearBannerCodes).not.toHaveBeenCalled();
-
-    fireSSE("mcp_identity_provider", "", {
-      status: { reported: { state: "signed-in", account: "a@acme" } },
-    });
-    expect(mockClearBannerCodes).toHaveBeenCalledWith("*", ["open_external_url"]);
-    mockClearBannerCodes.mockClear();
-    vi.advanceTimersByTime(300_000);
-    expect(mockClearBannerCodes).not.toHaveBeenCalled();
-  });
-
-  it("leaves a server's banner up when the organization sign-in changes", () => {
-    fireSSE("open_external_url", "", signIn("https://auth.example.com/oauth?state=s"));
-    mockClearBannerCodes.mockClear();
-    fireSSE("mcp_identity_provider", "", { status: { reported: { state: "signed-in" } } });
-    expect(mockClearBannerCodes).not.toHaveBeenCalled();
   });
 });

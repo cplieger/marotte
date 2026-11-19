@@ -4,15 +4,12 @@ import { $, byId, maybeEl, queryAll, queryEl } from "./dom.js";
 import { el } from "@cplieger/reactive";
 import { closeModal, RollingOutput } from "./modals.js";
 import {
-  type OAuthMode,
   type Server,
   type Transport,
   SECRET_MASK,
   mcpState,
   discoverySignalFor,
-  identityProvider,
 } from "./mcp-state.js";
-import { ORG_CARD_ID } from "./mcp-org-sign-in.js";
 import {
   type EditablePair,
   renderKeyPairList,
@@ -171,8 +168,6 @@ function setMode(mode: AddMode, existing: Server | null): void {
 
 // One response can name several bad fields, so the fields are marked and the messages listed under them.
 
-const SIGN_IN_METHOD_ID = "mcp-remote-oauth-mode";
-
 /** Wire field name -> input id; the wire names are the server's own. A field with no input still prints its message. */
 const FIELD_INPUT_IDS: Readonly<Record<string, readonly string[]>> = {
   name: ["mcp-remote-name", "mcp-npm-name"],
@@ -183,7 +178,6 @@ const FIELD_INPUT_IDS: Readonly<Record<string, readonly string[]>> = {
   headers: ["mcp-remote-headers", "mcp-registry-headers"],
   env: ["mcp-npm-env", "mcp-registry-env"],
   oauth_client_id: ["mcp-remote-oauth-client-id"],
-  oauth_mode: [SIGN_IN_METHOD_ID],
 };
 
 const CLS_FIELD_INVALID = "field-invalid";
@@ -540,13 +534,6 @@ function initRemotePanel(existing: Server | null): void {
   }
   // A stdio server never reaches this panel, so the stored transport is http or sse.
   transportSel.value = remoteTransport(existing?.transport);
-  const method = renderSignInMethod(
-    existing?.oauth_mode,
-    identityProvider.peek().provider !== null,
-    goToOrgCard,
-  );
-  remotePanel().querySelector(`.${CLS_SIGN_IN_METHOD}`)?.remove();
-  oauthClientID.closest("label")?.after(method.element);
 
   byId<HTMLButtonElement>("mcp-remote-add-header").onclick = (): void => {
     appendKeyPair(headers, { name: "", value: "" }, "header");
@@ -568,75 +555,8 @@ function initRemotePanel(existing: Server | null): void {
     if (oauthID !== "") {
       body.oauth_client_id = oauthID;
     }
-    const mode = method.value();
-    if (mode !== undefined) {
-      body.oauth_mode = mode;
-    }
     void submitServer(body, errEl, byId<HTMLButtonElement>("mcp-remote-save"));
   };
-}
-
-const CLS_SIGN_IN_METHOD = "mcp-sign-in-method";
-
-/** The labels of KAS's `oauth.mode` values; "" is KAS's default, the browser. */
-const SIGN_IN_METHODS: readonly {
-  readonly value: "" | Exclude<OAuthMode, "browser">;
-  readonly label: string;
-}[] = [
-  { value: "", label: "Browser" },
-  { value: "enterprise", label: "Organization sign-in" },
-  { value: "auto", label: "Organization, then browser" },
-];
-
-/** The remote form's Sign-in method select. The organization options are disabled while no organization sign-in is
- *  set up, with a link to its card; `value()` is the mode to save, undefined for the browser. Exported for its test. */
-export function renderSignInMethod(
-  current: OAuthMode | undefined,
-  orgSetUp: boolean,
-  onSetUp: () => void,
-): { readonly element: HTMLElement; value: () => OAuthMode | undefined } {
-  const select = el("select", {
-    id: SIGN_IN_METHOD_ID,
-    className: "tool-form-input",
-  }) as HTMLSelectElement;
-  for (const m of SIGN_IN_METHODS) {
-    const opt = el("option", { value: m.value }, m.label) as HTMLOptionElement;
-    // A stored organization mode stays selectable, so opening the form never changes it.
-    opt.disabled = m.value !== "" && !orgSetUp && m.value !== current;
-    select.appendChild(opt);
-  }
-  select.value = current === "enterprise" || current === "auto" ? current : "";
-  const label = el(
-    "label",
-    { className: `tool-form-label ${CLS_SIGN_IN_METHOD}` },
-    "Sign-in method",
-    select,
-  );
-  if (!orgSetUp) {
-    const link = el(
-      "a",
-      { href: `#${ORG_CARD_ID}` },
-      "Set up organization sign-in first",
-    ) as HTMLAnchorElement;
-    link.addEventListener("click", (ev) => {
-      ev.preventDefault();
-      onSetUp();
-    });
-    label.appendChild(el("span", { className: "tool-form-hint" }, link));
-  }
-  return {
-    element: label,
-    value: () =>
-      select.value === "enterprise" || select.value === "auto" ? select.value : undefined,
-  };
-}
-
-/** Close the form and bring the organization sign-in card into view. */
-function goToOrgCard(): void {
-  closeModal($.mcpModal);
-  const card = maybeEl(ORG_CARD_ID);
-  card?.scrollIntoView({ block: "start" });
-  card?.querySelector<HTMLElement>("input, button:not([hidden])")?.focus();
 }
 
 /** Resolved by the same attribute the panel loop uses. */

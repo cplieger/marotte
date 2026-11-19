@@ -49,7 +49,6 @@ func (s *Store) load() error {
 		s.moveAside(uErr)
 		return nil
 	}
-	s.loadIdentityProvider(f.IdentityProvider)
 	servers, unreadable, errs := decodeEntries(f.Servers)
 	if len(servers) == 0 && len(unreadable) > 0 {
 		s.moveAside(fmt.Errorf("entry at position %d: %w", errs[0].position, errs[0].err))
@@ -77,26 +76,6 @@ func (s *Store) load() error {
 	return nil
 }
 
-// loadIdentityProvider takes the record's identity provider when the save rule accepts it. One it refuses is logged
-// and kept as read for persist, and KAS's file keeps the identityProvider it has until the user saves a provider.
-func (s *Store) loadIdentityProvider(raw json.RawMessage) {
-	if len(raw) == 0 || isJSONNull(raw) {
-		return
-	}
-	var idp identityProvider
-	err := json.Unmarshal(raw, &idp)
-	if err == nil {
-		err = validateIdentityProvider(&idp)
-	}
-	if err != nil {
-		s.idpUnreadable = raw
-		slog.Warn("mcp: the organization identity provider in mcp.json is unreadable; it stays in the file and kiro-cli does not get it until it is saved again",
-			"path", s.path, "error", err)
-		return
-	}
-	s.idp = &idp
-}
-
 // serverKeys is the nameKey of every stored server.
 func (s *Store) serverKeys() map[string]bool {
 	keys := make(map[string]bool, len(s.servers))
@@ -112,7 +91,7 @@ func decodeEntries(entries []json.RawMessage) (servers []*Server, unreadable []j
 	for i, entry := range entries {
 		var sv Server
 		err := json.Unmarshal(entry, &sv)
-		if err == nil && isJSONNull(entry) {
+		if err == nil && string(entry) == "null" {
 			err = errors.New("the entry is null")
 		}
 		if err != nil {
@@ -235,6 +214,3 @@ func (s *Store) identicalAside(raw []byte) (string, bool) {
 	}
 	return "", false
 }
-
-// isJSONNull reports whether raw is the JSON literal null, which decodes into any value without an error.
-func isJSONNull(raw json.RawMessage) bool { return string(raw) == "null" }

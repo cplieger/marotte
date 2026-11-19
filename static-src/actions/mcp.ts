@@ -2,7 +2,6 @@ import { ActionError, apiAction, retryNetwork, RETRY_STANDARD } from "./index.js
 import type { ApiErrorInfo, ApiErrorDecision } from "./index.js";
 
 import {
-  type IdentityProviderConfig,
   type Server,
   updateConfiguredEntry,
   removeConfiguredEntry,
@@ -346,47 +345,4 @@ export const relayOAuthCallback = apiAction<{ server: string; redirect_url: stri
   }),
   // Shown inline beside the pasted box: every rejection names the wrong part of the address.
   error: false,
-});
-
-// The organization sign-in (internal/agent/mcp_org_sign_in.go). Its state arrives as mcp_identity_provider frames, so
-// none of these draws anything optimistic.
-
-/** Save the organization identity provider: 400 names each refused field. kiro-cli reloads it live. */
-export const saveIdentityProvider = apiAction<IdentityProviderConfig>({
-  name: "mcp.save_identity_provider",
-  idempotencyKey: true,
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  request: (body) => ({ method: "PUT", path: `${MCP_API}/identity-provider`, body }),
-  decodeError: decodeValidationError,
-  // Shown inline under the card's form.
-  error: false,
-});
-
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
-export const removeIdentityProvider = apiAction<void>({
-  name: "mcp.remove_identity_provider",
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  request: () => ({ method: "DELETE", path: `${MCP_API}/identity-provider` }),
-  error: "Could not remove the organization sign-in",
-});
-
-// 202 once queued, 409 while one stands, 503 with no engine; kiro-cli's own refusal arrives on the card.
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
-export const orgSignIn = apiAction<void, void>({
-  name: "mcp.org_sign_in",
-  // NO retry: a second sign-in would join or replace the first.
-  scope: () => "mcp-org-sign-in",
-  request: () => ({ method: "POST", path: `${MCP_API}/identity-provider/sign-in` }),
-  error: "Could not start the organization sign-in",
-});
-
-// Also the Cancel of a sign-in in progress: kiro-cli's signOut discards it.
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
-export const orgSignOut = apiAction<void, void>({
-  name: "mcp.org_sign_out",
-  scope: () => "mcp-org-sign-in",
-  request: () => ({ method: "POST", path: `${MCP_API}/identity-provider/sign-out` }),
-  error: "Could not sign out of the organization",
 });

@@ -245,7 +245,7 @@ func TestNames_AHeldNameIsRefused(t *testing.T) {
 			return err
 		}},
 		{name: "import", do: func(t *testing.T, s *Store) error {
-			_, err := s.importServers(t.Context(), []*Server{stdio("bad", "new")}, nil)
+			_, err := s.importServers(t.Context(), []*Server{stdio("bad", "new")})
 			return err
 		}},
 	} {
@@ -282,7 +282,7 @@ func TestNames_AnOrphanKeyIsRefusedBeforeTheFirstReadableKASFile(t *testing.T) {
 			return err
 		}},
 		{name: "import", do: func(t *testing.T, s *Store) error {
-			_, err := s.importServers(t.Context(), []*Server{{Name: "orphan", Transport: TransportStdio, Command: "new", Enabled: true}}, nil)
+			_, err := s.importServers(t.Context(), []*Server{{Name: "orphan", Transport: TransportStdio, Command: "new", Enabled: true}})
 			return err
 		}},
 	} {
@@ -392,43 +392,5 @@ func TestLoad_ShapesThatKeepTodaysBehaviour(t *testing.T) {
 				t.Errorf("no 'moved aside' WARN:\n%s", logs.String())
 			}
 		})
-	}
-}
-
-// A provider in the record the save rule refuses stays in the record as written, and KAS's file keeps the member
-// it has, until the user saves a provider.
-func TestLoad_KeepsAnUnreadableIdentityProvider(t *testing.T) {
-	const bad = `{"issuer":"http://idp.example.com","client_id":"x"}`
-	const kasMember = `{"issuer":"http://idp.example.com","clientId":"x"}`
-	dir, kas := seedStoreDir(t,
-		`{"version":1,"servers":[{"id":"aaaa","name":"one","transport":"stdio","command":"c1","enabled":true}],"identity_provider":`+bad+`}`,
-		`{"identityProvider":`+kasMember+`}`)
-	s := openSeeded(t, dir, kas)
-
-	if _, ok := s.savedIdentityProvider(); ok {
-		t.Error("an unreadable provider was taken")
-	}
-	if _, err := s.Create(t.Context(), &Server{Name: "two", Transport: TransportStdio, Command: "c2", Enabled: true}); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	var rec struct {
-		IdentityProvider json.RawMessage `json:"identity_provider"`
-	}
-	data, err := os.ReadFile(filepath.Join(dir, "mcp.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(data, &rec); err != nil || !sameJSONValue(rec.IdentityProvider, json.RawMessage(bad)) {
-		t.Errorf("record identity_provider after a save = %s, want it kept as read", rec.IdentityProvider)
-	}
-	if got := readKAS(t, kas)[kasIdentityProviderKey]; !sameJSONValue(got, json.RawMessage(kasMember)) {
-		t.Errorf("KAS identityProvider = %s, want the file's own kept", got)
-	}
-
-	if err := s.setIdentityProvider(t.Context(), &identityProvider{Issuer: "https://idp.example.com", ClientID: "x"}); err != nil {
-		t.Fatalf("setIdentityProvider: %v", err)
-	}
-	if got := readKAS(t, kas)[kasIdentityProviderKey]; !sameJSONValue(got, json.RawMessage(`{"issuer":"https://idp.example.com","clientId":"x"}`)) {
-		t.Errorf("KAS identityProvider after a save = %s, want the saved one", got)
 	}
 }

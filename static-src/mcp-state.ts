@@ -14,7 +14,6 @@ import {
   type Collection,
 } from "@cplieger/reactive";
 import { createMirror, type MirrorChange } from "./mirror.js";
-import { versionMap } from "./subject-versions.js";
 import { decodeMCPStatusResponse } from "./wire/decoders.gen.js";
 import {
   asObject,
@@ -64,10 +63,6 @@ const decodeServer: Decoder<Server> = (v) => {
   if (oauthRedirectURI !== undefined) {
     out.oauth_redirect_uri = oauthRedirectURI;
   }
-  const oauthMode = optStr(o, "oauth_mode", p);
-  if (oauthMode === "browser" || oauthMode === "enterprise" || oauthMode === "auto") {
-    out.oauth_mode = oauthMode;
-  }
   const prewarm = optBool(o, "prewarm", p);
   if (prewarm !== undefined) {
     out.prewarm = prewarm;
@@ -113,7 +108,6 @@ const decodeMCPServersResponseLocal: Decoder<{ servers: Server[]; unreadable: nu
 // SSE is the legacy HTTP+SSE remote transport, a first-class stored value sharing the url/headers form with http.
 export type { Transport } from "./wire/types.gen.js";
 import type {
-  MCPIdentityProviderStatus,
   MCPOrigin,
   MCPPrewarmState,
   MCPPromptInfo,
@@ -126,10 +120,6 @@ import type {
 
 /** KAS's per-server `versionNegotiation` enum. */
 type VersionNegotiation = "auto" | "legacy";
-
-/** KAS's per-server `oauth.mode`: its own browser sign-in, the organization sign-in, or that with the browser as
- *  fallback. Absent is KAS's default, browser. */
-export type OAuthMode = "browser" | "enterprise" | "auto";
 
 export interface KeyPair {
   name: string;
@@ -169,8 +159,6 @@ export interface Server {
   oauth_redirect_uri?: string;
   /** KAS `oauthScopes`, from a paste or the raw edit; no form control edits it. */
   oauth_scopes?: string[];
-  /** KAS `oauth.mode`, a remote server's Sign-in method. */
-  oauth_mode?: OAuthMode;
   created_at: number;
   updated_at: number;
 }
@@ -187,7 +175,7 @@ export interface ServerDiscovery {
 }
 
 export type RuntimeState =
-  "connected" | "needs_auth" | "needs_org_sign_in" | "signing_in" | "idle" | "failed" | "disabled";
+  "connected" | "needs_auth" | "signing_in" | "idle" | "failed" | "disabled";
 
 /**
  * `origin` picks the row a live status belongs to, never editability. `shadows`: marotte's config holds the name, so
@@ -207,8 +195,6 @@ export type RuntimeStatus = Provenance &
     | { name: string; state: "connected" }
     /** `error` is why kiro-cli refused the last Sign in, absent when none was refused. */
     | { name: string; state: "needs_auth"; error?: string }
-    /** Waits on the organization sign-in, whose card's Sign in is the remedy. */
-    | { name: string; state: "needs_org_sign_in" }
     /** `oauth_url` is the consent page of the sign-in the user started. `relayed` rides the status wire, so a reload
      *  or second device does not offer the paste box for a spent code. */
     | { name: string; state: "signing_in"; oauth_url: string; relayed: boolean }
@@ -256,8 +242,6 @@ export function adaptStatus(w: MCPServerStatus): RuntimeStatus {
       return w.error === undefined || w.error === ""
         ? { name: w.name, ...prov, state: "needs_auth" }
         : { name: w.name, ...prov, state: "needs_auth", error: w.error };
-    case "needs_org_sign_in":
-      return { name: w.name, ...prov, state: "needs_org_sign_in" };
     case "signing_in":
       return {
         name: w.name,
@@ -277,46 +261,8 @@ export function adaptStatus(w: MCPServerStatus): RuntimeStatus {
   }
 }
 
-/** The `mcp_status` version and epoch the organization sign-in was last read at. */
-interface OrgHeld {
-  readonly version: bigint;
-  readonly epoch: string | null;
-}
-
-let orgHeld: OrgHeld | null = null;
-// A fetched read's organization sign-in, taken once the mirror applied the rows read with it.
-let orgFetched: { status: MCPIdentityProviderStatus | undefined; stamp: SubjectStamp } | null =
-  null;
-
-/** The organization sign-in's runtime state, absent while kiro-cli reported none and no sign-in stands. */
-export const orgSignInStatus: Signal<MCPIdentityProviderStatus | undefined> = signal(undefined);
-
-/** Take `status` when its stamp is newer than what is held, or the server process changed. Answers whether it was
- *  taken. */
-function takeOrg(
-  status: MCPIdentityProviderStatus | undefined,
-  stamp: SubjectStamp | undefined,
-  atOrAbove: boolean,
-): boolean {
-  if (stamp?.kind !== "mcp_status" || !/^\d{1,20}$/u.test(stamp.version)) {
-    return false;
-  }
-  const version = BigInt(stamp.version);
-  const epoch = versionMap().epoch();
-  if (
-    orgHeld !== null &&
-    orgHeld.epoch === epoch &&
-    (atOrAbove ? version < orgHeld.version : version <= orgHeld.version)
-  ) {
-    return false;
-  }
-  orgHeld = { version, epoch };
-  orgSignInStatus.value = status;
-  return true;
-}
-
 /** The registry's status rows, ordered by the `mcp_status` version: its `mcp_status` frames and
- *  `GET /api/mcp/status` are the only writers. The organization sign-in rides the same version. */
+ *  `GET /api/mcp/status` are the only writers. */
 const mcpStatus = createMirror<string, MCPServerStatus>({
   kind: "mcp_status",
   async fetch(signal) {
@@ -324,78 +270,9 @@ const mcpStatus = createMirror<string, MCPServerStatus>({
     if (d?.subject === undefined) {
       return null;
     }
-    orgFetched = { status: d.identity_provider, stamp: d.subject };
     return { rows: new Map(d.servers.map((s) => [s.name, s])), stamp: d.subject };
   },
-  onFetched() {
-    if (orgFetched !== null) {
-      takeOrg(orgFetched.status, orgFetched.stamp, true);
-      orgFetched = null;
-    }
-  },
 });
-
-/** The saved organization identity provider (GET /api/mcp/identity-provider), null while none is. */
-export interface IdentityProviderConfig {
-  issuer: string;
-  client_id: string;
-  name?: string;
-  authorization_endpoint?: string;
-  token_endpoint?: string;
-}
-
-/** Whether the provider read has answered, and what it held. */
-export interface IdentityProviderRead {
-  readonly loaded: boolean;
-  readonly provider: IdentityProviderConfig | null;
-  /** The record holds a provider marotte could not read, which a save replaces. */
-  readonly unreadable: boolean;
-}
-
-export const identityProvider: Signal<IdentityProviderRead> = signal({
-  loaded: false,
-  provider: null,
-  unreadable: false,
-});
-
-/** Narrow GET /api/mcp/identity-provider's body. Exported for its test. */
-export function decodeIdentityProviderBody(v: unknown): Omit<IdentityProviderRead, "loaded"> {
-  const o = asObject(v, "$.idp");
-  const unreadable = optBool(o, "unreadable", "$.idp") ?? false;
-  const raw = o["identity_provider"];
-  if (raw === null || raw === undefined) {
-    return { provider: null, unreadable };
-  }
-  const p = asObject(raw, "$.idp.identity_provider");
-  const at = "$.idp.identity_provider";
-  const provider: IdentityProviderConfig = {
-    issuer: reqStr(p, "issuer", at),
-    client_id: reqStr(p, "client_id", at),
-  };
-  for (const key of ["name", "authorization_endpoint", "token_endpoint"] as const) {
-    const val = optStr(p, key, at);
-    if (val !== undefined && val !== "") {
-      provider[key] = val;
-    }
-  }
-  return { provider, unreadable };
-}
-
-/** The name a sign-in prompt gives the organization: the saved name, else kiro-cli's display name, else the issuer.
- *  Reactive inside an effect. */
-export function orgProviderName(): string {
-  const cfg = identityProvider.value.provider;
-  const reported = orgSignInStatus.value?.reported;
-  for (const n of [cfg?.name, reported?.display_name, cfg?.issuer, reported?.issuer]) {
-    if (n !== undefined && n.trim() !== "") {
-      return n.trim();
-    }
-  }
-  return ORG_NAME_FALLBACK;
-}
-
-/** What orgProviderName answers while neither marotte nor kiro-cli knows a name. */
-export const ORG_NAME_FALLBACK = "your organization";
 
 function idleStatus(name: string): RuntimeStatus {
   return { name, origin: "user", state: "idle" };
@@ -517,12 +394,10 @@ export function configuredServers(): Server[] {
 
 class MCPStateController {
   private readonly serversSlot = new CancellableSlot();
-  private readonly identityProviderSlot = new CancellableSlot();
   private serversFetchPending = false;
 
   abort(): void {
     this.serversSlot.abort();
-    this.identityProviderSlot.abort();
     this.serversFetchPending = false;
   }
 
@@ -561,22 +436,6 @@ class MCPStateController {
   /** Read the status inventory again (`Mirror.refetch`). */
   refetchStatus(signal?: AbortSignal): Promise<void> {
     return mcpStatus.refetch(signal);
-  }
-
-  /** Apply one `mcp_identity_provider` frame; a frame not newer than the held state is refused. */
-  applyOrgFrame(status: MCPIdentityProviderStatus, stamp: SubjectStamp | undefined): void {
-    if (!takeOrg(status, stamp, false) && stamp?.kind !== "mcp_status") {
-      void mcpStatus.refetch();
-    }
-  }
-
-  /** Read the saved identity provider again; a newer read supersedes this one, so an older body never lands last. */
-  async refetchIdentityProvider(): Promise<void> {
-    const abort = this.identityProviderSlot.start();
-    const d = await apiGetTyped("/api/mcp/identity-provider", decodeIdentityProviderBody, abort);
-    if (!abort.aborted && d !== null) {
-      identityProvider.value = { loaded: true, ...d };
-    }
   }
 }
 

@@ -124,9 +124,6 @@ const (
 	EventElicitationNeeded EventType = "elicitation_needed"
 	EventUserInputNeeded   EventType = "user_input_needed"
 	EventMCPConfigChanged  EventType = "mcp_config_changed"
-	// EventMCPIdentityProvider is a change of GET /api/mcp/status's identity_provider, stamped with
-	// the `mcp_status` version.
-	EventMCPIdentityProvider EventType = "mcp_identity_provider"
 	// EventMCPPoolChanged is an empty refetch signal for GET /api/mcp/pool: a
 	// session's pool was replaced or dropped.
 	EventMCPPoolChanged  EventType = "mcp_pool_changed"

@@ -21,7 +21,6 @@
   "GET /api/kiro-settings?keys": null,
   "GET /api/launch-rules": null,
   "GET /api/mcp": null,
-  "GET /api/mcp/identity-provider": null,
   "GET /api/mcp/status": "MCPStatusResponse",
   "GET /api/permissions/profile": "SecurityProfileView",
   "GET /api/recipes": "RecipesResponse",

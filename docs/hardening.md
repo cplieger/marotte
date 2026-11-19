@@ -61,7 +61,7 @@ marotte sends no telemetry. Its outbound requests are these:
 
 - the AI provider of the Kiro account you signed in with
 - AWS's sign-in service in your account's region, to sign in and to renew the sign-in, and Kiro's account service, to read the account's Kiro profile and email at sign-in
-- any MCP server you add, and the identity provider you set up on the **Organization sign-in** card, at its issuer and its sign-in and token addresses
+- any MCP server you add
 - the API of each forge you connect in the git panel, never on a private address unless that connection allows it
 - the public MCP registry when you search it
 - the kiro-cli download on first start, the tools you install, and the tool catalog refresh, once a day by default. When a github.com account is connected, its token goes with the tools' requests to GitHub's API and to no other host.

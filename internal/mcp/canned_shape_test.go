@@ -13,5 +13,4 @@ func TestCannedAnswers_ReadAsTheHandlersWrite(t *testing.T) {
 		Unreadable int       `json:"unreadable"`
 	}
 	testsupport.HoldCannedShape[serversAnswer](t, "GET /api/mcp")
-	testsupport.HoldCannedShape[identityProviderBody](t, "GET /api/mcp/identity-provider")
 }

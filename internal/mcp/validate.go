@@ -121,10 +121,7 @@ const (
 )
 
 // oauthRedirectHosts are the loopback hosts KAS serves its OAuth callback on.
-var oauthRedirectHosts = []string{"localhost", loopbackIPv4}
-
-// loopbackIPv4 is the IPv4 loopback address KAS serves its callbacks on.
-const loopbackIPv4 = "127.0.0.1"
+var oauthRedirectHosts = []string{"localhost", "127.0.0.1"}
 
 // Adding a new transport requires only a map entry, not a control-flow change. The init() below
 // validates that every known transport has a registered validator, preventing nil-call panics.
@@ -166,14 +163,7 @@ const (
 	fieldOAuthClientMetadataURL = "oauth_client_metadata_url"
 	fieldOAuthRedirectURI       = "oauth_redirect_uri"
 	fieldOAuthScopes            = "oauth_scopes"
-	fieldOAuthMode              = "oauth_mode"
 	fieldVersionNegotiation     = "version_negotiation"
-
-	fieldIDPIssuer                = "issuer"
-	fieldIDPClientID              = "client_id"
-	fieldIDPName                  = "name"
-	fieldIDPAuthorizationEndpoint = "authorization_endpoint"
-	fieldIDPTokenEndpoint         = "token_endpoint"
 )
 
 // fieldError is one validation failure, attributed to the wire field it
@@ -281,55 +271,8 @@ func validate(s *Server) error {
 		errs.addf(fieldVersionNegotiation, "version_negotiation must be %q or %q, got %q",
 			versionNegotiationAuto, versionNegotiationLegacy, s.VersionNegotiation)
 	}
-	if !s.OAuthMode.valid() {
-		errs.addf(fieldOAuthMode, "oauth_mode must be %q, %q or %q, got %q",
-			oauthModeBrowser, oauthModeEnterprise, oauthModeAuto, s.OAuthMode)
-	}
 	return errs.join()
 }
-
-// validateIdentityProvider is KAS's own rule for its identityProvider (parseMcpIdentityProviderConfig): an issuer,
-// a client id, a name when one is given, and every URL https or on a loopback host. A provider KAS refuses would
-// leave every enterprise server signed out with only invalid-config to say why.
-func validateIdentityProvider(p *identityProvider) error {
-	var errs fieldErrs
-	errs.merge(validateIDPURL(fieldIDPIssuer, p.Issuer, true))
-	errs.merge(validateIDPURL(fieldIDPAuthorizationEndpoint, p.AuthorizationEndpoint, false))
-	errs.merge(validateIDPURL(fieldIDPTokenEndpoint, p.TokenEndpoint, false))
-	if strings.TrimSpace(p.ClientID) == "" {
-		errs.addf(fieldIDPClientID, "client_id required")
-	} else {
-		errs.merge(validateOAuthField(fieldIDPClientID, p.ClientID, oauthClientIDMax))
-	}
-	if p.Name != "" && strings.TrimSpace(p.Name) == "" {
-		errs.addf(fieldIDPName, "name must not be blank")
-	}
-	errs.merge(validateOAuthField(fieldIDPName, p.Name, nameMaxLen))
-	return errs.join()
-}
-
-// validateIDPURL accepts an https URL, or an http one on a loopback host, as KAS does.
-func validateIDPURL(field, raw string, required bool) error {
-	if raw == "" {
-		if required {
-			return &fieldError{Field: field, Msg: field + " required"}
-		}
-		return nil
-	}
-	if err := validateOAuthField(field, raw, urlMax); err != nil {
-		return err
-	}
-	u, err := url.Parse(raw)
-	ok := err == nil && u.Host != "" && u.User == nil &&
-		(u.Scheme == schemeHTTPS || u.Scheme == schemeHTTP && slices.Contains(idpLoopbackHosts, strings.ToLower(u.Hostname())))
-	if !ok {
-		return &fieldError{Field: field, Msg: fmt.Sprintf("%s must be an https URL, or http on localhost: %q", field, raw)}
-	}
-	return nil
-}
-
-// idpLoopbackHosts are the hosts KAS lets an identity provider URL use without https.
-var idpLoopbackHosts = []string{"localhost", loopbackIPv4, "::1"}
 
 // KAS clamps a larger timeout silently, so a value past it would be stored as one number and
 // enforced as another.
@@ -420,9 +363,6 @@ func validateStdio(s *Server) error {
 	if len(s.OAuthScopes) > 0 {
 		errs.addf(fieldOAuthScopes, "stdio transport cannot have oauth_scopes")
 	}
-	if s.OAuthMode != "" {
-		errs.addf(fieldOAuthMode, "stdio transport cannot have oauth_mode")
-	}
 	errs.merge(validateArgs(s.Args))
 	errs.merge(validateKeyPairs(fieldEnvPairs, s.Env, maxEnvEntries, envValueMax, false))
 	return errs.join()
@@ -488,7 +428,6 @@ func validateRegistry(s *Server) error {
 		{fieldOAuthClientMetadataURL, s.OAuthClientMetadataURL != ""},
 		{fieldOAuthRedirectURI, s.OAuthRedirectURI != ""},
 		{fieldOAuthScopes, len(s.OAuthScopes) > 0},
-		{fieldOAuthMode, s.OAuthMode != ""},
 	} {
 		if f.set {
 			errs.addf(f.field, "a registry server cannot have %s: sign-in overrides are not offered for registry servers", f.field)
@@ -543,7 +482,7 @@ func validateRemoteURL(raw string) error {
 			Msg:   fmt.Sprintf("url must be an absolute http(s) URL: %q", raw),
 		}
 	}
-	if u.Scheme != schemeHTTP && u.Scheme != schemeHTTPS {
+	if u.Scheme != schemeHTTP && u.Scheme != "https" {
 		return &fieldError{
 			Field: fieldURL,
 			Msg:   fmt.Sprintf("url scheme must be http or https: %q", u.Scheme),
@@ -573,7 +512,7 @@ func validateOAuthMetadataURL(raw string) error {
 		return err
 	}
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != schemeHTTPS || u.Host == "" || u.Path == "" || u.Path == "/" {
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.Path == "" || u.Path == "/" {
 		return &fieldError{
 			Field: fieldOAuthClientMetadataURL,
 			Msg:   fmt.Sprintf("oauth_client_metadata_url must be an https URL with a path: %q", raw),
@@ -585,9 +524,6 @@ func validateOAuthMetadataURL(raw string) error {
 // schemeHTTP is the plain-HTTP URL scheme, which shares its spelling with
 // transportHTTP but is a different vocabulary.
 const schemeHTTP = "http"
-
-// schemeHTTPS is the TLS URL scheme.
-const schemeHTTPS = "https"
 
 // validateOAuthRedirectURI mirrors KAS's three accepted redirectUri forms
 // ("host:port", ":port", or an http URL with no query or fragment) on a
@@ -634,7 +570,7 @@ func splitOAuthRedirectURI(v, raw string) (host, port, msg string) {
 		}
 		return strings.ToLower(u.Hostname()), u.Port(), ""
 	case strings.HasPrefix(v, ":"):
-		return loopbackIPv4, v[1:], ""
+		return "127.0.0.1", v[1:], ""
 	}
 	h, p, ok := strings.Cut(v, ":")
 	if !ok || h == "" || strings.ContainsAny(h, " /@") {

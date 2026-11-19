@@ -2591,48 +2591,6 @@ export interface LoginResult {
 }
 
 /**
- * MCPIdentityProviderPayload is the payload for type="mcp_identity_provider": the organization
- * sign-in changed, stamped with the `mcp_status` version.
- */
-export interface MCPIdentityProviderPayload {
-  status: MCPIdentityProviderStatus;
-}
-
-/**
- * MCPIdentityProviderState is the organization identity provider as kiro-cli last reported it on
- * _kiro/mcp/status. State is kiro-cli's word verbatim: signed-out, signing-in, signed-in,
- * session-expired, invalid-config (with ErrorMessage), or one it adds later. Account is set only
- * while signed in.
- */
-export interface MCPIdentityProviderState {
-  state: string;
-  issuer?: string;
-  display_name?: string;
-  account?: string;
-  error_message?: string;
-}
-
-/**
- * MCPIdentityProviderStatus is the organization sign-in's runtime state, beside the per-server rows;
- * its configuration is GET /api/mcp/identity-provider's.
- */
-export interface MCPIdentityProviderStatus {
-  /** Reported is nil before any session reported a provider, or while none is configured. */
-  reported?: MCPIdentityProviderState;
-  /**
-   * SignInDeadline is set while a sign-in started from marotte stands: when kiro-cli stops waiting
-   * for its browser callback.
-   */
-  sign_in_deadline?: string;
-  /** SignInURL is that sign-in's page once kiro-cli opened it. */
-  sign_in_url?: string;
-  /** Error is why kiro-cli refused the last sign-in, until another starts or a report supersedes it. */
-  error?: string;
-  /** Relayed stops a reload or second device offering the paste box for a spent code. */
-  relayed?: boolean;
-}
-
-/**
  * MCPPrewarmPayload is the payload for type="mcp_prewarm", emitted when a prewarm install starts,
  * succeeds or fails, and when a server joins or leaves one in flight. State applies to exactly the
  * servers ServerIDs names.
@@ -2723,11 +2681,6 @@ export interface MCPStatusPayload {
 export interface MCPStatusResponse {
   /** Subject is the `mcp_status` digest stamp with the hub epoch, read with the rows. */
   subject?: SubjectStamp;
-  /**
-   * IdentityProvider is the organization sign-in at the same version as the rows, absent while no provider was
-   * reported and no sign-in stands.
-   */
-  identity_provider?: MCPIdentityProviderStatus;
   servers: MCPServerStatus[];
 }
 
@@ -2860,15 +2813,13 @@ export interface OpenEntry {
  * than auto-opening. Only http/https URLs are broadcast. ExpiresAt is when KAS stops waiting for
  * the callback; a replayed event carries the original time, so the client shows only what is left.
  * Server is the MCP server KAS named, and FlowID the mid-session re-auth that mcp_sign_in_closed
- * ends; either is absent when KAS named none. IdentityProviderSignIn marks the organization
- * sign-in, which mcp_identity_provider ends.
+ * ends; either is absent when KAS named none.
  */
 export interface OpenExternalURLPayload {
   expires_at: string;
   url: string;
   server?: string;
   flow_id?: string;
-  identity_provider_sign_in?: boolean;
 }
 
 /**

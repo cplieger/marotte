@@ -536,14 +536,12 @@ type GovernanceRegistryServer struct {
 // than auto-opening. Only http/https URLs are broadcast. ExpiresAt is when KAS stops waiting for
 // the callback; a replayed event carries the original time, so the client shows only what is left.
 // Server is the MCP server KAS named, and FlowID the mid-session re-auth that mcp_sign_in_closed
-// ends; either is absent when KAS named none. IdentityProviderSignIn marks the organization
-// sign-in, which mcp_identity_provider ends.
+// ends; either is absent when KAS named none.
 type OpenExternalURLPayload struct {
-	ExpiresAt              time.Time `json:"expires_at"`
-	URL                    string    `json:"url"`
-	Server                 string    `json:"server,omitempty"`
-	FlowID                 string    `json:"flow_id,omitempty"`
-	IdentityProviderSignIn bool      `json:"identity_provider_sign_in,omitempty"`
+	ExpiresAt time.Time `json:"expires_at"`
+	URL       string    `json:"url"`
+	Server    string    `json:"server,omitempty"`
+	FlowID    string    `json:"flow_id,omitempty"`
 }
 
 // MCPSignInClosedPayload is the payload for type="mcp_sign_in_closed": KAS ended the mid-session

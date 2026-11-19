@@ -46,10 +46,7 @@ vi.mock("./mcp-state.js", () => ({
   // A function, not undefined: a registry row calls it, and nothing here configures a server.
   configuredServers: () => [],
   SECRET_MASK: "***",
-  // Present-but-undefined for real-ESM linking; no case opens the remote panel.
-  identityProvider: undefined,
 }));
-vi.mock("./mcp-org-sign-in.js", () => ({ ORG_CARD_ID: "mcp-org-sign-in" }));
 vi.mock("./mcp-pairs.js", () => ({
   renderKeyPairList: () => {
     /* noop */
@@ -74,7 +71,7 @@ vi.mock("./actions/mcp.js", () => ({
 }));
 
 import { simplifyName } from "./mcp-panels-search.js";
-import { extractNpxPackage, renderImportNotes, renderSignInMethod } from "./mcp-panels.js";
+import { extractNpxPackage, renderImportNotes } from "./mcp-panels.js";
 import type { Server } from "./mcp-state.js";
 
 describe("simplifyName", () => {
@@ -195,56 +192,5 @@ describe("renderImportNotes", () => {
       "$schema: Not stored: a schema pointer, not configuration.",
     ]);
     expect(items.every((li) => li.firstChild?.nodeName === "CODE")).toBe(true);
-  });
-});
-
-describe("renderSignInMethod", () => {
-  const optionStates = (box: HTMLElement): [string, boolean][] =>
-    [...box.querySelectorAll("option")].map((o) => [o.textContent ?? "", o.disabled]);
-
-  it("offers the three methods and saves the chosen organization mode", () => {
-    const m = renderSignInMethod(undefined, true, () => undefined);
-    expect(optionStates(m.element)).toEqual([
-      ["Browser", false],
-      ["Organization sign-in", false],
-      ["Organization, then browser", false],
-    ]);
-    expect(m.value()).toBeUndefined();
-    const select = m.element.querySelector("select");
-    if (select === null) {
-      throw new Error("no select");
-    }
-    select.value = "auto";
-    expect(m.value()).toBe("auto");
-    expect(m.element.querySelector("a")).toBeNull();
-  });
-
-  it("keeps a stored mode", () => {
-    expect(renderSignInMethod("enterprise", true, () => undefined).value()).toBe("enterprise");
-    // KAS's browser value and the default are the same choice, saved as the default.
-    expect(renderSignInMethod("browser", true, () => undefined).value()).toBeUndefined();
-  });
-
-  it("disables the organization options until one is set up, and links to its card", () => {
-    let went = 0;
-    const m = renderSignInMethod(undefined, false, () => {
-      went++;
-    });
-    expect(optionStates(m.element)).toEqual([
-      ["Browser", false],
-      ["Organization sign-in", true],
-      ["Organization, then browser", true],
-    ]);
-    const link = m.element.querySelector("a");
-    expect(link?.textContent).toBe("Set up organization sign-in first");
-    expect(link?.getAttribute("href")).toBe("#mcp-org-sign-in");
-    link?.click();
-    expect(went).toBe(1);
-  });
-
-  it("keeps a stored organization mode selectable with none set up, so opening the form changes nothing", () => {
-    const m = renderSignInMethod("auto", false, () => undefined);
-    expect(m.value()).toBe("auto");
-    expect(optionStates(m.element)[2]).toEqual(["Organization, then browser", false]);
   });
 });
