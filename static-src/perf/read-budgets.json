@@ -14,6 +14,10 @@
           "count": 1,
           "maxBytes": 96
         },
+        "GET /api/mcp/identity-provider": {
+          "count": 1,
+          "maxBytes": 133
+        },
         "GET /api/config/standing": {
           "count": 1,
           "maxBytes": 32
@@ -104,6 +108,10 @@
           "count": 1,
           "maxBytes": 1681
         },
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
+        },
         "GET /api/chats/{chat}/turns": {
           "count": 1,
           "maxBytes": 4429
@@ -111,10 +119,6 @@
         "GET /api/git/status-all": {
           "count": 1,
           "maxBytes": 5046
-        },
-        "POST /api/events/view": {
-          "count": 1,
-          "maxBytes": 0
         },
         "POST /api/events/alive": {
           "count": 1,
@@ -172,6 +176,10 @@
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
+        },
+        "GET /api/mcp/identity-provider": {
+          "count": 1,
+          "maxBytes": 133
         },
         "GET /api/config/standing": {
           "count": 1,
@@ -331,6 +339,10 @@
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
+        },
+        "GET /api/mcp/identity-provider": {
+          "count": 1,
+          "maxBytes": 133
         },
         "GET /api/config/standing": {
           "count": 2,
@@ -522,6 +534,10 @@
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
+        },
+        "GET /api/mcp/identity-provider": {
+          "count": 1,
+          "maxBytes": 133
         },
         "GET /api/config/standing": {
           "count": 2,
@@ -734,6 +750,10 @@
           "count": 1,
           "maxBytes": 96
         },
+        "GET /api/mcp/identity-provider": {
+          "count": 1,
+          "maxBytes": 133
+        },
         "GET /api/config/standing": {
           "count": 1,
           "maxBytes": 32
@@ -822,11 +842,15 @@
         },
         "GET /api/git/status-all?paths": {
           "count": 12,
-          "maxBytes": 5050
+          "maxBytes": 5049
         },
         "GET /api/git/status-all": {
           "count": 13,
           "maxBytes": 5046
+        },
+        "GET /api/chats/{chat}/turns": {
+          "count": 1,
+          "maxBytes": 604
         },
         "POST /api/events/view": {
           "count": 1,
@@ -835,10 +859,6 @@
         "POST /api/events/alive": {
           "count": 1,
           "maxBytes": 0
-        },
-        "GET /api/chats/{chat}/turns": {
-          "count": 1,
-          "maxBytes": 604
         }
       },
       "topics": []
@@ -859,7 +879,7 @@
         },
         "GET /api/git/status-all?paths": {
           "count": 12,
-          "maxBytes": 5050
+          "maxBytes": 5049
         },
         "GET /api/git/status-all": {
           "count": 13,
@@ -900,6 +920,10 @@
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
+        },
+        "GET /api/mcp/identity-provider": {
+          "count": 1,
+          "maxBytes": 133
         },
         "GET /api/config/standing": {
           "count": 1,
@@ -1084,6 +1108,10 @@
           "count": 1,
           "maxBytes": 96
         },
+        "GET /api/mcp/identity-provider": {
+          "count": 1,
+          "maxBytes": 133
+        },
         "GET /api/config/standing": {
           "count": 1,
           "maxBytes": 32
@@ -1160,13 +1188,13 @@
           "count": 1,
           "maxBytes": 0
         },
-        "GET /api/forges/{forge}/repos": {
-          "count": 1,
-          "maxBytes": 4058
-        },
         "GET /api/forges/inventory": {
           "count": 1,
           "maxBytes": 69179
+        },
+        "GET /api/forges/{forge}/repos": {
+          "count": 1,
+          "maxBytes": 4058
         }
       },
       "topics": []
@@ -1258,6 +1286,10 @@
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
+        },
+        "GET /api/mcp/identity-provider": {
+          "count": 1,
+          "maxBytes": 133
         },
         "GET /api/config/standing": {
           "count": 1,
@@ -1418,6 +1450,10 @@
           "count": 1,
           "maxBytes": 96
         },
+        "GET /api/mcp/identity-provider": {
+          "count": 1,
+          "maxBytes": 133
+        },
         "GET /api/config/standing": {
           "count": 1,
           "maxBytes": 32
@@ -1573,6 +1609,10 @@
           "count": 1,
           "maxBytes": 96
         },
+        "GET /api/mcp/identity-provider": {
+          "count": 1,
+          "maxBytes": 133
+        },
         "GET /api/config/standing": {
           "count": 1,
           "maxBytes": 32
@@ -1633,13 +1673,13 @@
           "count": 1,
           "maxBytes": 710
         },
-        "GET /api/runs/{run}?view=glance": {
-          "count": 1,
-          "maxBytes": 61788
-        },
         "GET /api/chats/{chat}": {
           "count": 1,
           "maxBytes": 222932
+        },
+        "GET /api/runs/{run}?view=glance": {
+          "count": 1,
+          "maxBytes": 61788
         },
         "GET /api/chats/{chat}/turns": {
           "count": 1,
@@ -1664,7 +1704,7 @@
     "live": {
       "routes": {
         "GET /api/runs/{run}?view=glance": {
-          "count": 51,
+          "count": 55,
           "maxBytes": 61788
         }
       },
@@ -1723,6 +1763,10 @@
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
+        },
+        "GET /api/mcp/identity-provider": {
+          "count": 1,
+          "maxBytes": 133
         },
         "GET /api/config/standing": {
           "count": 1,
@@ -1823,7 +1867,7 @@
     "live": {
       "routes": {
         "GET /api/runs/{run}?view=glance": {
-          "count": 46,
+          "count": 51,
           "maxBytes": 61788
         }
       },
@@ -1895,6 +1939,10 @@
           "count": 1,
           "maxBytes": 96
         },
+        "GET /api/mcp/identity-provider": {
+          "count": 1,
+          "maxBytes": 133
+        },
         "GET /api/config/standing": {
           "count": 1,
           "maxBytes": 32
@@ -1965,7 +2013,7 @@
         },
         "GET /api/tools": {
           "count": 1,
-          "maxBytes": 3115
+          "maxBytes": 3111
         }
       },
       "topics": []
@@ -2045,7 +2093,7 @@
         },
         "GET /api/tools": {
           "count": 1,
-          "maxBytes": 3115
+          "maxBytes": 3111
         }
       },
       "topics": []
@@ -2066,6 +2114,10 @@
           "count": 1,
           "maxBytes": 96
         },
+        "GET /api/mcp/identity-provider": {
+          "count": 1,
+          "maxBytes": 133
+        },
         "GET /api/config/standing": {
           "count": 1,
           "maxBytes": 32
@@ -2136,7 +2188,7 @@
         },
         "GET /api/tools": {
           "count": 1,
-          "maxBytes": 3115
+          "maxBytes": 3111
         }
       },
       "topics": []
@@ -2216,7 +2268,7 @@
         },
         "GET /api/tools": {
           "count": 1,
-          "maxBytes": 3115
+          "maxBytes": 3111
         }
       },
       "topics": []
@@ -2236,6 +2288,10 @@
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
+        },
+        "GET /api/mcp/identity-provider": {
+          "count": 1,
+          "maxBytes": 133
         },
         "GET /api/config/standing": {
           "count": 1,
@@ -2362,6 +2418,10 @@
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
+        },
+        "GET /api/mcp/identity-provider": {
+          "count": 1,
+          "maxBytes": 133
         },
         "GET /api/config/standing": {
           "count": 1,

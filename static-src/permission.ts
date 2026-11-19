@@ -746,36 +746,37 @@ function alwaysPatterns(consent: PermissionConsent): AlwaysPattern[] {
 
 /** Each reach's button and chooser name and what its hint says the rule covers. The user reach's
  *  button is the always option itself, named by KAS; on a deny its chooser says Always deny. */
-const REACH_COPY: Readonly<Record<AlwaysReach, { readonly name: string; readonly hint: string }>> = {
-  chat: {
-    name: "Allow for this chat",
-    hint:
-      "kiro-cli keeps this rule for this chat's session only. Nothing is saved and Permissions " +
-      "stay as they are. It may ask again after the chat closes or reloads.",
-  },
-  step: {
-    name: "Allow for this step",
-    hint:
-      "kiro-cli keeps this rule for this workflow step only. Nothing is saved, and the run's " +
-      "other steps still ask.",
-  },
-  run: {
-    name: "Allow for this run",
-    hint: "kiro-cli keeps this rule until this run ends. Nothing is saved.",
-  },
-  launching_chat: {
-    name: "Allow for this chat and its runs",
-    hint:
-      "kiro-cli keeps this rule in the chat that launched this run, for that chat and every run " +
-      "it launches, until its session closes or reloads. Nothing is saved.",
-  },
-  user: {
-    name: "Always allow",
-    hint:
-      "Saves the rule to your user permissions, which every kiro-cli session on this account " +
-      "reads, not only these chats. Each chat keeps its security profile.",
-  },
-};
+const REACH_COPY: Readonly<Record<AlwaysReach, { readonly name: string; readonly hint: string }>> =
+  {
+    chat: {
+      name: "Allow for this chat",
+      hint:
+        "kiro-cli keeps this rule for this chat's session only. Nothing is saved and Permissions " +
+        "stay as they are. It may ask again after the chat closes or reloads.",
+    },
+    step: {
+      name: "Allow for this step",
+      hint:
+        "kiro-cli keeps this rule for this workflow step only. Nothing is saved, and the run's " +
+        "other steps still ask.",
+    },
+    run: {
+      name: "Allow for this run",
+      hint: "kiro-cli keeps this rule until this run ends. Nothing is saved.",
+    },
+    launching_chat: {
+      name: "Allow for this chat and its runs",
+      hint:
+        "kiro-cli keeps this rule in the chat that launched this run, for that chat and every run " +
+        "it launches, until its session closes or reloads. Nothing is saved.",
+    },
+    user: {
+      name: "Always allow",
+      hint:
+        "Saves the rule to your user permissions, which every kiro-cli session on this account " +
+        "reads, not only these chats. Each chat keeps its security profile.",
+    },
+  };
 
 /** Open or close the pattern chooser an always option leads to. Saving is the second click, on a
  *  pattern, so a rule is never saved for a scope the reader did not see. */

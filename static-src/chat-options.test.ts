@@ -777,7 +777,9 @@ describe("supervised mode", () => {
 
 describe("messages between chats", () => {
   function messagingRow(card: HTMLElement): HTMLLabelElement {
-    const row = card.querySelector<HTMLLabelElement>('label.chat-opt-row[for="chat-opt-messaging"]');
+    const row = card.querySelector<HTMLLabelElement>(
+      'label.chat-opt-row[for="chat-opt-messaging"]',
+    );
     if (row === null) {
       throw new Error("no messaging row");
     }

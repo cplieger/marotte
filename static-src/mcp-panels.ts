@@ -605,7 +605,11 @@ interface SignInChoice {
 function signInChoice(): SignInChoice {
   const known = maybeEl(OAUTH_MODE_ID);
   if (known instanceof HTMLSelectElement) {
-    return { row: known.closest("label") as HTMLLabelElement, select: known };
+    const row = known.closest("label");
+    if (row === null) {
+      throw new Error("mcp: Sign-in choice outside its label");
+    }
+    return { row, select: known };
   }
   const select = el(
     "select",

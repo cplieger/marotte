@@ -585,9 +585,7 @@ function switchRow(opts: {
       row.classList.toggle("hidden", hidden);
     }
     const nextHint =
-      opts.busyHint !== undefined && s !== undefined && watchBusy(s.id)
-        ? opts.busyHint
-        : opts.hint;
+      opts.busyHint !== undefined && s !== undefined && watchBusy(s.id) ? opts.busyHint : opts.hint;
     if (hint.textContent !== nextHint) {
       hint.textContent = nextHint;
     }

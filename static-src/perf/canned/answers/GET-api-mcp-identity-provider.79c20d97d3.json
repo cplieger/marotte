@@ -1,0 +1,1 @@
+{"route":"GET /api/mcp/identity-provider","url":"/api/mcp/identity-provider","decoder":"IdentityProviderResponse","body":{"config":null,"subject":{"kind":"mcp_identity_provider","ref":"","version":"0","epoch":"ca0000000000ca00"},"status":{"known":false}}}

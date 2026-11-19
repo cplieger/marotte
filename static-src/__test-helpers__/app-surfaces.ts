@@ -1788,7 +1788,11 @@ export const SURFACES: readonly Surface[] = [
             kind: "execute",
             run_id: "wf_1",
             node_id: "search",
-            consent: { capability: "shell", subject: "grep -rn foo", reaches: ["step", "run", "user"] },
+            consent: {
+              capability: "shell",
+              subject: "grep -rn foo",
+              reaches: ["step", "run", "user"],
+            },
             options: [
               { option_id: "a", name: "Allow", kind: "allow_once" },
               { option_id: "aa", name: "Always allow", kind: "allow_always" },

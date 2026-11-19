@@ -104,7 +104,9 @@ describe("an always option opens a chooser instead of answering", () => {
     button(card, "Always allow").click();
     [...card.querySelectorAll<HTMLButtonElement>(".always-choice-option")][1]?.click();
 
-    expect(answers).toEqual([{ optionID: "always-accept", alwaysResource: "head *", alwaysReach: "user" }]);
+    expect(answers).toEqual([
+      { optionID: "always-accept", alwaysResource: "head *", alwaysReach: "user" },
+    ]);
   });
 
   it("offers the same patterns for Always deny and answers its own option", () => {
@@ -113,7 +115,9 @@ describe("an always option opens a chooser instead of answering", () => {
     expect(card.querySelector(".always-choice-title")?.textContent).toBe("Always deny:");
     [...card.querySelectorAll<HTMLButtonElement>(".always-choice-option")][0]?.click();
 
-    expect(answers).toEqual([{ optionID: "always-reject", alwaysResource: "head -1", alwaysReach: "user" }]);
+    expect(answers).toEqual([
+      { optionID: "always-reject", alwaysResource: "head -1", alwaysReach: "user" },
+    ]);
   });
 
   it("closes on a second click and switches between the two always options", () => {
@@ -192,7 +196,9 @@ describe("an always option opens a chooser instead of answering", () => {
     button(card, "Always allow").click();
     [...card.querySelectorAll<HTMLButtonElement>(".always-choice-option")][1]?.click();
 
-    expect(answers).toEqual([{ optionID: "always-accept", alwaysResource: "git stash *", alwaysReach: "user" }]);
+    expect(answers).toEqual([
+      { optionID: "always-accept", alwaysResource: "git stash *", alwaysReach: "user" },
+    ]);
   });
 
   it.each([
@@ -285,7 +291,9 @@ describe("an always option opens a chooser instead of answering", () => {
     button(card, "Always allow").click();
     [...card.querySelectorAll<HTMLButtonElement>(".always-choice-option")][0]?.click();
 
-    expect(answers).toEqual([{ optionID: "always-accept", alwaysResource: subject, alwaysReach: "user" }]);
+    expect(answers).toEqual([
+      { optionID: "always-accept", alwaysResource: subject, alwaysReach: "user" },
+    ]);
   });
 
   it("sends the server's folder back exactly as shown", () => {
@@ -296,7 +304,9 @@ describe("an always option opens a chooser instead of answering", () => {
     button(card, "Always allow").click();
     [...card.querySelectorAll<HTMLButtonElement>(".always-choice-option")][1]?.click();
 
-    expect(answers).toEqual([{ optionID: "always-accept", alwaysResource: folder, alwaysReach: "user" }]);
+    expect(answers).toEqual([
+      { optionID: "always-accept", alwaysResource: folder, alwaysReach: "user" },
+    ]);
   });
 
   it("leaves an always option out when the ask names nothing to save", () => {
@@ -385,7 +395,9 @@ describe("Allow for this chat answers the always option with the chat reach", ()
     expect(card.querySelector(".always-choice-title")?.textContent).toBe("Always allow:");
     expect(card.querySelector(".always-choice-hint")?.textContent).toMatch(/^Saves the rule/);
     [...card.querySelectorAll<HTMLButtonElement>(".always-choice-option")][0]?.click();
-    expect(answers).toEqual([{ optionID: "always-accept", alwaysResource: "head -1", alwaysReach: "user" }]);
+    expect(answers).toEqual([
+      { optionID: "always-accept", alwaysResource: "head -1", alwaysReach: "user" },
+    ]);
   });
 
   it("closes on a second click", () => {

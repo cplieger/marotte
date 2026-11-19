@@ -22,12 +22,7 @@ import {
 import type { IdentityProvider, MCPIdentityProviderPayload } from "./wire/types.gen.js";
 
 type CardState =
-  | "none"
-  | "signed-out"
-  | "signing-in"
-  | "signed-in"
-  | "session-expired"
-  | "invalid-config";
+  "none" | "signed-out" | "signing-in" | "signed-in" | "session-expired" | "invalid-config";
 
 /** The card's state: none while marotte holds no provider, else kiro-cli's report. A Sign in the user started is
  *  signing in before kiro-cli says so, and an unreported provider is not signed in. */
@@ -112,11 +107,21 @@ function identityText(cfg: IdentityProviderConfig, name: string, s: CardState): 
   if (cfg.config === null) {
     return UNREADABLE;
   }
-  return name === "" || name === cfg.config.issuer ? cfg.config.issuer : `${name} · ${cfg.config.issuer}`;
+  return name === "" || name === cfg.config.issuer
+    ? cfg.config.issuer
+    : `${name} · ${cfg.config.issuer}`;
 }
 
-function actionBtn(label: string, cls: string, run: (btn: HTMLButtonElement) => Promise<unknown>): HTMLButtonElement {
-  const btn = el("button", { type: "button", className: `btn-small ${cls}` }, label) as HTMLButtonElement;
+function actionBtn(
+  label: string,
+  cls: string,
+  run: (btn: HTMLButtonElement) => Promise<unknown>,
+): HTMLButtonElement {
+  const btn = el(
+    "button",
+    { type: "button", className: `btn-small ${cls}` },
+    label,
+  ) as HTMLButtonElement;
   btn.addEventListener("click", () => {
     if (btn.disabled) {
       return;
@@ -198,7 +203,9 @@ function buildForm(onClose: () => void): ProviderForm {
       spellcheck: "false",
     }) as HTMLInputElement;
     inputs.set(f.key, input);
-    const aux = OPTIONAL.has(f.key) ? [" ", el("span", { className: "tool-form-label-aux" }, "(optional)")] : [];
+    const aux = OPTIONAL.has(f.key)
+      ? [" ", el("span", { className: "tool-form-label-aux" }, "(optional)")]
+      : [];
     return el(
       "label",
       { className: "tool-form-label" },
@@ -209,8 +216,16 @@ function buildForm(onClose: () => void): ProviderForm {
     );
   });
   const err = el("p", { className: "section-hint mcp-form-error hidden" }) as HTMLParagraphElement;
-  const save = el("button", { type: "submit", className: "btn-small btn-primary mcp-idp-save" }, "Save") as HTMLButtonElement;
-  const discard = el("button", { type: "button", className: "btn-small mcp-idp-discard" }, "Cancel") as HTMLButtonElement;
+  const save = el(
+    "button",
+    { type: "submit", className: "btn-small btn-primary mcp-idp-save" },
+    "Save",
+  ) as HTMLButtonElement;
+  const discard = el(
+    "button",
+    { type: "button", className: "btn-small mcp-idp-discard" },
+    "Cancel",
+  ) as HTMLButtonElement;
   const form = el(
     "form",
     { className: "mcp-idp-form", autocomplete: "off", novalidate: true, hidden: true },
@@ -281,10 +296,20 @@ export function mountIdentityProviderCard(host: HTMLElement, slot: SignInSlot): 
     editing.value = false;
   });
 
-  const signIn = actionBtn("Sign in", "mcp-idp-sign-in", () => signInOrganization.dispatch(undefined));
-  const cancel = actionBtn("Cancel", "mcp-idp-cancel", () => signOutOrganization.dispatch(undefined));
-  const signOut = actionBtn("Sign out", "mcp-idp-sign-out", () => signOutOrganization.dispatch(undefined));
-  const edit = el("button", { type: "button", className: "btn-small mcp-idp-edit" }, "Edit") as HTMLButtonElement;
+  const signIn = actionBtn("Sign in", "mcp-idp-sign-in", () =>
+    signInOrganization.dispatch(undefined),
+  );
+  const cancel = actionBtn("Cancel", "mcp-idp-cancel", () =>
+    signOutOrganization.dispatch(undefined),
+  );
+  const signOut = actionBtn("Sign out", "mcp-idp-sign-out", () =>
+    signOutOrganization.dispatch(undefined),
+  );
+  const edit = el(
+    "button",
+    { type: "button", className: "btn-small mcp-idp-edit" },
+    "Edit",
+  ) as HTMLButtonElement;
   edit.addEventListener("click", () => {
     editing.value = true;
     form.open(identityProviderConfig.peek().config);
@@ -305,7 +330,15 @@ export function mountIdentityProviderCard(host: HTMLElement, slot: SignInSlot): 
       },
     });
   });
-  const actions = el("div", { className: "mcp-idp-actions" }, signIn, cancel, signOut, edit, remove);
+  const actions = el(
+    "div",
+    { className: "mcp-idp-actions" },
+    signIn,
+    cancel,
+    signOut,
+    edit,
+    remove,
+  );
 
   host.replaceChildren(
     el("h3", { className: "mcp-idp-title" }, "Organization sign-in"),
@@ -333,14 +366,17 @@ export function mountIdentityProviderCard(host: HTMLElement, slot: SignInSlot): 
     if (shownURL !== url) {
       shownURL = url;
       paste = null;
-      slotBox.replaceChildren(slot.link(url), el("p", { className: "mcp-sign-in-hint" }, TIME_LIMIT));
+      slotBox.replaceChildren(
+        slot.link(url),
+        el("p", { className: "mcp-sign-in-hint" }, TIME_LIMIT),
+      );
     }
     // A relayed code is spent, so a second paste can only fail.
     if (p?.relayed === true) {
       paste?.remove();
       paste = null;
-    } else if (paste === null) {
-      paste = slotBox.appendChild(slot.paste());
+    } else {
+      paste ??= slotBox.appendChild(slot.paste());
     }
   };
 

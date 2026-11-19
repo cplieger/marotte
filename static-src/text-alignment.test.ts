@@ -455,9 +455,7 @@ function sectionGaps(): { section: string; top: number; bottom: number; pad: num
       const hint = row.querySelector(".section-hint:not([hidden])");
       const band = inkBand(text);
       const end =
-        knob === null
-          ? inkBand(hint ?? text).endBaseline
-          : knob.getBoundingClientRect().bottom;
+        knob === null ? inkBand(hint ?? text).endBaseline : knob.getBoundingClientRect().bottom;
       return {
         section: knob === null ? "Fallback" : "effort",
         top: band.top - inner,
@@ -516,9 +514,10 @@ describe("the model card's sections", () => {
     await frames();
     expect(hintLines()).toBeGreaterThanOrEqual(2);
     const fallback = sectionGaps().find((g) => g.section === "Fallback")!;
-    expect(Math.abs(fallback.top - fallback.bottom) / 2, JSON.stringify(fallback)).toBeLessThanOrEqual(
-      CENTRE_PX,
-    );
+    expect(
+      Math.abs(fallback.top - fallback.bottom) / 2,
+      JSON.stringify(fallback),
+    ).toBeLessThanOrEqual(CENTRE_PX);
 
     await page.viewport(desktop.w, desktop.h);
     await mountSurface(surface("the model popup"), desktop.size, desktop.tier);

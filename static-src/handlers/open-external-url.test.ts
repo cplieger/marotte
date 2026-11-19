@@ -223,7 +223,10 @@ describe("the organization sign-in a refused tool call starts", () => {
   });
 
   it("leaves a server's banner alone", () => {
-    fireSSE("open_external_url", "", { ...signIn("https://auth.example.com/oauth?state=f1"), server: "linear" });
+    fireSSE("open_external_url", "", {
+      ...signIn("https://auth.example.com/oauth?state=f1"),
+      server: "linear",
+    });
     mockClearBannerCodes.mockClear();
 
     fireSSE("mcp_identity_provider", "", frame("signed-in"));

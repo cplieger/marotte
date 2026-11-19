@@ -4,15 +4,28 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { http, HttpResponse } from "msw";
 import { setupWorker } from "msw/browser";
 
+import type * as ToolsActions from "./actions/tools.js";
+import type * as Tools from "./tools.js";
+
 // The panels' graph reaches the tools installer; no case installs anything.
-vi.mock("./actions/tools.js", () => ({ getToolsStatus: { dispatch: async () => null } }));
-vi.mock("./tools.js", () => ({ installToolAndWait: async () => ({ ok: true }) }));
+vi.mock("./actions/tools.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof ToolsActions>()),
+  getToolsStatus: { dispatch: async () => null },
+}));
+vi.mock("./tools.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Tools>()),
+  installToolAndWait: async () => ({ ok: true }),
+}));
 
 import { mountIdentityProviderCard, type SignInSlot } from "./mcp-identity-provider.js";
 import { mcpState } from "./mcp-state.js";
 import type { IdentityProvider, MCPIdentityProviderPayload } from "./wire/types.gen.js";
 
-const ACME: IdentityProvider = { issuer: "https://acme.okta.com", client_id: "kiro-cli", name: "Acme" };
+const ACME: IdentityProvider = {
+  issuer: "https://acme.okta.com",
+  client_id: "kiro-cli",
+  name: "Acme",
+};
 const ISSUER_STATUS = { issuer: ACME.issuer, display_name: "Acme" };
 const CONSENT = "https://acme.okta.com/oauth2/v1/authorize?state=st-1";
 
@@ -124,7 +137,10 @@ describe("the Organization sign-in card", () => {
   });
 
   it("names the provider and offers Sign in while not signed in", async () => {
-    const host = await card(ACME, { known: true, status: { state: "signed-out", ...ISSUER_STATUS } });
+    const host = await card(ACME, {
+      known: true,
+      status: { state: "signed-out", ...ISSUER_STATUS },
+    });
     expect(text(host, "mcp-idp-identity")).toBe("Acme · https://acme.okta.com");
     expect(text(host, "mcp-idp-state")).toBe("Not signed in");
     expect(actions(host)).toEqual(["Sign in", "Edit", "Remove"]);
@@ -188,7 +204,10 @@ describe("the Organization sign-in card", () => {
   });
 
   it("offers Sign in again when the session expired", async () => {
-    const host = await card(ACME, { known: true, status: { state: "session-expired", ...ISSUER_STATUS } });
+    const host = await card(ACME, {
+      known: true,
+      status: { state: "session-expired", ...ISSUER_STATUS },
+    });
     expect(text(host, "mcp-idp-state")).toBe("Sign-in expired");
     expect(actions(host)).toEqual(["Sign in", "Edit", "Remove"]);
   });
@@ -204,7 +223,10 @@ describe("the Organization sign-in card", () => {
   });
 
   it("follows a newer status frame", async () => {
-    const host = await card(ACME, { known: true, status: { state: "signed-out", ...ISSUER_STATUS } });
+    const host = await card(ACME, {
+      known: true,
+      status: { state: "signed-out", ...ISSUER_STATUS },
+    });
     version++;
     mcpState.applyIdentityProviderFrame(
       { known: true, status: { state: "signed-in", ...ISSUER_STATUS } },
@@ -216,7 +238,10 @@ describe("the Organization sign-in card", () => {
 
 describe("the card's actions", () => {
   it("Sign in posts the organization sign-in", async () => {
-    const host = await card(ACME, { known: true, status: { state: "signed-out", ...ISSUER_STATUS } });
+    const host = await card(ACME, {
+      known: true,
+      status: { state: "signed-out", ...ISSUER_STATUS },
+    });
     press(host, "Sign in");
     await until(() => posted.length > 0);
     expect(posted).toEqual(["sign-in"]);
@@ -234,7 +259,10 @@ describe("the card's actions", () => {
   });
 
   it("Sign out posts the sign-out", async () => {
-    const host = await card(ACME, { known: true, status: { state: "signed-in", ...ISSUER_STATUS } });
+    const host = await card(ACME, {
+      known: true,
+      status: { state: "signed-in", ...ISSUER_STATUS },
+    });
     press(host, "Sign out");
     await until(() => posted.length > 0);
     expect(posted).toEqual(["sign-out"]);
