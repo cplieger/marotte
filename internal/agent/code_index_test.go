@@ -70,6 +70,63 @@ func TestCodeIndexStatus_KeepsTheLatestPerRootAndBroadcasts(t *testing.T) {
 	}
 }
 
+// codeIndexBuildStatus is a /tmp/work status carrying one build.
+func codeIndexBuildStatus(id, state, phase string) *marotte.CodeIndexStatusPayload {
+	return &marotte.CodeIndexStatusPayload{
+		WorkspaceRoot: "/tmp/work", Store: marotte.CodeIndexStore{State: "none"},
+		Build: &marotte.CodeIndexBuild{BuildID: id, State: state, Phase: phase, Message: state + " " + phase},
+	}
+}
+
+// A lagging lane's copy of an earlier phase, or of an older build's frame, is refused; a later phase, a new build
+// and a terminal state are kept.
+func TestCodeIndexStatus_RefusesAnEarlierPhaseAndAnOlderBuild(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		frames []*marotte.CodeIndexStatusPayload
+		want   []bool
+		shown  *marotte.CodeIndexBuild
+	}{{
+		name: "late same-build phase",
+		frames: []*marotte.CodeIndexStatusPayload{
+			codeIndexBuildStatus("b1", "queued", ""), codeIndexBuildStatus("b1", "running", "parse"),
+			codeIndexBuildStatus("b1", "running", "scan"), codeIndexBuildStatus("b1", "queued", ""),
+			codeIndexBuildStatus("b1", "running", "graph"),
+		},
+		want:  []bool{true, true, false, false, true},
+		shown: codeIndexBuildStatus("b1", "running", "graph").Build,
+	}, {
+		name: "late older build",
+		frames: []*marotte.CodeIndexStatusPayload{
+			codeIndexBuildStatus("b1", "running", "parse"), codeIndexBuildStatus("b2", "queued", ""),
+			codeIndexBuildStatus("b1", "succeeded", "save"), codeIndexBuildStatus("b1", "running", "save"),
+			codeIndexBuildStatus("b2", "running", "scan"),
+		},
+		want:  []bool{true, true, false, false, true},
+		shown: codeIndexBuildStatus("b2", "running", "scan").Build,
+	}, {
+		name: "ended build stays ended",
+		frames: []*marotte.CodeIndexStatusPayload{
+			codeIndexBuildStatus("b1", "running", "save"), codeIndexBuildStatus("b1", "canceled", "save"),
+			codeIndexBuildStatus("b1", "running", "save"),
+		},
+		want:  []bool{true, true, false},
+		shown: codeIndexBuildStatus("b1", "canceled", "save").Build,
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			var c codeIndexStatuses
+			for i, f := range tc.frames {
+				if got := c.set(f); got != tc.want[i] {
+					t.Errorf("set(frame %d: %s %s %s) = %v, want %v", i, f.Build.BuildID, f.Build.State, f.Build.Phase, got, tc.want[i])
+				}
+			}
+			if v := c.view(); len(v) != 1 || v[0].Build == nil || *v[0].Build != *tc.shown {
+				t.Errorf("view = %+v, want %+v shown", v, tc.shown)
+			}
+		})
+	}
+}
+
 func TestCodeIndexStatus_ArrivesFromARunHostSession(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })

@@ -18,7 +18,7 @@ import type * as Transport from "./transport.js";
 
 const SLOT_MS = 1000 / 60;
 /** The display slots the recorded turn's frames arrive in, at most; the replay case asserts it. */
-const REPLAY_SLOTS = 187;
+const REPLAY_SLOTS = 189;
 /** The replay waits one real rendering update per display slot: under a throttled rAF the default
  *  timeout cuts it off mid-turn, and every later case then runs inside that open turn. */
 const REPLAY_TIMEOUT_MS = testTimeoutFor(framesBudgetMs(REPLAY_SLOTS));

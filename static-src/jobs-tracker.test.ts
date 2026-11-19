@@ -181,6 +181,53 @@ describe("mountJobsTracker", () => {
     });
   });
 
+  it("keeps the open job's lines when another job's read lands after them", async () => {
+    let releaseA: () => void = () => undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+        if (url.pathname === "/api/chats/c1/jobs/7/output") {
+          // Answers whatever the read's signal says, as a response already on its way would.
+          return new Promise<Response>((resolve) => {
+            releaseA = () => {
+              resolve(Response.json({ status: "running", lines: ["a"] }));
+            };
+          });
+        }
+        if (url.pathname === "/api/chats/c1/jobs/8/output") {
+          return Promise.resolve(Response.json({ status: "running", lines: ["b"] }));
+        }
+        return Promise.resolve(Response.json({ jobs: [] }));
+      }),
+    );
+    mountJobsTracker();
+    applyJobUpdate("c1", job("7"));
+    applyJobUpdate("c1", job("8"));
+    const show = (id: string): HTMLButtonElement | null | undefined =>
+      rows()
+        .find((r) => r.textContent.includes(`sleep ${id}`))
+        ?.querySelector<HTMLButtonElement>(".jobs-tracker-show");
+    const dialog = (): HTMLDialogElement | null =>
+      document.querySelector<HTMLDialogElement>(".job-output-dialog");
+    const well = (): string | null | undefined =>
+      dialog()?.querySelector(".job-output-well")?.textContent;
+
+    show("7")?.click();
+    [...(dialog()?.querySelectorAll("button") ?? [])]
+      .find((b) => b.textContent === "Close")
+      ?.click();
+    show("8")?.click();
+    await vi.waitFor(() => {
+      expect(well()).toBe("b");
+    });
+    releaseA();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(well()).toBe("b");
+    expect(dialog()?.querySelector("header")?.textContent).toBe("Output of sleep 8");
+  });
+
   it("shows a failed read in the modal", async () => {
     answer = () =>
       Response.json({ error: "kiro-cli did not read the job's output." }, { status: 502 });

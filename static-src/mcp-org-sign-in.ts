@@ -7,6 +7,7 @@ import { el, effect } from "@cplieger/reactive";
 import { setControlBusy } from "./dom.js";
 import { ICON_EDIT_UI } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { formatClock, watchClock } from "./locale-time.js";
 import {
   type IdentityProviderConfig,
   type IdentityProviderRead,
@@ -101,7 +102,7 @@ export function orgStateText(v: OrgView, provider: string): string {
 
 /** "Finish by 11:42": the time kiro-cli stops waiting, shown once rather than counted down. Exported for its test. */
 export function finishByText(deadline: Date): string {
-  return `Finish by ${deadline.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  return `Finish by ${formatClock(deadline.getTime())}`;
 }
 
 const DOT_CSS: Readonly<Record<OrgView["kind"], string>> = {
@@ -356,6 +357,7 @@ export function mountOrgCard(deps: OrgCardDeps): {
     controls.replaceChildren(...buttons);
 
     const signing = view.kind === "signing_in" ? view : null;
+    watchClock();
     finishBy.hidden = signing?.deadline === undefined;
     finishBy.textContent = signing?.deadline === undefined ? "" : finishByText(signing.deadline);
     const url = signing === null || signing.url === "" ? null : signing.url;

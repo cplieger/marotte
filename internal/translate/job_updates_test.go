@@ -167,6 +167,37 @@ func TestJobEnd_FiledOnceFromTheCardOrTheNotice(t *testing.T) {
 	}
 }
 
+// A frame arriving after the job's end was filed (KAS's terminal job/update, a late move) keeps nothing for the
+// filed row: settleEnd dropped the description and the card, and they stay dropped.
+func TestJobEnd_LateFramesDoNotRestoreTheFiledRowsFacts(t *testing.T) {
+	deps, _ := newEventCaptureDeps()
+	tr := New(rolesOf(deps))
+	tr.HandleToolCall(t.Context(), "c1", jobCreate(t), FrameAttribution{})
+	tr.HandleToolCallUpdate(t.Context(), "c1", jobMoved(t), FrameAttribution{})
+	tr.HandleJobUpdate(t.Context(), "c1", jobUpdateMsg(t, "", jobID, "running"))
+	closeChatTurn(t, deps, "c1")
+	tr.HandleToolCallUpdate(t.Context(), "c1", jobEndedCard(t, "failed", "timed_out"), FrameAttribution{})
+	if len(jobEndedEntries(deps.between["c1"])) != 1 {
+		t.Fatalf("between-turns entries = %+v, want the card's job_ended", deps.between["c1"])
+	}
+
+	tr.HandleJobUpdate(t.Context(), "c1", jobUpdateMsg(t, "", jobID, "timed_out"))
+	tr.jobs.noteCard("c1", jobID, jobCallID)
+	if description, card := tr.jobs.known("c1", jobID); description != "" || card != "" {
+		t.Errorf("known() after the filed end = (%q, %q), want both empty", description, card)
+	}
+}
+
+// A job whose first frame is terminal keeps its description until its end is filed.
+func TestJobUpdate_TerminalFirstFrameKeepsTheDescription(t *testing.T) {
+	deps, _ := newEventCaptureDeps()
+	tr := New(rolesOf(deps))
+	tr.HandleJobUpdate(t.Context(), "c1", jobUpdateMsg(t, "", jobID, "completed"))
+	if description, _ := tr.jobs.known("c1", jobID); description != "sleep 60" {
+		t.Errorf("known() description = %q, want sleep 60", description)
+	}
+}
+
 // A write that fails leaves the job's end unfiled, so the other source, arriving later, files it.
 func TestJobEnd_FailedWriteLeavesTheEndToTheOtherSource(t *testing.T) {
 	for _, tc := range []struct {

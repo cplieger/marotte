@@ -88,17 +88,10 @@ func (s *Store) handleImport(w http.ResponseWriter, r *http.Request) {
 		writeValidationErr(w, err)
 		return
 	}
-	results, err := s.importServers(r.Context(), req.servers)
+	results, err := s.importServers(r.Context(), req.servers, req.identityProvider)
 	if err != nil {
 		s.writeErr(w, err)
 		return
-	}
-	// parseImportBody already held the provider to the save rule, so only a write failure is left here.
-	if req.identityProvider != nil {
-		if err := s.setIdentityProvider(r.Context(), req.identityProvider); err != nil {
-			s.writeErr(w, err)
-			return
-		}
 	}
 	httpserver.WriteJSON(w, map[string]any{"results": results, "notes": req.notes})
 }

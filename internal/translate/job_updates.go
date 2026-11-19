@@ -73,7 +73,8 @@ func (r *jobRegistry) update(chatID marotte.ChatID, session string, p *marotte.B
 		clear(c.described)
 		clear(c.cards)
 	}
-	if p.Description != "" {
+	// A claimed end has had (or will have) its row's facts dropped by settleEnd; a later frame must not restore them.
+	if p.Description != "" && !slices.Contains(c.ended, p.ID) {
 		c.described[p.ID] = p.Description
 	}
 	if p.Status == marotte.BackgroundJobRunning {
@@ -128,7 +129,9 @@ func (r *jobRegistry) settleEnd(chatID marotte.ChatID, jobID string, filed bool)
 func (r *jobRegistry) noteCard(chatID marotte.ChatID, jobID, toolCallID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.chatLocked(chatID).cards[jobID] = toolCallID
+	if c := r.chatLocked(chatID); !slices.Contains(c.ended, jobID) {
+		c.cards[jobID] = toolCallID
+	}
 }
 
 // known is what the chat holds about a job for its end's row: its description and its card.

@@ -18,13 +18,17 @@ import type { Server } from "./mcp-state.js";
 import { refreshConfigStanding } from "./config-standing.js";
 
 // Only the network edge is mocked: the decoder is real, so the fixture decodes as a GET /api/mcp body.
-const wire = vi.hoisted(() => ({ body: {} as unknown }));
+// `held`, when set, answers a read in the test's own time instead of at once.
+const wire = vi.hoisted(() => ({
+  body: {} as unknown,
+  held: undefined as (() => Promise<unknown>) | undefined,
+}));
 vi.mock(import("./api-client.js"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    apiGetTyped: <T>(_path: string, decode: (v: unknown) => T) =>
-      Promise.resolve(decode(wire.body)),
+    apiGetTyped: async <T>(_path: string, decode: (v: unknown) => T) =>
+      decode(wire.held === undefined ? wire.body : await wire.held()),
   } as unknown as typeof actual;
 });
 
@@ -464,6 +468,25 @@ describe("disabled by layer", () => {
 });
 
 describe("the organization sign-in", () => {
+  it("keeps the newest identity-provider read when an older one lands after it", async () => {
+    const answers: ((body: unknown) => void)[] = [];
+    wire.held = () =>
+      new Promise((resolve) => {
+        answers.push(resolve);
+      });
+    try {
+      const older = mcpState.refetchIdentityProvider();
+      const newer = mcpState.refetchIdentityProvider();
+      answers[1]?.({ identity_provider: { issuer: "https://new.example", client_id: "n" } });
+      await newer;
+      answers[0]?.({ identity_provider: { issuer: "https://old.example", client_id: "o" } });
+      await older;
+    } finally {
+      wire.held = undefined;
+    }
+    expect(identityProvider.value.provider?.issuer).toBe("https://new.example");
+  });
+
   const stamp = (version: string) => ({ kind: "mcp_status", ref: "", version });
   const signedIn = { reported: { state: "signed-in", account: "a@acme" } };
   const signingIn = { reported: { state: "signing-in" }, sign_in_deadline: "2026-11-18T12:00:00Z" };

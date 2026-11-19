@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -1253,6 +1254,50 @@ func TestParseImportBody_IdentityProvider(t *testing.T) {
 				t.Error("a refused paste saved something")
 			}
 		})
+	}
+}
+
+// A paste is one write: when the save fails, neither its servers nor its identity provider are kept.
+func TestImport_AFailedSaveKeepsNeitherTheServersNorTheProvider(t *testing.T) {
+	dir := t.TempDir()
+	kas := filepath.Join(dir, "kas-mcp.json")
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(kas))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	mux := http.NewServeMux()
+	s.RegisterRoutes(mux)
+	writeKASFile(t, kas, "# not json\n")
+
+	rec := postImport(t, mux, `{
+	  "identityProvider": {"issuer":"https://idp.example.com","clientId":"marotte"},
+	  "mcpServers": {"corp": {"url":"https://mcp.corp.example/mcp","oauth":{"mode":"enterprise"}}}
+	}`)
+	if rec.Code < http.StatusBadRequest {
+		t.Fatalf("import over an unwritable KAS file = %d %s, want an error", rec.Code, rec.Body.String())
+	}
+	if _, ok := s.savedIdentityProvider(); ok {
+		t.Error("the failed paste saved its identity provider")
+	}
+	if got := s.list(t.Context()); len(got) != 0 {
+		t.Errorf("servers = %+v, want none after the failed paste", got)
+	}
+}
+
+// A paste whose servers are all already configured still saves a provider it changes.
+func TestImport_UnchangedServersStillSaveANewProvider(t *testing.T) {
+	s, mux := newRoutedStore(t)
+	block := func(issuer string) string {
+		return `{"identityProvider": {"issuer":"` + issuer + `","clientId":"marotte"},
+		  "mcpServers": {"corp": {"url":"https://mcp.corp.example/mcp","oauth":{"mode":"enterprise"}}}}`
+	}
+	decodeImport(t, postImport(t, mux, block("https://idp.example.com")))
+	got := decodeImport(t, postImport(t, mux, block("https://idp2.example.com")))
+	if len(got.Results) != 1 || got.Results[0].Outcome != importUnchanged {
+		t.Errorf("results = %+v, want corp unchanged", got.Results)
+	}
+	if idp, ok := s.savedIdentityProvider(); !ok || idp.Issuer != "https://idp2.example.com" {
+		t.Errorf("provider = %+v, %v; want the second paste's", idp, ok)
 	}
 }
 

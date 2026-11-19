@@ -39,6 +39,7 @@ vi.mock(import("./actions/mcp.js"), async (importOriginal) => {
   } as unknown as typeof actual;
 });
 
+import { formatClock } from "./locale-time.js";
 import { finishByText, mountOrgCard, orgStateText, orgView } from "./mcp-org-sign-in.js";
 import { identityProvider, orgSignInStatus } from "./mcp-state.js";
 import type { MCPIdentityProviderStatus } from "./wire/types.gen.js";
@@ -129,9 +130,7 @@ describe("the state line", () => {
 
   it("gives the deadline as a clock time", () => {
     const at = new Date(2026, 10, 18, 11, 42);
-    expect(finishByText(at)).toBe(
-      `Finish by ${at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
-    );
+    expect(finishByText(at)).toBe(`Finish by ${formatClock(at.getTime())}`);
   });
 });
 

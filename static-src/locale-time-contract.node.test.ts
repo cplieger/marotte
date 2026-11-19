@@ -18,6 +18,7 @@ const SKIPPED_DIRS = new Set(["node_modules", "testdata", "__test-helpers__", "e
  *  `toISOString().slice(11, 16)`; `composer-paste.ts` legitimately slices an ISO string. */
 const NUMBER_FORMATTERS = new Set([
   "account-usage.ts",
+  "code-index-status.ts",
   "context-breakdown.ts",
   "fundamentals/reasoning.ts",
   "memories.ts",

@@ -245,7 +245,7 @@ func TestNames_AHeldNameIsRefused(t *testing.T) {
 			return err
 		}},
 		{name: "import", do: func(t *testing.T, s *Store) error {
-			_, err := s.importServers(t.Context(), []*Server{stdio("bad", "new")})
+			_, err := s.importServers(t.Context(), []*Server{stdio("bad", "new")}, nil)
 			return err
 		}},
 	} {
@@ -282,7 +282,7 @@ func TestNames_AnOrphanKeyIsRefusedBeforeTheFirstReadableKASFile(t *testing.T) {
 			return err
 		}},
 		{name: "import", do: func(t *testing.T, s *Store) error {
-			_, err := s.importServers(t.Context(), []*Server{{Name: "orphan", Transport: TransportStdio, Command: "new", Enabled: true}})
+			_, err := s.importServers(t.Context(), []*Server{{Name: "orphan", Transport: TransportStdio, Command: "new", Enabled: true}}, nil)
 			return err
 		}},
 	} {

@@ -54,15 +54,15 @@ const (
 	noteSchemaPointer        = "Not stored: a schema pointer, not configuration."
 )
 
+// keyOAuthScopes is the scopes key both a server and its oauth object take.
+const keyOAuthScopes = "oauthScopes"
+
 // pasteOAuthKeys are the keys of a server's nested `oauth` object that KAS reads. A scope list may
 // sit there (`oauthScopes`, else `scopes`) or in the sibling server key `oauthScopes`, which wins.
 //
 // The nested object needs its own classification pass: encoding/json drops a
 // key with no matching field, so without one a misspelt `clientIdd` would be
 // accepted and discarded silently.
-// keyOAuthScopes is the scopes key both a server and its oauth object take.
-const keyOAuthScopes = "oauthScopes"
-
 var pasteOAuthKeys = []string{"clientId", "clientMetadataUrl", "mode", keyOAuthScopes, "redirectUri", "scopes"}
 
 // pasteOAuthSecretKey is refused by name, before the typo pass: a confidential

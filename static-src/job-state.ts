@@ -1,5 +1,5 @@
 // The client's view of kiro-cli's background jobs: each chat's running jobs (job_update and GET /api/jobs) and the
-// ends its log holds (job_ended entries). State only, so the card, the row, the strip and the chat list read one
+// ends its log holds (job_ended entries). State only, so the card, the row, the jobs tracker and the chat list read one
 // source without importing each other.
 
 import { signal, SignalMap, type Signal } from "@cplieger/reactive";

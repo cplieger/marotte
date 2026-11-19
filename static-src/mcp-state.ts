@@ -517,10 +517,12 @@ export function configuredServers(): Server[] {
 
 class MCPStateController {
   private readonly serversSlot = new CancellableSlot();
+  private readonly identityProviderSlot = new CancellableSlot();
   private serversFetchPending = false;
 
   abort(): void {
     this.serversSlot.abort();
+    this.identityProviderSlot.abort();
     this.serversFetchPending = false;
   }
 
@@ -568,10 +570,11 @@ class MCPStateController {
     }
   }
 
-  /** Read the saved identity provider again. */
+  /** Read the saved identity provider again; a newer read supersedes this one, so an older body never lands last. */
   async refetchIdentityProvider(): Promise<void> {
-    const d = await apiGetTyped("/api/mcp/identity-provider", decodeIdentityProviderBody);
-    if (d !== null) {
+    const abort = this.identityProviderSlot.start();
+    const d = await apiGetTyped("/api/mcp/identity-provider", decodeIdentityProviderBody, abort);
+    if (!abort.aborted && d !== null) {
       identityProvider.value = { loaded: true, ...d };
     }
   }

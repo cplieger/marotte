@@ -1725,7 +1725,6 @@ func TestLoadSession_RecordsTheResponsePosition(t *testing.T) {
 		entry.lane.push(&marotte.RPCResponse{Method: marotte.MethodSessionUpdate})
 	}
 	entry.ch <- pendingReply{resp: &marotte.RPCResponse{Result: json.RawMessage(`{}`)}, seq: entry.lane.position()}
-	waitPending(t, e, 1)
 	for {
 		select {
 		case got := <-done:

@@ -5,7 +5,7 @@
 import { effect, el } from "@cplieger/reactive";
 
 import { apiAction } from "./actions/index.js";
-import { apiGetTyped, apiGetTypedOrError } from "./api-client.js";
+import { apiGetTyped, apiGetTypedOrError, CancellableSlot } from "./api-client.js";
 import { BUS_RECONCILE, onBus, onSSE } from "./bus.js";
 import { jobsOpen, setJobsOpen } from "./device-view.js";
 import { byId } from "./dom.js";
@@ -233,11 +233,17 @@ function createOutputDialog(): OutputDialog {
 
   let chatID = "";
   let jobID = "";
+  // One read at a time: opening another job or closing the dialog aborts the read in flight, whose answer is dropped.
+  const reads = new CancellableSlot();
   const load = (): void => {
     status.textContent = "";
     refresh.disabled = true;
+    const abort = reads.start();
     const path = `${jobPath(chatID, jobID, "output")}?lines=${String(OUTPUT_LINES)}`;
-    void apiGetTypedOrError(path, decodeBackgroundJobOutput).then((r) => {
+    void apiGetTypedOrError(path, decodeBackgroundJobOutput, abort).then((r) => {
+      if (abort.aborted) {
+        return;
+      }
       refresh.disabled = false;
       if (!r.ok || r.data === null) {
         status.textContent = r.error === "" ? "kiro-cli did not read the job's output." : r.error;
@@ -262,6 +268,12 @@ function createOutputDialog(): OutputDialog {
   refresh.addEventListener("click", load);
   close.addEventListener("click", () => {
     dialog.close();
+  });
+  // The close event fires a task after close(), by when the dialog may already be open on another job.
+  dialog.addEventListener("close", () => {
+    if (!dialog.open) {
+      reads.abort();
+    }
   });
   return {
     open(chat, job) {

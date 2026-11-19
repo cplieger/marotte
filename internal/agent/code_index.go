@@ -29,31 +29,72 @@ const codeIndexCallBudget = time.Minute
 // maxCodeIndexText bounds each line of kiro-cli's text the row shows.
 const maxCodeIndexText = 512
 
+// maxCodeIndexBuilds bounds the build ids a root remembers for ordering; a lane lagging more builds behind than this
+// could show an older one until it catches up.
+const maxCodeIndexBuilds = 16
+
 // codeIndexStatuses is the latest status per workspace root.
 type codeIndexStatuses struct {
-	byRoot map[string]marotte.CodeIndexStatusPayload
+	byRoot map[string]*codeIndexRoot
 	mu     sync.Mutex
 }
 
+// codeIndexRoot is a root's shown status, the build ids in the order they were first accepted (oldest first, the
+// shown one last) and the rank of that build's shown state.
+type codeIndexRoot struct {
+	shown  marotte.CodeIndexStatusPayload
+	builds []string
+	rank   int
+}
+
 // set keeps st as its root's latest and reports whether it changed what is shown. Every lane delivers its own copy
-// of one broadcast, so a lane running behind can bring an earlier state of a build that already ended; that copy is
-// refused, or a finished build would read as running until the next status.
+// of KAS's ordered sequence for a root, so a lane running behind can bring an older build or an earlier state of
+// the current one; that copy is refused, or a finished build would read as running until the lane caught up.
 func (c *codeIndexStatuses) set(st *marotte.CodeIndexStatusPayload) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	prev, ok := c.byRoot[st.WorkspaceRoot]
-	if ok && codeIndexStatusEqual(&prev, st) {
+	r := c.byRoot[st.WorkspaceRoot]
+	if r != nil && codeIndexStatusEqual(&r.shown, st) {
 		return false
 	}
-	if ok && prev.Build != nil && st.Build != nil && prev.Build.BuildID == st.Build.BuildID &&
-		codeIndexBuildEnded(prev.Build.State) && !codeIndexBuildEnded(st.Build.State) {
-		return false
+	if r == nil {
+		if c.byRoot == nil {
+			c.byRoot = map[string]*codeIndexRoot{}
+		}
+		r = &codeIndexRoot{}
+		c.byRoot[st.WorkspaceRoot] = r
 	}
-	if c.byRoot == nil {
-		c.byRoot = map[string]marotte.CodeIndexStatusPayload{}
+	if b := st.Build; b != nil {
+		rank := codeIndexBuildRank(b)
+		switch at := slices.Index(r.builds, b.BuildID); {
+		case at >= 0 && at < len(r.builds)-1:
+			return false
+		case at >= 0 && rank < r.rank:
+			return false
+		case at < 0:
+			if len(r.builds) == maxCodeIndexBuilds {
+				r.builds = slices.Delete(r.builds, 0, 1)
+			}
+			r.builds = append(r.builds, b.BuildID)
+		}
+		r.rank = rank
 	}
-	c.byRoot[st.WorkspaceRoot] = *st
+	r.shown = *st
 	return true
+}
+
+// codeIndexPhases are KAS's running phases (indexPhase), in the order a build passes them.
+var codeIndexPhases = []string{"scan", "parse", "graph", "save"}
+
+// codeIndexBuildRank orders a build's states: queued, then running by phase, then any terminal state.
+func codeIndexBuildRank(b *marotte.CodeIndexBuild) int {
+	switch {
+	case codeIndexBuildEnded(b.State):
+		return len(codeIndexPhases) + 1
+	case b.State == codeIndexBuildQueued:
+		return 0
+	}
+	return max(slices.Index(codeIndexPhases, b.Phase), 0) + 1
 }
 
 // view is every root's latest, sorted by root.
@@ -62,13 +103,14 @@ func (c *codeIndexStatuses) view() []marotte.CodeIndexStatusPayload {
 	defer c.mu.Unlock()
 	out := make([]marotte.CodeIndexStatusPayload, 0, len(c.byRoot))
 	for _, root := range slices.Sorted(maps.Keys(c.byRoot)) {
-		out = append(out, c.byRoot[root])
+		out = append(out, c.byRoot[root].shown)
 	}
 	return out
 }
 
-// KAS's terminal build states.
+// KAS's queued and terminal build states.
 const (
+	codeIndexBuildQueued    = "queued"
 	codeIndexBuildSucceeded = "succeeded"
 	codeIndexBuildFailed    = "failed"
 	codeIndexBuildCanceled  = "canceled"

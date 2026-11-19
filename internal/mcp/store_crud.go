@@ -170,38 +170,38 @@ type importResult struct {
 	Outcome importOutcome `json:"outcome"`
 }
 
-// importServers creates every server of one pasted block, or none: the block is one README's worth.
-// A name configured with the SAME spec is `unchanged`; with a DIFFERENT spec the paste fails rather
-// than silently overwriting.
-func (s *Store) importServers(ctx context.Context, in []*Server) ([]importResult, error) {
-	// Before taking the lock: the check is pure, and a block that cannot land
+// importServers creates every server of one pasted block, or none, and saves the block's identity provider (nil when
+// it carries none) in the same write, so a paste lands whole or not at all: the block is one README's worth. A name
+// configured with the SAME spec is `unchanged`; with a DIFFERENT spec the paste fails rather than silently
+// overwriting.
+func (s *Store) importServers(ctx context.Context, in []*Server, idp *identityProvider) ([]importResult, error) {
+	// Before taking the lock: the checks are pure, and a block that cannot land
 	// should not have made every other caller wait.
 	if err := validateImport(in); err != nil {
 		return nil, err
 	}
+	var nextIDP *identityProvider
+	if idp != nil {
+		var err error
+		if nextIDP, err = normalizedIdentityProvider(idp); err != nil {
+			return nil, err
+		}
+	}
 
-	now := time.Now().UnixMilli()
 	if err := s.acquireWrite(ctx); err != nil {
 		return nil, err
 	}
 	defer s.releaseWrite()
 	s.mu.Lock()
-	before := s.servers
-	results := make([]importResult, 0, len(in))
-	created := 0
-	for _, sv := range in {
-		res, err := s.importOneLocked(sv, now)
-		if err != nil {
-			s.servers = before
-			s.mu.Unlock()
-			return nil, err
-		}
-		if res.Outcome == importCreated {
-			created++
-		}
-		results = append(results, res)
+	before, prevIDP, prevIDPRaw := s.servers, s.idp, s.idpUnreadable
+	results, created, err := s.importAllLocked(in)
+	if err != nil {
+		s.servers = before
+		s.mu.Unlock()
+		return nil, err
 	}
-	if created == 0 {
+	idpChanged := nextIDP != nil && !s.sameIdentityProviderLocked(nextIDP)
+	if created == 0 && !idpChanged {
 		s.mu.Unlock()
 		slog.Info("mcp: import matched the stored set; record unchanged", "servers", len(in))
 		if _, err := s.healKASLocked(ctx, "import"); err != nil {
@@ -209,15 +209,42 @@ func (s *Store) importServers(ctx context.Context, in []*Server) ([]importResult
 		}
 		return results, nil
 	}
+	if idpChanged {
+		s.idp, s.idpUnreadable = nextIDP, nil
+	}
 	if err := s.persist(ctx); err != nil {
-		s.servers = before
+		s.servers, s.idp, s.idpUnreadable = before, prevIDP, prevIDPRaw
 		s.mu.Unlock()
 		return nil, err
 	}
 	s.mu.Unlock()
 	slog.Info("mcp: servers imported", "created", created, "entries", len(in))
-	s.notifyChange()
+	if idpChanged {
+		slog.Info("mcp: organization identity provider saved", "issuer", logsafe.Field(nextIDP.Issuer))
+	}
+	if created > 0 {
+		s.notifyChange()
+	}
 	return results, nil
+}
+
+// importAllLocked appends every entry of one block and counts the created ones; on an error the caller restores
+// s.servers. Caller must hold the write lock.
+func (s *Store) importAllLocked(in []*Server) ([]importResult, int, error) {
+	now := time.Now().UnixMilli()
+	results := make([]importResult, 0, len(in))
+	created := 0
+	for _, sv := range in {
+		res, err := s.importOneLocked(sv, now)
+		if err != nil {
+			return nil, 0, err
+		}
+		if res.Outcome == importCreated {
+			created++
+		}
+		results = append(results, res)
+	}
+	return results, created, nil
 }
 
 // validateImport validates and de-duplicates one pasted block.
