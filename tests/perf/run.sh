@@ -76,6 +76,12 @@ rep() {
   "$here/instance/stop.sh" "$inst"
 }
 
+# elapsed <start> <out>: the seconds since $EPOCHREALTIME read <start>, into <out>.
+elapsed() {
+  python3 -c 'import sys; print(round(float(sys.argv[2]) - float(sys.argv[1]), 1))' \
+    "$1" "$EPOCHREALTIME" >"$2"
+}
+
 while read -r scenario scale engine width windows profile; do
   stem=$scenario.$scale.$engine.$width
   args=()
@@ -87,11 +93,12 @@ while read -r scenario scale engine width windows profile; do
   for n in $(seq 1 "$reps"); do
     rep "$replay" "r$n" --rep "$n" "${args[@]}"
   done
+  elapsed "$start" "$raw/$stem.seconds"
   if [ "$profile" = 1 ]; then
+    start=$EPOCHREALTIME
     rep 0 rp --rep p --profile "${args[@]}"
+    elapsed "$start" "$raw/$stem.profile.seconds"
   fi
-  python3 -c 'import sys; print(round(float(sys.argv[2]) - float(sys.argv[1]), 1))' \
-    "$start" "$EPOCHREALTIME" >"$raw/$stem.seconds"
 done < <(units)
 
 if [ "${#failed[@]}" -gt 0 ]; then

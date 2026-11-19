@@ -10,7 +10,7 @@ Signing in on the page gives the agent your Kiro account. That is the agent's id
 
 MCP sign-ins are kept in `/config/mcp-secrets.json`, which only the container's user may read or write: each server's OAuth client and tokens, and the organization sign-in's ID token and refresh token. Signing out on the **Organization sign-in** card, removing the provider or changing its issuer or client ID removes the organization sign-in from the file.
 
-The metrics page at `/metrics` answers with no login. It shows whether the agent engine is ready and how much memory it uses, and counts failed prompts by class. It also counts each schedule's slots under the schedule's random id, and the outcomes of unattended runs. It shows no chat text, workflow name, path, command or credential. Behind a login proxy, exempt `/metrics` there, or scrape the container only from a network you already trust with the agent. [Monitoring and alerts](monitoring.md) lists every series.
+The metrics page at `/metrics` answers with no login. It shows whether the agent engine is ready and how much memory it uses, and counts failed prompts by class. It also counts each schedule's slots under the schedule's random id, and the outcomes of unattended runs and of the permission requests marotte answered in automatic Bot turns. It shows no chat text, workflow name, path, command or credential. Behind a login proxy, exempt `/metrics` there, or scrape the container only from a network you already trust with the agent. [Monitoring and alerts](monitoring.md) lists every series.
 
 Set `ALLOWED_HOSTS` on any server that stays up, and set `TRUSTED_PROXIES` when a proxy sits in front. [Configuration](configuration.md) explains both. Requests that change state from another website are refused with `403`. The one route that skips `ALLOWED_HOSTS`, the [notify route](configuration.md#waking-a-chat-from-another-service-marotte_notify_token), answers only a request carrying `MAROTTE_NOTIFY_TOKEN`, and that token opens no other route.
 
@@ -24,7 +24,7 @@ The image is built on Debian, which has the shell the terminal needs and runs ki
 
 ## Read-only root
 
-marotte runs with `read_only: true`, which stops anything inside the container from changing the image's own files. As user 1000, the example's default, it needs one `tmpfs` beside the three folders the example already mounts. A `tmpfs` is a folder kept in memory that is emptied when the container stops. Add `read_only: true` and the `tmpfs:` lines to the service:
+marotte runs with `read_only: true`, which stops anything inside the container from changing the image's own files. It needs one `tmpfs` beside the three folders the example already mounts. A `tmpfs` is a folder kept in memory that is emptied when the container stops. Add `read_only: true` and the `tmpfs:` lines to the service:
 
 ```yaml
 services:
@@ -34,8 +34,6 @@ services:
     read_only: true
     tmpfs:
       - /tmp:rw,exec,nosuid,nodev,size=512m,mode=1777
-      # when the container runs as root, also:
-      # - /etc/profile.d:rw,noexec,nosuid,nodev,size=1m,mode=755
     volumes:
       - "/opt/appdata/marotte/config:/config"
       - "/opt/appdata/marotte/workspace:/workspace"
@@ -45,12 +43,11 @@ services:
 Each folder holds this:
 
 - `/tmp` holds kiro-cli's logs in `/tmp/kiro-log` and its update check folder. It also holds what the **Shell** panel and the agent's commands write there, such as build files and test binaries. marotte itself uses less than 200 KB, so the 512 MB are room for those programs. Docker mounts a `tmpfs` with `noexec` by default, so the line adds `exec` for test runners that start programs from `/tmp`. Mode 1777 matches the image's own `/tmp`.
-- `/etc/profile.d` is needed only when the container runs as root, with `user: "0:0"`. marotte writes `10-marotte-path.sh` there at each start, which tells the **Shell** panel's login shell where kiro-cli and the installed tools are. Without it, the log warns that marotte could not write that file, and the **Shell** panel no longer finds those programs by name. The folder is empty in the image, so the mount hides nothing.
 - `/config` holds the chats, the Kiro sign-in, the kiro-cli install with its unpacked runtime, and the tools you install.
 - `/workspace` holds your repositories.
 - `/uploads` holds the files you attach. Under `read_only: true` it must stay a mount, or attaching a file fails.
 
-Each `tmpfs` counts against the container's memory limit. A program in the **Shell** panel that writes anywhere else, such as `/var/tmp`, gets `Read-only file system`.
+The `tmpfs` counts against the container's memory limit. A program in the **Shell** panel that writes anywhere else, such as `/var/tmp`, gets `Read-only file system`.
 
 Debian packages from [OS packages](os-packages.md) do not install on a read-only root. apt and dpkg write the package database in `/var/lib/dpkg`, and they unpack each package into `/usr`, `/etc` and `/lib`, which are the image's own folders. A `tmpfs` on `/var/lib/dpkg` would hide the image's record of its installed packages, and one on `/usr` would hide its programs. Leave out `read_only: true` when you install Debian packages.
 

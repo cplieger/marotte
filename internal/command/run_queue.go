@@ -170,33 +170,35 @@ func (d *Dispatcher) LaunchEntry(ctx context.Context, chatID marotte.ChatID, l *
 }
 
 // SteerEntry routes a run-list entry the chat's list offered into its running turn and sends it, under the chat's
-// steer lock. A refusal class answers that nothing was sent; kiro-cli's answer is the record's to report.
-func (d *Dispatcher) SteerEntry(ctx context.Context, chatID marotte.ChatID, s *EntrySteer) (refuse string) {
+// steer lock. A refusal class answers that nothing was sent; kiro-cli's answer is the record's to report. accepted
+// is kiro-cli's queued reply to the send carrying the entry: false for no send, a drop or a failed call.
+func (d *Dispatcher) SteerEntry(ctx context.Context, chatID marotte.ChatID, s *EntrySteer) (refuse string, accepted bool) {
 	if d == nil || d.prompts == nil {
-		return SteerRefuseNoTurn
+		return SteerRefuseNoTurn, false
 	}
 	return steerEntry(ctx, d.prompts, chatID, s)
 }
 
-func steerEntry(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, s *EntrySteer) (refuse string) {
+func steerEntry(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, s *EntrySteer) (refuse string, accepted bool) {
 	unlock, err := roles.queue.LockSteerOps(ctx, chatID)
 	if err != nil {
-		return SteerRefuseNoTurn
+		return SteerRefuseNoTurn, false
 	}
 	defer unlock()
 	t := roles.steerTarget(chatID)
 	sends, refuse := t.Queue.RouteEntry(chatID, s, steerHolder(roles, chatID))
 	if refuse != "" {
-		return refuse
+		return refuse, false
 	}
 	key := marotte.SteerIDFor(s.Entry)
 	_ = issueSteers(ctx, t, sends, "", func(snd SteerSend, queued bool, err error) {
 		t.Queue.SteerSent(t.Key, snd, queued, err)
 		if queued && err == nil && (snd.ID == key || slices.Contains(snd.Keys, key)) {
+			accepted = true
 			slog.Info("queued message steered", "chat_id", chatID, "message_id", s.Entry)
 		}
 	})
-	return ""
+	return "", accepted
 }
 
 func launchEntry(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, l *EntryLaunch) (string, error) {

@@ -16,8 +16,8 @@ github.com/cplieger/go/httpclient v1.2.0 h1:E+lbIpiNkUkcq3fxdMDYn116cwx6tU1XWmn4
 github.com/cplieger/go/httpclient v1.2.0/go.mod h1:couTQSCNdgNwOotbaQREGcM4CjUKZJ4Bdb7FSkNwL8U=
 github.com/cplieger/go/httpserver v1.5.0 h1:z4ji5vpyd6mhR+FnFtzFBe9Mv6nOuVPWhcFv33YJL/o=
 github.com/cplieger/go/httpserver v1.5.0/go.mod h1:MuZxKRRjQG6DAJBO88cTGhVdhSCmBu2PMeA/DWRbiTQ=
-github.com/cplieger/go/httpserver/v2 v2.0.0-dev.7 h1:6Bca+TrHBagiHxuLQmKEqcMgeahJBfijWAql7IEL12g=
-github.com/cplieger/go/httpserver/v2 v2.0.0-dev.7/go.mod h1:MBXpBuVO/zdiyXOcq5eRMRJVmdryzDfH7DFo+olLF88=
+github.com/cplieger/go/httpserver/v2 v2.0.0-dev.9 h1:1tu6QwPi6eQuMX5mqI+q1yOe6Lqzmlw8Lgf/PS481To=
+github.com/cplieger/go/httpserver/v2 v2.0.0-dev.9/go.mod h1:MBXpBuVO/zdiyXOcq5eRMRJVmdryzDfH7DFo+olLF88=
 github.com/cplieger/go/jsonx v1.1.0 h1:/XBHr3vJVqKYVDteO8cZEMAdTgmT3Df/SeyNw1pdak8=
 github.com/cplieger/go/jsonx v1.1.0/go.mod h1:ry6co0JYAadIhjHtkktBSK3to4YdtEak1P7mdmQlr7U=
 github.com/cplieger/go/keyenc v1.3.0 h1:v0zvHSY4ZOZapGNYGAkghEXPz1SeifT/Trg0b9A8IBU=
@@ -32,8 +32,8 @@ github.com/cplieger/go/scheduler v1.1.0 h1:AzmRDvZ/wEEwK7Ab5Uz0Pa5Xx67oWndalpVkn
 github.com/cplieger/go/scheduler v1.1.0/go.mod h1:PEVHRl8YalcfFnicvMQdoWQKM16Ddrby9GPlG1oxyQI=
 github.com/cplieger/go/slogx v1.1.0 h1:whWmZcNmLuWGFM33SYFR+alUTfEodzBjKju44DHNgPY=
 github.com/cplieger/go/slogx v1.1.0/go.mod h1:N88y5LJZ1aVp++cLFqzEV4WsalaX5YKXoRtXT29Ngkw=
-github.com/cplieger/go/sse/v2 v2.3.0-dev.15 h1:3EBTbJoOd96ZA6jumB7g+DsTC5zOlytTZNN0dOlK7l8=
-github.com/cplieger/go/sse/v2 v2.3.0-dev.15/go.mod h1:IozZ+wee7FkvWlpG5WP3JNmv6Tn7rfptusqSI9xJ2Vw=
+github.com/cplieger/go/sse/v2 v2.3.0-dev.17 h1:0s3US3/5Sibhnpu21j2ZT+XZqWPofP3yX3mgIxEagVI=
+github.com/cplieger/go/sse/v2 v2.3.0-dev.17/go.mod h1:U+oc81ZXIy1arKb+/OQpfeYxYHlUMjQAgRknU4gOUtk=
 github.com/cplieger/go/ssrf v1.1.0 h1:gyP7pYm1415RkHmIdod1YCvuX+I1xD1dXiRa8tvz8Bg=
 github.com/cplieger/go/ssrf v1.1.0/go.mod h1:95hUJ04+tP4FHFyd9Vp+egJpNDuf8d+jtgvcxzf7Mkw=
 github.com/cplieger/go/textsafe v1.1.0 h1:D+p7ZDBQmABv/empI2TNMZfvhMXNlfii8E2e5V+dUWE=
@@ -44,8 +44,8 @@ github.com/cplieger/go/wiregen/v2 v2.4.0-dev.1 h1:fovfDlizknuX2h827nStg2Ulrh00Nq
 github.com/cplieger/go/wiregen/v2 v2.4.0-dev.1/go.mod h1:7AAFpcRMfVBBnn5iIsz2BvztMzTzBPwygVhy8ZKlKc8=
 github.com/cplieger/go/yamlenv v1.1.0 h1:vNaxHJnJMmg7MfRhqTBDaFPhMylEzzEtNefCvqU9ZPc=
 github.com/cplieger/go/yamlenv v1.1.0/go.mod h1:2kEi6iiRSxaaAusNrPoC6l0BUqvVVskkR1Cdpt15nUg=
-github.com/cplieger/toolbelt/v3 v3.16.0-dev.6 h1:5vRGFcvEQBtYwBAJdUXgsfB/CU7S84gs+rT/7QkNJag=
-github.com/cplieger/toolbelt/v3 v3.16.0-dev.6/go.mod h1:QDdU2+YOtIxPGMDI7O+EGo6L4YKPbVqJnthbfOdzGFY=
+github.com/cplieger/toolbelt/v3 v3.16.0-dev.7 h1:FZZJ9yxfCefuphkO20KckPl62wHT1wS75kOCeS5rd40=
+github.com/cplieger/toolbelt/v3 v3.16.0-dev.7/go.mod h1:QDdU2+YOtIxPGMDI7O+EGo6L4YKPbVqJnthbfOdzGFY=
 github.com/cplieger/web-terminal-engine/v6 v6.6.0-dev.5 h1:46NJV+8YN+HsmWajdafxtPrn526Gvya+yzOsHSqPk8E=
 github.com/cplieger/web-terminal-engine/v6 v6.6.0-dev.5/go.mod h1:Q9FfHBKIYRzkwHND2f1/psB2MeZtO9CgA8lev7LLx6c=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=

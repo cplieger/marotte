@@ -415,7 +415,7 @@ func WithDebugLogs(current func() bool, set func(on bool)) Option {
 	return func(h *Runtime) { h.debugLogs, h.setDebugLogs = current, set }
 }
 
-// WithSessionReaper wires the KAS session reaper a chat delete and the run-log sweep read.
+// WithSessionReaper wires the KAS session reaper a chat delete, an ended observer pass and the run-log sweep read.
 func WithSessionReaper(r *kirosession.Reaper) Option {
 	return func(h *Runtime) { h.sessionReaper = r }
 }

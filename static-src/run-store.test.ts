@@ -717,11 +717,11 @@ describe("the live-runs inventory", () => {
     // Sorted, because the answer's ORDER is the map's insertion order and no consumer depends on it
     // — asserting it would pin a fact nothing reads.
     expect([...rows].sort((a, b) => a.id.localeCompare(b.id))).toEqual([
-      { id: "wf-a", chat: "chat-x", executing: true },
-      { id: "wf-b", chat: "chat-x", executing: false },
+      { id: "wf-a", chat: "chat-x", executing: true, started: 1 },
+      { id: "wf-b", chat: "chat-x", executing: false, started: 1 },
     ]);
     expect(store.liveRunsForChat("chat-y"), "the other chat's own row").toEqual([
-      { id: "wf-c", chat: "chat-y", executing: true },
+      { id: "wf-c", chat: "chat-y", executing: true, started: 1 },
     ]);
     expect(store.liveRunsForChat("chat-none"), "a chat with no run").toEqual([]);
     expect(store.liveRunsForChat(""), "the empty chat is never a subject").toEqual([]);

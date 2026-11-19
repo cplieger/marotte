@@ -210,7 +210,7 @@ function isAptState(v: unknown): v is AptState {
   return v === "unavailable" || v === "indexing" || v === "available";
 }
 
-/** The search reply plus two fields only newer engines state. Absent means UNSTATED. */
+/** The search reply with its optional fields narrowed. Absent means UNSTATED. */
 export interface ToolSearchResponse extends SearchResponse {
   apt_state?: AptState;
   /** How many rows the query matched over the blocks the reply holds, so it is
@@ -218,17 +218,22 @@ export interface ToolSearchResponse extends SearchResponse {
   matched?: number;
 }
 
-/** Reads both additive fields off the raw body and VALIDATES them: the wire type's bare-string
+/** Reads the optional fields off the raw body and VALIDATES them: the wire type's bare-string
  *  `apt_state` would let an invented value reach the renderer's exhaustive switch with no arm. */
 function decodeSearch(data: unknown): ToolSearchResponse {
   const o = data as Record<string, unknown>;
   const out: ToolSearchResponse = { ...(data as Omit<SearchResponse, "apt_state">) };
   // Dropped first, or a REFUSED value would survive the spread.
   delete out.apt_state;
+  delete out.apt_reason;
   delete out.matched;
   const state = o["apt_state"];
   if (isAptState(state)) {
     out.apt_state = state;
+  }
+  const reason = o["apt_reason"];
+  if (typeof reason === "string" && reason !== "") {
+    out.apt_reason = reason;
   }
   const matched = o["matched"];
   if (typeof matched === "number" && Number.isInteger(matched) && matched >= 0) {

@@ -107,7 +107,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
 # fonts and icons the stylesheet names, with their notices, into static/vendor/ui/.
 # This pin and static-src/package.json's track the same exact version.
 # renovate: datasource=npm depName=@cplieger/ui
-ARG CPLIEGER_UI_VERSION=1.3.0-dev.51
+ARG CPLIEGER_UI_VERSION=1.3.0-dev.52
 RUN mkdir -p static-src/node_modules/@cplieger/ui && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/ui/-/ui-${CPLIEGER_UI_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/ui --strip-components=1
@@ -331,6 +331,7 @@ RUN ln -s /app/marotte /usr/bin/xclip
 
 # /opt is hidden from the file browser (internal/filebrowse/paths.go).
 COPY --chmod=755 entrypoint.sh /opt/marotte/entrypoint.sh
+COPY login-path.sh /etc/profile.d/10-marotte-path.sh
 COPY --from=builder /tmp/tool-catalog.json /opt/marotte/tool-catalog.json
 COPY bundled-tools.json /opt/marotte/bundled-tools.json
 

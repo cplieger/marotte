@@ -506,8 +506,10 @@ func (r *turnRegistry) endStep(host marotte.ChatID, turnID string) {
 
 // holdWake keeps chatID's session for the wake KAS owes it after workflowID's terminal run_complete: KAS sends the
 // wake after the frame, and with no resident session its frames would reach the engine lane. The hold ends when a
-// turn KAS opens on the chat (takeWakeLocked), its life ends or wakeHoldBound passes. A run chat takes none.
-func (r *turnRegistry) holdWake(chatID marotte.ChatID, workflowID string) {
+// turn KAS opens on the chat (takeWakeLocked), its life ends or wakeHoldBound passes. A run chat, a chat with no
+// lifecycle and an ended life take none. kept, when set, runs under lc.mu once the hold is taken, so a life's end
+// (endLifeLocked) either refuses the hold or follows kept's record.
+func (r *turnRegistry) holdWake(chatID marotte.ChatID, workflowID string, kept func()) {
 	if marotte.IsRunHostChat(chatID) {
 		return
 	}
@@ -519,6 +521,9 @@ func (r *turnRegistry) holdWake(chatID marotte.ChatID, workflowID string) {
 	defer lc.mu.Unlock()
 	if lc.ended {
 		return
+	}
+	if kept != nil {
+		kept()
 	}
 	if old := lc.wakes[workflowID]; old != nil {
 		old.Stop()
@@ -542,14 +547,16 @@ func (r *turnRegistry) holdWake(chatID marotte.ChatID, workflowID string) {
 // takeWakeLocked ends one wake hold, any of them, for a turn KAS opened: that turn, including a continuation that
 // delivers a buffered wake, takes over the session in this section. A turn marotte opened takes none, since it may end
 // unsent while KAS, still idle, starts the wake. A wake the running turn reads opens no turn, so its hold ends at
-// wakeHoldBound. KAS's activity takes none, since holdKAS refuses while it lasts. Caller holds mu.
-func (lc *chatLifecycle) takeWakeLocked() {
+// wakeHoldBound. KAS's activity takes none, since holdKAS refuses while it lasts. It reports whether it took one.
+// Caller holds mu.
+func (lc *chatLifecycle) takeWakeLocked() bool {
 	for workflowID, bound := range lc.wakes {
 		bound.Stop()
 		delete(lc.wakes, workflowID)
 		lc.wakeLocked()
-		return
+		return true
 	}
+	return false
 }
 
 // endWakesLocked ends every wake hold when the life ends. Caller holds mu.

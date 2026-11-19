@@ -87,6 +87,8 @@ type engineHooks struct {
 	// owner's last verdict, true while it cannot be read, with no I/O. Nil means readable and not held.
 	configReadable func(ctx context.Context) bool
 	configHeld     func() bool
+	// passClosed removes a closed observer pass's persisted session state, which nothing loads again; nil keeps it.
+	passClosed func(id marotte.SessionID)
 }
 
 // engineBusy is what a restart now would interrupt, and whether anything else holds quiescence.

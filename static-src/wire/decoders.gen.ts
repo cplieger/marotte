@@ -952,6 +952,7 @@ export const decodeEffectiveSettings: Decoder<EffectiveSettings> = (v) => {
     chat_awareness_enabled: reqBool(o, "chat_awareness_enabled", "$.effective_settings"),
     supervised_default: reqBool(o, "supervised_default", "$.effective_settings"),
     scheduled_auto_approve: reqBool(o, "scheduled_auto_approve", "$.effective_settings"),
+    bot_auto_approve: reqBool(o, "bot_auto_approve", "$.effective_settings"),
     debug_logs: reqBool(o, "debug_logs", "$.effective_settings"),
     high_throughput_optimizations: reqBool(o, "high_throughput_optimizations", "$.effective_settings"),
     model_fallback_enabled: reqBool(o, "model_fallback_enabled", "$.effective_settings"),
@@ -2712,6 +2713,7 @@ export const decodeLiveRun: Decoder<LiveRun> = (v) => {
     workflow_id: reqStr(o, "workflow_id", "$.live_run"),
     chat_id: reqStr(o, "chat_id", "$.live_run"),
     executing: reqBool(o, "executing", "$.live_run"),
+    started_at: reqNum(o, "started_at", "$.live_run"),
   };
   return out;
 };
@@ -2723,6 +2725,7 @@ export const decodeLiveRunPayload: Decoder<LiveRunPayload> = (v) => {
     chat_id: reqStr(o, "chat_id", "$.live_run_payload"),
     live: reqBool(o, "live", "$.live_run_payload"),
     executing: reqBool(o, "executing", "$.live_run_payload"),
+    started_at: reqNum(o, "started_at", "$.live_run_payload"),
   };
   return out;
 };
@@ -5128,6 +5131,10 @@ export const decodeSearchResponse: Decoder<SearchResponse> = (v) => {
   {
     const $v = own(o, "apt_state");
     if ($v !== undefined && $v !== null) out.apt_state = reqStr(o, "apt_state", "$.search_response");
+  }
+  {
+    const $v = own(o, "apt_reason");
+    if ($v !== undefined && $v !== null) out.apt_reason = reqStr(o, "apt_reason", "$.search_response");
   }
   {
     const $v = own(o, "matched");

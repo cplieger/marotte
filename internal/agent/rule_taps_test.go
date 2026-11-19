@@ -35,13 +35,22 @@ func (r *tapRecorder) record(tap string, chatID marotte.ChatID, turnID string, c
 	r.calls = append(r.calls, tapCall{tap: tap, turn: turnID, caller: caller, endedAt: ended})
 }
 
-func (r *tapRecorder) TurnOpened(chatID marotte.ChatID, turnID string, caller *marotte.Caller) {
+func (r *tapRecorder) TurnOpened(
+	chatID marotte.ChatID, turnID string, _ marotte.TurnOpenSource, caller *marotte.Caller, _ bool,
+) (leaseDepth int) {
 	r.record("opened", chatID, turnID, caller)
+	return 0
 }
 
 func (r *tapRecorder) TurnClosed(chatID marotte.ChatID, turnID string, caller *marotte.Caller) {
 	r.record("closed", chatID, turnID, caller)
 }
+
+func (*tapRecorder) LaunchDepth(marotte.ChatID) int { return 0 }
+
+func (*tapRecorder) RunEnded(marotte.ChatID, string, int) {}
+
+func (*tapRecorder) SessionEnded(marotte.ChatID) {}
 
 func (*tapRecorder) Reindex(marotte.ChatID) {}
 

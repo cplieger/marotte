@@ -748,9 +748,13 @@ func (rs *Runs) leaseForRetry(
 		rs.settleMissedEnd(ctx, &l, marotte.RunStatus(aff.head.Status))
 	}
 	if l, held := rs.lease(workflowID); held {
-		// A manual or agent lease is the one this origin would grant; the run under it is a new one all the same.
+		// A manual or agent lease is the one this origin would grant; the run under it is a new one all the same, and
+		// a person's launch, so depth 0.
 		rs.restartLife(ctx, workflowID)
 		rs.recordKeepChats(ctx, &l, holders)
+		if err := rs.leaseStore().SetDepth(ctx, workflowID, 0); err != nil {
+			slog.Warn("run lease: a retry's depth was not recorded on disk", "workflow_id", workflowID, "error", err)
+		}
 		return false
 	}
 	if event != nil {

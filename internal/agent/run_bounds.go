@@ -921,7 +921,7 @@ func (rs *Runs) observeComplete(ctx context.Context, chatID marotte.ChatID, msg 
 		}
 		// Before forgetBounds, whose lease release asks the chat's release: KAS wakes the parent after this frame.
 		if rs.coord != nil && chatID != "" {
-			rs.coord.turns.holdWake(chatID, f.WorkflowID)
+			rs.coord.turns.holdWake(chatID, f.WorkflowID, rs.wakeDepthKeeper(chatID, f.WorkflowID))
 		}
 		rs.forgetBounds(ctx, f.WorkflowID)
 		rs.translate.ForgetRunSteps(f.WorkflowID)
@@ -933,6 +933,22 @@ func (rs *Runs) observeComplete(ctx context.Context, chatID marotte.ChatID, msg 
 		rs.notifyRunOutcome(ctx, chatID, &f)
 	}
 	rs.translate.HandleRunComplete(ctx, chatID, msg)
+}
+
+// wakeDepthKeeper is holdWake's record of a terminal run's lease depth for the wake turn KAS owes its parent chat,
+// nil with no rule engine: a depth kept for an ended life would deepen the reopened chat's next wake. It reads the
+// lease, so it is built before forgetBounds.
+func (rs *Runs) wakeDepthKeeper(chatID marotte.ChatID, workflowID string) func() {
+	taps := rs.ruleTaps()
+	if taps == nil {
+		return nil
+	}
+	depth := 0
+	if l, held := rs.lease(workflowID); held {
+		depth = l.Depth
+	}
+	parent := rs.parentChat(chatID, workflowID)
+	return func() { taps.RunEnded(parent, workflowID, depth) }
 }
 
 // notifyRunOutcome notifies a run's `run_complete`: the only channel to a reader off the page, for

@@ -50,6 +50,14 @@ var signInSaveReasons = []string{SignInStagedCopyLeft, SignInWriteFailed}
 // unattendedOrigins are the runlease origins internal/agent leases as unattended.
 var unattendedOrigins = []string{"scheduled", "triggered"}
 
+// The answers the floor gives an automatic Bot turn's permission ask for the absent user.
+const (
+	BotAnswerRefused  = "refused"
+	BotAnswerApproved = "approved"
+)
+
+var botAnswers = []string{BotAnswerRefused, BotAnswerApproved}
+
 // The reasons an unattended run fails.
 const (
 	// RunNeedsApproval is a permission ask refused because nobody was there to approve it.
@@ -144,6 +152,9 @@ var (
 	unattendedApprovals = measure.NewLabeledCounter("unattended_approvals_total",
 		"Permission asks of scheduled and triggered runs approved automatically, by origin.", measure.UnitCount,
 		[]string{"origin"}, measure.WithSeed(each(unattendedOrigins)...))
+	botUnattendedAnswers = measure.NewLabeledCounter("bot_unattended_answers_total",
+		"Permission asks of automatic Bot turns answered with nobody watching, by answer.", measure.UnitCount,
+		[]string{"answer"}, measure.WithSeed(each(botAnswers)...))
 	slotsNotStarted = measure.NewLabeledCounter("schedule_slots_not_started_total",
 		"Schedule slots that produced no run, by what stopped them.", measure.UnitCount, []string{"event"},
 		measure.WithSeed(each(slotNotStartedEvents)...))
@@ -179,7 +190,7 @@ var (
 
 func init() {
 	registry.MustRegister(buildInfo, engineExits, promptFailures, signInSaveFailures, signInState, engineUp, engineResident,
-		engineHeapLimit, unattendedRunFailures, unattendedApprovals, slotsNotStarted, scheduleFailedSlots,
+		engineHeapLimit, unattendedRunFailures, unattendedApprovals, botUnattendedAnswers, slotsNotStarted, scheduleFailedSlots,
 		scheduleNextDue, triggerBlocked, triggerQueueFull, triggerPollFailures, triggerGaps, ruleEvaluations,
 		ruleDeliveries, ruleQueueEvents, ruleWriteFailing)
 	buildInfo.Set(version.Build)
@@ -267,6 +278,10 @@ func UnattendedRunFailed(origin, reason string) { unattendedRunFailures.Inc(orig
 
 // UnattendedApproved counts one permission ask of an unattended run of origin approved with nobody watching.
 func UnattendedApproved(origin string) { unattendedApprovals.Inc(origin) }
+
+// BotUnattendedAnswer counts one permission ask of an automatic Bot turn answered for the absent user, answer one of
+// BotAnswerRefused and BotAnswerApproved.
+func BotUnattendedAnswer(answer string) { botUnattendedAnswers.Inc(answer) }
 
 // ScheduleSlotNotStarted counts one schedule slot that produced no run, under event, one of the Slot events above.
 func ScheduleSlotNotStarted(event string) { slotsNotStarted.Inc(event) }

@@ -176,8 +176,9 @@ type EffectiveSettings struct {
 	NotifyRunOutcome     bool `json:"notify_run_outcome"`
 	NotifySignIn         bool `json:"notify_sign_in"`
 	// SupervisedDefault seeds newly created chats; ScheduledAutoApprove decides an
-	// unattended run's permission ask at its deadline and is fail-closed by
-	// decision. DebugLogs raises the log level. All three default off.
+	// unattended run's permission ask at its deadline and BotAutoApprove an automatic
+	// Bot turn's, both fail-closed by decision. DebugLogs raises the log level. All
+	// four default off.
 	// SpecPlanningAskFirst, SteeringReminders, ChatMessaging and ChatAwareness default off, matching kiro-cli.
 	// WorkflowsEnabled defaults ON (user's choice, where the TUI's default is off).
 	SpecPlanningAskFirst bool `json:"spec_planning_ask_first"`
@@ -187,6 +188,7 @@ type EffectiveSettings struct {
 	ChatAwareness        bool `json:"chat_awareness_enabled"`
 	SupervisedDefault    bool `json:"supervised_default"`
 	ScheduledAutoApprove bool `json:"scheduled_auto_approve"`
+	BotAutoApprove       bool `json:"bot_auto_approve"`
 	DebugLogs            bool `json:"debug_logs"`
 	// HighThroughput starts the agent engine with the high throughput Node.js flags, default on.
 	HighThroughput bool `json:"high_throughput_optimizations"`

@@ -549,28 +549,29 @@ func TestStoreAnnouncesEachRowChange(t *testing.T) {
 		t.Fatalf("fresh ListStamped = (%d leases, %q), want (0, %q)", len(leases), version, subject.Unminted)
 	}
 	ctx := t.Context()
-	armed := time.Now().Add(time.Hour)
+	start := time.Now()
+	armed := start.Add(time.Hour)
 	steps := []struct {
 		do   func() error
 		want *announcement
 		name string
 	}{
 		{name: "Put", do: func() error {
-			return s.Put(ctx, &Lease{WorkflowID: "wf_1", ChatID: "c1", Origin: OriginManual, StartedAt: time.Now()})
-		}, want: &announcement{row: Row{WorkflowID: "wf_1", ChatID: "c1"}, live: true}},
+			return s.Put(ctx, &Lease{WorkflowID: "wf_1", ChatID: "c1", Origin: OriginManual, StartedAt: start})
+		}, want: &announcement{row: Row{StartedAt: start, WorkflowID: "wf_1", ChatID: "c1"}, live: true}},
 		{name: "an unchanged Put", do: func() error {
-			return s.Put(ctx, &Lease{WorkflowID: "wf_1", ChatID: "c1", Origin: OriginManual, Recipe: "r"})
+			return s.Put(ctx, &Lease{WorkflowID: "wf_1", ChatID: "c1", Origin: OriginManual, Recipe: "r", StartedAt: start})
 		}},
 		{
 			name: "SetDeadline arms", do: func() error { return s.SetDeadline(ctx, "wf_1", armed) },
-			want: &announcement{row: Row{WorkflowID: "wf_1", ChatID: "c1", Executing: true}, live: true},
+			want: &announcement{row: Row{StartedAt: start, WorkflowID: "wf_1", ChatID: "c1", Executing: true}, live: true},
 		},
 		{name: "a refill", do: func() error { return s.SetDeadline(ctx, "wf_1", armed.Add(time.Minute)) }},
 		{name: "SetKeepChats", do: func() error { return s.SetKeepChats(ctx, "wf_1", []string{"c2"}) }},
 		{name: "SetParentSessionID", do: func() error { return s.SetParentSessionID(ctx, "wf_1", "sess") }},
 		{
 			name: "SetDeadline parks", do: func() error { return s.SetDeadline(ctx, "wf_1", time.Time{}) },
-			want: &announcement{row: Row{WorkflowID: "wf_1", ChatID: "c1"}, live: true},
+			want: &announcement{row: Row{StartedAt: start, WorkflowID: "wf_1", ChatID: "c1"}, live: true},
 		},
 		{
 			name: "Release", do: func() error { return s.Release(ctx, "wf_1") },
@@ -676,6 +677,31 @@ func TestStore_SetParentSessionIDIsDurable(t *testing.T) {
 	}
 	if err := s.SetParentSessionID(t.Context(), "wf_gone", "sess_parent"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("SetParentSessionID on no lease = %v, want ErrNotFound", err)
+	}
+}
+
+func TestStore_SetDepthIsDurable(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	s, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := s.Put(t.Context(), &Lease{WorkflowID: "wf_1", Origin: OriginAgent, Depth: 2}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := s.SetDepth(t.Context(), "wf_1", 0); err != nil {
+		t.Fatalf("SetDepth: %v", err)
+	}
+	reopened, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if got, _ := reopened.Get("wf_1"); got.Depth != 0 {
+		t.Errorf("after a restart Depth = %d, want 0", got.Depth)
+	}
+	if err := s.SetDepth(t.Context(), "wf_gone", 0); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SetDepth on no lease = %v, want ErrNotFound", err)
 	}
 }
 

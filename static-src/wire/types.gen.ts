@@ -1086,8 +1086,9 @@ export interface EffectiveSettings {
   notify_sign_in: boolean;
   /**
    * SupervisedDefault seeds newly created chats; ScheduledAutoApprove decides an
-   * unattended run's permission ask at its deadline and is fail-closed by
-   * decision. DebugLogs raises the log level. All three default off.
+   * unattended run's permission ask at its deadline and BotAutoApprove an automatic
+   * Bot turn's, both fail-closed by decision. DebugLogs raises the log level. All
+   * four default off.
    * SpecPlanningAskFirst, SteeringReminders, ChatMessaging and ChatAwareness default off, matching kiro-cli.
    * WorkflowsEnabled defaults ON (user's choice, where the TUI's default is off).
    */
@@ -1098,6 +1099,7 @@ export interface EffectiveSettings {
   chat_awareness_enabled: boolean;
   supervised_default: boolean;
   scheduled_auto_approve: boolean;
+  bot_auto_approve: boolean;
   debug_logs: boolean;
   /** HighThroughput starts the agent engine with the high throughput Node.js flags, default on. */
   high_throughput_optimizations: boolean;
@@ -2405,10 +2407,9 @@ export interface LastRanLeaf {
 
 /**
  * LiveRun is one row of GET /api/runs/live: a run marotte's own lease registry says
- * is in flight, named with the chat whose agent launched it. ChatID is empty for a
- * parentless run and for a lease predating the field — both mean "no chat to launch
- * a tab under". Executing is a FIELD rather than a filter applied here because
- * three consumers ask this row three different questions, and filtering for the
+ * is in flight, named with the chat whose agent launched it. ChatID is empty exactly
+ * for a parentless run. Executing is a FIELD rather than a filter applied here because
+ * its consumers ask this row different questions, and filtering for the
  * eviction sweep would take the row away from the tab dot and the tab parent.
  */
 export interface LiveRun {
@@ -2421,17 +2422,21 @@ export interface LiveRun {
    * advances a step without re-arming) until marotte arms the run again.
    */
   executing: boolean;
+  /** StartedAt is the unix ms marotte put the run on the wire, the same on every page. */
+  started_at: number;
 }
 
 /**
  * LiveRunPayload is the payload for type="live_run": one LiveRun row changed. Live false
- * means the run left the inventory: ChatID is the chat it was under, Executing false.
+ * means the run left the inventory: ChatID is the chat it was under, Executing false and
+ * StartedAt 0.
  */
 export interface LiveRunPayload {
   workflow_id: string;
   chat_id: string;
   live: boolean;
   executing: boolean;
+  started_at: number;
 }
 
 /** LiveRunsResponse is GET /api/runs/live's reply. */
@@ -2986,7 +2991,8 @@ export interface PermissionNeededPayload {
   rejection_note?: RejectionNote;
   /**
    * ClassifierNote is _meta.kiro.trustClassifier's reason: Kiro's safety check did not clear the
-   * call and handed it to a person. Unattended runs refuse such an ask.
+   * call and handed it to a person. Both unattended floors, a scheduled or triggered run's and an
+   * automatic Bot turn's, refuse such an ask.
    */
   classifier_note?: string;
   options: PermissionOption[];
@@ -4298,8 +4304,9 @@ export interface SearchHit {
    */
   version?: string;
   /**
-   * Reason names the registry backend that defeated the compiler, and
-   * is set only alongside Unavailable.
+   * Reason says why the hit cannot be installed: the registry backend
+   * that defeated the compiler, or for a Debian package
+   * [toolbelt.AptUnavailableReason]. Set only alongside Unavailable.
    */
   reason?: string;
   /**
@@ -4351,6 +4358,12 @@ export interface SearchResponse {
    * predating the field, where AptAvailable is the whole answer.
    */
   apt_state?: string;
+  /**
+   * AptReason says why apt cannot install here, set only when AptState
+   * is unavailable, so a client can say why even when no Debian hit
+   * reaches the unavailable block.
+   */
+  apt_reason?: string;
   results: SearchHit[];
   /**
    * Matched is how many rows the query matched across the blocks

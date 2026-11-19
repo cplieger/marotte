@@ -39,6 +39,10 @@ marotte_unattended_run_failures_total{origin="triggered",reason="stalled"} 0
 # TYPE marotte_unattended_approvals_total counter
 marotte_unattended_approvals_total{origin="scheduled"} 0
 marotte_unattended_approvals_total{origin="triggered"} 0
+# HELP marotte_bot_unattended_answers_total Permission asks of automatic Bot turns answered with nobody watching, by answer.
+# TYPE marotte_bot_unattended_answers_total counter
+marotte_bot_unattended_answers_total{answer="approved"} 0
+marotte_bot_unattended_answers_total{answer="refused"} 0
 # HELP marotte_schedule_slots_not_started_total Schedule slots that produced no run, by what stopped them.
 # TYPE marotte_schedule_slots_not_started_total counter
 marotte_schedule_slots_not_started_total{event="engine_busy"} 0
@@ -121,6 +125,10 @@ marotte_unattended_run_failures_total{origin="triggered",reason="stalled"} 0
 # TYPE marotte_unattended_approvals_total counter
 marotte_unattended_approvals_total{origin="scheduled"} 0
 marotte_unattended_approvals_total{origin="triggered"} 1
+# HELP marotte_bot_unattended_answers_total Permission asks of automatic Bot turns answered with nobody watching, by answer.
+# TYPE marotte_bot_unattended_answers_total counter
+marotte_bot_unattended_answers_total{answer="approved"} 0
+marotte_bot_unattended_answers_total{answer="refused"} 0
 # HELP marotte_schedule_slots_not_started_total Schedule slots that produced no run, by what stopped them.
 # TYPE marotte_schedule_slots_not_started_total counter
 marotte_schedule_slots_not_started_total{event="engine_busy"} 1
@@ -232,6 +240,10 @@ marotte_unattended_run_failures_total{origin="triggered",reason="stalled"} 0
 # TYPE marotte_unattended_approvals_total counter
 marotte_unattended_approvals_total{origin="scheduled"} 0
 marotte_unattended_approvals_total{origin="triggered"} 1
+# HELP marotte_bot_unattended_answers_total Permission asks of automatic Bot turns answered with nobody watching, by answer.
+# TYPE marotte_bot_unattended_answers_total counter
+marotte_bot_unattended_answers_total{answer="approved"} 0
+marotte_bot_unattended_answers_total{answer="refused"} 0
 # HELP marotte_schedule_slots_not_started_total Schedule slots that produced no run, by what stopped them.
 # TYPE marotte_schedule_slots_not_started_total counter
 marotte_schedule_slots_not_started_total{event="engine_busy"} 1
@@ -339,6 +351,10 @@ marotte_unattended_run_failures_total{origin="triggered",reason="stalled"} 0
 # TYPE marotte_unattended_approvals_total counter
 marotte_unattended_approvals_total{origin="scheduled"} 0
 marotte_unattended_approvals_total{origin="triggered"} 1
+# HELP marotte_bot_unattended_answers_total Permission asks of automatic Bot turns answered with nobody watching, by answer.
+# TYPE marotte_bot_unattended_answers_total counter
+marotte_bot_unattended_answers_total{answer="approved"} 0
+marotte_bot_unattended_answers_total{answer="refused"} 0
 # HELP marotte_schedule_slots_not_started_total Schedule slots that produced no run, by what stopped them.
 # TYPE marotte_schedule_slots_not_started_total counter
 marotte_schedule_slots_not_started_total{event="engine_busy"} 1

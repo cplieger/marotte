@@ -22,7 +22,7 @@ export function runsStamp(): SubjectStamp {
 /** The server announced this run live (or moved its row). */
 export function frameRunLive(workflowID: string, chatID: string, executing = true): void {
   applyLiveRunFrame(
-    { workflow_id: workflowID, chat_id: chatID, live: true, executing },
+    { workflow_id: workflowID, chat_id: chatID, live: true, executing, started_at: 1 },
     runsStamp(),
   );
 }
@@ -30,7 +30,7 @@ export function frameRunLive(workflowID: string, chatID: string, executing = tru
 /** The server released this run's lease. */
 export function frameRunGone(workflowID: string): void {
   applyLiveRunFrame(
-    { workflow_id: workflowID, chat_id: "", live: false, executing: false },
+    { workflow_id: workflowID, chat_id: "", live: false, executing: false, started_at: 0 },
     runsStamp(),
   );
 }

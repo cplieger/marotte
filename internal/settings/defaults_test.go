@@ -95,6 +95,23 @@ func TestEffective_MCPWaitForReadyDefaultsOffAndDecodes(t *testing.T) {
 	}
 }
 
+// An automatic Bot turn's tool request is refused unless the user turned approval on.
+func TestEffective_BotAutoApproveDefaultsOffAndDecodes(t *testing.T) {
+	if EffectiveDefaults().BotAutoApprove {
+		t.Error("EffectiveDefaults().BotAutoApprove = true, want false")
+	}
+	got, rejected := EffectiveFrom(map[string]json.RawMessage{KeyBotAutoApprove: json.RawMessage(`true`)})
+	if !got.BotAutoApprove || len(rejected) != 0 {
+		t.Errorf("EffectiveFrom(stored true) = %v, rejected %v; want true and nothing rejected", got.BotAutoApprove, rejected)
+	}
+	if KeyBotAutoApprove != "bot_auto_approve" {
+		t.Errorf("KeyBotAutoApprove = %q, want bot_auto_approve", KeyBotAutoApprove)
+	}
+	if unknown := WarnUnknownKeys([]string{KeyBotAutoApprove}, "test"); len(unknown) != 0 {
+		t.Errorf("WarnUnknownKeys(%q) = %v, want it known", KeyBotAutoApprove, unknown)
+	}
+}
+
 func TestEffective_AutoCompactionDefaultsAndInvalidPctReadsAsDefault(t *testing.T) {
 	d := EffectiveDefaults()
 	if !d.AutoCompactionEnabled || d.AutoCompactPct != 80 {

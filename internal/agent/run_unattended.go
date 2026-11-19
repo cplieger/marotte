@@ -26,7 +26,7 @@ import (
 	"github.com/cplieger/marotte/internal/translate"
 )
 
-// unattendedApprovalBudget is how long a scheduled run's request waits before refusal: 180s, as KiroCrew's
+// unattendedApprovalBudget is how long an ask nobody watches waits before a floor answers it: 180s, as KiroCrew's
 // `_BACKGROUND_APPROVAL_TIMEOUT_SECS`. Nonzero: the user may be watching.
 const unattendedApprovalBudget = 180 * time.Second
 
@@ -143,42 +143,15 @@ func (rs *Runs) answerUnattended(
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
 
-	approve := scheduledAutoApprove(ctx, rs.lifecycle.configDir)
-	asker := askerOf(msgParams, delegated)
-	if refusal := asker.refusal(); approve && refusal != "" {
-		slog.Warn("unattended auto-approve: refusing, "+refusal,
-			"chat_id", chatID, "tool", name.tool, "subject", name.subject)
-		approve = false
-	}
-	// Refuse with the advertised reject option; Cancelled only when none is offered. A plan approval's note is
-	// kept by KAS and handed to the steps of the creator's next approved plan as the user's correction, so the
-	// floor's machine text goes on no plan.
-	outcome := marotte.PermissionOutcomeCancelled()
-	if opt := optionIDByKind(msgParams, optionKindRejectOnce); opt != "" {
-		outcome = marotte.PermissionOutcomeWithRejectionReason(opt, unattendedRejectionReason)
-		if planApprovalAsk(msgParams) {
-			outcome = marotte.PermissionOutcomeSelected(opt)
-		}
-	}
-	verb := outcomeRefused
-	if approve {
-		opt := optionIDByKind(msgParams, optionKindAllowOnce)
-		if opt == "" {
-			// Never invent an id; fall back to refusal.
-			slog.Warn("unattended auto-approve: request offered no allow option, refusing instead",
-				"chat_id", chatID, "tool", name.tool)
-		} else {
-			outcome = marotte.PermissionOutcomeSelected(opt)
-			verb = outcomeApproved
-		}
-	}
+	a := decideUnattended(chatID, msgParams, scheduledAutoApprove(ctx, rs.lifecycle.configDir), delegated,
+		unattendedRejectionReason)
 	// The claim decides the race with a human on the page; losing it, or the bridge ending first, gives
 	// up. Claimed by the bridge and its own id: a successor reuses ids from zero.
 	reply, ok := rs.perms.TakePendingPermOn(origin, acpID, marotte.SettledByUnattended)
 	if !ok {
 		return
 	}
-	switch answered, err := reply.Respond(ctx, outcome); answered {
+	switch answered, err := reply.Respond(ctx, a.outcome); answered {
 	case command.AnswerDelivered:
 	case command.AnswerWithdrawn:
 		// The ask settled first, so no answer reached the run to report or explain.
@@ -189,9 +162,9 @@ func (rs *Runs) answerUnattended(
 	}
 	// One message for both answers, the outcome a field, so one search finds every answer given with nobody there.
 	slog.Warn(logMsgUnattendedPermission,
-		"outcome", verb, "chat_id", chatID, "tool", name.tool, "subject", name.subject,
+		"outcome", a.verb, "chat_id", chatID, "tool", name.tool, "subject", name.subject,
 		"budget", unattendedApprovalBudget, "schedule_id", run.ScheduleID, "rule_id", run.RuleID)
-	if verb == outcomeApproved {
+	if a.verb == outcomeApproved {
 		// An approval is not a failure.
 		obs.UnattendedApproved(string(l.Origin))
 		return
@@ -199,7 +172,7 @@ func (rs *Runs) answerUnattended(
 
 	countUnattendedFailure(l, obs.RunNeedsApproval)
 	// Surface it on the schedule row, or the run fails silently every night.
-	reason := unattendedRefusalReason(name.label(), asker)
+	reason := unattendedRefusalReason(name.label(), a.asker)
 	rs.recordScheduleOutcome(ctx, run, launchrule.Outcome{Status: launchrule.StatusFailed, Reason: reason})
 }
 

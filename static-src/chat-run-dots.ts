@@ -5,7 +5,7 @@
 import { effect } from "@cplieger/reactive";
 import { hasTab, openChatRefs, setTabRunStatus, tabIdFor } from "./tabs.js";
 import type { TabRunDotStatus, TabRunTally } from "./tabs.js";
-import { runStatusFor } from "./store.js";
+import { runStatusFor, type TabDotState } from "./store.js";
 import { runPendingAsks } from "./decision-dock.js";
 import { liveRunsForChat, peekLiveRun, runState } from "./run-store.js";
 
@@ -16,21 +16,24 @@ interface RunFold {
 }
 
 /**
- * Fold this chat's live runs onto one mark with `run-dots.ts`'s per-run read; before a run's
- * cell resolves, `executing` answers (`false` contributes nothing).
+ * A live run's state with `run-dots.ts`'s per-run read; before the run's cell resolves, its
+ * inventory row's `executing` answers (`false` paints nothing). Subscribes to the run and its asks.
  */
+export function liveRunStatus(workflowID: string, executing: boolean): TabDotState {
+  const asking = runPendingAsks(workflowID).count > 0;
+  const state = runState(workflowID);
+  return state === undefined
+    ? runStatusFor(executing ? "running" : undefined, asking)
+    : runStatusFor(state.status, asking);
+}
+
+/** Fold this chat's live runs onto one mark. */
 function foldRuns(chatID: string): RunFold {
   let working = 0;
   let waiting = 0;
   let input = 0;
   for (const row of liveRunsForChat(chatID)) {
-    const asking = runPendingAsks(row.id).count > 0;
-    const state = runState(row.id);
-    const rowStatus =
-      state === undefined
-        ? runStatusFor(row.executing ? "running" : undefined, asking)
-        : runStatusFor(state.status, asking);
-    switch (rowStatus) {
+    switch (liveRunStatus(row.id, row.executing)) {
       case "input":
         input++;
         break;

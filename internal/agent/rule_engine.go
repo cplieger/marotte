@@ -8,11 +8,16 @@ import (
 	"github.com/cplieger/marotte/internal/ruleengine"
 )
 
-// ruleTaps is the rule engine's turn taps. turnID is the turn_open entry's id, never the lifecycle's Seq, which
-// starts again with every life; caller is the opening prompt's, nil for a turn no caller's prompt opened.
+// ruleTaps is the rule engine's turn and run taps. turnID is the turn_open entry's id, never the lifecycle's Seq,
+// which starts again with every life; caller is the opening prompt's, nil for a turn no caller's prompt opened; wake
+// says the turn took a wake hold. TurnOpened answers the waking run's lease depth.
 type ruleTaps interface {
-	TurnOpened(chatID marotte.ChatID, turnID string, caller *marotte.Caller)
+	TurnOpened(chatID marotte.ChatID, turnID string, source marotte.TurnOpenSource, caller *marotte.Caller,
+		wake bool) (leaseDepth int)
 	TurnClosed(chatID marotte.ChatID, turnID string, caller *marotte.Caller)
+	LaunchDepth(chatID marotte.ChatID) int
+	RunEnded(parent marotte.ChatID, workflowID string, depth int)
+	SessionEnded(chatID marotte.ChatID)
 }
 
 // ruleEngine is the rule engine as the runtime wires it: its taps, the Bot commands' way in, and the setup's view.
@@ -37,15 +42,16 @@ func (rt *Runtime) SetRuleEngine(e ruleEngine) {
 }
 
 // RuleDeps answers the rule engine's dependencies on this runtime, over store: the notify door's delivery, the drain
-// and readiness gates the HTTP notify door is built with, and each chat's turn and waiting state.
-func (rt *Runtime) RuleDeps(store ruleengine.Store) ruleengine.Deps {
-	return ruleengine.Deps{
+// and readiness gates the HTTP notify door is built with, each chat's turn and waiting state, and the wake hold.
+func (rt *Runtime) RuleDeps(store ruleengine.Store) *ruleengine.Deps {
+	return &ruleengine.Deps{
 		Store:    store,
 		Notifier: ruleDoor{rt: rt},
 		Enter:    rt.lifecycle.enterUnlessDraining,
 		Ready:    rt.engine.isReady,
 		TurnLive: rt.TurnLive,
 		Waiting:  rt.bus.chatStatus.waiting,
+		WakeHold: wakeHoldBound,
 	}
 }
 
