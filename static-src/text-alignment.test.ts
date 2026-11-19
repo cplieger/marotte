@@ -19,6 +19,7 @@ import {
   clearSurface,
   frames,
   mountSurface,
+  plantToolSearch,
   q,
   type Size,
   type Surface,
@@ -92,6 +93,9 @@ interface Site {
   readonly must: readonly RegExp[];
   /** A label's tolerance where the site's dev offset lies inside a centre's: the trimmed label's. */
   readonly labelTol?: number;
+  /** Holds a label's cap centre, not its cap-to-x band, to this tolerance: the band takes in a
+   *  label raised by a row font smaller than its own. */
+  readonly capTol?: number;
 }
 
 const SITES: readonly Site[] = [
@@ -287,7 +291,7 @@ const SITES: readonly Site[] = [
     surface: surface("the model popup"),
     frame: ".pill-model-scroll .pill-model-item",
     sizes: [1180, 390],
-    must: [/^label: .*pill-model-name$/, /^label: .*pill-model-meta$/],
+    must: [/^label: .*pill-model-name$/, /^line: .*pill-model-name \| .*pill-model-meta$/],
   },
   {
     id: "the role card's name, shadow and scope",
@@ -314,6 +318,14 @@ const SITES: readonly Site[] = [
     sizes: [1180, 390],
     must: [/^label: .*section-option-label$/, /^label: .*auto-compact-pct-value$/],
     labelTol: BASELINE_PX,
+  },
+  {
+    id: "the global instructions' title",
+    surface: surface("Settings, Knowledge"),
+    frame: '[data-settings-panel="instructions"] .section-title-status-row',
+    sizes: [1180, 390],
+    must: [/^label: .*section-title-status-row > label\.section-title$/],
+    capTol: BASELINE_PX,
   },
   {
     id: "a workflow's schedule button",
@@ -374,8 +386,8 @@ function measureSite(site: Site): { what: string; delta: number; tol: number }[]
       .filter((l) => inside(l.el) && !l.lowered)
       .map((l) => ({
         what: `label: ${l.sel}`,
-        delta: labelOffset(l),
-        tol: site.labelTol ?? CENTRE_PX,
+        delta: site.capTol === undefined ? labelOffset(l) : l.capOff,
+        tol: site.capTol ?? site.labelTol ?? CENTRE_PX,
       })),
   ];
 }
@@ -541,5 +553,111 @@ describe("every line of a row", () => {
         },
       );
     }
+  }
+});
+
+const fileRows = surface("the file browser's rows");
+
+/** A fine pointer's list too narrow for one line: the other arm of the stacked row (19-files.css). */
+const NARROW_FILE_ROWS: Surface = {
+  ...fileRows,
+  name: "the file browser's rows in a narrow list",
+  setup: async (size) => {
+    await fileRows.setup(size);
+    q(".fb-list-wrap").style.inlineSize = "24rem";
+  },
+};
+
+/** A layout unit: Blink's 1/64 px, the finest step a box edge takes. */
+const LAYOUT_UNIT_PX = 1 / 64;
+
+describe("the stacked file row's meta line", () => {
+  for (const [vp, sf] of [
+    [VPS[0], NARROW_FILE_ROWS],
+    [VPS[1], fileRows],
+  ] as const) {
+    it(`stays in the row's content box and holds its text at ${String(vp.w)}x${String(vp.h)}`, async () => {
+      await page.viewport(vp.w, vp.h);
+      await mountSurface(sf, vp.size, vp.tier);
+      await frames();
+      const metas = [...document.querySelectorAll<HTMLElement>("#fb-list .fb-row > .fb-meta")];
+      expect(metas.length, "a file row's meta").toBeGreaterThan(0);
+      const off: string[] = [];
+      for (const meta of metas) {
+        const row = meta.parentElement!;
+        const rcs = getComputedStyle(row);
+        expect(rcs.display, "the row stacks its meta under its name").toBe("grid");
+        const rb = row.getBoundingClientRect();
+        // The row's padding is sized so its two line boxes are its content height (19-files.css).
+        const content = {
+          top: rb.top + parseFloat(rcs.borderTopWidth) + parseFloat(rcs.paddingTop),
+          bottom: rb.bottom - parseFloat(rcs.borderBottomWidth) - parseFloat(rcs.paddingBottom),
+        };
+        const box = meta.getBoundingClientRect();
+        // The meta clips at its box (`overflow: hidden`), so its text's content area must fit it.
+        const range = document.createRange();
+        range.selectNodeContents(meta);
+        const text = range.getClientRects()[0]!;
+        const past = {
+          "box below the row's content": box.bottom - content.bottom,
+          "box above the row's content": content.top - box.top,
+          "text below the box": text.bottom - box.bottom,
+          "text above the box": box.top - text.top,
+        };
+        for (const [what, px] of Object.entries(past)) {
+          if (px > LAYOUT_UNIT_PX) {
+            off.push(`${meta.textContent}: ${what} by ${String(r2(px))} px`);
+          }
+        }
+      }
+      expect(off, `at DPR ${String(window.devicePixelRatio)}`).toEqual([]);
+    });
+  }
+});
+
+/** Turns the row trim (15-input.css) off: every trimmed box gets its untrimmed line box back. */
+const UNTRIM_CSS =
+  "[data-untrim] { text-box: normal !important; padding-block: 0 !important;" +
+  " margin-block: 0 !important; min-block-size: auto !important; }";
+
+const TOOL_SEARCH: Surface = {
+  ...surface("Settings, Tools"),
+  name: "the Add-tool search",
+  setup: plantToolSearch,
+};
+
+const hitHeights = (): number[] =>
+  [...document.querySelectorAll(".tool-hit")].map((h) => h.getBoundingClientRect().height);
+
+describe("the Add-tool search's hit rows", () => {
+  for (const vp of VPS) {
+    it(`keep their untrimmed height at ${String(vp.w)}x${String(vp.h)}`, async () => {
+      await page.viewport(vp.w, vp.h);
+      await mountSurface(TOOL_SEARCH, vp.size, vp.tier);
+      await frames();
+      const got = hitHeights();
+      expect(got.length, "the search's hits").toBe(3);
+      const trimmed = [...document.querySelectorAll(".tool-hit *")].filter(
+        (e) => getComputedStyle(e).getPropertyValue("text-box-trim") !== "none",
+      );
+      expect(trimmed.length, "the trim reaches the hits").toBeGreaterThan(0);
+      const untrim = document.createElement("style");
+      untrim.textContent = UNTRIM_CSS;
+      document.head.append(untrim);
+      for (const e of trimmed) {
+        e.setAttribute("data-untrim", "");
+      }
+      await frames();
+      const want = hitHeights();
+      untrim.remove();
+      for (const e of trimmed) {
+        e.removeAttribute("data-untrim");
+      }
+      // Exact to a layout unit: a box edge's finest step.
+      expect(
+        got.filter((h, i) => Math.abs(h - want[i]!) >= LAYOUT_UNIT_PX),
+        `at DPR ${String(window.devicePixelRatio)}, untrimmed ${want.join(", ")} px`,
+      ).toEqual([]);
+    });
   }
 });

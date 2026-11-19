@@ -388,11 +388,16 @@
       line-height: var(--fb-name-lh);
     }
 
+    /* Alone on its line, the meta has no baseline to meet, so it keeps its untrimmed line
+       box (15-input.css trims a row's runs): trimmed, its descenders reach the clip's edge. */
     :where(&) > .fb-meta {
       grid-area: 2 / 3;
       min-width: 0;
+      min-block-size: auto;
+      padding-block: 0;
       overflow: hidden;
       text-overflow: ellipsis;
+      text-box: normal;
       line-height: var(--fb-meta-lh);
     }
 

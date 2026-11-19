@@ -13,6 +13,9 @@
   position: absolute;
   width: 1px;
   height: 1px;
+
+  /* A row trim's 1lh floor (15-input.css) would outgrow the 1px. */
+  min-block-size: 0;
   padding: 0;
   margin: -1px;
   overflow: hidden;

@@ -493,8 +493,9 @@ export interface LabelShape {
   /** The label's cap-band and x-band middles less the row's centre, positive low. */
   readonly capOff: number;
   readonly xOff: number;
-  /** Lowered by a top margin onto a larger run's baseline (15-input.css), so off the centre; a
-   *  margin under a quarter pixel is a cap rounding between two faces of one size. */
+  /** Lowered onto a larger run's baseline (15-input.css) by a start padding over its end one or
+   *  a start margin over its end one, so off the centre; a drop under a quarter pixel is a cap
+   *  rounding between two faces of one size. */
   readonly lowered: boolean;
 }
 
@@ -537,7 +538,12 @@ export function labelShapes(root: Element, opts: MeasureOptions = {}): LabelShap
       boxCy: pc.boxCy,
       capOff: r2(pc.capMid - rowCy),
       xOff: r2(pc.xMid - rowCy),
-      lowered: parseFloat(cs.marginTop) > 0.25,
+      lowered:
+        parseFloat(cs.paddingTop) -
+          parseFloat(cs.paddingBottom) +
+          parseFloat(cs.marginTop) -
+          parseFloat(cs.marginBottom) >
+        0.25,
     });
   }
   return out;
