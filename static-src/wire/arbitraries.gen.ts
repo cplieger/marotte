@@ -40,7 +40,7 @@ export const arbPlanStatus: fc.Arbitrary<PlanStatus> = fc.constantFrom("pending"
 export const arbPressOutcome: fc.Arbitrary<PressOutcome> = fc.constantFrom("fired", "queued", "skipped", "failed");
 export const arbPreviewHintSource: fc.Arbitrary<PreviewHintSource> = fc.constantFrom("meta", "viewport");
 export const arbPreviewPreset: fc.Arbitrary<PreviewPreset> = fc.constantFrom("phone", "tablet", "desktop");
-export const arbPushKind: fc.Arbitrary<PushKind> = fc.constantFrom("agent_finished", "permission", "pr_status", "run_outcome", "sign_in");
+export const arbPushKind: fc.Arbitrary<PushKind> = fc.constantFrom("agent_finished", "permission", "pr_status", "run_outcome", "sign_in", "bot_rule");
 export const arbReadState: fc.Arbitrary<ReadState> = fc.constantFrom("ready", "unavailable");
 export const arbRefusalCode: fc.Arbitrary<RefusalCode> = fc.constantFrom("changed", "too_large", "binary", "invalid_file_id");
 export const arbRegistryFailureReason: fc.Arbitrary<RegistryFailureReason> = fc.constantFrom("rate_limited", "rejected", "unavailable");
@@ -907,6 +907,7 @@ const arbModel = fc.letrec<{
       notify_pr_status: fc.boolean(),
       notify_run_outcome: fc.boolean(),
       notify_sign_in: fc.boolean(),
+      notify_bot_rule: fc.boolean(),
       spec_planning_ask_first: fc.boolean(),
       steering_reminders_enabled: fc.boolean(),
       workflows_enabled: fc.boolean(),
@@ -920,7 +921,7 @@ const arbModel = fc.letrec<{
       model_fallback_enabled: fc.boolean(),
       hook_status_shown: fc.boolean(),
     },
-    { requiredKeys: ["last_effort_by_model", "kiro_defaults", "additional_directories_refused", "theme", "last_model", "last_merge_method", "memory_mode", "interrupt_mode", "spec_planning", "work_validation", "cloudformation_safety_check", "auto_routing", "auto_delegation", "output_style", "workflow_launch", "workflow_creator_effort", "chat_awareness_mode", "knowledge_index_type", "knowledge_include_patterns", "knowledge_exclude_patterns", "agent_ignore_files", "additional_directories", "rejected_keys", "model_fallbacks", "history_window_choices", "chat_retention_days", "history_window_hours", "auto_compact_pct", "auto_compact_pct_range", "terminal_command_timeout_ms", "engine_heap_mib", "trigger_max_live_runs", "trigger_max_launches_per_hour", "chat_message_delivery_limit", "knowledge_max_files", "knowledge_chunking", "settings_epoch", "settings_revision", "auto_compaction_enabled", "knowledge_enabled", "content_collection_enabled", "guard_payload_links", "mcp_wait_for_ready", "notifications_enabled", "notify_agent_finished", "notify_pr_status", "notify_run_outcome", "notify_sign_in", "spec_planning_ask_first", "steering_reminders_enabled", "workflows_enabled", "chat_messaging_enabled", "chat_awareness_enabled", "supervised_default", "scheduled_auto_approve", "bot_auto_approve", "debug_logs", "high_throughput_optimizations", "model_fallback_enabled", "hook_status_shown"] },
+    { requiredKeys: ["last_effort_by_model", "kiro_defaults", "additional_directories_refused", "theme", "last_model", "last_merge_method", "memory_mode", "interrupt_mode", "spec_planning", "work_validation", "cloudformation_safety_check", "auto_routing", "auto_delegation", "output_style", "workflow_launch", "workflow_creator_effort", "chat_awareness_mode", "knowledge_index_type", "knowledge_include_patterns", "knowledge_exclude_patterns", "agent_ignore_files", "additional_directories", "rejected_keys", "model_fallbacks", "history_window_choices", "chat_retention_days", "history_window_hours", "auto_compact_pct", "auto_compact_pct_range", "terminal_command_timeout_ms", "engine_heap_mib", "trigger_max_live_runs", "trigger_max_launches_per_hour", "chat_message_delivery_limit", "knowledge_max_files", "knowledge_chunking", "settings_epoch", "settings_revision", "auto_compaction_enabled", "knowledge_enabled", "content_collection_enabled", "guard_payload_links", "mcp_wait_for_ready", "notifications_enabled", "notify_agent_finished", "notify_pr_status", "notify_run_outcome", "notify_sign_in", "notify_bot_rule", "spec_planning_ask_first", "steering_reminders_enabled", "workflows_enabled", "chat_messaging_enabled", "chat_awareness_enabled", "supervised_default", "scheduled_auto_approve", "bot_auto_approve", "debug_logs", "high_throughput_optimizations", "model_fallback_enabled", "hook_status_shown"] },
   ),
   ElicitationEnumOption: fc.record(
     {

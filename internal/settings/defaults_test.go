@@ -112,6 +112,23 @@ func TestEffective_BotAutoApproveDefaultsOffAndDecodes(t *testing.T) {
 	}
 }
 
+// A clean automatic Bot turn pushes only when the user asked for it.
+func TestEffective_NotifyBotRuleDefaultsOffAndDecodes(t *testing.T) {
+	if EffectiveDefaults().NotifyBotRule {
+		t.Error("EffectiveDefaults().NotifyBotRule = true, want false")
+	}
+	got, rejected := EffectiveFrom(map[string]json.RawMessage{KeyNotifyBotRule: json.RawMessage(`true`)})
+	if !got.NotifyBotRule || len(rejected) != 0 {
+		t.Errorf("EffectiveFrom(stored true) = %v, rejected %v; want true and nothing rejected", got.NotifyBotRule, rejected)
+	}
+	if KeyNotifyBotRule != "notify_bot_rule" {
+		t.Errorf("KeyNotifyBotRule = %q, want notify_bot_rule", KeyNotifyBotRule)
+	}
+	if unknown := WarnUnknownKeys([]string{KeyNotifyBotRule}, "test"); len(unknown) != 0 {
+		t.Errorf("WarnUnknownKeys(%q) = %v, want it known", KeyNotifyBotRule, unknown)
+	}
+}
+
 func TestEffective_AutoCompactionDefaultsAndInvalidPctReadsAsDefault(t *testing.T) {
 	d := EffectiveDefaults()
 	if !d.AutoCompactionEnabled || d.AutoCompactPct != 80 {

@@ -25,12 +25,12 @@ func openTurn(t *testing.T, h *Runtime) (closeIt func()) {
 
 func closeClean(t *testing.T, h *Runtime, focus string) {
 	t.Helper()
-	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonEndTurn), focus)
+	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonEndTurn), focus, nil, false)
 }
 
 func closeStopped(t *testing.T, h *Runtime) {
 	t.Helper()
-	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonCancelled), "")
+	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonCancelled), "", nil, false)
 }
 
 // settleAsk withdraws c1's ask filed as KAS's request acpID, through the settle path a real answer takes.
@@ -125,7 +125,7 @@ func TestPushTurnOutcome_ParksABrokenCloseBehindAnAsk(t *testing.T) {
 	h, fp := newWithholdHub(t)
 	addPermission(t, h, nil, 1, "")
 
-	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonError), "")
+	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonError), "", nil, false)
 	awaitNoPush(t, h, fp, "the chat has a pending ask")
 	settleAsk(t, h, 1)
 

@@ -5,6 +5,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/notice"
 	"github.com/cplieger/marotte/internal/ruleengine"
 )
 
@@ -42,7 +43,8 @@ func (rt *Runtime) SetRuleEngine(e ruleEngine) {
 }
 
 // RuleDeps answers the rule engine's dependencies on this runtime, over store: the notify door's delivery, the drain
-// and readiness gates the HTTP notify door is built with, each chat's turn and waiting state, and the wake hold.
+// and readiness gates the HTTP notify door is built with, each chat's turn and waiting state, the wake hold, and the
+// push for a prompt the engine gave up on.
 func (rt *Runtime) RuleDeps(store ruleengine.Store) *ruleengine.Deps {
 	return &ruleengine.Deps{
 		Store:    store,
@@ -52,6 +54,10 @@ func (rt *Runtime) RuleDeps(store ruleengine.Store) *ruleengine.Deps {
 		TurnLive: rt.TurnLive,
 		Waiting:  rt.bus.chatStatus.waiting,
 		WakeHold: wakeHoldBound,
+		NotDelivered: func(ctx context.Context, chatID marotte.ChatID, ruleName string, cause error) {
+			n := notice.RuleNotDelivered(rt.coord.NoticeTarget(ctx, chatID, ""), ruleName, cause)
+			rt.coord.Notify(ctx, chatID, &n)
+		},
 	}
 }
 

@@ -1,6 +1,7 @@
 package notice
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ func TestBuilders_titleIsTheTabAndBodyIsPhraseThenDetail(t *testing.T) {
 	chat := ChatTarget("c1", "Fix the login bug")
 	run := RunTarget("wf1", "nightly · scheduled")
 	rule := RuleTarget("r1", "nightly")
+	ruleCaller := &marotte.Caller{Kind: marotte.CallerKindRule, Label: "Weekly questions", Rule: "r1", Event: "e1", Depth: 1}
 	tests := []struct {
 		name string
 		got  marotte.NotificationPayload
@@ -29,6 +31,26 @@ func TestBuilders_titleIsTheTabAndBodyIsPhraseThenDetail(t *testing.T) {
 		{"turn failed", TurnFailed(chat, "The model refused the request."), marotte.NotificationPayload{
 			PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindAgentFinished,
 			Title: "Fix the login bug", Body: "Turn failed · The model refused the request.",
+		}},
+		{"a rule's turn finished with focus", RuleTurnFinished(chat, ruleCaller, "Asked the review queue"), marotte.NotificationPayload{
+			PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindBotRule,
+			Title: "Fix the login bug", Body: "Response complete · Rule: Weekly questions · Asked the review queue",
+		}},
+		{"a rule's turn finished without focus", RuleTurnFinished(chat, ruleCaller, " "), marotte.NotificationPayload{
+			PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindBotRule,
+			Title: "Fix the login bug", Body: "Response complete · Rule: Weekly questions",
+		}},
+		{"the wake after a rule's run finished with focus", RuleTurnFinished(chat, nil, "Read the run's result"), marotte.NotificationPayload{
+			PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindBotRule,
+			Title: "Fix the login bug", Body: "Response complete · Read the run's result",
+		}},
+		{"the wake after a rule's run finished without focus", RuleTurnFinished(chat, nil, ""), marotte.NotificationPayload{
+			PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindBotRule,
+			Title: "Fix the login bug", Body: "Response complete",
+		}},
+		{"a rule's prompt not delivered", RuleNotDelivered(chat, "Weekly questions", errors.New("the chat is starting")), marotte.NotificationPayload{
+			PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindAgentFinished,
+			Title: "Fix the login bug", Body: "Rule could not run · Weekly questions: the chat is starting",
 		}},
 		{"tool permission", Permission(chat, "", "rm -rf build", 0), marotte.NotificationPayload{
 			PushSubject: marotte.ChatSubject("c1"), Kind: marotte.PushKindPermission,

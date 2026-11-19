@@ -59,19 +59,24 @@ describe("keyed push kinds", () => {
     }
   });
 
-  // The declared table, read as values: the polarities are NOT uniform, and a client default
-  // that disagrees with the server's is the drift class this repo has already paid for once.
-  it("declares pr_status OFF while its siblings are ON", () => {
+  // The declared table, read as values: the keyed kinds' polarities are NOT uniform, and a client
+  // default that disagrees with the server's is the drift class this repo has already paid for once.
+  it("declares pr_status and bot_rule OFF while agent_finished, run_outcome and sign_in are ON", () => {
     expect(KEYED_PUSH_DEFAULTS).toEqual({
       agent_finished: true,
       pr_status: false,
       run_outcome: true,
       sign_in: true,
+      bot_rule: false,
     });
   });
 
   it("pairs sign_in with its own settings key", () => {
     expect(KEYED_PUSH_KINDS["sign_in"]).toBe("notify_sign_in");
+  });
+
+  it("pairs bot_rule with its own settings key", () => {
+    expect(KEYED_PUSH_KINDS["bot_rule"]).toBe("notify_bot_rule");
   });
 
   // The seed, which is the half a table alone does not state: a client that has not loaded
@@ -114,6 +119,7 @@ const polarities = [
   { kind: "pr_status", goConst: "DefaultNotifyPRStatus" },
   { kind: "run_outcome", goConst: "DefaultNotifyRunOutcome" },
   { kind: "sign_in", goConst: "DefaultNotifySignIn" },
+  { kind: "bot_rule", goConst: "DefaultNotifyBotRule" },
 ] as const;
 
 // The client half of the polarity contract.
