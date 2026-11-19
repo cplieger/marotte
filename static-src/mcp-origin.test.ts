@@ -61,6 +61,7 @@ import {
 } from "./mcp-ui.js";
 import {
   discoverySignalFor,
+  identityProviderStatus,
   mcpState,
   prewarmSignalFor,
   servers,
@@ -470,6 +471,23 @@ describe("the sign-in frames", () => {
       error: "listener busy",
     });
     expect(document.body.textContent).toContain('Signing in to "frames" failed: listener busy');
+  });
+
+  it("an organization sign-in frame reaches the organization status", () => {
+    const section = document.createElement("div");
+    section.id = "mcp-section";
+    const modal = document.createElement("div");
+    modal.id = "mcp-modal";
+    document.body.replaceChildren(section, modal);
+    initMCP();
+
+    dispatch({
+      type: "mcp_identity_provider",
+      payload: { known: true, status: { state: "signed-in", account: "ana@acme.example" } },
+      subject: { kind: "mcp_identity_provider", ref: "", version: "1" },
+    } as ServerEvent);
+
+    expect(identityProviderStatus.value?.status?.account).toBe("ana@acme.example");
   });
 });
 

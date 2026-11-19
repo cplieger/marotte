@@ -86,7 +86,7 @@ func TestEmit_ARunChatsWorkingLabelIsNotPublished(t *testing.T) {
 	h, _, _ := newTestHub()
 	base := h.bus.fanout.Position().Head
 	label := marotte.WorkingLabelPayload{Label: marotte.WorkingLabelThinking}
-	h.bus.emit(marotte.NewEvent(marotte.EventWorkingLabel, runChatID("wf_1"), label))
+	h.bus.emit(marotte.NewEvent(marotte.EventWorkingLabel, marotte.RunHostChatID("wf_1"), label))
 	h.bus.emit(marotte.NewEvent(marotte.EventWorkingLabel, "c1", label))
 
 	got := ringSince(h, base)
@@ -460,7 +460,7 @@ func BenchmarkEmit(b *testing.B) {
 func TestHandleSSE_ReplaysTheStateAClientCannotDeriveFromTheEventLog(t *testing.T) {
 	h, _, br := newTestHub()
 
-	h.bus.pendingPerms.add(9, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+	h.bus.pendingPerms.add(9, "", marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 		marotte.PermissionNeededPayload{RequestID: 9}), nil)
 	h.insertBridgeNow("c1", testBridge(br, bridgeReady))
 	h.stagePromptTurn(t, "c1")
@@ -648,7 +648,7 @@ func TestHandleSSE_APendingSetOverOneFrameStillOpensTheStream(t *testing.T) {
 	h, _, _ := newTestHub()
 	const asks = 160
 	for i := range asks {
-		h.bus.pendingPerms.add(int64(i+1), marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+		h.bus.pendingPerms.add(int64(i+1), "", marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 			marotte.PermissionNeededPayload{RequestID: int64(i + 1), Command: &marotte.PermissionCommand{
 				Text: strings.Repeat("h", 4<<10), Tail: strings.Repeat("t", 4<<10), OmittedBytes: 100,
 			}}), nil)
@@ -681,9 +681,9 @@ func TestHandleSSE_APendingSetOverOneFrameStillOpensTheStream(t *testing.T) {
 
 func TestHandleSSE_AFrameOverTheCapIsSkippedAndTheConnectGoesOn(t *testing.T) {
 	h, _, _ := newTestHub()
-	h.bus.pendingPerms.add(1, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+	h.bus.pendingPerms.add(1, "", marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 		marotte.PermissionNeededPayload{RequestID: 1, Title: strings.Repeat("t", sse.MaxFrameBytes)}), nil)
-	h.bus.pendingPerms.add(2, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+	h.bus.pendingPerms.add(2, "", marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 		marotte.PermissionNeededPayload{RequestID: 2}), nil)
 
 	frames := connectFrames(t, h, true)

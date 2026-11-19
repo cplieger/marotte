@@ -1205,7 +1205,14 @@ function fillChatOptions(card: HTMLElement): void {
     strip.appendChild(b);
   }
   card.appendChild(strip);
-  for (const name of ["Attach files", "Set a goal", "Compact"]) {
+  for (const name of [
+    "Attach a file",
+    "Set a goal",
+    "Start a tangent",
+    "Merge into parent chat",
+    "Compact the context",
+    "Rename chat",
+  ]) {
     const b = make("button", "chat-opt-btn", { type: "button" });
     b.append(
       box("chat-opt-icon", [glyph()]),
@@ -1217,8 +1224,8 @@ function fillChatOptions(card: HTMLElement): void {
     card.appendChild(box("chat-opt-entry", [b]));
   }
   for (const [id, name] of [
-    ["tt-opt-queue", "Queue while running"],
-    ["tt-opt-supervised", "Supervised"],
+    ["chat-opt-supervised", "Supervised mode"],
+    ["chat-opt-messaging", "Messages between chats"],
   ] as const) {
     const row = make("label", "chat-opt-row", { for: id });
     row.append(
@@ -1757,9 +1764,14 @@ export const SURFACES: readonly Surface[] = [
             request_id: 1,
             title: "grep -rn foo",
             kind: "execute",
+            run_id: "wf_1",
+            node_id: "search",
+            consent: { capability: "shell", subject: "grep -rn foo", reaches: ["step", "run", "user"] },
             options: [
               { option_id: "a", name: "Allow", kind: "allow_once" },
+              { option_id: "aa", name: "Always allow", kind: "allow_always" },
               { option_id: "r", name: "Reject", kind: "reject_once" },
+              { option_id: "ra", name: "Always reject", kind: "reject_always" },
             ],
           } as Parameters<typeof buildPermissionCard>[1],
           () => undefined,

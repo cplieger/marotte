@@ -35,6 +35,8 @@ const (
 	KindForgeInventory Kind = "forge_inventory"
 	// KindMCPStatus is the workspace-wide MCP status inventory, GET /api/mcp/status.
 	KindMCPStatus Kind = "mcp_status"
+	// KindMCPIdentityProvider is the organization sign-in's status, GET /api/mcp/identity-provider.
+	KindMCPIdentityProvider Kind = "mcp_identity_provider"
 )
 
 // Unminted is the version a counter reports before its first bump this

@@ -714,7 +714,7 @@ func TestSessionUpdateDoors_ReportAnUnnamedKind(t *testing.T) {
 		{name: "chat door, replay with no load", replay: true, feed: func(msg *marotte.RPCResponse) {
 			h.handleSessionUpdate(t.Context(), "c1", msg)
 		}},
-		{name: "run host door", feed: func(msg *marotte.RPCResponse) { h.handleRunStepFrame(t.Context(), runChatID("wf_1"), msg) }},
+		{name: "run host door", feed: func(msg *marotte.RPCResponse) { h.handleRunStepFrame(t.Context(), marotte.RunHostChatID("wf_1"), msg) }},
 		{name: "engine lane", feed: func(msg *marotte.RPCResponse) { h.engineSessionUpdate(t.Context(), msg) }},
 		{name: "observer pass", feed: h.observerUpdate},
 		{name: "run mutation peek", feed: func(msg *marotte.RPCResponse) { frameWorkflow(msg, noSteps) }},

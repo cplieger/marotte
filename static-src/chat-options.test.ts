@@ -1,8 +1,10 @@
 // The chat-options menu: pins each row's dispatch (the card is TS-built, so this is also
 // the markup test). The goal row's string is run through KAS's transcribed parser.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { signal } from "@cplieger/reactive";
 
 import { uploadLimitHint } from "./upload-policy.js";
+import { adoptChatMessaging } from "./chat-messaging.js";
 
 const {
   openFilePicker,
@@ -10,6 +12,7 @@ const {
   mergeTangentChat,
   openRunView,
   setSupervisedDispatch,
+  setMessagingDispatch,
   compactDispatch,
   launchDispatch,
   recipesDispatch,
@@ -32,6 +35,7 @@ const {
   openTangentChat: vi.fn(),
   openRunView: vi.fn(),
   setSupervisedDispatch: vi.fn(),
+  setMessagingDispatch: vi.fn(),
   compactDispatch: vi.fn(),
   launchDispatch: vi.fn(),
   recipesDispatch: vi.fn(),
@@ -46,7 +50,10 @@ const {
 
 let activeID = "";
 let supervised: boolean | undefined;
+let messagingOff: boolean | undefined;
 let thinking = false;
+/** Bumped to re-run the card's effects after `thinking` changes, as a turn's end does. */
+const busyTick = signal(0);
 let messageCount = 3;
 let tangent = false;
 let compacting = false;
@@ -57,6 +64,7 @@ function session():
       id: string;
       name: string;
       supervised_mode: boolean | undefined;
+      messaging_off: boolean | undefined;
       message_count: number;
       tangent: boolean;
       compacting: boolean;
@@ -68,6 +76,7 @@ function session():
         id: activeID,
         name: "My chat",
         supervised_mode: supervised,
+        messaging_off: messagingOff,
         message_count: messageCount,
         tangent,
         compacting,
@@ -82,7 +91,10 @@ vi.mock("./store.js", () => ({
     },
   },
   isBusy: (id: string) => id === activeID && thinking,
-  watchBusy: (id: string) => id === activeID && thinking,
+  watchBusy: (id: string) => {
+    void busyTick.value;
+    return id === activeID && thinking;
+  },
   isEmptyChat: (s: { message_count: number } | undefined) =>
     s === undefined || s.message_count === 0,
   // Present-but-inert so real-ESM linking succeeds; no case calls them.
@@ -102,6 +114,7 @@ vi.mock("./toast.js", () => ({ error: toastError, success: vi.fn(), info: vi.fn(
 vi.mock("./notice-subject.js", () => ({ chatNotice }));
 vi.mock("./actions/chat.js", () => ({
   setSupervised: { dispatch: setSupervisedDispatch },
+  setChatMessaging: { dispatch: setMessagingDispatch },
   compactChat: { dispatch: compactDispatch },
   renameChat: { dispatch: renameDispatch },
   downloadKiroSession: { dispatch: sessionDispatch },
@@ -127,6 +140,7 @@ vi.mock("./role-picker.js", () => ({
 vi.mock("./profile-pill.js", () => ({
   profileSelect: (id: string) => Object.assign(document.createElement("select"), { id }),
   profileNote: () => note.text,
+  BUSY_NOTE: "Applies after this turn",
 }));
 
 const { movedPills } = await import("./pill-row-fit.js");
@@ -205,6 +219,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   activeID = "c-active";
   supervised = false;
+  messagingOff = undefined;
+  adoptChatMessaging({ chat_messaging_enabled: true });
   thinking = false;
   compacting = false;
   messageCount = 3;
@@ -219,9 +235,9 @@ beforeEach(() => {
 });
 
 describe("the chat-options menu", () => {
-  // The two pills the prompt row can move here, six actions, then the switch: an addition or loss shows here. What
+  // The two pills the prompt row can move here, six actions, then the switches: an addition or loss shows here. What
   // Send does mid-turn is Settings, General.
-  it("holds exactly nine entries, the moved pills first and the switch last", async () => {
+  it("holds exactly ten entries, the moved pills first and the switches last", async () => {
     const { card } = await mountMenu();
     const names = Array.from(card.querySelectorAll(".chat-opt-name")).map((n) => n.textContent);
     expect(names).toEqual([
@@ -234,14 +250,15 @@ describe("the chat-options menu", () => {
       "Compact the context",
       "Rename chat",
       "Supervised mode",
+      "Messages between chats",
     ]);
   });
 
-  // The switch is a label with a checkbox; the rest are buttons.
-  it("renders the switch as a label with a checkbox and the rest as buttons", async () => {
+  // The switches are labels with a checkbox; the rest are buttons.
+  it("renders the switches as labels with a checkbox and the rest as buttons", async () => {
     const { card } = await mountMenu();
     expect(card.querySelectorAll(".chat-opt-btn")).toHaveLength(6);
-    for (const id of ["chat-opt-supervised"]) {
+    for (const id of ["chat-opt-supervised", "chat-opt-messaging"]) {
       const row = card.querySelector<HTMLLabelElement>(`label.chat-opt-row[for="${id}"]`);
       expect(row?.querySelector<HTMLInputElement>("input")?.type, id).toBe("checkbox");
     }
@@ -758,6 +775,63 @@ describe("supervised mode", () => {
   });
 });
 
+describe("messages between chats", () => {
+  function messagingRow(card: HTMLElement): HTMLLabelElement {
+    const row = card.querySelector<HTMLLabelElement>('label.chat-opt-row[for="chat-opt-messaging"]');
+    if (row === null) {
+      throw new Error("no messaging row");
+    }
+    return row;
+  }
+  const box = (card: HTMLElement): HTMLInputElement =>
+    messagingRow(card).querySelector<HTMLInputElement>("#chat-opt-messaging")!;
+  const hint = (card: HTMLElement): string =>
+    messagingRow(card).querySelector(".chat-opt-hint")?.textContent ?? "";
+
+  it("shows Messages between chats only while the Settings switch is on", async () => {
+    adoptChatMessaging({ chat_messaging_enabled: false });
+    const { card } = await mountMenu();
+    expect(messagingRow(card).classList.contains("hidden")).toBe(true);
+    adoptChatMessaging({ chat_messaging_enabled: true });
+    expect(messagingRow(card).classList.contains("hidden")).toBe(false);
+    adoptChatMessaging({ chat_messaging_enabled: false });
+    expect(messagingRow(card).classList.contains("hidden")).toBe(true);
+  });
+
+  it("dispatches the messaging toggle for the active chat, checked by default", async () => {
+    const { card } = await mountMenu();
+    expect(box(card).checked).toBe(true);
+    box(card).checked = false;
+    box(card).dispatchEvent(new Event("change"));
+    expect(setMessagingDispatch).toHaveBeenCalledWith({ chatID: "c-active", enabled: false });
+  });
+
+  it("is unchecked for a chat that turned it off", async () => {
+    messagingOff = true;
+    const { card } = await mountMenu();
+    expect(box(card).checked).toBe(false);
+  });
+
+  it("says the messaging change applies after this turn while busy", async () => {
+    thinking = true;
+    const { card } = await mountMenu();
+    expect(hint(card)).toBe("Applies after this turn");
+    thinking = false;
+    busyTick.value++;
+    expect(hint(card)).toBe("Let other chats message this one, and let its agent message them");
+  });
+
+  // No chat: the visual resets and nothing persists.
+  it("resets the visual and persists nothing with no active chat", async () => {
+    activeID = "";
+    const { card } = await mountMenu();
+    box(card).checked = true;
+    box(card).dispatchEvent(new Event("change"));
+    expect(setMessagingDispatch).not.toHaveBeenCalled();
+    expect(box(card).checked).toBe(false);
+  });
+});
+
 // initChatOptions is called once from app.ts, but the latch is what makes a
 // second call safe — without it a re-init would append a second set of rows.
 describe("a pill the prompt row moved here", () => {
@@ -806,6 +880,6 @@ describe("initChatOptions", () => {
   it("is idempotent", async () => {
     const { card, mod } = await mountMenu();
     mod.initChatOptions();
-    expect(card.querySelectorAll(".chat-opt-name")).toHaveLength(9);
+    expect(card.querySelectorAll(".chat-opt-name")).toHaveLength(10);
   });
 });

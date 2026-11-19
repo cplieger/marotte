@@ -261,3 +261,84 @@ func TestHandleMCPStatus_RecordsTheWholeFrameUnderItsSession(t *testing.T) {
 		t.Errorf("servers = %+v, want %+v", frames[0].status.Servers, want)
 	}
 }
+
+// recordedFrame hands params to HandleMCPStatus and returns the one frame the recorder got.
+func recordedFrame(t *testing.T, params map[string]any) MCPSessionStatus {
+	t.Helper()
+	deps, _ := newEventCaptureDeps()
+	var frames []capturedMCPFrame
+	New(rolesOf(&mcpCaptureDeps{baseDeps: deps, frames: &frames})).HandleMCPStatus(t.Context(), "", &marotte.RPCResponse{Params: mustJSON(t, params)})
+	if len(frames) != 1 {
+		t.Fatalf("RecordSessionStatus calls = %d, want one", len(frames))
+	}
+	return frames[0].status
+}
+
+// KAS's mcpIdentityProviderStatus: {state, issuer, displayName, account?}, or {state: invalid-config, errorMessage},
+// and no member while it has no provider.
+func TestHandleMCPStatus_CarriesTheIdentityProvider(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		block map[string]any
+		want  *marotte.MCPIdentityProviderStatus
+	}{
+		{
+			name: "signed_in",
+			block: map[string]any{
+				"state": "signed-in", "issuer": "https://login.acme.example", "displayName": "Acme", "account": "ada@acme.example",
+			},
+			want: &marotte.MCPIdentityProviderStatus{
+				State: marotte.MCPIdentityProviderSignedIn, Issuer: "https://login.acme.example", DisplayName: "Acme",
+				Account: "ada@acme.example",
+			},
+		},
+		{
+			name:  "invalid_config",
+			block: map[string]any{"state": "invalid-config", "errorMessage": "identityProvider.clientId: Too small"},
+			want: &marotte.MCPIdentityProviderStatus{
+				State: marotte.MCPIdentityProviderInvalidConfig, Error: "identityProvider.clientId: Too small",
+			},
+		},
+		{name: "absent"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			params := map[string]any{"sessionId": "s1", "servers": []map[string]any{}}
+			if tc.block != nil {
+				params["identityProvider"] = tc.block
+			}
+			got := recordedFrame(t, params).IdentityProvider
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("identity provider = %+v, want %+v", got, tc.want)
+			}
+			observed, ok := DecodeMCPIdentityProvider(&marotte.RPCResponse{Params: mustJSON(t, params)})
+			if !ok || !reflect.DeepEqual(observed, tc.want) {
+				t.Errorf("DecodeMCPIdentityProvider = (%+v, %v), want (%+v, true)", observed, ok, tc.want)
+			}
+		})
+	}
+}
+
+// KAS's boundStatus: a failed enterprise row carries its reason and the server's description, with
+// failedAuthorization false and KAS's own sentence; a connected one an empty block.
+func TestHandleMCPStatus_DecodesEnterpriseAuthorization(t *testing.T) {
+	got := recordedFrame(t, map[string]any{"sessionId": "s1", "servers": []map[string]any{
+		{
+			"name": "docs", "status": "failed", "failedAuthorization": false,
+			"errorMessage":            "Sign in to your organization to use this server.",
+			"enterpriseAuthorization": map[string]any{"reason": "idp-sign-in-required", "serverDescription": "Acme docs"},
+		},
+		{"name": "wiki", "status": "connected", "enterpriseAuthorization": map[string]any{}},
+		{"name": "plain", "status": "connected"},
+	}}).Servers
+	want := []MCPServerReport{
+		{
+			Name: "docs", State: MCPReportFailed, Error: "Sign in to your organization to use this server.",
+			Enterprise: &marotte.MCPEnterpriseAuth{Reason: "idp-sign-in-required", ServerDescription: "Acme docs"},
+		},
+		{Name: "wiki", State: MCPReportConnected, Enterprise: &marotte.MCPEnterpriseAuth{}},
+		{Name: "plain", State: MCPReportConnected},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("servers = %+v, want %+v", got, want)
+	}
+}

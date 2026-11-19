@@ -16,9 +16,9 @@ import (
 // with shell access can write.
 const kasDriftNamesCap = 20
 
-// HealKASConfig re-renders KAS's config file when its `mcpServers` member does not decode to the
-// value a save would write (a missing, null or non-object member included), and reports whether
-// it wrote. Only that member is compared, by value, so a reindented file is not drift; every
+// HealKASConfig re-renders KAS's config file when its `mcpServers` or `identityProvider` member does not
+// decode to the value a save would write (a missing, null or non-object member included), and reports
+// whether it wrote. Only those members are compared, by value, so a reindented file is not drift; every
 // other key is kept. An unreadable file is left alone and returns ErrKASUnreadable. trigger
 // names the caller in the drift WARN. It waits for the write turn only while ctx lasts.
 func (s *Store) HealKASConfig(ctx context.Context, trigger string) (bool, error) {
@@ -45,11 +45,21 @@ func (s *Store) healKASLocked(ctx context.Context, trigger string) (bool, error)
 	if err != nil {
 		return false, err
 	}
-	if sameJSONValue(fileServers, wanted) {
+	fileIDP := doc.members[kasIdentityProviderKey]
+	wantedIDP, err := s.renderKASIdentityProvider(fileIDP)
+	if err != nil {
+		return false, err
+	}
+	idpSame := sameOptionalMember(fileIDP, wantedIDP)
+	if sameJSONValue(fileServers, wanted) && idpSame {
 		return false, nil
 	}
-	pending := s.isPendingWaitRender(fileServers, policy)
+	pending := idpSame && s.isPendingWaitRender(fileServers, policy)
 	drift, err := diffKASServers(objectOrEmpty(fileServers), objectOrEmpty(wanted))
+	if err != nil {
+		return false, err
+	}
+	idpDrift, err := diffKASServers(objectOrEmpty(fileIDP), objectOrEmpty(wantedIDP))
 	if err != nil {
 		return false, err
 	}
@@ -63,8 +73,17 @@ func (s *Store) healKASLocked(ctx context.Context, trigger string) (bool, error)
 	slog.Warn("mcp: kas config file had drifted from the store; re-rendered it",
 		"path", s.kasPath, "trigger", trigger, "member", jsonKind(fileServers),
 		"missing", driftNames(drift.missing), "unexpected", driftNames(drift.unexpected),
-		"changed", driftNames(drift.changed))
+		"changed", driftNames(drift.changed), "identity_provider", jsonKind(fileIDP),
+		"identity_provider_changed", driftNames(slices.Concat(idpDrift.missing, idpDrift.unexpected, idpDrift.changed)))
 	return true, nil
+}
+
+// sameOptionalMember is sameJSONValue for a member either side may lack (nil): two absences match.
+func sameOptionalMember(file, wanted json.RawMessage) bool {
+	if file == nil || wanted == nil {
+		return file == nil && wanted == nil
+	}
+	return sameJSONValue(file, wanted)
 }
 
 // isPendingWaitRender reports whether file is exactly marotte's last render under a wait setting

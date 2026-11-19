@@ -45,9 +45,9 @@ func TestPendingPermsTracker_EveryMutationMovesTheSharedCounter(t *testing.T) {
 			Options: []marotte.PermissionOption{{OptionID: "allow"}},
 		})
 	}
-	mustMove(t, v, "Add", func() { tr.add(1, perm("c1", 1, ""), nil) })
-	mustMove(t, v, "Add second", func() { tr.add(2, perm("c1", 2, "wf-1"), nil) })
-	mustMove(t, v, "Add third", func() { tr.add(3, perm("c2", 3, ""), nil) })
+	mustMove(t, v, "Add", func() { tr.add(1, "", perm("c1", 1, ""), nil) })
+	mustMove(t, v, "Add second", func() { tr.add(2, "", perm("c1", 2, "wf-1"), nil) })
+	mustMove(t, v, "Add third", func() { tr.add(3, "", perm("c2", 3, ""), nil) })
 	mustMove(t, v, "TakeIfPresent", func() {
 		if _, ok := tr.takeIfPresent("c1", 1, marotte.DecisionKindPermission); !ok {
 			t.Fatal("TakeIfPresent(c1, 1) = false, want the tracked request")
@@ -64,14 +64,14 @@ func TestPendingPermsTracker_EveryMutationMovesTheSharedCounter(t *testing.T) {
 			t.Fatal("TakePermissionOption(allow) = not offered, want the claim")
 		}
 	})
-	tr.add(4, perm("c2", 4, "wf-2"), nil)
+	tr.add(4, "", perm("c2", 4, "wf-2"), nil)
 	mustMove(t, v, "ClearForRun", func() { tr.clearForRun("wf-2") })
 	mustHold(t, v, "ClearForRun with nothing to drop", func() { tr.clearForRun("wf-2") })
-	tr.add(6, marotte.NewEvent(marotte.EventElicitationNeeded, "c2", marotte.ElicitationNeededPayload{RunID: "wf-3"}), nil)
+	tr.add(6, "", marotte.NewEvent(marotte.EventElicitationNeeded, "c2", marotte.ElicitationNeededPayload{RunID: "wf-3"}), nil)
 	mustHold(t, v, "AskRefs", func() { tr.askRefs("c2", command.ScopeChatAndRuns) })
 	mustMove(t, v, "ClearForRun of an input ask", func() { tr.clearForRun("wf-3") })
 	origin := newFakeBridge()
-	tr.add(5, perm("c3", 5, ""), origin)
+	tr.add(5, "", perm("c3", 5, ""), origin)
 	mustMove(t, v, "EndOrigin", func() { tr.endOrigin(origin) })
 	mustHold(t, v, "EndOrigin with nothing to retire", func() { tr.endOrigin(origin) })
 }
@@ -127,7 +127,7 @@ func TestPendingStores_ShareOneCounter(t *testing.T) {
 	}
 	b := newSteerRecords()
 	b.versions = v
-	tr.add(1, marotte.NewEvent(marotte.EventPermissionNeeded, "c1", marotte.PermissionNeededPayload{RequestID: 1}), nil)
+	tr.add(1, "", marotte.NewEvent(marotte.EventPermissionNeeded, "c1", marotte.PermissionNeededPayload{RequestID: 1}), nil)
 	rs.cellFor("wf-1")
 	b.SteerWaiting("c1", &marotte.SteerQueuedPayload{SteerID: "s1"})
 	if got := pendingVersion(t, v); got != "3" {

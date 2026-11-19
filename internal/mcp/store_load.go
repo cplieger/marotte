@@ -55,7 +55,11 @@ func (s *Store) load() error {
 		return nil
 	}
 	s.servers = servers
+	s.loadIdentityProvider(f.IdentityProvider)
 	if len(unreadable) == 0 {
+		if s.heldIdentityProvider != nil {
+			s.copyAside(raw)
+		}
 		return nil
 	}
 	s.unreadable = unreadable
@@ -83,6 +87,27 @@ func (s *Store) serverKeys() map[string]bool {
 		keys[nameKey(sv.Name)] = true
 	}
 	return keys
+}
+
+// loadIdentityProvider reads the record's provider member. One that does not decode or validate is held: written
+// back as it is, and its KAS key left as the file has it, so a hand-corrupted record keeps the user's provider in
+// force until a save replaces it.
+func (s *Store) loadIdentityProvider(raw json.RawMessage) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return
+	}
+	var idp IdentityProvider
+	err := json.Unmarshal(raw, &idp)
+	if err == nil {
+		err = validateIdentityProvider(&idp)
+	}
+	if err != nil {
+		slog.Warn("mcp: the mcp.json organization identity provider is unreadable; it stays in the file and in force until it is saved again",
+			"path", s.path, "error", err)
+		s.heldIdentityProvider = raw
+		return
+	}
+	s.identityProvider = &idp
 }
 
 // decodeEntries decodes each record entry on its own; unreadable and errs are index-aligned.

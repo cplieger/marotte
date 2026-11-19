@@ -8,7 +8,11 @@ import {
   insertConfiguredEntry,
 } from "../mcp-state.js";
 import { decodeRegistrySearchFailure, decodeRegistrySearchResult } from "../wire/decoders.gen.js";
-import type { RegistrySearchFailure, RegistrySearchResult } from "../wire/types.gen.js";
+import type {
+  IdentityProvider,
+  RegistrySearchFailure,
+  RegistrySearchResult,
+} from "../wire/types.gen.js";
 
 /** Base path for MCP API endpoints. */
 export const MCP_API = "/api/mcp";
@@ -312,4 +316,47 @@ export const relayOAuthCallback = apiAction<{ server: string; redirect_url: stri
   }),
   // Shown inline beside the pasted box: every rejection names the wrong part of the address.
   error: false,
+});
+
+// The organization sign-in: marotte's provider record, and kiro-cli's one sign-in per engine.
+
+const IDP_API = `${MCP_API}/identity-provider`;
+
+export const saveIdentityProvider = apiAction<IdentityProvider, IdentityProvider>({
+  name: "mcp.save_identity_provider",
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  scope: () => "mcp-identity-provider",
+  request: (body) => ({ method: "PUT", path: IDP_API, body }),
+  decodeError: decodeValidationError,
+  error: false,
+});
+
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
+export const removeIdentityProvider = apiAction<void, void>({
+  name: "mcp.remove_identity_provider",
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  scope: () => "mcp-identity-provider",
+  request: () => ({ method: "DELETE", path: IDP_API }),
+  error: "Could not remove the organization sign-in",
+});
+
+// 202 once queued, 409 while one stands. The consent page arrives on the mcp_identity_provider status.
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
+export const signInOrganization = apiAction<void, void>({
+  name: "mcp.sign_in_organization",
+  // NO retry: kiro-cli starts a new browser round trip for each one.
+  scope: () => "mcp-identity-provider-session",
+  request: () => ({ method: "POST", path: `${IDP_API}/sign-in` }),
+  error: "Could not start the organization sign-in",
+});
+
+// Also ends a sign-in in progress, so it is the card's Cancel too.
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
+export const signOutOrganization = apiAction<void, void>({
+  name: "mcp.sign_out_organization",
+  scope: () => "mcp-identity-provider-session",
+  request: () => ({ method: "POST", path: `${IDP_API}/sign-out` }),
+  error: "Could not sign out of the organization",
 });

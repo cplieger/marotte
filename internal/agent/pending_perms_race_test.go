@@ -19,14 +19,14 @@ func TestPendingPermsTracker_ConcurrentAddTakeList(t *testing.T) {
 	wg.Go(func() {
 		for i := range N {
 			evt := marotte.ServerEvent{ChatID: marotte.ChatID("chat-1"), Type: "permission_needed"}
-			tracker.add(int64(i), evt, nil)
+			tracker.add(int64(i), "", evt, nil)
 		}
 	})
 
 	wg.Go(func() {
 		for i := range N {
 			evt := marotte.NewEvent(marotte.EventElicitationNeeded, "chat-2", marotte.ElicitationNeededPayload{RunID: "wf-1"})
-			tracker.add(int64(N+i), evt, nil)
+			tracker.add(int64(N+i), "", evt, nil)
 		}
 	})
 
@@ -62,7 +62,7 @@ func TestPendingPermsTracker_TakeIfPresent_OneWinnerPerRequest(t *testing.T) {
 	for round := range rounds {
 		tracker := newPendingPermsTracker()
 		want := marotte.NewEvent(marotte.EventPermissionNeeded, "chat-1", marotte.PermissionNeededPayload{})
-		id := requestIDOf(t, tracker.add(int64(round), want, nil))
+		id := requestIDOf(t, tracker.add(int64(round), "", want, nil))
 
 		var wins atomic.Int64
 		start := make(chan struct{})

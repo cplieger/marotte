@@ -132,7 +132,7 @@ func withReason(text, reason string) string {
 
 // A parentless run has no chat to tell.
 func (rs *Runs) notePlan(ctx context.Context, chatID marotte.ChatID, runID, id, text, severity string) {
-	if chatID == "" || workflowIDOf(chatID) != "" || rs.coord == nil {
+	if chatID == "" || marotte.RunHostWorkflowID(chatID) != "" || rs.coord == nil {
 		return
 	}
 	rs.coord.recordSteer(ctx, chatID, id, &marotte.EntrySteer{

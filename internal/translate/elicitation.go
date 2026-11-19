@@ -49,6 +49,8 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID marotte
 		return
 	}
 
+	// KAS sends this request outside its ask record, with no requester or ask id, so the step
+	// registry attributes it.
 	step := t.steps.refFor(p.SessionID)
 	message := displayText(p.Elicitation.Message)
 	evt := marotte.NewEvent(marotte.EventElicitationNeeded, chatID, marotte.ElicitationNeededPayload{
@@ -61,7 +63,7 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID marotte
 		NodeID:          step.NodeID,
 		RequestedSchema: displaySchema(p.Elicitation.RequestedSchema),
 	})
-	evt, filed := t.pendingPerms.PendingPermsAdd(ctx, reqID, evt, origin)
+	evt, filed := t.pendingPerms.PendingPermsAdd(ctx, reqID, "", evt, origin)
 	if !filed {
 		return
 	}

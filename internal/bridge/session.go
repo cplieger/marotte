@@ -67,6 +67,9 @@ type Session struct {
 	// nothing. workflowLaunch is the value the session last reported, meaningful only while workflowLaunchOffered.
 	workflowLaunchWant string
 	workflowLaunch     string
+	// messaging is the sessionToolsMessaging value the session last reported ("on", "off", or "" unknown), meaningful
+	// only while messagingOffered.
+	messaging string
 	// policyErrors are the rules KAS skipped at the door (flat `_meta.policyErrors`).
 	policyErrors []marotte.PolicyErrorItem
 	// spawn is this session's door input, immutable after the door.
@@ -93,6 +96,7 @@ type Session struct {
 	// whether the session's last report carried the option at all.
 	workflowLaunchOffered bool
 	workflowLaunchRefused bool
+	messagingOffered      bool
 }
 
 // SessionID returns the session's ACP id.
@@ -421,7 +425,7 @@ func (s *Session) HealWorkflowLaunch(ctx context.Context, reported string) error
 
 // recordWorkflowLaunch records the workflowLaunch option a door result carries, or that it carries none.
 func (s *Session) recordWorkflowLaunch(result json.RawMessage) {
-	value, offered := marotte.WorkflowLaunchReported(result)
+	value, offered := marotte.ConfigOptionValue(result, marotte.ConfigOptionWorkflowLaunch)
 	s.mu.Lock()
 	s.workflowLaunch, s.workflowLaunchOffered = value, offered
 	s.mu.Unlock()
@@ -442,7 +446,7 @@ func (s *Session) ensureWorkflowLaunch(ctx context.Context) error {
 	})
 	var confirmed string
 	if err == nil && resp != nil {
-		confirmed, _ = marotte.WorkflowLaunchReported(resp.Result)
+		confirmed, _ = marotte.ConfigOptionValue(resp.Result, marotte.ConfigOptionWorkflowLaunch)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -459,6 +463,49 @@ func (s *Session) ensureWorkflowLaunch(ctx context.Context) error {
 
 // errWorkflowLaunchUnconfirmed is a set_config_option reply that does not report the workflowLaunch value sent.
 var errWorkflowLaunchUnconfirmed = errors.New("bridge: kiro-cli did not confirm the workflow use value")
+
+// EnsureMessaging makes the session's sessionToolsMessaging switch match on via set_config_option. It sends only
+// where the session offers the option and reported the other value, and records the reply's value. KAS refuses the
+// call with -32000 while a turn runs; the caller retries once the session is idle.
+func (s *Session) EnsureMessaging(ctx context.Context, on bool) error {
+	if err := s.callable(); err != nil {
+		return err
+	}
+	want := marotte.SessionMessagingOff
+	if on {
+		want = marotte.SessionMessagingOn
+	}
+	s.mu.Lock()
+	skip := !s.messagingOffered || s.messaging == want
+	s.mu.Unlock()
+	if skip {
+		return nil
+	}
+	resp, err := s.doorSetConfig(ctx, map[string]any{
+		marotte.KeySessionID: s.id,
+		keyConfigID:          marotte.ConfigOptionSessionMessaging,
+		keyConfigValue:       want,
+	})
+	if err != nil {
+		return err
+	}
+	if resp != nil {
+		reported, _ := marotte.ConfigOptionValue(resp.Result, marotte.ConfigOptionSessionMessaging)
+		s.ObserveMessaging(reported)
+	}
+	return nil
+}
+
+// ObserveMessaging records a sessionToolsMessaging value the session reported, which also proves the session offers
+// the option. Anything but "on" or "off" is ignored.
+func (s *Session) ObserveMessaging(value string) {
+	if value != marotte.SessionMessagingOn && value != marotte.SessionMessagingOff {
+		return
+	}
+	s.mu.Lock()
+	s.messaging, s.messagingOffered = value, true
+	s.mu.Unlock()
+}
 
 // ObserveThinking records a thinking value from the config_option_update channel the session forwards unread. Empty
 // is ignored.

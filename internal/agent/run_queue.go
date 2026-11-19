@@ -73,7 +73,7 @@ func (lc *chatLifecycle) flushRunLocked() {
 // run chat has no record, and a missing record declines; a failed write marks the list dirty, so the next write
 // carries it. Caller holds mu.
 func (lc *chatLifecycle) writeRunLocked() {
-	if isRunChat(lc.chatID) {
+	if marotte.IsRunHostChat(lc.chatID) {
 		lc.run.dirty = false
 		return
 	}
@@ -166,7 +166,7 @@ func (lc *chatLifecycle) parkGateLocked(idle <-chan struct{}) {
 
 // loadRunLocked seeds a new life's list from the chat's stored one. Caller holds r.mu.
 func (r *turnRegistry) loadRunLocked(lc *chatLifecycle) {
-	if r.runHost == nil || isRunChat(lc.chatID) {
+	if r.runHost == nil || marotte.IsRunHostChat(lc.chatID) {
 		return
 	}
 	stored, version, ok := r.runHost.storedRun(lc.chatID)
@@ -206,7 +206,7 @@ func (lc *chatLifecycle) writeFinalRun() {
 	final, owed, written := lc.runFinal, lc.runFinalOwed, lc.runWritten
 	lc.runFinal, lc.runFinalOwed = nil, false
 	lc.mu.Unlock()
-	if !owed || lc.reg == nil || lc.reg.runHost == nil || isRunChat(lc.chatID) {
+	if !owed || lc.reg == nil || lc.reg.runHost == nil || marotte.IsRunHostChat(lc.chatID) {
 		return
 	}
 	err := lc.reg.runHost.writeRun(lc.chatID, func(c *marotte.Chat) bool {

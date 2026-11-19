@@ -86,6 +86,45 @@ describe("chat.set_supervised", () => {
   });
 });
 
+describe("chat.set_messaging", () => {
+  it("shows the chat's switch off before the server answers and sends set_chat_messaging", async () => {
+    let answer!: (r: { ok: boolean; status: number }) => void;
+    mockSend.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    const { setChatMessaging } = await import("./chat.js");
+    const sent = setChatMessaging.dispatch({ chatID: "c1", enabled: false });
+    await vi.waitFor(() => {
+      expect(mockSend).toHaveBeenCalled();
+    });
+    expect(get("c1")!.messaging_off).toBe(true);
+    answer({ ok: true, status: 200 });
+    await sent;
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "set_chat_messaging",
+        chat_id: "c1",
+        payload: { enabled: false },
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("puts the chat's switch back and says why when the server refuses it", async () => {
+    mockSend.mockResolvedValue({ ok: false, status: 404, error: "chat not found" });
+    const { setChatMessaging } = await import("./chat.js");
+    const outcome = await setChatMessaging.dispatch({ chatID: "c1", enabled: false }).outcome;
+    expect(outcome.status).toBe("error");
+    expect(get("c1")!.messaging_off ?? false).toBe(false);
+    expect(toast.error).toHaveBeenCalledWith(
+      expect.stringContaining("Could not update messages between chats"),
+      undefined,
+    );
+  });
+});
+
 describe("chat.set_security_profile", () => {
   it("shows the picked profile on the chat before the server answers", async () => {
     let answer!: (r: { ok: boolean; status: number }) => void;

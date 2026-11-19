@@ -1,6 +1,6 @@
-// Package mcp persists and serves the user's configured MCP servers: one ordered array of Server
-// records in <configDir>/mcp.json, mode 0600, written atomically. One user-global scope, shared by
-// every session on the agent engine.
+// Package mcp persists and serves the user's configured MCP servers and organization identity provider: one
+// ordered array of Server records and an optional IdentityProvider in <configDir>/mcp.json, mode 0600, written
+// atomically. One user-global scope, shared by every session on the agent engine.
 // Env and header values often hold API keys: public reads mask them as "***", and Update keeps the
 // stored value when the client sends "***" back. On disk the file is plaintext 0600, the same
 // threat model as the chat files beside it.
@@ -77,6 +77,26 @@ func (v versionNegotiation) valid() bool {
 	}
 }
 
+// oauthMode is KAS's per-server oauth.mode, the closed set of its mcp.json enum.
+type oauthMode string
+
+// oauthModeBrowser, oauthModeEnterprise and oauthModeAuto are the three values KAS accepts.
+const (
+	oauthModeBrowser    oauthMode = "browser"
+	oauthModeEnterprise oauthMode = "enterprise"
+	oauthModeAuto       oauthMode = "auto"
+)
+
+// valid reports whether m is unset or one of KAS's values, compared exactly because KAS does not trim.
+func (m oauthMode) valid() bool {
+	switch m {
+	case "", oauthModeBrowser, oauthModeEnterprise, oauthModeAuto:
+		return true
+	default:
+		return false
+	}
+}
+
 // secretMask references the shared marotte.secretMask constant.
 const secretMask = marotte.SecretMask
 
@@ -91,10 +111,14 @@ type Server struct {
 	OAuthClientID string `json:"oauth_client_id,omitempty"`
 	// OAuthClientMetadataURL and OAuthRedirectURI are KAS's other two oauth
 	// members (client-ID metadata document, pinned loopback redirect); not secrets.
-	OAuthClientMetadataURL string    `json:"oauth_client_metadata_url,omitempty"`
-	OAuthRedirectURI       string    `json:"oauth_redirect_uri,omitempty"`
-	ID                     serverID  `json:"id"`
-	Transport              Transport `json:"transport"`
+	OAuthClientMetadataURL string `json:"oauth_client_metadata_url,omitempty"`
+	OAuthRedirectURI       string `json:"oauth_redirect_uri,omitempty"`
+	// OAuthMode is how a remote server signs in: empty is KAS's default browser sign-in,
+	// enterprise uses the organization identity provider, and auto tries the provider and
+	// falls back to the browser.
+	OAuthMode oauthMode `json:"oauth_mode,omitempty"`
+	ID        serverID  `json:"id"`
+	Transport Transport `json:"transport"`
 	// VersionNegotiation empty leaves KAS's `auto`, which starts a stdio server once to send
 	// server/discover and again for the real connection. `legacy` uses the initialize handshake
 	// and starts it once, and fails a server that speaks only the 2026-07-28 protocol. Written
@@ -117,6 +141,18 @@ type Server struct {
 	Prewarm      bool `json:"prewarm,omitempty"`
 	Enabled      bool `json:"enabled"`
 	WaitForReady bool `json:"wait_for_ready,omitempty"`
+}
+
+// IdentityProvider is the organization identity provider KAS signs a remote server in through when the server's
+// oauth_mode is enterprise or auto. One per user; KAS reads it from the user mcp.json only.
+type IdentityProvider struct {
+	Issuer   string `json:"issuer"`
+	ClientID string `json:"client_id"`
+	// Name is the display name; empty leaves KAS's own, the issuer's host.
+	Name string `json:"name,omitempty"`
+	// AuthorizationEndpoint and TokenEndpoint override the issuer's OpenID discovery document.
+	AuthorizationEndpoint string `json:"authorization_endpoint,omitempty"`
+	TokenEndpoint         string `json:"token_endpoint,omitempty"`
 }
 
 // keyPair is an ordered env-var or header entry. Ordered (vs map) so
@@ -161,7 +197,16 @@ type Store struct {
 	// unreadable are the record's entries load could not decode, which persist writes back. Set
 	// before New returns and never changed, so read without mu.
 	unreadable []json.RawMessage
-	callbacks  sync.WaitGroup
+	// identityProvider is the configured organization provider, nil when none. heldIdentityProvider is
+	// the record's member load could not read, written back and its KAS key kept as the file has it until
+	// a save of the provider replaces it. Both change only on the write turn under mu.
+	identityProvider     *IdentityProvider
+	heldIdentityProvider json.RawMessage
+	// forgetIdentityProviderSessions deletes every stored organization session; nil leaves them.
+	forgetIdentityProviderSessions func(context.Context) error
+	// identityProviderStatus answers the organization sign-in's live status; nil serves a zero one.
+	identityProviderStatus IdentityProviderStatusFunc
+	callbacks              sync.WaitGroup
 	// mu guards servers and onChange; a writer of servers holds it only alongside the turn.
 	mu sync.RWMutex
 }
@@ -265,6 +310,25 @@ func (s *Store) renderedState() renderedWait {
 func (s *Store) SetOnChange(fn func(context.Context)) {
 	s.mu.Lock()
 	s.onChange = fn
+	s.mu.Unlock()
+}
+
+// SetIdentityProviderSessionReset installs what deletes every stored organization session, run after a save
+// that changes the provider's issuer or client id or removes it: KAS can never read such a session again.
+func (s *Store) SetIdentityProviderSessionReset(fn func(context.Context) error) {
+	s.mu.Lock()
+	s.forgetIdentityProviderSessions = fn
+	s.mu.Unlock()
+}
+
+// IdentityProviderStatusFunc answers the organization sign-in's live status for the provider configured now (nil
+// when none), and the subject stamp it was read at.
+type IdentityProviderStatusFunc func(ctx context.Context, configured *IdentityProvider) (marotte.MCPIdentityProviderPayload, *marotte.SubjectStamp)
+
+// SetIdentityProviderStatus installs the live status GET /api/mcp/identity-provider serves beside the config.
+func (s *Store) SetIdentityProviderStatus(fn IdentityProviderStatusFunc) {
+	s.mu.Lock()
+	s.identityProviderStatus = fn
 	s.mu.Unlock()
 }
 

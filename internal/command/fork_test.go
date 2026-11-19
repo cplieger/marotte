@@ -422,6 +422,24 @@ func TestCmdForkChat_InheritsTheParentsAgent(t *testing.T) {
 	}
 }
 
+// A user who took a chat out of messages between chats expects its tangent out too.
+func TestForkCreate_CopiesTheMessagingChoice(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedParent(t, store, "c-parent")
+	_, _ = store.Mutate(t.Context(), "c-parent", func(c *marotte.Chat, _ bool) bool {
+		c.MessagingOff = true
+		return true
+	})
+	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
+	host := newForkHost(store, br, "c-parent")
+
+	_, _ = cmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
+
+	if c, ok := store.Get(t.Context(), "c-tangent"); !ok || !c.MessagingOff {
+		t.Errorf("tangent of a chat with messaging off = %+v, want messaging_off copied", c)
+	}
+}
+
 // A parent holding no level hands the tangent the one its session runs, which the tangent's load
 // asserts: KAS's fork drops it, and the seed is another chat's pick.
 func TestCmdForkChat_InheritsTheLevelTheParentRuns(t *testing.T) {

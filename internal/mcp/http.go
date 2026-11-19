@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -10,16 +11,68 @@ import (
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // RegisterRoutes wires the MCP config endpoints: GET/POST /api/mcp (list masked with the count of
 // record entries that could not be read as `unreadable`, create), POST
-// /api/mcp/import (every server of a pasted README block), and GET (masked), PUT (keeps "***"
-// values), PATCH ({"enabled": bool}) and DELETE on /api/mcp/{id}.
+// /api/mcp/import (every server of a pasted README block), GET, PUT and DELETE
+// /api/mcp/identity-provider (the organization provider with its live sign-in status), and GET
+// (masked), PUT (keeps "***" values), PATCH ({"enabled": bool}) and DELETE on /api/mcp/{id}.
 func (s *Store) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mcp", s.handleCollection)
 	mux.HandleFunc("/api/mcp/import", s.handleImport)
+	mux.HandleFunc("/api/mcp/identity-provider", s.handleIdentityProvider)
 	mux.HandleFunc("/api/mcp/", s.handleOne)
+}
+
+// IdentityProviderResponse is GET /api/mcp/identity-provider's reply. Config is nil when no provider is configured;
+// Unreadable says the record holds one marotte could not read, still in force. Subject stamps Status.
+type IdentityProviderResponse struct {
+	Config     *IdentityProvider                  `json:"config"`
+	Subject    *marotte.SubjectStamp              `json:"subject,omitempty"`
+	Status     marotte.MCPIdentityProviderPayload `json:"status"`
+	Unreadable bool                               `json:"unreadable,omitempty"`
+}
+
+// handleIdentityProvider serves the organization provider: GET it with its status, PUT one (200 with the stored
+// provider, 400 with field errors), DELETE it (200, also when none was set).
+func (s *Store) handleIdentityProvider(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		httpserver.WriteJSON(w, s.identityProviderView(r.Context()))
+	case http.MethodPut:
+		var in IdentityProvider
+		if !httpreply.DecodeJSON(w, r, &in) {
+			return
+		}
+		saved, err := s.putIdentityProvider(r.Context(), &in)
+		if err != nil {
+			s.writeErr(w, err)
+			return
+		}
+		httpserver.WriteJSON(w, saved)
+	case http.MethodDelete:
+		if err := s.deleteIdentityProvider(r.Context()); err != nil {
+			s.writeErr(w, err)
+			return
+		}
+		httpserver.OK(w)
+	default:
+		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPut, http.MethodDelete)
+	}
+}
+
+func (s *Store) identityProviderView(ctx context.Context) IdentityProviderResponse {
+	cfg, unreadable := s.getIdentityProvider()
+	out := IdentityProviderResponse{Config: cfg, Unreadable: unreadable}
+	s.mu.RLock()
+	status := s.identityProviderStatus
+	s.mu.RUnlock()
+	if status != nil {
+		out.Status, out.Subject = status(ctx, cfg)
+	}
+	return out
 }
 
 // handleImport handles POST /api/mcp/import: translate a pasted publisher block
@@ -44,7 +97,7 @@ func (s *Store) handleImport(w http.ResponseWriter, r *http.Request) {
 		writeValidationErr(w, err)
 		return
 	}
-	results, err := s.importServers(r.Context(), req.servers)
+	results, err := s.importServers(r.Context(), req)
 	if err != nil {
 		s.writeErr(w, err)
 		return

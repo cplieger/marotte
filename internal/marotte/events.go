@@ -131,9 +131,12 @@ const (
 	EventMCPSignInClosed EventType = "mcp_sign_in_closed"
 	// EventMCPStatus is one row change of GET /api/mcp/status, stamped with the
 	// `mcp_status` version.
-	EventMCPStatus       EventType = "mcp_status"
-	EventModeChanged     EventType = "mode_changed"
-	EventOpenExternalURL EventType = "open_external_url"
+	EventMCPStatus EventType = "mcp_status"
+	// EventMCPIdentityProvider is the organization sign-in's new status, stamped with the
+	// `mcp_identity_provider` version.
+	EventMCPIdentityProvider EventType = "mcp_identity_provider"
+	EventModeChanged         EventType = "mode_changed"
+	EventOpenExternalURL     EventType = "open_external_url"
 	// EventPermissionNeeded carries a turn's verdict as well as an individual
 	// tool ask. There are no pending_change_* or pending_trust_* events:
 	// staged writes are KAS's.

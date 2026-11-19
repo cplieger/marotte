@@ -31,7 +31,7 @@ func TestAsks_notifyWhatTheyAskUnderTheirTab(t *testing.T) {
 		{"turn approval", func(tr *Translator, t *testing.T) {
 			tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{ID: &id, Params: mustJSON(t, map[string]any{
 				"sessionId": "s", "toolCall": map[string]any{"toolCallId": "tc", "title": "Review"},
-				"_meta": map[string]any{"kiro": map[string]any{"type": "turn_approval", "files": []map[string]any{
+				"_meta": map[string]any{"kiro": map[string]any{"askKind": "turn_approval", "files": []map[string]any{
 					{"path": "/w/a.go"}, {"path": "/w/b.go"},
 				}}},
 			})})

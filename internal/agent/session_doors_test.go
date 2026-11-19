@@ -68,7 +68,7 @@ func TestReadVerbsNeedNoHost(t *testing.T) {
 			if got := br.startCount() - before; got != 0 {
 				t.Errorf("%s opened %d session doors, want none", tc.name, got)
 			}
-			if h.bridge.mgr.get(runChatID("wf_1")) != nil {
+			if h.bridge.mgr.get(marotte.RunHostChatID("wf_1")) != nil {
 				t.Errorf("%s made the run's host session resident", tc.name)
 			}
 		})

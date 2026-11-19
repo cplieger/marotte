@@ -408,6 +408,29 @@ func TestImport_OAuthObjectReachesTheRecord(t *testing.T) {
 	}
 }
 
+// TestImport_OAuthModeReachesTheRecord: mode is a member of KAS's oauth schema (browser, enterprise, auto), so a
+// block opting a server into the organization sign-in installs with it instead of failing the typo pass.
+func TestImport_OAuthModeReachesTheRecord(t *testing.T) {
+	s, mux := newRoutedStore(t)
+
+	got := decodeImport(t, postImport(t, mux, `{
+	  "mcpServers": {"corp": {"url":"https://mcp.example/mcp",
+	    "oauth": {"mode":"enterprise"}}}
+	}`))
+	if len(got.Notes) != 0 {
+		t.Errorf("notes = %q, want none for a key the record carries", got.Notes)
+	}
+	raw := s.enabledRaw(t.Context())
+	if len(raw) != 1 || raw[0].OAuthMode != oauthModeEnterprise {
+		t.Fatalf("stored = %#v, want oauth_mode enterprise", raw)
+	}
+
+	rec := postImport(t, mux, `{"mcpServers": {"other": {"url":"https://mcp.example/b", "oauth": {"mode":"device"}}}}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), fieldOAuthMode) {
+		t.Errorf("a mode outside KAS's enum = %d %s, want 400 naming %s", rec.Code, rec.Body.String(), fieldOAuthMode)
+	}
+}
+
 func TestImport_OAuthScopesReachTheRecord(t *testing.T) {
 	s, mux := newRoutedStore(t)
 

@@ -32,7 +32,18 @@ const READ_ONLY_WORDS: ReadonlyMap<string, string> = new Map([
   ["multiple-targets", "This fallback chain has multiple targets and cannot be edited here."],
 ]);
 
-/** A list option: its target (empty for Kiro default), its name and the model whose glyph it shows. */
+/** The empty target's name when Kiro states no fallback of its own: the account's choice is all there is. */
+const NONE = "None";
+
+/** What the empty target leaves uncovered. KAS moves to Kiro's default only for a declined request, never for an
+ *  unavailable model (its refusalFallbackModels answer the refusal trigger alone). */
+function unsetWords(r: ModelFallback, model: string): string {
+  return r.vendor_default === ""
+    ? `No fallback is set. When ${model} declines a request or is unavailable, the turn fails. Pick a model to fall back to.`
+    : `Kiro default covers only a declined request. Pick a model to also fall back to when ${model} is unavailable.`;
+}
+
+/** A list option: its target (empty for Kiro default, or None), its name and the model whose glyph it shows. */
 type Entry = [value: string, label: string, logo: string];
 
 interface FallbackRowInput {
@@ -108,7 +119,7 @@ function buildFallbackRow(
     return humanName(name === "" ? id : name);
   };
   const kiroLabel = (r: ModelFallback): string =>
-    r.vendor_default === "" ? "Kiro default" : `Kiro default (${nameOf(r.vendor_default)})`;
+    r.vendor_default === "" ? NONE : `Kiro default (${nameOf(r.vendor_default)})`;
 
   const choice = el("span", { className: "pill-model-meta" });
   const opener = el(
@@ -174,6 +185,8 @@ function buildFallbackRow(
   };
 
   let selected = row.configured;
+  /** Why the row cannot be edited, "" while it can. */
+  let reason = "";
   /** Shows `target` as the choice. The options are keyed by target, so a focused one keeps focus. */
   const paint = (r: ModelFallback, target = r.configured): void => {
     const targets = catalog.map((m) => m.model_id).filter((id) => id !== model && id !== AUTO);
@@ -204,11 +217,15 @@ function buildFallbackRow(
     const label = target === "" ? kiroLabel(r) : nameOf(target);
     choice.textContent = label;
     opener.setAttribute("aria-label", `Fallback: ${label}`);
+    const words = reason !== "" ? reason : target === "" ? unsetWords(r, nameOf(model)) : "";
+    // The hint is a live region: rewriting the same words would announce them again.
+    if (hint.textContent !== words) {
+      hint.textContent = words;
+    }
+    hint.hidden = words === "";
   };
   const showReason = (r: ModelFallback): void => {
-    const reason = signedOut ? SIGN_IN_WORDS : (READ_ONLY_WORDS.get(r.read_only_reason) ?? "");
-    hint.textContent = reason;
-    hint.hidden = reason === "";
+    reason = signedOut ? SIGN_IN_WORDS : (READ_ONLY_WORDS.get(r.read_only_reason) ?? "");
     opener.disabled = reason !== "";
   };
 
@@ -262,8 +279,7 @@ function buildFallbackRow(
           },
           onError: (err) => {
             if (err.code === "unavailable") {
-              hint.textContent = SIGN_IN_WORDS;
-              hint.hidden = false;
+              reason = SIGN_IN_WORDS;
             }
           },
         },
@@ -274,14 +290,14 @@ function buildFallbackRow(
         if (pending === 0) {
           paint(shown);
           setBusy(opener, false);
-          opener.disabled = hint.textContent !== "";
+          opener.disabled = reason !== "";
           onSettled();
         }
       });
   };
 
-  paint(row);
   showReason(row);
+  paint(row);
   // Stop the picker's own handlers: a click inside the card must not reach the pill trigger.
   opener.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -317,8 +333,8 @@ function buildFallbackRow(
     show: (r, c) => {
       shown = r;
       catalog = c;
-      paint(r);
       showReason(r);
+      paint(r);
     },
     reset,
     remove() {

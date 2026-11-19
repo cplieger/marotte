@@ -24,9 +24,9 @@ func TestResumeIfInterrupted_LosingTheClaimToAnotherResumeIsNotAFailure(t *testi
 		Data: json.RawMessage(`{"details":"Workflow 'wf_1' was just claimed by another process; ` +
 			`refusing to load it here. Retry if that process does not end up driving it."}`),
 	}}
-	h.insertBridgeNow(runChatID("wf_1"), testBridge(host, bridgeReady))
+	h.insertBridgeNow(marotte.RunHostChatID("wf_1"), testBridge(host, bridgeReady))
 
-	h.runs.resumeIfInterrupted(t.Context(), runChatID("wf_1"), "wf_1")
+	h.runs.resumeIfInterrupted(t.Context(), marotte.RunHostChatID("wf_1"), "wf_1")
 
 	if !slices.Contains(host.callLog(), methodKiroWorkflowResume) {
 		t.Fatalf("the heal sent no resume, so its outcome is untested: %v", host.callLog())

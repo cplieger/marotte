@@ -38,6 +38,7 @@ var leaseKinds = map[string]string{
 	"attach":     "attach",
 	"holds":      "fact", "hasSession": "fact", "open": "fact", "endedOnItsOwn": "fact",
 	"SessionID": "fact", "awaitAbandonedPrompt": "fact", "observeEffort": "fact", "observeThinking": "fact",
+	"observeMessaging": "fact",
 }
 
 // sessionTypes are the package's interfaces whose method set holds an engine call on a session; the census derives

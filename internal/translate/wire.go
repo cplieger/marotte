@@ -256,6 +256,8 @@ type acpConsentMeta struct {
 	Capability         string `json:"capability"`
 	Resource           string `json:"resource"`
 	TriggeringResource string `json:"triggeringResource"`
+	// Scopes is where KAS lets an always answer keep its rule, in KAS's order.
+	Scopes []string `json:"scopes"`
 }
 
 type acpConsentMetaShadow acpConsentMeta
@@ -263,14 +265,13 @@ type acpConsentMetaShadow acpConsentMeta
 // UnmarshalJSON decodes the block and reports any member it does not read. askType needs no
 // reader (KAS offers no Always allow on an explicit ask); matchedRule and source name the rule
 // that asked, which the card does not show; KAS falls back to the request's own workspaceRoot
-// when an answer omits it; scopes lists where an always answer may persist and holds session
-// and user whenever the answer can persist, the only two marotte sends.
+// when an answer omits it.
 func (c *acpConsentMeta) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, (*acpConsentMetaShadow)(c)); err != nil {
 		return err
 	}
 	censusMeta("session/request_permission._meta.kiro.consent", data, reflect.TypeFor[acpConsentMetaShadow](),
-		"askType", "matchedRule", "source", "workspaceRoot", "scopes")
+		"askType", "matchedRule", "source", "workspaceRoot")
 	return nil
 }
 
@@ -288,18 +289,21 @@ type acpPermissionMeta struct {
 // acpPermissionKiroBlock is the `kiro` object inside a permission request's `_meta`.
 // Field order is fieldalignment's.
 type acpPermissionKiroBlock struct {
-	// WorkflowWatch names the run and node a watch command polls for; the ask arrives on the
-	// LAUNCHING session, so the step registry cannot name them.
+	// WorkflowWatch names the run and node a watch command polls for; the launching session
+	// raises the ask, so its requester names that session, not the watch's run.
 	WorkflowWatch *acpWorkflowWatch `json:"workflowWatch"`
 	// TrustClassifier is set when KAS's safety check did not clear the call and handed it to a person.
 	TrustClassifier *acpTrustClassifier `json:"trustClassifier"`
+	// Requester names who asked; its workflow attributes a step's ask.
+	Requester *acpAskRequester `json:"requester"`
 	// Consent names what the ask is about and whether an always answer can persist.
 	Consent acpConsentMeta `json:"consent"`
 	// MCPTool carries the identity KAS verified for an MCP-backed tool.
 	MCPTool acpmcpToolWire `json:"mcpTool"`
-	// Type marks a TURN APPROVAL ("turn_approval"), the only thing distinguishing it from a
-	// tool approval on session/request_permission.
-	Type string `json:"type"`
+	// AskID is KAS's id for this consent round of the ask, which its withdrawal names.
+	AskID string `json:"askId"`
+	// AskKind is KAS's kind for the ask; turn_approval alone tells a turn approval from a tool approval.
+	AskKind string `json:"askKind"`
 	// ToolID is set on the ordinary tool approval alone, whose reject reads a rejectionReason.
 	ToolID string `json:"toolId"`
 	// Command is the command a shell, hook or watch ask would run, whole and raw.
@@ -321,9 +325,8 @@ type acpPermissionKiroBlockShadow acpPermissionKiroBlock
 
 // UnmarshalJSON decodes the block and reports any member KAS sent that it does not read;
 // the declined ones are read elsewhere or belong to asks this frame does not render.
-// workflowPlan is a plan approval's structured step list, which the card has no view for.
-// askId, askKind and requester are KAS's own ask identity; marotte keys an ask on its request id
-// and toolCallId.
+// workflowPlan is a plan approval's structured step list, which the card has no view for;
+// type repeats askKind.
 func (b *acpPermissionKiroBlock) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, (*acpPermissionKiroBlockShadow)(b)); err != nil {
 		return err
@@ -331,8 +334,39 @@ func (b *acpPermissionKiroBlock) UnmarshalJSON(data []byte) error {
 	censusMeta("session/request_permission._meta.kiro", data, reflect.TypeFor[acpPermissionKiroBlockShadow](),
 		"agentManagesTrust", "disclosedContext", "hookName", "executionId", "kind",
 		"requirementText", "question", "requirementRange", "requirementsFilePath", "workflowPlan",
-		"askId", "askKind", "requester")
+		"type")
 	return nil
+}
+
+// acpAskRequester is `_meta.kiro.requester` on an ask: the session that asked and, for a
+// workflow step, its run and node.
+type acpAskRequester struct {
+	Workflow *ACPWorkflowMeta `json:"workflow"`
+	// RootSessionID is the session at the root of the asker's launch chain, the one a
+	// launching-session rule is kept on.
+	RootSessionID string `json:"rootSessionId"`
+}
+
+type acpAskRequesterShadow acpAskRequester
+
+// UnmarshalJSON decodes the block and reports any member it does not read. sessionId repeats
+// the request's own; launchingSessionId names a chat the lane the ask arrived on already files
+// it under; a subagent's calls render inside its subagent block.
+func (r *acpAskRequester) UnmarshalJSON(data []byte) error {
+	if err := json.Unmarshal(data, (*acpAskRequesterShadow)(r)); err != nil {
+		return err
+	}
+	censusMeta("_meta.kiro.requester", data, reflect.TypeFor[acpAskRequesterShadow](),
+		"sessionId", "launchingSessionId", "subagent")
+	return nil
+}
+
+// step is the workflow step that asked, the zero stepRef when no step did.
+func (r *acpAskRequester) step() stepRef {
+	if r == nil || r.Workflow == nil || r.Workflow.WorkflowID == "" {
+		return stepRef{}
+	}
+	return stepRef{WorkflowID: r.Workflow.WorkflowID, NodeID: r.Workflow.NodeID, NodePath: runNodePath(r.Workflow)}
 }
 
 // acpmcpToolWire is the verified MCP identity attached to a permission request.

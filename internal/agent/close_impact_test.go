@@ -138,9 +138,9 @@ func waitTurns(t *testing.T, rt *Runtime, n int) []command.CloseTurn {
 func TestCloseImpact_NamesTheChatsAsksRunsAndQueuedRows(t *testing.T) {
 	rt, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
-	first := rt.bus.pendingPerms.add(10, permNeeded("c1", 0), nil)
-	rt.bus.pendingPerms.add(11, permNeeded("c2", 0), nil)
-	second := rt.bus.pendingPerms.add(12, permNeeded("c1", 0), nil)
+	first := rt.bus.pendingPerms.add(10, "", permNeeded("c1", 0), nil)
+	rt.bus.pendingPerms.add(11, "", permNeeded("c2", 0), nil)
+	second := rt.bus.pendingPerms.add(12, "", permNeeded("c1", 0), nil)
 	for _, l := range []runlease.Lease{{WorkflowID: "wf-1", ChatID: "c1", Origin: runlease.OriginAgent}, {WorkflowID: "wf-2", ChatID: "c2", Origin: runlease.OriginAgent}, {WorkflowID: "wf-3", Origin: runlease.OriginManual}} {
 		if err := rt.runs.leaseStore().Put(t.Context(), &l); err != nil {
 			t.Fatal(err)

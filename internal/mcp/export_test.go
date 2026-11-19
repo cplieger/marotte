@@ -276,3 +276,20 @@ func TestMergeSecrets_RapidRoundTrip(t *testing.T) {
 		}
 	})
 }
+
+// TestSameSpec_OAuthModeDistinguishes: oauth.mode decides how the server signs in, so a re-paste that changes only it
+// is a different connection, not a no-op.
+func TestSameSpec_OAuthModeDistinguishes(t *testing.T) {
+	remote := func(mode oauthMode) *Server {
+		return &Server{Transport: transportHTTP, Name: "s", URL: "https://mcp.example/mcp", OAuthMode: mode}
+	}
+	if !sameSpec(remote("enterprise"), remote("enterprise")) {
+		t.Error("sameSpec(identical modes) = false, want true")
+	}
+	if sameSpec(remote(""), remote("enterprise")) {
+		t.Error("sameSpec(unset, enterprise) = true, want a changed oauth_mode to differ")
+	}
+	if sameSpec(remote("auto"), remote("enterprise")) {
+		t.Error("sameSpec(auto, enterprise) = true, want a changed oauth_mode to differ")
+	}
+}

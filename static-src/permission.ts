@@ -10,7 +10,7 @@ import type {
   PermissionOption,
   ToolCall,
 } from "./types.js";
-import type { PermissionCommand, RejectionNote } from "./wire/types.gen.js";
+import type { AlwaysReach, PermissionCommand, RejectionNote } from "./wire/types.gen.js";
 import { decodeToolCallBulk } from "./wire/decoders.gen.js";
 import { apiGetTyped } from "./api-client.js";
 import { el } from "@cplieger/reactive";
@@ -24,14 +24,14 @@ import { ICON_DIFF } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 
 /** One answer to a permission ask. `fileDecisions` rides only a turn approval; `rejectionReason`
- *  only a deny of an ask that accepts a note; `alwaysResource` only an always answer, as the
- *  pattern its saved rule matches, and `alwaysScope` only an Allow for this chat answer. */
+ *  only a deny of an ask that accepts a note; `alwaysResource` and `alwaysReach` only an always
+ *  answer, as the pattern its saved rule matches and what that rule covers. */
 export interface PermissionAnswer {
   readonly optionID: string;
   readonly fileDecisions?: Record<string, boolean>;
   readonly rejectionReason?: string;
   readonly alwaysResource?: string;
-  readonly alwaysScope?: "session";
+  readonly alwaysReach?: AlwaysReach;
 }
 
 /** The deny note's cap, the server's `MaxRejectionReasonRunes`. */
@@ -219,13 +219,34 @@ function buildToolPermissionCard(
   const actions = el("div", { className: "approval-actions" });
   const chooserSlot = el("div", { className: "always-choice-slot" });
   const consent = payload.consent;
-  // Beside Allow for this chat and Always allow, KAS's bare "Allow" does not say it lasts once.
-  const threeAllows =
-    consent !== undefined && payload.options.some((o) => o.kind === "allow_always");
+  const reaches = consent?.reaches ?? [];
+  // Beside any other allow, KAS's bare "Allow" does not say it lasts once.
+  const otherAllows = reaches.length > 0 && payload.options.some((o) => o.kind === "allow_always");
   for (const opt of payload.options) {
     const always = ALWAYS_KINDS.has(opt.kind);
     if (always && consent === undefined) {
       // A saved rule needs to know what it is about, and KAS offers one only with consent.
+      continue;
+    }
+    if (always && consent !== undefined && opt.kind === "allow_always") {
+      // Each narrower reach is the always option kept somewhere else, not an option of its own.
+      for (const reach of reaches) {
+        if (reach === "user") {
+          continue;
+        }
+        const narrower = el(
+          "button",
+          { type: "button", className: "btn-small confirm-allow" },
+          REACH_COPY[reach].name,
+        );
+        narrower.setAttribute("aria-expanded", "false");
+        narrower.addEventListener("click", () => {
+          toggleAlwaysChooser(chooserSlot, narrower, opt, consent, reach, onSelect);
+        });
+        actions.appendChild(narrower);
+      }
+    }
+    if (always && !reaches.includes("user")) {
       continue;
     }
     const btn = el(
@@ -236,23 +257,9 @@ function buildToolPermissionCard(
           ? "btn-small confirm-allow"
           : "btn-small btn-danger",
       },
-      threeAllows && opt.kind === "allow_once" ? "Allow once" : opt.name,
+      otherAllows && opt.kind === "allow_once" ? "Allow once" : opt.name,
     );
     if (always && consent !== undefined) {
-      if (opt.kind === "allow_always") {
-        // KAS keeps a session-scope rule for the chat's live session only, so the third allow
-        // answer is the always option with a narrower reach rather than an option of its own.
-        const chat = el(
-          "button",
-          { type: "button", className: "btn-small confirm-allow" },
-          "Allow for this chat",
-        );
-        chat.setAttribute("aria-expanded", "false");
-        chat.addEventListener("click", () => {
-          toggleAlwaysChooser(chooserSlot, chat, opt, consent, "session", onSelect);
-        });
-        actions.appendChild(chat);
-      }
       btn.setAttribute("aria-expanded", "false");
       btn.addEventListener("click", () => {
         toggleAlwaysChooser(chooserSlot, btn, opt, consent, "user", onSelect);
@@ -737,16 +744,38 @@ function alwaysPatterns(consent: PermissionConsent): AlwaysPattern[] {
   return [...covers].map(([resource, label]) => ({ resource, covers: label }));
 }
 
-/** Where a chooser's rule is kept: the user permissions file, or the chat's live session. */
-type AlwaysReach = "user" | "session";
-
-const USER_RULE_HINT =
-  "Saves the rule to your user permissions, which every kiro-cli session on this account reads, " +
-  "not only these chats. Each chat keeps its security profile.";
-
-const SESSION_RULE_HINT =
-  "kiro-cli keeps this rule for this chat's session only. Nothing is saved and Permissions stay " +
-  "as they are. It may ask again after the chat closes or reloads.";
+/** Each reach's button and chooser name and what its hint says the rule covers. The user reach's
+ *  button is the always option itself, named by KAS; on a deny its chooser says Always deny. */
+const REACH_COPY: Readonly<Record<AlwaysReach, { readonly name: string; readonly hint: string }>> = {
+  chat: {
+    name: "Allow for this chat",
+    hint:
+      "kiro-cli keeps this rule for this chat's session only. Nothing is saved and Permissions " +
+      "stay as they are. It may ask again after the chat closes or reloads.",
+  },
+  step: {
+    name: "Allow for this step",
+    hint:
+      "kiro-cli keeps this rule for this workflow step only. Nothing is saved, and the run's " +
+      "other steps still ask.",
+  },
+  run: {
+    name: "Allow for this run",
+    hint: "kiro-cli keeps this rule until this run ends. Nothing is saved.",
+  },
+  launching_chat: {
+    name: "Allow for this chat and its runs",
+    hint:
+      "kiro-cli keeps this rule in the chat that launched this run, for that chat and every run " +
+      "it launches, until its session closes or reloads. Nothing is saved.",
+  },
+  user: {
+    name: "Always allow",
+    hint:
+      "Saves the rule to your user permissions, which every kiro-cli session on this account " +
+      "reads, not only these chats. Each chat keeps its security profile.",
+  },
+};
 
 /** Open or close the pattern chooser an always option leads to. Saving is the second click, on a
  *  pattern, so a rule is never saved for a scope the reader did not see. */
@@ -772,7 +801,7 @@ function toggleAlwaysChooser(
   slot.dataset["option"] = opt.option_id;
   slot.dataset["reach"] = reach;
   const allow = opt.kind.startsWith("allow");
-  const name = reach === "session" ? "Allow for this chat" : allow ? "Always allow" : "Always deny";
+  const name = allow ? REACH_COPY[reach].name : "Always deny";
   const list = el("div", {
     className: "always-choice",
     role: "group",
@@ -787,20 +816,10 @@ function toggleAlwaysChooser(
       el("span", { className: "always-choice-covers" }, p.covers),
     );
     choice.addEventListener("click", () => {
-      onSelect(
-        reach === "session"
-          ? { optionID: opt.option_id, alwaysResource: p.resource, alwaysScope: "session" }
-          : { optionID: opt.option_id, alwaysResource: p.resource },
-      );
+      onSelect({ optionID: opt.option_id, alwaysResource: p.resource, alwaysReach: reach });
     });
     list.appendChild(choice);
   }
-  list.appendChild(
-    el(
-      "p",
-      { className: "always-choice-hint" },
-      reach === "session" ? SESSION_RULE_HINT : USER_RULE_HINT,
-    ),
-  );
+  list.appendChild(el("p", { className: "always-choice-hint" }, REACH_COPY[reach].hint));
   slot.appendChild(list);
 }

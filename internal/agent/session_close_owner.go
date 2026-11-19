@@ -362,7 +362,7 @@ func (lc *chatLifecycle) closingLocked(sb *sharedBridge) bool {
 // closeOwner is the lifecycle that decides when sb, chatID's entry, may close: the life its leases are counted on. A
 // run chat's entry has none: releaseEndedHost owns it.
 func (*turnRegistry) closeOwner(chatID marotte.ChatID, sb *sharedBridge) (*chatLifecycle, bool) {
-	if sb == nil || isRunChat(chatID) {
+	if sb == nil || marotte.IsRunHostChat(chatID) {
 		return nil, false
 	}
 	lc, ok := sb.life.(*chatLifecycle)
@@ -454,7 +454,7 @@ func (r *turnRegistry) beginTail(lc *chatLifecycle) (lifeCtx context.Context, do
 // holdStep records that host's session hosts the run step turn turnID, until endStep. A run chat's session is its
 // run's, so it takes none. Lock order runLog.mu -> r.mu -> lc.mu.
 func (r *turnRegistry) holdStep(host marotte.ChatID, turnID string) {
-	if isRunChat(host) {
+	if marotte.IsRunHostChat(host) {
 		return
 	}
 	r.mu.Lock()
@@ -508,7 +508,7 @@ func (r *turnRegistry) endStep(host marotte.ChatID, turnID string) {
 // wake after the frame, and with no resident session its frames would reach the engine lane. The hold ends when a
 // turn KAS opens on the chat (takeWakeLocked), its life ends or wakeHoldBound passes. A run chat takes none.
 func (r *turnRegistry) holdWake(chatID marotte.ChatID, workflowID string) {
-	if isRunChat(chatID) {
+	if marotte.IsRunHostChat(chatID) {
 		return
 	}
 	lc, ok := r.lookup(chatID)

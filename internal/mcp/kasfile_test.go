@@ -161,6 +161,42 @@ func TestWriteKASConfig_RemoteCarriesClientMetadataAndRedirect(t *testing.T) {
 	}
 }
 
+// TestWriteKASConfig_RemoteCarriesOAuthMode: oauth.mode is how KAS picks the organization sign-in for a server, and
+// an unset mode renders no oauth block at all, so KAS keeps its browser default.
+func TestWriteKASConfig_RemoteCarriesOAuthMode(t *testing.T) {
+	s, kas := newIsolatedStore(t)
+	for _, srv := range []*Server{
+		{Transport: transportHTTP, Name: "corp", Enabled: true, URL: "https://mcp.example/mcp", OAuthMode: oauthModeEnterprise},
+		{Transport: transportHTTP, Name: "plain", Enabled: true, URL: "https://mcp.example/plain"},
+	} {
+		if _, err := s.Create(t.Context(), srv); err != nil {
+			t.Fatalf("Create %s: %v", srv.Name, err)
+		}
+	}
+	servers := readKASServers(t, kas)
+	oauth, ok := servers["corp"]["oauth"].(map[string]any)
+	if !ok || len(oauth) != 1 || oauth["mode"] != "enterprise" {
+		t.Errorf("corp oauth = %v, want exactly mode=enterprise", servers["corp"]["oauth"])
+	}
+	if got, present := servers["plain"]["oauth"]; present {
+		t.Errorf("plain oauth = %v, want no oauth block for an unset mode", got)
+	}
+
+	var edit Server
+	for _, sv := range s.list(t.Context()) {
+		if sv.Name == "plain" {
+			edit = *sv
+		}
+	}
+	edit.OAuthMode = oauthModeAuto
+	if _, err := s.update(t.Context(), edit.ID, &edit); err != nil {
+		t.Fatalf("update plain: %v", err)
+	}
+	if oauth, _ := readKASServers(t, kas)["plain"]["oauth"].(map[string]any); oauth["mode"] != "auto" {
+		t.Errorf("plain oauth after an edit = %v, want mode=auto", oauth)
+	}
+}
+
 func TestWriteKASConfig_RemoteCarriesOAuthScopes(t *testing.T) {
 	s, kas := newIsolatedStore(t)
 	for _, srv := range []*Server{

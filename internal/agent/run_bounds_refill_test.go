@@ -124,7 +124,7 @@ func TestRefillDeadline_SwapsTheTimerForTheNewDeadline(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
+	h.insertBridgeNow(marotte.RunHostChatID(id), testBridge(br, bridgeReady))
 	leased(t, h.runs, id)
 
 	h.runs.armDeadline(t.Context(), id)
@@ -181,7 +181,7 @@ func TestCancelExpiredRun_AStallSaysWhichBoundCameDue(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
+	h.insertBridgeNow(marotte.RunHostChatID(id), testBridge(br, bridgeReady))
 	h.runs.grantLease(t.Context(), id, "publish", scheduledLaunch(launchrule.Row{ID: "sched-1"}, time.Time{}), hostSec())
 	h.runs.recordParentSession(t.Context(), id, testLaunchSession)
 	h.runs.armDeadline(t.Context(), id)
@@ -212,7 +212,7 @@ func TestRefillDeadline_ConcurrentRefillsLeaveALiveTimerForTheStoredDeadline(t *
 		h, _, br := newTestHub()
 		id := "wf_" + strconv.Itoa(round)
 		br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-		h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
+		h.insertBridgeNow(marotte.RunHostChatID(id), testBridge(br, bridgeReady))
 		st, err := runlease.NewStore(t.TempDir())
 		if err != nil {
 			t.Fatalf("round %d: NewStore: %v", round, err)

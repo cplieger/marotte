@@ -78,7 +78,7 @@ func TestCancelExpired_AnUnreadableRunWithNoOpenStepIsAStall(t *testing.T) {
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 	br.callErrs = map[string]error{methodKiroWorkflowInspect: errors.New("engine unavailable")}
-	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
+	h.insertBridgeNow(marotte.RunHostChatID(id), testBridge(br, bridgeReady))
 	deadline := stagedExpiry(t, h.runs, id, manualLaunch())
 
 	h.runs.cancelExpired(id, deadline)
@@ -130,6 +130,47 @@ func TestRequestPermission_AStepsAskRefillsTheWindow(t *testing.T) {
 		"sessionId": stepSID,
 		"toolCall":  map[string]any{"toolCallId": "tc-1", "title": "Run tests", "kind": "execute"},
 		"options":   []map[string]any{{"optionId": "allow", "kind": "allow_once"}},
+	})
+	h.askHandlers[marotte.MethodRequestPermission](t.Context(), chatID, h.originOf(chatID), &marotte.RPCResponse{
+		ID: &reqID, Method: marotte.MethodRequestPermission, Params: params,
+	})
+
+	l, _ := h.runs.lease(id)
+	if budget := time.Until(l.Deadline); budget < runIdleWindow-time.Second {
+		t.Errorf("a step's permission ask left %v of budget, want a full idle window %v",
+			budget.Round(time.Second), runIdleWindow)
+	}
+}
+
+// A step's ask names its run through its requester, so it refills the run's window with the step registry cold
+// (no node_start seen, as after a restart).
+func TestAskReportsStepProgress_ColdRegistryRefreshesTheRequestersRun(t *testing.T) {
+	const (
+		chatID  = marotte.ChatID("c1")
+		stepSID = "step-session-1"
+		id      = "wf_1"
+	)
+	h, _, _ := newTestHub()
+	defer shutdownHub(t, h)
+	registerParentSession(t, h, chatID, "parent-A")
+	leased(t, h.runs, id)
+	h.runs.armDeadline(t.Context(), id)
+	if err := h.runs.leaseStore().SetDeadline(t.Context(), id, time.Now().Add(time.Minute)); err != nil {
+		t.Fatalf("stage a near-expiry deadline: %v", err)
+	}
+
+	reqID := int64(7)
+	params := mustJSON(t, map[string]any{
+		"sessionId": stepSID,
+		"toolCall":  map[string]any{"toolCallId": "tc-1", "title": "Run tests", "kind": "execute"},
+		"options":   []map[string]any{{"optionId": "allow", "kind": "allow_once"}},
+		"_meta": map[string]any{"kiro": map[string]any{
+			"askId": "pr-1", "askKind": "tool_call_approval",
+			"requester": map[string]any{
+				"sessionId": stepSID,
+				"workflow":  map[string]any{"workflowId": id, "nodeId": "build", "nodePath": []string{"build"}},
+			},
+		}},
 	})
 	h.askHandlers[marotte.MethodRequestPermission](t.Context(), chatID, h.originOf(chatID), &marotte.RPCResponse{
 		ID: &reqID, Method: marotte.MethodRequestPermission, Params: params,
@@ -304,7 +345,7 @@ func TestFinishTermination_AParentlessRunLeavesNoNote(t *testing.T) {
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 	host := testBridge(br, bridgeReady)
-	h.insertBridgeNow(runChatID(id), host)
+	h.insertBridgeNow(marotte.RunHostChatID(id), host)
 	leased(t, h.runs, id)
 
 	if err := h.runs.finishTermination(t.Context(), id, runEndStalled, runStop{}, noRetry); err != nil {

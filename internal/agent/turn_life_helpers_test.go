@@ -193,7 +193,7 @@ func (r *turnRegistry) ensureTestLife(chatID marotte.ChatID) {
 	if _, ok := r.lookup(chatID); ok {
 		return
 	}
-	if isRunChat(chatID) {
+	if marotte.IsRunHostChat(chatID) {
 		r.lifecycleForRun(chatID)
 		return
 	}

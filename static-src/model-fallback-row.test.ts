@@ -146,6 +146,17 @@ function panelOf(c: Card): HTMLElement {
   return p;
 }
 
+/** The card's height inside its border, unrounded: `clientHeight` rounds to a whole pixel, and a panel's own
+ *  height need not be one. */
+function innerHeight(c: Card): number {
+  const cs = getComputedStyle(c.card);
+  return (
+    c.card.getBoundingClientRect().height -
+    parseFloat(cs.borderTopWidth) -
+    parseFloat(cs.borderBottomWidth)
+  );
+}
+
 function optionsOf(c: Card): HTMLElement[] {
   return [...panelOf(c).querySelectorAll<HTMLElement>('[role="listbox"] [role="option"]')];
 }
@@ -213,14 +224,37 @@ describe("the model picker's Fallback row", () => {
     expect(c.main.lastElementChild?.contains(row)).toBe(true);
   });
 
-  it("names Kiro default with its model, or alone when Kiro states none", () => {
+  it("names Kiro default with its model, or None when Kiro states none", () => {
     expect(openerOf(mount([fallback()])).getAttribute("aria-label")).toBe(
       "Fallback: Kiro default (Bravo)",
     );
     document.body.replaceChildren();
     expect(openerOf(mount([fallback({ vendor_default: "" })])).getAttribute("aria-label")).toBe(
-      "Fallback: Kiro default",
+      "Fallback: None",
     );
+  });
+
+  it("says what an unset row leaves uncovered, and nothing once a model is chosen", () => {
+    // KAS uses Kiro's default only for a declined request; an unavailable model takes the account's choice alone.
+    const cases: [ModelFallback, string][] = [
+      [
+        fallback(),
+        "Kiro default covers only a declined request. Pick a model to also fall back to when Alpha is unavailable.",
+      ],
+      [
+        fallback({ vendor_default: "" }),
+        "No fallback is set. When Alpha declines a request or is unavailable, the turn fails. Pick a model to fall back to.",
+      ],
+      [fallback({ configured: "model-c" }), ""],
+    ];
+    for (const [row, words] of cases) {
+      document.body.replaceChildren();
+      const c = mount([row]);
+      const hint = c.main.querySelector<HTMLElement>(".section-hint");
+      expect(hint?.textContent, words).toBe(words);
+      expect(hint?.hidden, words).toBe(words === "");
+      expect(openerOf(c).disabled, words).toBe(false);
+    }
   });
 
   it("is absent for a model KAS states no fallback for, and for Auto", () => {
@@ -420,6 +454,9 @@ describe("the Fallback list", () => {
       expect(openerOf(c).getAttribute("aria-label")).toBe("Fallback: Kiro default (Charlie)");
     });
     expect(openerOf(c).disabled).toBe(false);
+    expect(hintOf(c)).toBe(
+      "Kiro default covers only a declined request. Pick a model to also fall back to when Alpha is unavailable.",
+    );
   });
 
   it("re-picking the current choice returns without a write", async () => {
@@ -488,7 +525,7 @@ describe("the Fallback list", () => {
     expect(resize[0]?.effect?.getTiming().duration).toBe(200);
     await settle();
 
-    expect(c.card.clientHeight).toBeCloseTo(panelOf(c).getBoundingClientRect().height, 0);
+    expect(innerHeight(c)).toBeCloseTo(panelOf(c).getBoundingClientRect().height, 0);
     expect(
       c.card.getBoundingClientRect().bottom,
       "the edge nearest the pill stays put",
@@ -497,7 +534,7 @@ describe("the Fallback list", () => {
     await userEvent.click(backOf(c));
     await settle();
     const back = c.card.getBoundingClientRect();
-    expect(c.card.clientHeight).toBeCloseTo(c.main.getBoundingClientRect().height, 0);
+    expect(innerHeight(c)).toBeCloseTo(c.main.getBoundingClientRect().height, 0);
     expect(back.height).toBeCloseTo(before.height, 0);
     expect(back.bottom).toBeCloseTo(before.bottom, 0);
   });
@@ -517,7 +554,7 @@ describe("the Fallback list", () => {
     expect(shownPanel(c)).toBe("fallback");
     expect(c.main.hidden).toBe(true);
     expect(slides()).toEqual([]);
-    expect(c.card.clientHeight).toBeCloseTo(panelOf(c).getBoundingClientRect().height, 0);
+    expect(innerHeight(c)).toBeCloseTo(panelOf(c).getBoundingClientRect().height, 0);
     await userEvent.click(backOf(c));
     expect(panelOf(c).hidden).toBe(true);
     expect(slides()).toEqual([]);

@@ -2,7 +2,9 @@ package translate
 
 import (
 	"encoding/json"
+	"maps"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -108,7 +110,7 @@ func turnApprovalParams(t *testing.T, files []map[string]any) []byte {
 		},
 		"_meta": map[string]any{
 			"kiro": map[string]any{
-				"type":        "turn_approval",
+				"askKind":     "turn_approval",
 				"executionId": "exec-1",
 				"files":       files,
 			},
@@ -212,6 +214,107 @@ func TestHandlePermissionRequest_OrdinaryPermissionHasNoFiles(t *testing.T) {
 
 // Always-allow persistability is ABSENT-MEANS-YES: a plain bool would suppress the row on
 // every pre-2.19.1 request.
+
+// Each scope KAS offers is named by what its rule covers for whoever asked: KAS keeps a session
+// rule on the asking session (a step's own), and a launching-session rule on its launch chain's
+// root, a run host for a parentless run and a chat otherwise. Workspace is never offered.
+func TestHandlePermissionRequest_ReachesFromOfferedScopes(t *testing.T) {
+	stepRequester := map[string]any{
+		"sessionId": "sess_step", "launchingSessionId": "sess_root",
+		"workflow": map[string]any{"workflowId": "wf_1", "nodeId": "build", "nodePath": []string{"build"}},
+	}
+	withRoot := func(root string) map[string]any {
+		r := maps.Clone(stepRequester)
+		r["rootSessionId"] = root
+		return r
+	}
+	all := []string{"session", "launching-session", "workspace", "user"}
+	for _, tc := range []struct {
+		kiro         map[string]any
+		sessionChats map[string]marotte.ChatID
+		name         string
+		lane         marotte.ChatID
+		scopes       []string
+		persistable  *bool
+		want         []marotte.AlwaysReach
+	}{
+		{
+			name: "a chat's own ask", lane: "c1", scopes: []string{"session", "workspace", "user"},
+			want: []marotte.AlwaysReach{marotte.AlwaysReachChat, marotte.AlwaysReachUser},
+		},
+		{
+			name: "a step's ask on its launching chat's lane", lane: "c1", scopes: all,
+			kiro: map[string]any{"requester": stepRequester},
+			want: []marotte.AlwaysReach{marotte.AlwaysReachStep, marotte.AlwaysReachLaunchingChat, marotte.AlwaysReachUser},
+		},
+		{
+			name: "a step's ask on a run host's lane", lane: "run:wf_1", scopes: all,
+			kiro: map[string]any{"requester": stepRequester},
+			want: []marotte.AlwaysReach{marotte.AlwaysReachStep, marotte.AlwaysReachRun, marotte.AlwaysReachUser},
+		},
+		{
+			name: "a nested step whose launch chain starts at a run host", lane: "c1", scopes: all,
+			kiro:         map[string]any{"requester": withRoot("sess_host")},
+			sessionChats: map[string]marotte.ChatID{"sess_host": "run:wf_0"},
+			want:         []marotte.AlwaysReach{marotte.AlwaysReachStep, marotte.AlwaysReachRun, marotte.AlwaysReachUser},
+		},
+		{
+			name: "a nested step whose launch chain starts at a chat", lane: "run:wf_2", scopes: all,
+			kiro:         map[string]any{"requester": withRoot("sess_chat")},
+			sessionChats: map[string]marotte.ChatID{"sess_chat": "c1"},
+			want:         []marotte.AlwaysReach{marotte.AlwaysReachStep, marotte.AlwaysReachLaunchingChat, marotte.AlwaysReachUser},
+		},
+		{
+			name: "a launch chain root marotte does not hold falls back to the lane", lane: "run:wf_1", scopes: all,
+			kiro: map[string]any{"requester": withRoot("sess_gone")},
+			want: []marotte.AlwaysReach{marotte.AlwaysReachStep, marotte.AlwaysReachRun, marotte.AlwaysReachUser},
+		},
+		{
+			name: "a watch the launching chat runs", lane: "c1", scopes: []string{"session", "user"},
+			kiro: map[string]any{"workflowWatch": map[string]any{"workflowId": "wf_1", "nodeId": "wait"}},
+			want: []marotte.AlwaysReach{marotte.AlwaysReachChat, marotte.AlwaysReachUser},
+		},
+		{
+			name: "an ask whose answer cannot persist", lane: "c1", scopes: []string{}, persistable: new(false),
+		},
+		{
+			name: "a scope KAS adds later", lane: "c1", scopes: []string{"session", "organization", "user"},
+			want: []marotte.AlwaysReach{marotte.AlwaysReachChat, marotte.AlwaysReachUser},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deps, events := newEventCaptureDeps()
+			deps.sessionChats = tc.sessionChats
+			tr := New(rolesOf(deps))
+			consent := map[string]any{"capability": "shell", "resource": "head -1", "scopes": tc.scopes}
+			if tc.persistable != nil {
+				consent["persistableConsent"] = *tc.persistable
+			}
+			kiro := map[string]any{"consent": consent}
+			maps.Copy(kiro, tc.kiro)
+			params := mustJSON(t, map[string]any{
+				"sessionId": "sess_step",
+				"toolCall":  map[string]any{"toolCallId": "tc-sh", "title": "head -1", "kind": "execute"},
+				"options": []map[string]any{
+					{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
+					{"optionId": "always", "name": "Always", "kind": "allow_always"},
+				},
+				"_meta": map[string]any{"kiro": kiro},
+			})
+			id := int64(1)
+
+			tr.HandlePermissionRequest(t.Context(), tc.lane, nopOrigin{}, &marotte.RPCResponse{ID: &id, Params: params})
+
+			got, ok := findPermissionNeeded(t, events)
+			if !ok || got.Consent == nil {
+				t.Fatalf("permission_needed = %+v (found %v), want one carrying consent", got, ok)
+			}
+			if !slices.Equal(got.Consent.Reaches, tc.want) {
+				t.Errorf("Reaches = %v, want %v", got.Consent.Reaches, tc.want)
+			}
+		})
+	}
+}
 
 // consentParams builds a shell permission request whose `_meta.kiro` carries
 // whatever `consent` object the case wants — or none at all when nil.
@@ -522,7 +625,7 @@ func TestHandlePermissionRequest_RejectionNote(t *testing.T) {
 			kiro: map[string]any{"toolId": "execute_bash"}, options: ordinary, want: marotte.RejectionNoteReason,
 		},
 		"a turn approval": {
-			kiro: map[string]any{"toolId": "x", "type": "turn_approval"}, options: ordinary,
+			kiro: map[string]any{"toolId": "x", "askKind": "turn_approval"}, options: ordinary,
 		},
 		"a hook approval carries no toolId": {
 			kiro: map[string]any{"hookName": "pre-commit"}, options: ordinary,

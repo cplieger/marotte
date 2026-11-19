@@ -84,6 +84,44 @@ func TestHandlePolicyError(t *testing.T) {
 			t.Errorf("payload = %+v (ok=%v)", e.Payload, ok)
 		}
 	}
+	if n := countEvents(events, marotte.EventSystemNotice); n != 0 {
+		t.Errorf("system_notice count = %d for a permissions file error, want 0: Settings shows it", n)
+	}
+}
+
+// A rule an always answer could not save (KAS's launching-session-unloaded refusal) is reported
+// with source "consent"; the person who answered hears it on the lane the ask came from.
+func TestHandlePolicyError_ConsentRefusalNotifies(t *testing.T) {
+	deps, events := newEventCaptureDeps()
+	tr := New(rolesOf(deps))
+
+	tr.HandlePolicyError(t.Context(), marotte.ChatID("c1"), &marotte.RPCResponse{
+		Params: mustJSON(t, map[string]any{
+			"sessionId": "sess-1",
+			"errors": []map[string]any{{
+				"scope": "session", "source": "consent", "fatal": false,
+				"message": "Kiro could not save this rule for the requested chat. The answer applied to this call only.",
+			}},
+		}),
+	})
+
+	if n := countEvents(events, marotte.EventPolicyError); n != 1 {
+		t.Errorf("policy_error count = %d, want 1: Settings keeps its status line", n)
+	}
+	var notices []marotte.ServerEvent
+	for _, e := range *events {
+		if e.Type == marotte.EventSystemNotice {
+			notices = append(notices, e)
+		}
+	}
+	if len(notices) != 1 {
+		t.Fatalf("system_notice count = %d, want 1", len(notices))
+	}
+	n, ok := notices[0].Payload.(marotte.SystemNoticePayload)
+	if !ok || notices[0].ChatID != "c1" || n.Level != marotte.NoticeWarning ||
+		n.Message != "kiro-cli did not save that rule; the answer applied to this call only." {
+		t.Errorf("notice = %q %+v, want a warning on c1 saying the rule was not saved", notices[0].ChatID, notices[0].Payload)
+	}
 }
 
 // TestHandlePolicyMalformedNoop pins that malformed params are dropped

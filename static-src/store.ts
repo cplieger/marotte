@@ -828,6 +828,7 @@ export function upsertHeader(h: ChatHeader): void {
         acp_session_id: h.acp_session_id ?? "",
         current_mode_id: h.current_mode_id ?? "",
         supervised_mode: h.supervised_mode ?? false,
+        messaging_off: h.messaging_off ?? false,
         security_profile: h.security_profile ?? "",
         effort: h.effort ?? "",
         // Absent means the server has no session catalog to report (a chat with no bridge, or a
@@ -885,6 +886,7 @@ export function upsertHeader(h: ChatHeader): void {
     acp_session_id: h.acp_session_id ?? "",
     current_mode_id: h.current_mode_id ?? "",
     supervised_mode: h.supervised_mode ?? false,
+    messaging_off: h.messaging_off ?? false,
     security_profile: h.security_profile ?? "",
     effort: h.effort ?? "",
     effort_levels: h.effort_levels ?? [],
@@ -1305,6 +1307,14 @@ export function setSupervisedMode(chatID: string, enabled: boolean): void {
     return;
   }
   sessions.update(chatID, (cur) => ({ ...cur, supervised_mode: enabled }));
+}
+
+export function setMessagingOff(chatID: string, off: boolean): void {
+  const s = get(chatID);
+  if (s === undefined || (s.messaging_off ?? false) === off) {
+    return;
+  }
+  sessions.update(chatID, (cur) => ({ ...cur, messaging_off: off }));
 }
 
 export function setSecurityProfile(chatID: string, profile: string): void {

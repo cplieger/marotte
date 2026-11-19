@@ -1043,7 +1043,7 @@ func TestCloseOwner_ARunEndOwingNoWakeReleasesAtOnce(t *testing.T) {
 			o.h.runs.releaseLease(t.Context(), recordedRun)
 		}},
 		{name: "a terminal frame on the run's own lane", end: func(t *testing.T, o *ownerHub) {
-			deliverRunComplete(t, o.h, runChatID(recordedRun), recordedRun, "completed")
+			deliverRunComplete(t, o.h, marotte.RunHostChatID(recordedRun), recordedRun, "completed")
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

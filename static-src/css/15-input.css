@@ -1246,6 +1246,23 @@
   overflow-wrap: anywhere;
 }
 
+/* The Fallback row's hint is a sentence in the nowrap card: it wraps, and `inline-size: 0` keeps its
+   max-content out of the card's width wherever the card is anchored. Trimmed to its last baseline and
+   padded by the opener's air above its cap, the row leaves as much air under its last line as above
+   its title. */
+.model-panel-main > .effort-row {
+  --row-cap: 1cap;
+
+  & > .section-hint {
+    text-box: trim-end cap alphabetic;
+    padding-block-end: calc((var(--menu-row-h) - var(--row-cap)) / 2);
+    white-space: normal;
+    overflow-wrap: anywhere;
+    inline-size: 0;
+    min-inline-size: 100%;
+  }
+}
+
 /* The live tier is the caption's payload, so it reads one ink rung above the word
    naming it: 8.062:1 dark / 7.290:1 light on the card, against the hint ink's
    4.771:1 / 4.719:1. */

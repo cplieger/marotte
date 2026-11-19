@@ -241,12 +241,13 @@ type Broadcaster interface {
 type pendingPermAdder interface {
 	// PendingPermsAdd records the ask KAS sent as acpID with the bridge it arrived on, which carries
 	// its answer and whose end retires it, and returns evt carrying the ask's own id: the request_id
-	// a client sees and echoes, since acpID restarts with every engine generation. False means it was
-	// answered at once, so there is no card to show.
-	PendingPermsAdd(ctx context.Context, acpID int64, evt marotte.ServerEvent, origin AskOrigin) (marotte.ServerEvent, bool)
-	// PendingPermsWithdraw retires the chat's ask for toolCallID, which KAS
-	// stopped waiting on, reporting whether one was open.
-	PendingPermsWithdraw(chatID marotte.ChatID, toolCallID string) bool
+	// a client sees and echoes, since acpID restarts with every engine generation. kasAskID is KAS's
+	// askId for the ask, "" when KAS sent none. False means it was answered at once, so there is no
+	// card to show.
+	PendingPermsAdd(ctx context.Context, acpID int64, kasAskID string, evt marotte.ServerEvent, origin AskOrigin) (marotte.ServerEvent, bool)
+	// PendingPermsWithdraw retires the chat's ask KAS filed as askID and stopped waiting on,
+	// reporting whether one was open.
+	PendingPermsWithdraw(chatID marotte.ChatID, askID string) bool
 }
 
 // AskOrigin is the bridge a server-to-client ask arrived on: every answer to it goes back there,
@@ -303,7 +304,8 @@ type governanceAccess interface {
 
 // mcpRecorder keeps each session's MCP view.
 type mcpRecorder interface {
-	// RecordSessionStatus replaces sessionID's view with its whole frame.
+	// RecordSessionStatus replaces sessionID's view with its whole frame, whose identity provider block is the
+	// engine's one organization sign-in.
 	RecordSessionStatus(ctx context.Context, sessionID marotte.SessionID, status MCPSessionStatus)
 }
 

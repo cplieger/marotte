@@ -138,14 +138,14 @@ describe("answering an ask: the four outcomes", () => {
     });
   });
 
-  it("sends always_scope only when the answer carries one", async () => {
+  it("sends always_reach only when the answer carries one", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
     await respondPermission.dispatch({
       chatID: "c1",
       requestID: 12,
       optionID: "always-accept",
       alwaysResource: "head *",
-      alwaysScope: "session",
+      alwaysReach: "chat",
     });
     await respondPermission.dispatch({ chatID: "c1", requestID: 13, optionID: "accept" });
     await respondPermission.dispatch({
@@ -160,7 +160,7 @@ describe("answering an ask: the four outcomes", () => {
         request_id: 12,
         option_id: "always-accept",
         always_resource: "head *",
-        always_scope: "session",
+        always_reach: "chat",
       },
       { request_id: 13, option_id: "accept" },
       { request_id: 14, option_id: "always-accept", always_resource: "head *" },

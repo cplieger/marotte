@@ -39,6 +39,7 @@ import type { EffectiveSettings } from "./persist.js";
 import { restoreLastEffort, restoreLastModel } from "./session-context.js";
 import { adoptLinkGuard } from "./link-guard.js";
 import { adoptInterruptDefault } from "./interrupt-default.js";
+import { adoptChatMessaging } from "./chat-messaging.js";
 import { resolveIdentity } from "./identity.js";
 import type { IdentityVerdict } from "./identity.js";
 import { fetchCatalog } from "./session-catalog.js";
@@ -154,6 +155,7 @@ function adoptSettings(settings: EffectiveSettings | null): void {
   restoreLastEffort(settings.last_effort_by_model);
   adoptLinkGuard(settings);
   adoptInterruptDefault(settings);
+  adoptChatMessaging(settings);
   setHookStatusShown(settings.hook_status_shown);
   // Where the server's choice replaces the pre-paint cache, and where that cache
   // is carried across if the server has none.

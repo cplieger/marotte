@@ -83,7 +83,7 @@ func (in *inbound) searchRun(chatID marotte.ChatID, sessionID marotte.SessionID)
 	if wf, ok := in.stepRun(sessionID); ok {
 		return wf
 	}
-	return workflowIDOf(chatID)
+	return marotte.RunHostWorkflowID(chatID)
 }
 
 // answerKiroSearch never answers with an error, a malformed request and a panic included: KAS

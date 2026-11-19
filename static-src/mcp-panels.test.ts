@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import fc from "fast-check";
+import indexHtml from "../static/index.html?raw";
 
 // `tools.ts` reaches the editor openers and their whole graph; cut at that edge, since no case opens a file.
 vi.mock("./editor-openers.js", () => ({
@@ -15,11 +16,10 @@ vi.mock("./editor-openers.js", () => ({
 }));
 // `tools.ts` also reaches the tab store; cut there too, since no case navigates.
 vi.mock("./tabs.js", async () => (await import("./__test-helpers__/tabs-mock.js")).tabsMock());
-vi.mock("./dom.js", () => ({
-  // Present-but-undefined for real-ESM linking: another module in the graph imports the name.
-  byId: undefined,
-  $: new Proxy({}, { get: () => document.createElement("div") }),
-  el: () => document.createElement("div"),
+// The real lookups, so the remote form below runs on the production markup; `$` stays a stub for the modal handle.
+vi.mock(import("./dom.js"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  $: new Proxy({}, { get: () => document.createElement("div") }) as never,
 }));
 vi.mock("./api-client.js", () => ({
   apiGet: async () => null,
@@ -34,11 +34,21 @@ vi.mock("./modals.js", () => ({
     /* noop */
   },
 }));
+// vi.hoisted: a vi.mock factory is hoisted above top-level consts.
+const { provider, saveDispatch } = vi.hoisted(() => ({
+  provider: { set: false },
+  saveDispatch: vi.fn((_args: { id: string; body: Record<string, unknown> }) => ({
+    outcome: Promise.resolve({ status: "success" }),
+  })),
+}));
 vi.mock("./mcp-state.js", () => ({
-  // Present-but-undefined for real-ESM linking.
-  discoverySignalFor: undefined,
+  discoverySignalFor: () => ({ peek: () => ({ tools: [] }) }),
+  identityProviderConfigured: () => provider.set,
   mcpState: {
     refetchServers: async () => {
+      /* noop */
+    },
+    refetchStatus: async () => {
       /* noop */
     },
   },
@@ -65,13 +75,13 @@ vi.mock("./actions/mcp.js", () => ({
   MCP_API: undefined,
   validationFieldsOf: undefined,
   registryFailureOf: undefined,
-  saveServer: { dispatch: async () => ({}) },
+  saveServer: { dispatch: saveDispatch },
   importServers: { dispatch: async () => ({}) },
   searchRegistry: { cancel: () => undefined },
 }));
 
 import { simplifyName } from "./mcp-panels-search.js";
-import { extractNpxPackage } from "./mcp-panels.js";
+import { extractNpxPackage, initModal, setEditing, signInChoiceShown } from "./mcp-panels.js";
 import type { Server } from "./mcp-state.js";
 
 describe("simplifyName", () => {
@@ -134,6 +144,88 @@ describe("extractNpxPackage", () => {
 
   it("refuses a remote server", () => {
     expect(extractNpxPackage({ ...stub(["-y", "pkg"]), transport: "http" })).toBe("");
+  });
+});
+
+describe("the remote form's Sign-in choice", () => {
+  const remote = (over: Partial<Server> = {}): Server => ({
+    id: "id-r",
+    name: "linear",
+    transport: "http",
+    url: "https://mcp.linear.app/mcp",
+    enabled: true,
+    created_at: 0,
+    updated_at: 0,
+    ...over,
+  });
+
+  function modal(): void {
+    const start = indexHtml.indexOf('<div id="mcp-modal"');
+    const end = indexHtml.indexOf("<!-- Git output popup -->", start);
+    const host = document.createElement("div");
+    host.innerHTML = indexHtml.slice(start, end);
+    document.body.replaceChildren(host);
+  }
+
+  function open(s: Server | null): { row: HTMLElement; select: HTMLSelectElement } {
+    setEditing({ id: s?.id ?? "" });
+    initModal({ mode: "remote", server: s });
+    const select = document.querySelector<HTMLSelectElement>("#mcp-remote-oauth-mode");
+    if (select === null) {
+      throw new Error("no Sign-in choice on the remote form");
+    }
+    return { row: select.closest("label") as HTMLElement, select };
+  }
+
+  async function save(): Promise<Record<string, unknown>> {
+    saveDispatch.mockClear();
+    document.querySelector<HTMLFormElement>('form[data-mcp-mode="remote"]')?.requestSubmit();
+    await Promise.resolve();
+    return saveDispatch.mock.calls[0]?.[0].body ?? {};
+  }
+
+  beforeEach(() => {
+    provider.set = false;
+    modal();
+  });
+
+  it("is shown only with a provider, or with a stored organization choice", () => {
+    // KAS's enterprise mode only fails without a provider and auto behaves as the browser, so the control does nothing.
+    expect(signInChoiceShown(false, undefined)).toBe(false);
+    expect(signInChoiceShown(false, "browser")).toBe(false);
+    expect(signInChoiceShown(true, undefined)).toBe(true);
+    expect(signInChoiceShown(false, "enterprise")).toBe(true);
+    expect(signInChoiceShown(false, "auto")).toBe(true);
+  });
+
+  it("hides on a server with no provider and the default sign-in", () => {
+    expect(open(remote()).row.classList.contains("hidden")).toBe(true);
+  });
+
+  it("stays on a server whose stored choice the provider's removal left behind", () => {
+    const { row, select } = open(remote({ oauth_mode: "enterprise" }));
+    expect(row.classList.contains("hidden")).toBe(false);
+    expect(select.value).toBe("enterprise");
+  });
+
+  it("sends the chosen organization sign-in", async () => {
+    provider.set = true;
+    const { row, select } = open(remote());
+    expect(row.classList.contains("hidden")).toBe(false);
+    select.value = "auto";
+    expect(await save()).toMatchObject({ oauth_mode: "auto" });
+  });
+
+  it("drops a stored choice set back to the browser default", async () => {
+    provider.set = true;
+    open(remote({ oauth_mode: "enterprise" })).select.value = "";
+    expect(await save()).not.toHaveProperty("oauth_mode");
+  });
+
+  it("keeps a stored value it does not show", async () => {
+    // Update replaces the whole record, so a hidden control carries what is stored.
+    open(remote({ oauth_mode: "browser" }));
+    expect(await save()).toMatchObject({ oauth_mode: "browser" });
   });
 });
 

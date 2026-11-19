@@ -1,6 +1,7 @@
 package command
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -312,9 +313,10 @@ func answerResponse(ctx context.Context, kind string, chatID marotte.ChatID, rep
 	}
 }
 
-// alwaysConsent is the rule an always answer saves, nil for any other answer. The chosen scope
+// alwaysConsent is the rule an always answer saves, nil for any other answer. The chosen reach
 // and a chosen pattern other than the ask's own subject are checked before anything is claimed
-// or written; an unknown request or option is left to the claim.
+// or written, so KAS is never sent a scope it would refuse and apply once; an unknown request or
+// option is left to the claim.
 func alwaysConsent(perms pendingPermAccess, chatID marotte.ChatID, p *marotte.PermissionResponseCommand) (*marotte.PermissionConsentAnswer, error) {
 	ask, ok := perms.PendingPermission(chatID, p.RequestID)
 	if !ok {
@@ -326,14 +328,16 @@ func alwaysConsent(perms pendingPermAccess, chatID marotte.ChatID, p *marotte.Pe
 	}
 	effect, isAlways := alwaysEffects[ask.Options[i].Kind]
 	resource := strings.TrimSpace(p.AlwaysResource)
-	scope, scopeOK := consentScope(p.AlwaysScope, effect)
+	reach := cmp.Or(p.AlwaysReach, marotte.AlwaysReachUser)
 	switch {
-	case !isAlways && p.AlwaysScope != "", isAlways && !scopeOK:
-		return nil, StatusError(http.StatusBadRequest, errAlwaysScopeInvalid)
+	case !isAlways && p.AlwaysReach != "":
+		return nil, StatusError(http.StatusBadRequest, errAlwaysReachInvalid)
 	case !isAlways && resource == "":
 		return nil, nil
 	case !isAlways, ask.Consent == nil, len(p.FileDecisions) > 0, strings.TrimSpace(p.RejectionReason) != "":
 		return nil, StatusError(http.StatusBadRequest, errAlwaysResourceInvalid)
+	case !slices.Contains(ask.Consent.Reaches, reach), reach.AllowOnly() && effect != policyfile.EffectAllow:
+		return nil, StatusError(http.StatusBadRequest, errAlwaysReachInvalid)
 	}
 	rule := policyfile.Rule{Capability: ask.Consent.Capability, Effect: effect}
 	raw, fromSubject := subjectResource(ask.Consent, resource)
@@ -348,20 +352,8 @@ func alwaysConsent(perms pendingPermAccess, chatID marotte.ChatID, p *marotte.Pe
 		raw = clean.Match[0]
 	}
 	return &marotte.PermissionConsentAnswer{
-		Scope: scope, Capability: clean.Capability, Resource: raw,
+		Scope: reach.ConsentScope(), Capability: clean.Capability, Resource: raw,
 	}, nil
-}
-
-// consentScope maps a requested always_scope onto the KAS scope it saves at. The card offers
-// a session scope only beside Allow, so a session-scope deny is refused.
-func consentScope(requested, effect string) (string, bool) {
-	switch requested {
-	case "", marotte.ConsentScopeUser:
-		return marotte.ConsentScopeUser, true
-	case marotte.ConsentScopeSession:
-		return marotte.ConsentScopeSession, effect == policyfile.EffectAllow
-	}
-	return "", false
 }
 
 // subjectResource maps a pattern the card offered from the ask itself (its subject, or the

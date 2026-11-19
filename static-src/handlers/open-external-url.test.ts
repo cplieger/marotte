@@ -161,3 +161,73 @@ describe("a sign-in KAS names its server and flow for", () => {
     expect(mockShowBanner).not.toHaveBeenCalled();
   });
 });
+
+describe("the organization sign-in a refused tool call starts", () => {
+  function org(name?: string): Record<string, unknown> {
+    const p: Record<string, unknown> = {
+      ...signIn("https://acme.okta.com/oauth2/v1/authorize?state=o1"),
+      identity_provider: true,
+    };
+    if (name !== undefined) {
+      p["identity_provider_name"] = name;
+    }
+    return p;
+  }
+
+  const frame = (state: string): Record<string, unknown> => ({ known: true, status: { state } });
+
+  it("names the organization rather than an integration", () => {
+    fireSSE("open_external_url", "", org("Acme"));
+    expect(mockShowBanner.mock.calls[0]?.[2]).toBe(
+      "Sign in to Acme to use your organization's MCP servers.",
+    );
+    expect(mockRenderOAuthRelay).toHaveBeenCalledWith("");
+  });
+
+  it("says your organization while kiro-cli has reported no name", () => {
+    fireSSE("open_external_url", "", org());
+    expect(mockShowBanner.mock.calls[0]?.[2]).toBe(
+      "Sign in to your organization to use its MCP servers.",
+    );
+  });
+
+  it("stays up while the sign-in runs and closes once signed in, stopping the countdown", () => {
+    fireSSE("open_external_url", "", org("Acme"));
+    mockClearBannerCodes.mockClear();
+    mockShowBanner.mockClear();
+
+    fireSSE("mcp_identity_provider", "", frame("signing-in"));
+    expect(mockClearBannerCodes).not.toHaveBeenCalled();
+
+    fireSSE("mcp_identity_provider", "", frame("signed-in"));
+    expect(mockClearBannerCodes).toHaveBeenCalledWith("*", ["open_external_url"]);
+    expect(mockShowBanner).not.toHaveBeenCalled();
+    mockClearBannerCodes.mockClear();
+    vi.advanceTimersByTime(300_000);
+    expect(mockClearBannerCodes).not.toHaveBeenCalled();
+  });
+
+  it("turns into a warning when the sign-in ends without signing in", () => {
+    fireSSE("open_external_url", "", org("Acme"));
+    mockShowBanner.mockClear();
+
+    fireSSE("mcp_identity_provider", "", frame("signed-out"));
+
+    expect(mockShowBanner).toHaveBeenCalledWith(
+      "*",
+      "mcp_sign_in_failed",
+      "The sign-in to Acme did not complete. The next tool call asks again.",
+      "warning",
+      true,
+    );
+  });
+
+  it("leaves a server's banner alone", () => {
+    fireSSE("open_external_url", "", { ...signIn("https://auth.example.com/oauth?state=f1"), server: "linear" });
+    mockClearBannerCodes.mockClear();
+
+    fireSSE("mcp_identity_provider", "", frame("signed-in"));
+
+    expect(mockClearBannerCodes).not.toHaveBeenCalled();
+  });
+});

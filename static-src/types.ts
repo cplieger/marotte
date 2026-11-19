@@ -393,6 +393,8 @@ export interface Session {
   /** The tier parked with `pending_model` (`ChatHeader.pending_effort`); empty carries `effort`. */
   pending_effort?: string;
   supervised_mode?: boolean;
+  /** `ChatHeader.messaging_off`: the chat's own Messages between chats switch is off. */
+  messaging_off?: boolean;
   /** `ChatHeader.security_profile`: the profile this chat's session runs, "" until its first session pins the
    *  Settings profile. */
   security_profile?: string;

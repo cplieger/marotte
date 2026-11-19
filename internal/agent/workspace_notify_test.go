@@ -77,7 +77,7 @@ func TestWorkspaceNotifications_HandledOnceOnEveryLane(t *testing.T) {
 		deliver func(msg *marotte.RPCResponse)
 	}{
 		{name: "chat lane", deliver: func(msg *marotte.RPCResponse) { h.translateACPEvent("c1", h.originOf("c1"), msg) }},
-		{name: "run lane", deliver: func(msg *marotte.RPCResponse) { h.dispatch(t.Context(), runChatID("wf_1"), br, msg) }},
+		{name: "run lane", deliver: func(msg *marotte.RPCResponse) { h.dispatch(t.Context(), marotte.RunHostChatID("wf_1"), br, msg) }},
 		{name: "engine lane", deliver: func(msg *marotte.RPCResponse) { h.engineFrame(fakeSourceOf(t, h).current(), msg) }},
 		{name: "observer lane", deliver: func(msg *marotte.RPCResponse) {
 			want := count(msg.Method) + 1

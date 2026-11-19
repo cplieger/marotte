@@ -428,7 +428,7 @@ func (at *agentTerminals) releaseForBridge(chatID marotte.ChatID, origin acpResp
 		at.unindex(term.chatID, id)
 		doomed = append(doomed, doomedTerminal{id: id, term: term})
 	}
-	if isRunChat(chatID) {
+	if marotte.IsRunHostChat(chatID) {
 		at.dropRetired(chatID)
 	}
 	at.mu.Unlock()

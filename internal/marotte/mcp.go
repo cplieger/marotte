@@ -73,6 +73,40 @@ type MCPServerStatus struct {
 	Relayed bool `json:"relayed,omitempty"`
 	// Shadows keeps the client from putting this status on marotte's config row.
 	Shadows bool `json:"shadows,omitempty"`
+	// Enterprise is set when the server signs in through the organization identity provider: empty on a
+	// connected row, its reason on a failed one.
+	Enterprise *MCPEnterpriseAuth `json:"enterprise,omitempty"`
+}
+
+// MCPEnterpriseAuth is kiro-cli's enterpriseAuthorization on one server's status. Reason is empty on a connected
+// server; on a failed one it is kiro-cli's open vocabulary (idp-not-configured, idp-sign-in-required,
+// idp-session-expired, denied, unsupported, failed), kept verbatim.
+type MCPEnterpriseAuth struct {
+	Reason            string `json:"reason,omitempty"`
+	ServerDescription string `json:"server_description,omitempty"`
+}
+
+// MCPIdentityProviderState is kiro-cli's organization sign-in state, spelled as kiro-cli spells it; a value it adds
+// later is carried as it comes.
+type MCPIdentityProviderState string
+
+// The organization sign-in states kiro-cli reports. A provider kiro-cli has no config for is reported as none at all.
+const (
+	MCPIdentityProviderSignedOut      MCPIdentityProviderState = "signed-out"
+	MCPIdentityProviderSigningIn      MCPIdentityProviderState = "signing-in"
+	MCPIdentityProviderSignedIn       MCPIdentityProviderState = "signed-in"
+	MCPIdentityProviderSessionExpired MCPIdentityProviderState = "session-expired"
+	MCPIdentityProviderInvalidConfig  MCPIdentityProviderState = "invalid-config"
+)
+
+// MCPIdentityProviderStatus is kiro-cli's organization sign-in as its _kiro/mcp/status frames report it. Error is
+// set for invalid-config only, which carries no issuer; Account only when signed in and the ID token names one.
+type MCPIdentityProviderStatus struct {
+	State       MCPIdentityProviderState `json:"state"`
+	Issuer      string                   `json:"issuer,omitempty"`
+	DisplayName string                   `json:"display_name,omitempty"`
+	Account     string                   `json:"account,omitempty"`
+	Error       string                   `json:"error,omitempty"`
 }
 
 // MCPStatusPayload is the payload for type="mcp_status": Server's row changed, stamped with the

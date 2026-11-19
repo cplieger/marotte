@@ -152,17 +152,17 @@ func isIdentByte(c byte, notFirst bool) bool {
 	return c == '_' || c == '$' || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || (notFirst && '0' <= c && c <= '9')
 }
 
-// renderedKASKeys returns kasServer's json tag names, read from the declaration.
-func renderedKASKeys(t *testing.T) []string {
+// renderedKASKeys returns the json tag names of typeName, a struct declared in kasfile.go.
+func renderedKASKeys(t *testing.T, typeName string) []string {
 	t.Helper()
 	file, err := parser.ParseFile(token.NewFileSet(), "../mcp/kasfile.go", nil, 0)
 	if err != nil {
-		t.Fatalf("parse kasServer declaration: %v", err)
+		t.Fatalf("parse %s declaration: %v", typeName, err)
 	}
 	var keys []string
 	ast.Inspect(file, func(node ast.Node) bool {
 		spec, ok := node.(*ast.TypeSpec)
-		if !ok || spec.Name.Name != "kasServer" {
+		if !ok || spec.Name.Name != typeName {
 			return true
 		}
 		for _, field := range spec.Type.(*ast.StructType).Fields.List {
@@ -171,7 +171,7 @@ func renderedKASKeys(t *testing.T) []string {
 			}
 			tag, unquoteErr := strconv.Unquote(field.Tag.Value)
 			if unquoteErr != nil {
-				t.Fatalf("decode kasServer tag %s: %v", field.Tag.Value, unquoteErr)
+				t.Fatalf("decode %s tag %s: %v", typeName, field.Tag.Value, unquoteErr)
 			}
 			name, _, _ := strings.Cut(reflect.StructTag(tag).Get("json"), ",")
 			keys = append(keys, name)
@@ -179,9 +179,21 @@ func renderedKASKeys(t *testing.T) []string {
 		return false
 	})
 	if len(keys) == 0 {
-		t.Fatal("kasServer declaration has no json-tagged fields")
+		t.Fatalf("%s declaration has no json-tagged fields", typeName)
 	}
 	return keys
+}
+
+// mcpOAuthSchemaLit opens KAS's per-server oauth schema, `<zod>.object({clientId:...,mode:...})`.
+const mcpOAuthSchemaLit = "object({clientId:"
+
+// extractMCPOAuthKeys returns the member names of KAS's per-server oauth schema.
+func extractMCPOAuthKeys(src string) ([]string, error) {
+	sites := literalSites(src, mcpOAuthSchemaLit, true)
+	if len(sites) != 1 {
+		return nil, fmt.Errorf("oauth schema: found %d `%s` literals, want exactly 1", len(sites), mcpOAuthSchemaLit)
+	}
+	return objectKeys(src, sites[0]+len("object("), nil)
 }
 
 func TestMCPFileSchemaExtractor(t *testing.T) {
@@ -210,7 +222,7 @@ func TestMCPFileSchemaKeysMatchRender(t *testing.T) {
 		for _, k := range bundleKeys {
 			inBundle[k] = true
 		}
-		rendered := renderedKASKeys(t)
+		rendered := renderedKASKeys(t, "kasServer")
 		for _, k := range bundleKeys {
 			if _, excluded := mcpFileExclusions[k]; !excluded && !slices.Contains(rendered, k) {
 				t.Errorf("KAS reads per-server key %q, which kasServer neither renders nor excludes: "+
@@ -226,6 +238,58 @@ func TestMCPFileSchemaKeysMatchRender(t *testing.T) {
 			if !inBundle[k] || slices.Contains(rendered, k) {
 				t.Errorf("mcpFileExclusions row %q is stale: the bundle declares it %t, kasServer renders it %t",
 					k, inBundle[k], slices.Contains(rendered, k))
+			}
+		}
+	})
+}
+
+func TestMCPFileSchemaOAuthKeysMatchRender(t *testing.T) {
+	forEachBundle(t, func(t *testing.T, b bundle) {
+		bundleKeys, err := extractMCPOAuthKeys(b.src)
+		if err != nil {
+			t.Fatalf("extract oauth keys: %v", err)
+		}
+		rendered := renderedKASKeys(t, "kasOAuth")
+		for _, k := range bundleKeys {
+			if !slices.Contains(rendered, k) {
+				t.Errorf("KAS reads oauth key %q, which kasOAuth does not render: add a field, or the paste refuses it as unknown", k)
+			}
+		}
+		for _, k := range rendered {
+			if !slices.Contains(bundleKeys, k) {
+				t.Errorf("kasOAuth renders %q, which KAS's oauth schema no longer declares", k)
+			}
+		}
+	})
+}
+
+// mcpIdentityProviderSchemaLit opens KAS's top-level identityProvider schema, `<zod>.object({issuer:...})`.
+const mcpIdentityProviderSchemaLit = "object({issuer:"
+
+// extractMCPIdentityProviderKeys returns the member names of KAS's identityProvider schema.
+func extractMCPIdentityProviderKeys(src string) ([]string, error) {
+	sites := literalSites(src, mcpIdentityProviderSchemaLit, true)
+	if len(sites) != 1 {
+		return nil, fmt.Errorf("identityProvider schema: found %d `%s` literals, want exactly 1", len(sites), mcpIdentityProviderSchemaLit)
+	}
+	return objectKeys(src, sites[0]+len("object("), nil)
+}
+
+func TestMCPIdentityProviderSchemaMatchesRender(t *testing.T) {
+	forEachBundle(t, func(t *testing.T, b bundle) {
+		bundleKeys, err := extractMCPIdentityProviderKeys(b.src)
+		if err != nil {
+			t.Fatalf("extract identityProvider keys: %v", err)
+		}
+		rendered := renderedKASKeys(t, "kasIdentityProvider")
+		for _, k := range bundleKeys {
+			if !slices.Contains(rendered, k) {
+				t.Errorf("KAS reads identityProvider key %q, which kasIdentityProvider does not render: add a field, or the paste refuses it as unknown", k)
+			}
+		}
+		for _, k := range rendered {
+			if !slices.Contains(bundleKeys, k) {
+				t.Errorf("kasIdentityProvider renders %q, which KAS's identityProvider schema no longer declares", k)
 			}
 		}
 	})

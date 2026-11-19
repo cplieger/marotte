@@ -177,12 +177,14 @@ function decodeImportReport(v: unknown): ImportReport {
   };
 }
 
-/** kiro-cli's reason codes; one it adds later shows as sent. */
+/** Every reason kiro-cli 3.5.0's import sends (planImport, its refuseScope included); one added later shows as sent. */
 const IMPORT_REASON_WORDS: ReadonlyMap<string, string> = new Map([
   ["duplicate_in_file", "duplicate in the file"],
   ["quota", "store full"],
   ["validation", "invalid record"],
   ["secret_blocked", "contains a secret"],
+  ["unsupported_scope", "unsupported scope"],
+  ["needs_repo_path", "needs a repo scope"],
   ["parse_error", "not valid JSON"],
 ]);
 
@@ -576,7 +578,7 @@ function importDialog(prompt: string): void {
     el(
       "p",
       { id: "memories-import-desc", className: "modal-subtitle" },
-      "Give this prompt to the other assistant, then paste its answer below or choose the file it saved. A file from Export cannot be imported back.",
+      "Give this prompt to the other assistant, then paste its answer below or choose the file it saved. A file from Export imports back too; memories already stored under the same title and scope are left as they are.",
     ),
     field("Prompt", promptBox),
     el("div", { className: "memories-detail-actions" }, copy),

@@ -382,7 +382,7 @@ func (rs *Runs) notifyAutoResumeStop(ctx context.Context, workflowID string, thr
 	n := notice.AutoResumeStopped(notice.RunTarget(workflowID, name), throttled)
 	rs.coord.Notify(ctx, marotte.ChatID(l.ChatID), &n)
 	chat := marotte.ChatID(l.ChatID)
-	if chat == "" || isRunChat(chat) || rs.lifecycle == nil {
+	if chat == "" || marotte.IsRunHostChat(chat) || rs.lifecycle == nil {
 		return
 	}
 	text := autoResumeStopNoteText(workflowID, name, throttled)

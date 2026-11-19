@@ -65,7 +65,7 @@ func TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks(t *testing.T) {
 		rt := pendingFixture()
 		// A resident population to resolve from.
 		for id := int64(1); id <= 3; id++ {
-			rt.bus.pendingPerms.add(id, permNeeded("c1", id), nil)
+			rt.bus.pendingPerms.add(id, "", permNeeded("c1", id), nil)
 		}
 		if err := rt.runs.leaseStore().Put(context.Background(), &runlease.Lease{WorkflowID: "wf", ChatID: "c2", Origin: runlease.OriginAgent}); err != nil {
 			t.Fatalf("Setup: lease: %v", err)
@@ -78,7 +78,7 @@ func TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks(t *testing.T) {
 		resolveID := rapid.Int64Range(1, 3).Draw(t, "resolveID")
 		payload, stamp := rt.pendingSnapshot(func(n int) {
 			if n == addAt {
-				rt.bus.pendingPerms.add(9, permNeeded("c1", 9), nil)
+				rt.bus.pendingPerms.add(9, "", permNeeded("c1", 9), nil)
 			}
 			if n == resolveAt {
 				rt.bus.pendingPerms.takeIfPresent("c1", resolveID, marotte.DecisionKindPermission)
@@ -86,7 +86,7 @@ func TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks(t *testing.T) {
 		})
 		// The late arms (-1) land after the snapshot, like a queued live frame.
 		if addAt == -1 {
-			rt.bus.pendingPerms.add(9, permNeeded("c1", 9), nil)
+			rt.bus.pendingPerms.add(9, "", permNeeded("c1", 9), nil)
 		}
 		if resolveAt == -1 {
 			rt.bus.pendingPerms.takeIfPresent("c1", resolveID, marotte.DecisionKindPermission)
@@ -115,7 +115,7 @@ func TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks(t *testing.T) {
 // yields a false unchanged, which is why the order is normative.
 func TestPendingSnapshot_CounterLastHasAFalseUnchanged(t *testing.T) {
 	rt := pendingFixture()
-	rt.bus.pendingPerms.add(1, permNeeded("c1", 1), nil)
+	rt.bus.pendingPerms.add(1, "", permNeeded("c1", 1), nil)
 	counterLast := func(afterPerms func()) ([]marotte.ServerEvent, string) {
 		events := rt.bus.pendingPerms.list("")
 		afterPerms()
@@ -124,7 +124,7 @@ func TestPendingSnapshot_CounterLastHasAFalseUnchanged(t *testing.T) {
 		version, _ := rt.versions.Current(subject.KindPending, "")
 		return events, version
 	}
-	events, version := counterLast(func() { rt.bus.pendingPerms.add(2, permNeeded("c1", 2), nil) })
+	events, version := counterLast(func() { rt.bus.pendingPerms.add(2, "", permNeeded("c1", 2), nil) })
 	server, _ := rt.versions.Current(subject.KindPending, "")
 	if version != server {
 		t.Fatalf("counter-last stamp %q != server %q; the demonstration needs them equal", version, server)

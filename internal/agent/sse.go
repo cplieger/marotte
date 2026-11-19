@@ -43,7 +43,7 @@ func (b *bus) emit(evt marotte.ServerEvent) {
 		b.chatStatus.clearAtTurnEnd(evt.ChatID)
 	case marotte.EventWorkingLabel:
 		// No tab reads it: a run chat id names no chat in the client's store, and the run tab paints from its log.
-		if isRunChat(evt.ChatID) {
+		if marotte.IsRunHostChat(evt.ChatID) {
 			return
 		}
 	}

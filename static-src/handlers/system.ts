@@ -19,6 +19,7 @@ import { noteSettingsEvent, settingsAsShown } from "../persist.js";
 import { restoreLastModel, restoreLastEffort } from "../session-context.js";
 import { adoptLinkGuard } from "../link-guard.js";
 import { adoptInterruptDefault } from "../interrupt-default.js";
+import { adoptChatMessaging } from "../chat-messaging.js";
 import { setWorkspaceRoot } from "../workspace.js";
 import {
   getSessions,
@@ -116,6 +117,7 @@ onSSE("settings_updated", (_chatID, p) => {
     restoreLastEffort(s.last_effort_by_model);
     adoptLinkGuard(s);
     adoptInterruptDefault(s);
+    adoptChatMessaging(s);
     setHookStatusShown(s.hook_status_shown);
     // The paints below take the settings as shown, so a click not yet committed stays painted; the
     // behaviour above takes the server's, so a write that then fails leaves nothing applied.

@@ -8,6 +8,8 @@ marotte has no login of its own. Anyone who can reach port 9847 (or the port `LI
 
 Signing in on the page gives the agent your Kiro account. That is the agent's identity, and it does not protect marotte itself. marotte keeps the sign-in in `/config/signin.json`, which only the container's user may read or write. marotte tightens a file that others can read, and refuses to use one it cannot tighten. It never reads the sign-in of a `kiro-cli` you run in the terminal.
 
+MCP sign-ins are kept in `/config/mcp-secrets.json`, which only the container's user may read or write: each server's OAuth client and tokens, and the organization sign-in's ID token and refresh token. Signing out on the **Organization sign-in** card, removing the provider or changing its issuer or client ID removes the organization sign-in from the file.
+
 The metrics page at `/metrics` answers with no login. It shows whether the agent engine is ready and how much memory it uses, and counts failed prompts by class. It also counts each schedule's slots under the schedule's random id, and the outcomes of unattended runs. It shows no chat text, workflow name, path, command or credential. Behind a login proxy, exempt `/metrics` there, or scrape the container only from a network you already trust with the agent. [Monitoring and alerts](monitoring.md) lists every series.
 
 Set `ALLOWED_HOSTS` on any server that stays up, and set `TRUSTED_PROXIES` when a proxy sits in front. [Configuration](configuration.md) explains both. Requests that change state from another website are refused with `403`. The one route that skips `ALLOWED_HOSTS`, the [notify route](configuration.md#waking-a-chat-from-another-service-marotte_notify_token), answers only a request carrying `MAROTTE_NOTIFY_TOKEN`, and that token opens no other route.
@@ -65,6 +67,7 @@ marotte sends no telemetry. Its outbound requests are these:
 - the AI provider of the Kiro account you signed in with
 - AWS's sign-in service in your account's region, to sign in and to renew the sign-in, and Kiro's account service, to read the account's Kiro profile and email at sign-in
 - any MCP server you add
+- the identity provider you set up for an organization sign-in to MCP servers, for the discovery, sign-in and token requests kiro-cli makes to it
 - the API of each forge you connect in the git panel, never on a private address unless that connection allows it
 - the public MCP registry when you search it
 - the kiro-cli download on first start, the tools you install, and the tool catalog refresh, once a day by default. When a github.com account is connected, its token goes with the tools' requests to GitHub's API and to no other host.

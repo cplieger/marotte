@@ -268,7 +268,7 @@ func TestAccount(t *testing.T) {
 			"another generic validation error keeps KAS's prose",
 			Mapped{ErrorType: "GenericValidationError", RetryErrorType: "CLIENT_ERROR"},
 			"Improperly formed request. (Request ID: 9c1e)",
-			"Improperly formed request. (Request ID: 9c1e)",
+			"Improperly formed request. (request 9c1e)",
 			false,
 		},
 		{
@@ -276,6 +276,27 @@ func TestAccount(t *testing.T) {
 			Mapped{ErrorType: "ClientThrottleError", RetryErrorType: RetryThrottling},
 			"Too many requests.",
 			"Too many requests. kiro-cli already retried. Wait a moment and send again, or switch to another model.",
+			false,
+		},
+		{
+			"a live throttle names its request id once, after the remedy",
+			Mapped{ErrorType: "ClientThrottleError", RetryErrorType: RetryThrottling, RequestID: "r1"},
+			"Too many requests. (Request ID: r1)",
+			"Too many requests. kiro-cli already retried. Wait a moment and send again, or switch to another model. (request r1)",
+			false,
+		},
+		{
+			"a replayed throttle reads as the live one",
+			Mapped{ErrorType: "ClientThrottleError", RetryErrorType: RetryThrottling},
+			"Too many requests. (Request ID: r1)",
+			"Too many requests. kiro-cli already retried. Wait a moment and send again, or switch to another model. (request r1)",
+			false,
+		},
+		{
+			"an unreachable model registry puts its request id after the remedy",
+			Mapped{ErrorType: "ModelRegistryUnavailableError", RetryErrorType: "SERVER_ERROR"},
+			"Kiro could not load the available models. (Request ID: r2)",
+			"Kiro could not load the available models. Sign in to Kiro from the account menu, then send the prompt again. (request r2)",
 			false,
 		},
 		{

@@ -77,6 +77,24 @@ const (
 	RejectionNotePlanEdits RejectionNote = "plan_edits"
 )
 
+// AlwaysReach names what the rule an always answer saves covers: marotte's word for it, which
+// only the server can pick, since it knows whether a step asked and which lane the ask came on.
+type AlwaysReach string
+
+const (
+	// AlwaysReachChat is a rule the asking chat keeps until its session closes; nothing is saved.
+	AlwaysReachChat AlwaysReach = "chat"
+	// AlwaysReachStep is a rule the asking workflow step keeps; the run's other steps still ask.
+	AlwaysReachStep AlwaysReach = "step"
+	// AlwaysReachRun is a rule a parentless run's host keeps until the run ends; nothing is saved.
+	AlwaysReachRun AlwaysReach = "run"
+	// AlwaysReachLaunchingChat is a rule the chat that launched the run keeps, for that chat and
+	// every run it launches, until its session closes or reloads; nothing is saved.
+	AlwaysReachLaunchingChat AlwaysReach = "launching_chat"
+	// AlwaysReachUser is a rule saved to the user permissions file, which every session reads.
+	AlwaysReachUser AlwaysReach = "user"
+)
+
 // MCPToolIdentity names the MCP server and tool KAS reports behind a permission request or a
 // tool call; both halves are set or the value is nil.
 type MCPToolIdentity struct {
@@ -143,6 +161,9 @@ type PermissionConsent struct {
 	// Subject and Folder can differ from them (controls replaced, cut at 512 bytes).
 	Resource       string `json:"-"`
 	FolderResource string `json:"-"`
+	// Reaches are the rules an always answer to this ask can save, widest last; empty when
+	// KAS offers to save none.
+	Reaches []AlwaysReach `json:"reaches,omitempty"`
 }
 
 // PermissionCommand is the command an ask would run, display-treated with its line breaks
@@ -535,12 +556,30 @@ type GovernanceRegistryServer struct {
 // than auto-opening. Only http/https URLs are broadcast. ExpiresAt is when KAS stops waiting for
 // the callback; a replayed event carries the original time, so the client shows only what is left.
 // Server is the MCP server KAS named, and FlowID the mid-session re-auth that mcp_sign_in_closed
-// ends; either is absent when KAS named none.
+// ends; either is absent when KAS named none. IdentityProvider marks the organization's own sign-in
+// page, named IdentityProviderName when kiro-cli has reported the provider; it ends when
+// mcp_identity_provider leaves signing-in.
 type OpenExternalURLPayload struct {
-	ExpiresAt time.Time `json:"expires_at"`
-	URL       string    `json:"url"`
-	Server    string    `json:"server,omitempty"`
-	FlowID    string    `json:"flow_id,omitempty"`
+	ExpiresAt            time.Time `json:"expires_at"`
+	URL                  string    `json:"url"`
+	Server               string    `json:"server,omitempty"`
+	FlowID               string    `json:"flow_id,omitempty"`
+	IdentityProviderName string    `json:"identity_provider_name,omitempty"`
+	IdentityProvider     bool      `json:"identity_provider,omitempty"`
+}
+
+// MCPIdentityProviderPayload is the organization sign-in's status, the payload for type="mcp_identity_provider"
+// and GET /api/mcp/identity-provider's status. Known is false until kiro-cli reports after the engine started;
+// a nil Status while Known means kiro-cli has no provider. SigningIn is a Sign in the user started, its consent
+// page OAuthURL once kiro-cli opened it and Relayed once its callback was pasted; SignInError is why kiro-cli
+// ended the last one without signing in.
+type MCPIdentityProviderPayload struct {
+	Status      *MCPIdentityProviderStatus `json:"status,omitempty"`
+	OAuthURL    string                     `json:"oauth_url,omitempty"`
+	SignInError string                     `json:"sign_in_error,omitempty"`
+	Known       bool                       `json:"known"`
+	SigningIn   bool                       `json:"signing_in,omitempty"`
+	Relayed     bool                       `json:"relayed,omitempty"`
 }
 
 // MCPSignInClosedPayload is the payload for type="mcp_sign_in_closed": KAS ended the mid-session

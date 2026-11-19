@@ -1,6 +1,7 @@
 package command
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -44,7 +45,10 @@ func (b *alwaysBridge) Respond(ctx context.Context, _ int64, result any, _ error
 func newAlwaysDeps() (*alwaysDeps, *alwaysBridge) {
 	d := &alwaysDeps{ask: marotte.PermissionNeededPayload{
 		RequestID: 7,
-		Consent:   &marotte.PermissionConsent{Capability: "shell", Subject: "head -1", Resource: "head -1"},
+		Consent: &marotte.PermissionConsent{
+			Capability: "shell", Subject: "head -1", Resource: "head -1",
+			Reaches: []marotte.AlwaysReach{marotte.AlwaysReachChat, marotte.AlwaysReachUser},
+		},
 		Options: []marotte.PermissionOption{
 			{OptionID: "accept", Kind: "allow_once"},
 			{OptionID: "always-accept", Kind: "allow_always"},
@@ -68,14 +72,15 @@ func answerJSON(t *testing.T, v any) string {
 
 func TestCmdPermission_AlwaysSavesAUserRuleAndKeepsTheProfile(t *testing.T) {
 	for _, tc := range []struct {
-		name, option, scope, want string
+		name, option, want string
+		reach              marotte.AlwaysReach
 	}{
 		{
 			name: "always allow", option: "always-accept",
 			want: `{"_meta":{"kiro":{"consent":{"scope":"user","capability":"shell","resource":"head *"}}},"outcome":{"outcome":"selected","optionId":"always-accept"}}`,
 		},
 		{
-			name: "always allow naming the user scope", option: "always-accept", scope: "user",
+			name: "always allow naming the user reach", option: "always-accept", reach: marotte.AlwaysReachUser,
 			want: `{"_meta":{"kiro":{"consent":{"scope":"user","capability":"shell","resource":"head *"}}},"outcome":{"outcome":"selected","optionId":"always-accept"}}`,
 		},
 		{
@@ -86,7 +91,7 @@ func TestCmdPermission_AlwaysSavesAUserRuleAndKeepsTheProfile(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			d, br := newAlwaysDeps()
 			cmd := decisionCommand(t, marotte.CmdPermissionResponse, marotte.PermissionResponseCommand{
-				RequestID: 7, OptionID: tc.option, AlwaysResource: "  head *  ", AlwaysScope: tc.scope,
+				RequestID: 7, OptionID: tc.option, AlwaysResource: "  head *  ", AlwaysReach: tc.reach,
 			})
 
 			if _, err := cmdPermission(t.Context(), d, cmd); err != nil {
@@ -109,7 +114,7 @@ func TestCmdPermission_AlwaysSavesAUserRuleAndKeepsTheProfile(t *testing.T) {
 func TestCmdPermission_AlwaysSessionScopeSavesNoFileAndKeepsTheProfile(t *testing.T) {
 	d, br := newAlwaysDeps()
 	cmd := decisionCommand(t, marotte.CmdPermissionResponse, marotte.PermissionResponseCommand{
-		RequestID: 7, OptionID: "always-accept", AlwaysResource: "head *", AlwaysScope: "session",
+		RequestID: 7, OptionID: "always-accept", AlwaysResource: "head *", AlwaysReach: marotte.AlwaysReachChat,
 	})
 
 	if _, err := cmdPermission(t.Context(), d, cmd); err != nil {
@@ -128,32 +133,113 @@ func TestCmdPermission_AlwaysSessionScopeSavesNoFileAndKeepsTheProfile(t *testin
 	}
 }
 
-func TestCmdPermission_AlwaysScopeIsChecked(t *testing.T) {
+// The scope each reach is kept at is KAS's consent scope vocabulary (session, launching-session,
+// user), so the rule lands on the session the card's label names.
+func TestCmdPermission_AlwaysReachMapsToKASScope(t *testing.T) {
 	for _, tc := range []struct {
-		name, option, resource, scope string
+		reach marotte.AlwaysReach
+		want  string
 	}{
-		{name: "a workspace scope", option: "always-accept", resource: "head *", scope: "workspace"},
-		{name: "an invocation scope", option: "always-accept", resource: "head *", scope: "invocation"},
-		{name: "an unknown scope", option: "always-accept", resource: "head *", scope: "x"},
-		{name: "a session scope on an always deny", option: "always-reject", resource: "head *", scope: "session"},
-		{name: "a scope on a one-time allow", option: "accept", scope: "session"},
-		{name: "a user scope on a one-time deny", option: "reject", scope: "user"},
+		{reach: marotte.AlwaysReachChat, want: "session"},
+		{reach: marotte.AlwaysReachStep, want: "session"},
+		{reach: marotte.AlwaysReachRun, want: "launching-session"},
+		{reach: marotte.AlwaysReachLaunchingChat, want: "launching-session"},
+		{reach: marotte.AlwaysReachUser, want: "user"},
+		{reach: "", want: "user"},
+	} {
+		t.Run(cmp.Or(string(tc.reach), "no reach"), func(t *testing.T) {
+			d, br := newAlwaysDeps()
+			d.ask.Consent.Reaches = allReaches()
+			cmd := decisionCommand(t, marotte.CmdPermissionResponse, marotte.PermissionResponseCommand{
+				RequestID: 7, OptionID: "always-accept", AlwaysResource: "head *", AlwaysReach: tc.reach,
+			})
+
+			if _, err := cmdPermission(t.Context(), d, cmd); err != nil {
+				t.Fatalf("CmdPermission(reach %q) = %v", tc.reach, err)
+			}
+
+			if len(br.answers) != 1 {
+				t.Fatalf("answers = %d, want 1", len(br.answers))
+			}
+			want := `{"_meta":{"kiro":{"consent":{"scope":"` + tc.want + `","capability":"shell","resource":"head *"}}},"outcome":{"outcome":"selected","optionId":"always-accept"}}`
+			if got := answerJSON(t, br.answers[0]); got != want {
+				t.Errorf("answer = %s\nwant      %s", got, want)
+			}
+		})
+	}
+}
+
+// KAS refuses a scope it did not offer and applies the answer once, so a reach the ask did not
+// list is refused here with the ask left pending.
+func TestCmdPermission_AlwaysReachNotOfferedIsRefused(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		reach   marotte.AlwaysReach
+		offered []marotte.AlwaysReach
+	}{
+		{name: "a run reach when the launching chat is not live", reach: marotte.AlwaysReachRun, offered: []marotte.AlwaysReach{marotte.AlwaysReachChat, marotte.AlwaysReachUser}},
+		{name: "a step reach on a chat's own ask", reach: marotte.AlwaysReachStep, offered: []marotte.AlwaysReach{marotte.AlwaysReachChat, marotte.AlwaysReachUser}},
+		{name: "no reach on an ask offering no user rule", offered: []marotte.AlwaysReach{marotte.AlwaysReachStep}},
+		{name: "a chat reach on an ask offering none", reach: marotte.AlwaysReachChat},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d, br := newAlwaysDeps()
+			d.ask.Consent.Reaches = tc.offered
 			cmd := decisionCommand(t, marotte.CmdPermissionResponse, marotte.PermissionResponseCommand{
-				RequestID: 7, OptionID: tc.option, AlwaysResource: tc.resource, AlwaysScope: tc.scope,
+				RequestID: 7, OptionID: "always-accept", AlwaysResource: "head *", AlwaysReach: tc.reach,
 			})
 
 			_, err := cmdPermission(t.Context(), d, cmd)
 
-			if got := statusOf(err); got != http.StatusBadRequest || !errors.Is(err, errAlwaysScopeInvalid) {
-				t.Fatalf("CmdPermission(%q, scope %q) = %v (status %d), want 400 always_scope_invalid", tc.option, tc.scope, err, got)
+			if got := statusOf(err); got != http.StatusBadRequest || !errors.Is(err, errAlwaysReachInvalid) {
+				t.Fatalf("CmdPermission(reach %q) = %v (status %d), want 400 always_reach_invalid", tc.reach, err, got)
 			}
 			if len(d.events) != 0 || len(br.answers) != 0 {
-				t.Errorf("events = %v after a refused scope, want none: the ask must stay pending", d.events)
+				t.Errorf("events = %v after a refused reach, want none: the ask must stay pending", d.events)
 			}
 		})
+	}
+}
+
+func TestCmdPermission_AlwaysReachIsChecked(t *testing.T) {
+	for _, tc := range []struct {
+		name, option, resource string
+		reach                  marotte.AlwaysReach
+	}{
+		{name: "a workspace reach", option: "always-accept", resource: "head *", reach: "workspace"},
+		{name: "an invocation reach", option: "always-accept", resource: "head *", reach: "invocation"},
+		{name: "a KAS scope name", option: "always-accept", resource: "head *", reach: "session"},
+		{name: "an unknown reach", option: "always-accept", resource: "head *", reach: "x"},
+		{name: "a chat reach on an always deny", option: "always-reject", resource: "head *", reach: marotte.AlwaysReachChat},
+		{name: "a step reach on an always deny", option: "always-reject", resource: "head *", reach: marotte.AlwaysReachStep},
+		{name: "a run reach on an always deny", option: "always-reject", resource: "head *", reach: marotte.AlwaysReachRun},
+		{name: "a launching chat reach on an always deny", option: "always-reject", resource: "head *", reach: marotte.AlwaysReachLaunchingChat},
+		{name: "a reach on a one-time allow", option: "accept", reach: marotte.AlwaysReachChat},
+		{name: "a user reach on a one-time deny", option: "reject", reach: marotte.AlwaysReachUser},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, br := newAlwaysDeps()
+			d.ask.Consent.Reaches = allReaches()
+			cmd := decisionCommand(t, marotte.CmdPermissionResponse, marotte.PermissionResponseCommand{
+				RequestID: 7, OptionID: tc.option, AlwaysResource: tc.resource, AlwaysReach: tc.reach,
+			})
+
+			_, err := cmdPermission(t.Context(), d, cmd)
+
+			if got := statusOf(err); got != http.StatusBadRequest || !errors.Is(err, errAlwaysReachInvalid) {
+				t.Fatalf("CmdPermission(%q, reach %q) = %v (status %d), want 400 always_reach_invalid", tc.option, tc.reach, err, got)
+			}
+			if len(d.events) != 0 || len(br.answers) != 0 {
+				t.Errorf("events = %v after a refused reach, want none: the ask must stay pending", d.events)
+			}
+		})
+	}
+}
+
+func allReaches() []marotte.AlwaysReach {
+	return []marotte.AlwaysReach{
+		marotte.AlwaysReachChat, marotte.AlwaysReachStep, marotte.AlwaysReachRun,
+		marotte.AlwaysReachLaunchingChat, marotte.AlwaysReachUser,
 	}
 }
 
@@ -236,6 +322,7 @@ func TestCmdPermission_AlwaysSubjectPatternSavesKASOwnSubject(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			d, br := newAlwaysDeps()
 			d.ask.Consent = &tc.consent
+			d.ask.Consent.Reaches = []marotte.AlwaysReach{marotte.AlwaysReachUser}
 			cmd := decisionCommand(t, marotte.CmdPermissionResponse, marotte.PermissionResponseCommand{
 				RequestID: 7, OptionID: "always-accept", AlwaysResource: tc.chosen,
 			})

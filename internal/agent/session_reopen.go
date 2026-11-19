@@ -82,8 +82,9 @@ func (rt *Runtime) reconcileSettingsWrite(ctx context.Context, reason string) {
 	rt.standing.refetchSoon()
 }
 
-// reconcileSessionSettings marks sessions for reload as the fingerprints moved, asks the engine owner whether a
-// restart is now pending, and syncs what this server applies itself, waiting no later than deadline.
+// reconcileSessionSettings marks sessions for reload as the fingerprints moved, pushes the messaging switch to open
+// chats, asks the engine owner whether a restart is now pending, and syncs what this server applies itself, waiting
+// no later than deadline.
 func (rt *Runtime) reconcileSessionSettings(ctx context.Context, reason string, deadline time.Time) {
 	b := &rt.sessionSeen
 	b.mu.Lock()
@@ -96,8 +97,9 @@ func (rt *Runtime) reconcileSessionSettings(ctx context.Context, reason string, 
 		rt.markSessionsForReload(reason)
 	}
 	b.mu.Unlock()
-	rt.engine.reconcile(ctx)
 	syncCtx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	rt.syncChatMessaging(syncCtx)
+	rt.engine.reconcile(ctx)
 	rt.syncProcessLive(syncCtx)
-	cancel()
 }

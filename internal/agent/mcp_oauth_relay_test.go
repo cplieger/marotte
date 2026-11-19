@@ -60,11 +60,12 @@ func postRelay(t *testing.T, h *Runtime, server, pasted string) *httptest.Respon
 
 // callbackListener stands in for KAS's redirect listener, recording the query so a test proves the code arrived verbatim.
 type callbackListener struct {
-	srv     *httptest.Server
-	gotCode string
-	gotPath string
-	status  int
-	gotHits int
+	srv      *httptest.Server
+	gotQuery url.Values
+	gotCode  string
+	gotPath  string
+	status   int
+	gotHits  int
 }
 
 func newCallbackListener(t *testing.T, status int) *callbackListener {
@@ -72,7 +73,8 @@ func newCallbackListener(t *testing.T, status int) *callbackListener {
 	l := &callbackListener{status: status}
 	l.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		l.gotHits++
-		l.gotCode = r.URL.Query().Get("code")
+		l.gotQuery = r.URL.Query()
+		l.gotCode = l.gotQuery.Get("code")
 		l.gotPath = r.URL.Path
 		w.WriteHeader(l.status)
 		_, _ = w.Write([]byte("you can close this window"))
@@ -471,6 +473,63 @@ func TestOAuthRelay_ALazySignInStaysRetryableAfterARefusal(t *testing.T) {
 	l.status = http.StatusOK
 	if rec := postRelay(t, h, "", pasted); rec.Code != http.StatusOK {
 		t.Errorf("retry = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+}
+
+// The organization sign-in's consent URL names no server, and its listener is on localhost at /oauth/callback; the
+// provider's callback carries iss (RFC 9207), which rides with the code to the listener the URL advertised.
+func TestOAuthRelay_DeliversAnIdentityProviderCallback(t *testing.T) {
+	l := newCallbackListener(t, http.StatusOK)
+	h := newHubWithMCPConfig(t, nil)
+	lu, err := url.Parse(l.srv.URL)
+	if err != nil {
+		t.Fatalf("parse listener URL: %v", err)
+	}
+	callback := "http://localhost:" + lu.Port() + "/oauth/callback"
+	authURL := "https://idp.example/oauth2/v1/authorize?" + url.Values{
+		"client_id":             {"corp-client"},
+		"response_type":         {"code"},
+		"scope":                 {"openid profile email offline_access"},
+		"redirect_uri":          {callback},
+		"state":                 {"st-idp"},
+		"code_challenge":        {"challenge"},
+		"code_challenge_method": {"S256"},
+	}.Encode()
+	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: authURL}, true); shown.how != consentBanner {
+		t.Fatalf("anchorConsentURL = %+v, want the banner", shown)
+	}
+
+	rec := postRelay(t, h, "", callback+"?code=c&state=st-idp&iss=https://idp.example")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	if l.gotHits != 1 || l.gotCode != "c" || l.gotPath != "/oauth/callback" || l.gotQuery.Get("iss") != "https://idp.example" {
+		t.Errorf("listener hits %d code %q path %q iss %q, want c delivered once at /oauth/callback with the issuer",
+			l.gotHits, l.gotCode, l.gotPath, l.gotQuery.Get("iss"))
+	}
+}
+
+// Google appends authuser, hd and prompt to its authorization redirect, so a Google sign-in pasted from a remote
+// browser carries them; the allowlist admits exactly those beside the OAuth keys.
+func TestOAuthRelay_AcceptsGoogleRedirectKeys(t *testing.T) {
+	const host = "127.0.0.1:41234"
+	authURL := "https://accounts.google.com/o/oauth2/v2/auth?" + url.Values{
+		"redirect_uri": {"http://" + host + "/oauth/callback"},
+		"state":        {"st-g"},
+	}.Encode()
+	google := "http://" + host + "/oauth/callback?state=st-g&code=4%2F0Ab&scope=email%20openid&authuser=0&hd=example.com&prompt=consent"
+	got, err := validateRelayAddress(google, authURL)
+	if err != nil {
+		t.Fatalf("validateRelayAddress(Google's redirect) error = %v, want nil", err)
+	}
+	if q := got.Query(); q.Get("authuser") != "0" || q.Get("hd") != "example.com" || q.Get("prompt") != "consent" {
+		t.Errorf("replayed query = %q, want Google's keys forwarded", got.RawQuery)
+	}
+	for _, key := range []string{"error", "redirect_uri", "client_id", "login_hint"} {
+		if _, err := validateRelayAddress(google+"&"+key+"=x", authURL); err != errRelayBadQuery {
+			t.Errorf("a callback carrying %q: error = %v, want errRelayBadQuery", key, err)
+		}
 	}
 }
 

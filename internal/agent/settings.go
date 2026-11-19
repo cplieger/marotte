@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"sync"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -20,8 +21,12 @@ type Settings struct {
 	onLocksChanged func(context.Context)
 	// onAdminResolved runs once, when the administrator rules first become known; publishGovernance calls it inline, so it must not block.
 	onAdminResolved func()
-	kiroDefaults    kiroDefaultsCache
-	adminRefresh    adminRefresh
+	// kiroAccount reports whether a Kiro account, not an API key, signs the engine in now.
+	kiroAccount  func() bool
+	kiroDefaults kiroDefaultsCache
+	adminRefresh adminRefresh
+	// seedMu runs one fallback seeding pass at a time, so two views never write or record one model twice.
+	seedMu sync.Mutex
 }
 
 func newSettings(lc *lifetime, broadcast func(context.Context, marotte.ServerEvent)) *Settings {

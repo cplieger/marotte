@@ -356,7 +356,7 @@ func (r *turnRegistry) admitLife(chatID marotte.ChatID, stamp uint64) (*chatLife
 // lifecycleForRun returns or creates a run chat's lifecycle. A run chat is never held by a close, so it takes no
 // stamp; a chat id reaching it is a wiring error.
 func (r *turnRegistry) lifecycleForRun(chatID marotte.ChatID) *chatLifecycle {
-	if !isRunChat(chatID) {
+	if !marotte.IsRunHostChat(chatID) {
 		panic("lifecycleForRun: " + string(chatID) + " is not a run chat")
 	}
 	r.mu.Lock()

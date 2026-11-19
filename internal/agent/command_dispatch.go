@@ -49,6 +49,7 @@ func (rt *Runtime) registerCommandHandlers() {
 		Renamer:        rt,
 		BotReloads:     rt,
 		Models:         rt,
+		Messaging:      rt,
 		BotPaths:       botPaths(),
 		SpecApprovals:  specApprovalsOrNil(rt.specApprovals),
 		Tangents:       rt,

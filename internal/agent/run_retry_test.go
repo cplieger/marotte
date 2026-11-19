@@ -107,7 +107,7 @@ func TestHandleRetry_AnswersTheOutcomeRatherThanOk(t *testing.T) {
 	}
 }
 
-// A retry of a chat-parented run goes out on the chat's resident session: keying on runChatID alone would load a
+// A retry of a chat-parented run goes out on the chat's resident session: keying on marotte.RunHostChatID alone would load a
 // second host session.
 func TestRetry_AChatParentedRunWhoseChatIsResidentOpensNoSession(t *testing.T) {
 	h, br := seedChatParentedRun(t, true, "final-verify")
@@ -128,7 +128,7 @@ func TestRetry_AChatParentedRunWhoseChatIsResidentOpensNoSession(t *testing.T) {
 	if got := br.startCount() - starts; got != 0 {
 		t.Errorf("%d session doors opened for a run whose launching chat's session is resident", got)
 	}
-	if sb := h.bridge.mgr.get(runChatID("wf_1")); sb != nil {
+	if sb := h.bridge.mgr.get(marotte.RunHostChatID("wf_1")); sb != nil {
 		t.Error("a host session was registered under the run's synthetic id for a run its launching " +
 			"chat already hosts")
 	}
@@ -157,7 +157,7 @@ func TestRetry_AChatParentedRunKeepsItsChatOnTheLease(t *testing.T) {
 	if len(got.OpenAsks) != 1 || !got.AsksReachable {
 		t.Errorf("open_asks = %+v reachable %v, want the parked step: %s", got.OpenAsks, got.AsksReachable, body)
 	}
-	if h.bridge.mgr.get(runChatID("wf_1")) != nil || br.startCount() != starts {
+	if h.bridge.mgr.get(marotte.RunHostChatID("wf_1")) != nil || br.startCount() != starts {
 		t.Error("opening the retried run opened a run host, loading its chat's live session a second time")
 	}
 }
@@ -178,7 +178,7 @@ func TestRetry_ReachesANonResidentChatRunThroughItsChat(t *testing.T) {
 	if h.bridge.mgr.get("c1") == nil {
 		t.Error("the launching chat's bridge was not opened, so its session is not live")
 	}
-	if h.bridge.mgr.get(runChatID("wf_1")) != nil {
+	if h.bridge.mgr.get(marotte.RunHostChatID("wf_1")) != nil {
 		t.Error("a run host session was registered for a chat-parented run")
 	}
 }
@@ -192,7 +192,7 @@ func TestRetry_ARefusedRetryThroughTheLaunchingChatLeavesNothingBehind(t *testin
 	if _, err := h.runs.retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1")); err == nil {
 		t.Fatal("Retry = nil for a retry KAS refused")
 	}
-	if sb := h.bridge.mgr.get(runChatID("wf_1")); sb != nil {
+	if sb := h.bridge.mgr.get(marotte.RunHostChatID("wf_1")); sb != nil {
 		t.Error("a run host session was left registered for a run that never re-drove")
 	}
 	if h.bridge.mgr.get("c1") == nil {
@@ -523,7 +523,7 @@ func TestRetry_KeepsTheParentItReadBeforeTheVerb(t *testing.T) {
 	if got := br.startCount() - starts; got != 0 {
 		t.Errorf("%d session doors opened although Retry had already resolved the run's launching session", got)
 	}
-	if sb := h.bridge.mgr.get(runChatID("wf_1")); sb != nil {
+	if sb := h.bridge.mgr.get(marotte.RunHostChatID("wf_1")); sb != nil {
 		t.Error("a host session was registered under the run's synthetic id for a run its " +
 			"launching chat already hosts")
 	}

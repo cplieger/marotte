@@ -81,6 +81,11 @@ type fakeBridge struct {
 	contentCollectionWrites []bool
 	// workflowLaunchHeals is every value HealWorkflowLaunch was handed, in call order.
 	workflowLaunchHeals []string
+	// messagingEnsures is every value EnsureMessaging was asked for, in call order, refused ones included;
+	// messagingErr refuses the next EnsureMessaging once. observedMessaging is the last ObserveMessaging value.
+	messagingEnsures  []bool
+	messagingErr      error
+	observedMessaging string
 	// sessionOpts records what the most recent door was handed, engineOpts the engine it opened on.
 	sessionOpts *marotte.SessionOpts
 	engineOpts  *marotte.EngineOpts
@@ -1020,6 +1025,33 @@ func (b *fakeBridge) HealWorkflowLaunch(_ context.Context, reported string) erro
 func (b *fakeBridge) ObserveThinking(value string) {
 	b.mu.Lock()
 	b.observedThinking = value
+	b.mu.Unlock()
+}
+
+func (b *fakeBridge) EnsureMessaging(_ context.Context, on bool) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.messagingEnsures = append(b.messagingEnsures, on)
+	err := b.messagingErr
+	b.messagingErr = nil
+	return err
+}
+
+func (b *fakeBridge) ObserveMessaging(value string) {
+	b.mu.Lock()
+	b.observedMessaging = value
+	b.mu.Unlock()
+}
+
+func (b *fakeBridge) messagingAsks() []bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return slices.Clone(b.messagingEnsures)
+}
+
+func (b *fakeBridge) refuseNextMessaging(err error) {
+	b.mu.Lock()
+	b.messagingErr = err
 	b.mu.Unlock()
 }
 

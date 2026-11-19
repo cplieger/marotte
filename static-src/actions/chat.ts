@@ -34,6 +34,7 @@ import {
   getActiveId,
   setActive,
   setSupervisedMode,
+  setMessagingOff,
   setSecurityProfile,
   removeChat,
   reinsertSession,
@@ -49,7 +50,7 @@ import {
 } from "../store.js";
 import { runOfAnswer } from "../run-order.js";
 import { send as transportSend, type SendResult } from "../transport.js";
-import type { CloseImpact, InterruptMode } from "../wire/types.gen.js";
+import type { AlwaysReach, CloseImpact, InterruptMode } from "../wire/types.gen.js";
 import { impactRefusal } from "./close-impact.js";
 
 const onChat = ({ chatID }: { readonly chatID: string }): string => chatID;
@@ -218,6 +219,38 @@ export const setSupervised = transportAction<
     onChat,
     stillOr("updating supervised mode", "Could not update supervised mode", "chat"),
   ),
+});
+
+// The server answers once the choice is recorded; a turn running now takes it when it ends.
+export const setChatMessaging = transportAction<
+  { chatID: string; enabled: boolean },
+  { prev: boolean }
+>({
+  name: "chat.set_messaging",
+  networkMode: "always",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  command: ({ chatID, enabled }) => ({
+    type: "set_chat_messaging",
+    chat_id: chatID,
+    payload: { enabled },
+  }),
+  optimistic: ({ chatID, enabled }) => {
+    const session = get(chatID);
+    if (session === undefined) {
+      return undefined;
+    }
+    const prev = session.messaging_off ?? false;
+    setMessagingOff(chatID, !enabled);
+    return { prev };
+  },
+  rollback: ({ chatID }, op) => {
+    if (op !== undefined) {
+      setMessagingOff(chatID, op.prev);
+    }
+  },
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  error: errorAbout(onChat, "Could not update messages between chats"),
 });
 
 // The server reloads the chat's resident session on the new profile in the background; a turn running keeps the old
@@ -952,8 +985,8 @@ export const respondPermission = defineAction<
     rejectionReason?: string;
     /** The pattern an always answer saves as a rule, on an always answer only. */
     alwaysResource?: string;
-    /** "session" keeps that rule for the chat's session only; absent saves it for the user. */
-    alwaysScope?: "session";
+    /** What that rule covers, one of the ask's offered reaches; absent saves it for the user. */
+    alwaysReach?: AlwaysReach;
   },
   DecisionAnswer
 >({
@@ -963,7 +996,7 @@ export const respondPermission = defineAction<
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   run: (
-    { chatID, requestID, optionID, fileDecisions, rejectionReason, alwaysResource, alwaysScope },
+    { chatID, requestID, optionID, fileDecisions, rejectionReason, alwaysResource, alwaysReach },
     signal,
     ctx,
   ) =>
@@ -977,7 +1010,7 @@ export const respondPermission = defineAction<
           ...(fileDecisions !== undefined ? { file_decisions: fileDecisions } : {}),
           ...(rejectionReason !== undefined ? { rejection_reason: rejectionReason } : {}),
           ...(alwaysResource !== undefined ? { always_resource: alwaysResource } : {}),
-          ...(alwaysScope !== undefined ? { always_scope: alwaysScope } : {}),
+          ...(alwaysReach !== undefined ? { always_reach: alwaysReach } : {}),
         },
       },
       signal,

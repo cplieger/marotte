@@ -108,7 +108,7 @@ func TestRunPlanUpdate_ARejectionTellsTheLaunchingChat(t *testing.T) {
 	h.runs.RunPlanUpdate(t.Context(), chatID, "wf_1", marotte.RunPlanUpdate{Outcome: marotte.RunPlanQueued, Pending: 1})
 	h.runs.RunPlanUpdate(t.Context(), chatID, "wf_1",
 		marotte.RunPlanUpdate{Outcome: marotte.RunPlanRejected, Reason: "step 'x' names no agent"})
-	h.runs.RunPlanUpdate(t.Context(), runChatID("wf_2"), "wf_2",
+	h.runs.RunPlanUpdate(t.Context(), marotte.RunHostChatID("wf_2"), "wf_2",
 		marotte.RunPlanUpdate{Outcome: marotte.RunPlanRejected, Reason: "no chat to tell"})
 
 	steers := chatSteers(t, cs, chatID)
@@ -158,7 +158,7 @@ func TestRunPlanRejection_ARunChatTellsNoOne(t *testing.T) {
 	h, _, _ := runLoggingHub(t)
 	logs := captureLogs(t)
 
-	h.runs.RunPlanRejection(t.Context(), runChatID("wf_1"), "wf_1", kasRejectionID, "split step 2")
+	h.runs.RunPlanRejection(t.Context(), marotte.RunHostChatID("wf_1"), "wf_1", kasRejectionID, "split step 2")
 
 	if out := logs.String(); strings.Contains(out, "steer was not recorded") {
 		t.Errorf("a run chat was sent a note: %s", out)

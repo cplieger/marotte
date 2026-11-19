@@ -181,7 +181,7 @@ func TestLifecycleForRun_RefusesAChatID(t *testing.T) {
 	})
 	t.Run("a run chat attaches past any gate", func(t *testing.T) {
 		r := newTurnRegistry(nopTurnRecords{})
-		run := marotte.ChatID(runChatPrefix + "wf1")
+		run := marotte.RunHostChatID("wf1")
 		h := r.gates.hold(run)
 		h.commit()
 		got := make(chan forwardAttachment, 1)

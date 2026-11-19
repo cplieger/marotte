@@ -2,6 +2,7 @@ import { vi, describe, it, expect } from "vitest";
 import type * as SettingsHighlight from "./settings-highlight.js";
 import type * as Navigate from "./navigate.js";
 import type { PermissionNeededPayload } from "./types.js";
+import type { AlwaysReach } from "./wire/types.gen.js";
 
 vi.mock("./settings-highlight.js", async (importOriginal) => ({
   ...(await importOriginal<typeof SettingsHighlight>()),
@@ -14,19 +15,22 @@ vi.mock("./navigate.js", async (importOriginal) => ({
 
 import { buildPermissionCard, type PermissionAnswer } from "./permission.js";
 
+/** A chat's own ask, which the server offers the chat and user reaches; a case's consent keeps
+ *  them unless it names its own. */
 function ask(over: Partial<PermissionNeededPayload> = {}): PermissionNeededPayload {
+  const { consent, ...rest } = over;
   return {
     request_id: 1,
     title: "echo a | head -1",
     kind: "execute",
-    consent: { capability: "shell", subject: "head -1" },
+    consent: { capability: "shell", subject: "head -1", reaches: ["chat", "user"], ...consent },
     options: [
       { option_id: "accept", name: "Allow", kind: "allow_once" },
       { option_id: "always-accept", name: "Always allow", kind: "allow_always" },
       { option_id: "reject", name: "Deny", kind: "reject_once" },
       { option_id: "always-reject", name: "Always deny", kind: "reject_always" },
     ],
-    ...over,
+    ...rest,
   } as PermissionNeededPayload;
 }
 
@@ -100,7 +104,7 @@ describe("an always option opens a chooser instead of answering", () => {
     button(card, "Always allow").click();
     [...card.querySelectorAll<HTMLButtonElement>(".always-choice-option")][1]?.click();
 
-    expect(answers).toEqual([{ optionID: "always-accept", alwaysResource: "head *" }]);
+    expect(answers).toEqual([{ optionID: "always-accept", alwaysResource: "head *", alwaysReach: "user" }]);
   });
 
   it("offers the same patterns for Always deny and answers its own option", () => {
@@ -109,7 +113,7 @@ describe("an always option opens a chooser instead of answering", () => {
     expect(card.querySelector(".always-choice-title")?.textContent).toBe("Always deny:");
     [...card.querySelectorAll<HTMLButtonElement>(".always-choice-option")][0]?.click();
 
-    expect(answers).toEqual([{ optionID: "always-reject", alwaysResource: "head -1" }]);
+    expect(answers).toEqual([{ optionID: "always-reject", alwaysResource: "head -1", alwaysReach: "user" }]);
   });
 
   it("closes on a second click and switches between the two always options", () => {
@@ -188,7 +192,7 @@ describe("an always option opens a chooser instead of answering", () => {
     button(card, "Always allow").click();
     [...card.querySelectorAll<HTMLButtonElement>(".always-choice-option")][1]?.click();
 
-    expect(answers).toEqual([{ optionID: "always-accept", alwaysResource: "git stash *" }]);
+    expect(answers).toEqual([{ optionID: "always-accept", alwaysResource: "git stash *", alwaysReach: "user" }]);
   });
 
   it.each([
@@ -281,7 +285,7 @@ describe("an always option opens a chooser instead of answering", () => {
     button(card, "Always allow").click();
     [...card.querySelectorAll<HTMLButtonElement>(".always-choice-option")][0]?.click();
 
-    expect(answers).toEqual([{ optionID: "always-accept", alwaysResource: subject }]);
+    expect(answers).toEqual([{ optionID: "always-accept", alwaysResource: subject, alwaysReach: "user" }]);
   });
 
   it("sends the server's folder back exactly as shown", () => {
@@ -292,7 +296,7 @@ describe("an always option opens a chooser instead of answering", () => {
     button(card, "Always allow").click();
     [...card.querySelectorAll<HTMLButtonElement>(".always-choice-option")][1]?.click();
 
-    expect(answers).toEqual([{ optionID: "always-accept", alwaysResource: folder }]);
+    expect(answers).toEqual([{ optionID: "always-accept", alwaysResource: folder, alwaysReach: "user" }]);
   });
 
   it("leaves an always option out when the ask names nothing to save", () => {
@@ -310,7 +314,7 @@ describe("an always option opens a chooser instead of answering", () => {
   });
 });
 
-describe("Allow for this chat answers the always option with session scope", () => {
+describe("Allow for this chat answers the always option with the chat reach", () => {
   function names(card: HTMLElement): (string | null)[] {
     return [...card.querySelectorAll(".approval-actions button")].map((b) => b.textContent);
   }
@@ -353,13 +357,13 @@ describe("Allow for this chat answers the always option with session scope", () 
     expect(patterns(card)).toEqual(["head -1", "head *", "*"]);
   });
 
-  it("answers the allow_always option with the picked pattern and session scope", () => {
+  it("answers the allow_always option with the picked pattern and the chat reach", () => {
     const { card, answers } = mount(ask());
     button(card, "Allow for this chat").click();
     [...card.querySelectorAll<HTMLButtonElement>(".always-choice-option")][1]?.click();
 
     expect(answers).toEqual([
-      { optionID: "always-accept", alwaysResource: "head *", alwaysScope: "session" },
+      { optionID: "always-accept", alwaysResource: "head *", alwaysReach: "chat" },
     ]);
   });
 
@@ -372,7 +376,7 @@ describe("Allow for this chat answers the always option with session scope", () 
     );
   });
 
-  it("switches to Always allow's own chooser, which still answers user scope", () => {
+  it("switches to Always allow's own chooser, which still answers the user reach", () => {
     const { card, answers } = mount(ask());
     button(card, "Allow for this chat").click();
     button(card, "Always allow").click();
@@ -381,7 +385,7 @@ describe("Allow for this chat answers the always option with session scope", () 
     expect(card.querySelector(".always-choice-title")?.textContent).toBe("Always allow:");
     expect(card.querySelector(".always-choice-hint")?.textContent).toMatch(/^Saves the rule/);
     [...card.querySelectorAll<HTMLButtonElement>(".always-choice-option")][0]?.click();
-    expect(answers).toEqual([{ optionID: "always-accept", alwaysResource: "head -1" }]);
+    expect(answers).toEqual([{ optionID: "always-accept", alwaysResource: "head -1", alwaysReach: "user" }]);
   });
 
   it("closes on a second click", () => {
@@ -409,6 +413,106 @@ describe("Allow for this chat answers the always option with session scope", () 
       }),
     );
     expect(names(card)).toEqual(["Allow", "Deny", "Always deny"]);
+  });
+});
+
+describe("the card offers the reaches the server lists", () => {
+  function names(card: HTMLElement): (string | null)[] {
+    return [...card.querySelectorAll(".approval-actions button")].map((b) => b.textContent);
+  }
+
+  function stepAsk(reaches: AlwaysReach[]): PermissionNeededPayload {
+    return ask({
+      run_id: "wf_1",
+      node_id: "build",
+      consent: { capability: "shell", subject: "head -1", reaches },
+    });
+  }
+
+  function answerThrough(name: string, reaches: AlwaysReach[]): PermissionAnswer[] {
+    const { card, answers } = mount(stepAsk(reaches));
+    button(card, name).click();
+    [...card.querySelectorAll<HTMLButtonElement>(".always-choice-option")][0]?.click();
+    return answers;
+  }
+
+  it("offers a step its own reach and its run's between Allow once and Always allow", () => {
+    const { card } = mount(stepAsk(["step", "run", "user"]));
+    expect(names(card)).toEqual([
+      "Allow once",
+      "Allow for this step",
+      "Allow for this run",
+      "Always allow",
+      "Deny",
+      "Always deny",
+    ]);
+  });
+
+  it.each([
+    ["Allow for this step", "step"],
+    ["Allow for this run", "run"],
+    ["Always allow", "user"],
+  ] as const)("answers %s with the %s reach", (name, reach) => {
+    expect(answerThrough(name, ["step", "run", "user"])).toEqual([
+      { optionID: "always-accept", alwaysResource: "head -1", alwaysReach: reach },
+    ]);
+  });
+
+  it.each([
+    [
+      "Allow for this step",
+      "kiro-cli keeps this rule for this workflow step only. Nothing is saved, and the run's " +
+        "other steps still ask.",
+    ],
+    ["Allow for this run", "kiro-cli keeps this rule until this run ends. Nothing is saved."],
+  ])("says what %s keeps", (name, hint) => {
+    const { card } = mount(stepAsk(["step", "run", "user"]));
+    button(card, name).click();
+    expect(card.querySelector(".always-choice-title")?.textContent).toBe(`${name}:`);
+    expect(card.querySelector(".always-choice-hint")?.textContent).toBe(hint);
+  });
+
+  it("names a chat-launched run's reach as that chat and its runs", () => {
+    const { card, answers } = mount(stepAsk(["step", "launching_chat", "user"]));
+    expect(names(card)).toEqual([
+      "Allow once",
+      "Allow for this step",
+      "Allow for this chat and its runs",
+      "Always allow",
+      "Deny",
+      "Always deny",
+    ]);
+    button(card, "Allow for this chat and its runs").click();
+    expect(card.querySelector(".always-choice-hint")?.textContent).toBe(
+      "kiro-cli keeps this rule in the chat that launched this run, for that chat and every run " +
+        "it launches, until its session closes or reloads. Nothing is saved.",
+    );
+    [...card.querySelectorAll<HTMLButtonElement>(".always-choice-option")][0]?.click();
+    expect(answers).toEqual([
+      { optionID: "always-accept", alwaysResource: "head -1", alwaysReach: "launching_chat" },
+    ]);
+  });
+
+  it("keeps a chat's own three allows", () => {
+    expect(names(mount(ask()).card)).toEqual([
+      "Allow once",
+      "Allow for this chat",
+      "Always allow",
+      "Deny",
+      "Always deny",
+    ]);
+  });
+
+  it("offers no allow but once when the server lists no reach", () => {
+    expect(names(mount(stepAsk([])).card)).toEqual(["Allow", "Deny"]);
+  });
+
+  it("offers neither always answer when the user reach is not listed", () => {
+    expect(names(mount(stepAsk(["step"])).card)).toEqual([
+      "Allow once",
+      "Allow for this step",
+      "Deny",
+    ]);
   });
 });
 

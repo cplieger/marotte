@@ -1640,3 +1640,29 @@ describe("the MCP status subject re-reads the status inventory", () => {
     expect(statusReads()).toHaveLength(1);
   });
 });
+
+describe("the organization sign-in subject re-reads the provider and its status", () => {
+  it("a verdict naming mcp_identity_provider reads it and holds its version once applied", async () => {
+    observeStamp({ kind: "mcp_identity_provider", ref: "", version: "1" });
+    scripted.respond(
+      "/api/sync",
+      digestAnswer([{ kind: "mcp_identity_provider", ref: "", version: "2" }]),
+    );
+    scripted.respond("/api/mcp/identity-provider", () =>
+      json({
+        config: null,
+        status: { known: true },
+        subject: { kind: "mcp_identity_provider", ref: "", version: "2", epoch: EPOCH_A },
+      }),
+    );
+
+    await _revalidateForTest(ctx());
+
+    expect(scripted.requests.filter((r) => r.url === "/api/mcp/identity-provider")).toHaveLength(1);
+    expect(
+      versionMap()
+        .snapshot()
+        .held.find((h) => h.kind === "mcp_identity_provider")?.version,
+    ).toBe("2");
+  });
+});

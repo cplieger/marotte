@@ -205,6 +205,11 @@ type engineSession interface {
 	EnsureThinking(ctx context.Context, choice string) error
 	// ObserveThinking records a thinking value the session reported.
 	ObserveThinking(value string)
+	// EnsureMessaging sets the sessionToolsMessaging switch, sending only where the session offers it and reported
+	// the other value. KAS refuses it while a turn runs.
+	EnsureMessaging(ctx context.Context, on bool) error
+	// ObserveMessaging records a sessionToolsMessaging value the session reported.
+	ObserveMessaging(value string)
 	// HealWorkflowLaunch records the workflowLaunch value a config_option_update offered and asserts the session
 	// door's own value when it differs, sending nothing once the session refused one assert.
 	HealWorkflowLaunch(ctx context.Context, reported string) error

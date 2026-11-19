@@ -69,7 +69,7 @@ func TestAffordance_ResumeIsOfferedOnAPausedNonResidentRun(t *testing.T) {
 	if sentence := got.refusal(verbResume); sentence != "" {
 		t.Errorf("resume carries a refusal %q on a run it can reach", sentence)
 	}
-	if h.bridge.mgr.get(runChatID("wf_1")) != nil {
+	if h.bridge.mgr.get(marotte.RunHostChatID("wf_1")) != nil {
 		t.Error("deciding the affordance made a host session resident")
 	}
 }

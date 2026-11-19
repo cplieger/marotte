@@ -79,7 +79,7 @@ const answering = new WeakSet<Decision>();
 const queues = new Map<string, Decision[]>();
 
 /**
- * The queue key a run owns, twin of `runChatPrefix` in `internal/agent/run_host.go`. Not a chat id: no tab or session
+ * The queue key a run owns, twin of `runHostChatPrefix` in `internal/marotte/run_host.go`. Not a chat id: no tab or session
  * row answers to it.
  */
 const RUN_CHAT_PREFIX = "run:";

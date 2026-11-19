@@ -54,7 +54,7 @@ var pasteServerIgnored = map[string]string{
 // The nested object needs its own classification pass: encoding/json drops a
 // key with no matching field, so without one a misspelt `clientIdd` would be
 // accepted and discarded silently.
-var pasteOAuthKeys = []string{"clientId", "clientMetadataUrl", "redirectUri"}
+var pasteOAuthKeys = []string{"clientId", "clientMetadataUrl", "mode", "redirectUri"}
 
 // pasteOAuthSecretKey is refused by name, before the typo pass: a confidential
 // client cannot authenticate through KAS, so the server would fail at its token
@@ -63,8 +63,12 @@ const pasteOAuthSecretKey = "clientSecret"
 
 const confidentialClientRefusal = "Kiro's v3 engine has no OAuth client secret, so it supports public pre-registered clients only"
 
-// Only the wrapper is consumed; a single-server object is detected by the wrapper's absence.
-var pasteTopKeys = []string{kasServerKey}
+// The wrapper and the organization provider are consumed; a single-server object is detected by both
+// being absent.
+var pasteTopKeys = []string{kasIdentityProviderKey, kasServerKey}
+
+// pasteIdentityProviderKeys are the keys of KAS's top-level identityProvider object, its closed schema.
+var pasteIdentityProviderKeys = []string{"authorizationEndpoint", "clientId", "issuer", "name", "tokenEndpoint"}
 
 var pasteTopIgnored = map[string]string{
 	"$schema": "a schema pointer, not configuration",
@@ -75,14 +79,25 @@ var pasteTopIgnored = map[string]string{
 // block declared them, plus the notes the translation produced (an unmodelled
 // key, a name that had to be adjusted).
 type importRequest struct {
-	servers []*Server
-	notes   []string
+	// identityProvider is the block's organization provider, nil when it names none.
+	identityProvider *IdentityProvider
+	servers          []*Server
+	notes            []string
+}
+
+type pasteIdentityProvider struct {
+	Issuer                string `json:"issuer"`
+	ClientID              string `json:"clientId"`
+	Name                  string `json:"name"`
+	AuthorizationEndpoint string `json:"authorizationEndpoint"`
+	TokenEndpoint         string `json:"tokenEndpoint"`
 }
 
 type pasteOAuth struct {
 	ClientID          string `json:"clientId"`
 	ClientMetadataURL string `json:"clientMetadataUrl"`
 	RedirectURI       string `json:"redirectUri"`
+	Mode              string `json:"mode"`
 }
 
 // `env` and `headers` are absent on purpose: they are JSON records, and marotte stores ordered
@@ -117,13 +132,44 @@ func parseImportBody(data []byte) (*importRequest, error) {
 	// an array, and one shape on the wire beats two the reader has to handle.
 	req := &importRequest{notes: []string{}}
 	block, isBlock := doc[kasServerKey]
-	if !isBlock {
+	idp, hasIDP := doc[kasIdentityProviderKey]
+	if !isBlock && !hasIDP {
 		return parseSingleServer(doc, data, req)
 	}
 	if err := classifyKeys("", doc, pasteTopKeys, pasteTopIgnored, req); err != nil {
 		return nil, err
 	}
+	if hasIDP {
+		p, err := parseIdentityProvider(idp, req)
+		if err != nil {
+			return nil, err
+		}
+		req.identityProvider = p
+	}
+	if !isBlock {
+		return req, nil
+	}
 	return parseServerBlock(block, req)
+}
+
+// parseIdentityProvider translates the block's identityProvider object, naming a typo like any other key.
+func parseIdentityProvider(raw json.RawMessage, req *importRequest) (*IdentityProvider, error) {
+	const where = kasIdentityProviderKey + ": "
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
+		return nil, fmt.Errorf(`"%s" must be a JSON object`, kasIdentityProviderKey)
+	}
+	if err := classifyKeys(where, obj, pasteIdentityProviderKeys, nil, req); err != nil {
+		return nil, err
+	}
+	var p pasteIdentityProvider
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, fmt.Errorf("%s%w", where, err)
+	}
+	return trimmedIdentityProvider(&IdentityProvider{
+		Issuer: p.Issuer, ClientID: p.ClientID, Name: p.Name,
+		AuthorizationEndpoint: p.AuthorizationEndpoint, TokenEndpoint: p.TokenEndpoint,
+	}), nil
 }
 
 // parseSingleServer handles the one-object shape: the whole body is a server
@@ -245,6 +291,7 @@ func fillRemote(sv *Server, spec *pasteServer, where string, headers json.RawMes
 		sv.OAuthClientID = strings.TrimSpace(spec.OAuth.ClientID)
 		sv.OAuthClientMetadataURL = strings.TrimSpace(spec.OAuth.ClientMetadataURL)
 		sv.OAuthRedirectURI = strings.TrimSpace(spec.OAuth.RedirectURI)
+		sv.OAuthMode = oauthMode(spec.OAuth.Mode)
 	}
 	sv.OAuthScopes = trimmedScopes(spec.OAuthScopes)
 	return nil

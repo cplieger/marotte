@@ -725,7 +725,7 @@ func TestBridgeEnd_ACloseBeforeTheRetireLeavesTheOutputToTheNextClose(t *testing
 func TestReleaseForBridge_DropsARunChatsRecords(t *testing.T) {
 	t.Parallel()
 	at := bareTerminals()
-	run := runChatID("wf_1")
+	run := marotte.RunHostChatID("wf_1")
 	at.mu.Lock()
 	at.retire("run-term", newAgentTerminal(&exec.Cmd{}, run, 64), "")
 	at.retire("chat-term", newAgentTerminal(&exec.Cmd{}, "c1", 64), "")

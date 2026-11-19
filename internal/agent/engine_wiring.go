@@ -58,7 +58,7 @@ func (rt *Runtime) snapshotInterrupted(gen uint64, held *interruptSet) interrupt
 		return set
 	}
 	for chatID := range rt.bridge.mgr.all() {
-		if !isRunChat(chatID) && rt.coord.turns.live(chatID) {
+		if !marotte.IsRunHostChat(chatID) && rt.coord.turns.live(chatID) {
 			set.chats = append(set.chats, chatID)
 		}
 	}
@@ -141,7 +141,7 @@ func (rt *Runtime) resumeInterrupted(ctx context.Context, set interruptSet) {
 // does: once while KAS may still list it running, an unreadable run included, and while its resume fails.
 func (rt *Runtime) resumeParentless(ctx context.Context, workflowID string) {
 	resume := func(ctx context.Context) (failed bool) {
-		return rt.runs.resumeIfInterrupted(ctx, runChatID(workflowID), workflowID) == resumeFailed
+		return rt.runs.resumeIfInterrupted(ctx, marotte.RunHostChatID(workflowID), workflowID) == resumeFailed
 	}
 	if !resume(ctx) {
 		if st, ok := rt.runs.inspect(ctx, workflowID); ok && st.State.Status != marotte.RunStatusRunning {
@@ -162,7 +162,7 @@ func (rt *Runtime) engineBusy() engineBusy {
 	all := rt.bridge.mgr.all()
 	b.sessions = len(all)
 	for chatID := range all {
-		if !isRunChat(chatID) && rt.coord.turns.live(chatID) {
+		if !marotte.IsRunHostChat(chatID) && rt.coord.turns.live(chatID) {
 			b.turns = append(b.turns, marotte.EngineBusyTurn{ChatID: chatID, Name: rt.coord.chatName(ctx, chatID)})
 		}
 	}

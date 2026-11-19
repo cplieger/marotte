@@ -29,16 +29,18 @@ func (s *Server) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// file is the on-disk schema: versioned envelope + ordered list. Each entry is a Server, decoded
-// one at a time so one bad entry costs only itself (load).
+// file is the on-disk schema: versioned envelope + ordered list, and the organization provider. Each entry is a
+// Server and the provider an IdentityProvider, each decoded on its own so one bad member costs only itself (load).
 type file struct {
-	Servers []json.RawMessage `json:"servers"`
-	Version int               `json:"version"`
+	IdentityProvider json.RawMessage   `json:"identity_provider,omitempty"`
+	Servers          []json.RawMessage `json:"servers"`
+	Version          int               `json:"version"`
 }
 
 const fileVersion = 1
 
-// marshalRecord is the record's bytes: the servers, then the entries load could not read, with the same value.
+// marshalRecord is the record's bytes: the servers, then the entries load could not read, with the same value, and
+// the provider, or the member load could not read.
 func (s *Store) marshalRecord() ([]byte, error) {
 	entries := make([]json.RawMessage, 0, len(s.servers)+len(s.unreadable))
 	for _, sv := range s.servers {
@@ -49,7 +51,15 @@ func (s *Store) marshalRecord() ([]byte, error) {
 		entries = append(entries, entry)
 	}
 	entries = append(entries, s.unreadable...)
-	data, err := json.MarshalIndent(file{Version: fileVersion, Servers: entries}, "", "  ")
+	rec := file{Version: fileVersion, Servers: entries, IdentityProvider: s.heldIdentityProvider}
+	if s.identityProvider != nil {
+		idp, err := json.Marshal(s.identityProvider)
+		if err != nil {
+			return nil, fmt.Errorf("%w mcp.json: %w", errPersistMarshal, err)
+		}
+		rec.IdentityProvider = idp
+	}
+	data, err := json.MarshalIndent(rec, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("%w mcp.json: %w", errPersistMarshal, err)
 	}

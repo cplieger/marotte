@@ -294,6 +294,7 @@ var table = []decl{
 		// (record fields sessionMessagingEnabled, sessionAwarenessEnabled). Both always present: on load a stated value
 		// replaces the persisted field, so an explicit false is what turns a resumed chat's switch off. awareness.mode
 		// is fixed at session/new: on load KAS keeps the session record's mode and reads the member only with no record.
+		// session/set_config_option sessionToolsMessaging writes the same record field live, refused while a turn runs.
 		key:      "sessionTools",
 		door:     doorSession,
 		resolver: resolverSettingObject,

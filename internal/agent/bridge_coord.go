@@ -39,6 +39,8 @@ type bridgeCoordinator struct {
 	// between an admission's read and its park. Keyed by chat id, so it needs no lifecycle; held across the bridge
 	// call.
 	switchLocks *keylock.Set[marotte.ChatID]
+	// messagingLocks serializes ensureChatMessaging per chat, so two appliers never send the option twice.
+	messagingLocks *keylock.Set[marotte.ChatID]
 	// parkedProfiles is the profile moves picked during a turn (moveProfile).
 	parkedProfiles   parkedProfiles
 	broadcast        func(ctx context.Context, e marotte.ServerEvent)
@@ -86,6 +88,9 @@ type bridgeCoordinator struct {
 	onTurnClosed func(marotte.ChatID, string)
 	// applyPendingModel is the pending_model idle arm, dispatched by every closer on its own goroutine. Nil in tests.
 	applyPendingModel func(context.Context, marotte.ChatID) `wiring:"optional"`
+	// ensureMessaging converges an idle chat's session on its messaging choice (Runtime.ensureChatMessaging). Nil in
+	// tests.
+	ensureMessaging func(context.Context, marotte.ChatID) `wiring:"optional"`
 	// compact is the reader's Compact presses.
 	compact *compactPresses `wiring:"optional"`
 	// resolveEnds settles a close's steer ends in afterTurnClose.
@@ -155,6 +160,7 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		catalog:        h.catalog,
 		turns:          turns,
 		switchLocks:    keylock.New(cmp.Compare[marotte.ChatID]),
+		messagingLocks: keylock.New(cmp.Compare[marotte.ChatID]),
 		broadcast:      h.bus.Broadcast,
 		translateEvent: h.translateACPEvent,
 		// Read per call: agentTerms is built after the coordinator.
@@ -201,6 +207,7 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		},
 		forgetLane:        func(origin acpResponder) { h.runs.mutations.forgetLane(laneRef{session: origin}) },
 		applyPendingModel: h.applyPendingModel,
+		ensureMessaging:   h.ensureChatMessaging,
 		resolveEnds: func(ctx context.Context, chatID marotte.ChatID, f command.TurnFence) {
 			h.dispatcher.ResolveAfterClose(ctx, chatID, f)
 		},
@@ -422,7 +429,7 @@ func (bc *bridgeCoordinator) endDoorClose(chatID marotte.ChatID, lc *chatLifecyc
 // an open tab (or no tab set wired), or a live run the chat launched. Neither a release nor the closer's reload closes
 // such a chat's session: a reload waits for its next door, which closes and loads in one call.
 func (bc *bridgeCoordinator) keptResident(chatID marotte.ChatID) bool {
-	return isRunChat(chatID) || bc.chatHasTab == nil || bc.chatHasTab(chatID) ||
+	return marotte.IsRunHostChat(chatID) || bc.chatHasTab == nil || bc.chatHasTab(chatID) ||
 		(bc.chatHasLiveRun != nil && bc.chatHasLiveRun(chatID))
 }
 
@@ -1290,7 +1297,7 @@ func (bc *bridgeCoordinator) closeBridge(ctx context.Context, chatID marotte.Cha
 		slog.Warn("a torn-down chat's bridge did not drain in time", "chat_id", chatID)
 	}
 	bc.closeTurnOnBridgeDeath(ctx, chatID, outcome)
-	if isRunChat(chatID) {
+	if marotte.IsRunHostChat(chatID) {
 		bc.turns.forget(chatID)
 	}
 }
@@ -1418,7 +1425,7 @@ func (bc *bridgeCoordinator) forwardAt(chatID marotte.ChatID, bridge engineSessi
 	}
 	// A run chat has no record and nothing calls cleanupChatState for one; a closer still owed its turn close
 	// forgets it after (closeBridge).
-	if isRunChat(chatID) {
+	if marotte.IsRunHostChat(chatID) {
 		bc.turns.forgetIfIdle(chatID)
 	}
 	// Last, for every end (tab close, reload, engine end): KAS's own dispose releases them on a session that is
@@ -1607,7 +1614,7 @@ func (bc *bridgeCoordinator) healWorkflowLaunch(next sessionUpdateHandler) sessi
 		if !attr.ChatOwned() {
 			return
 		}
-		reported, offered := marotte.WorkflowLaunchReported(raw)
+		reported, offered := marotte.ConfigOptionValue(raw, marotte.ConfigOptionWorkflowLaunch)
 		if !offered {
 			return
 		}

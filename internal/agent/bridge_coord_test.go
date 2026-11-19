@@ -861,7 +861,7 @@ func TestHeldSessions_CoversEveryResidentSession(t *testing.T) {
 
 	setSession("chatA", "sess_chatA")
 	setSession("chatB", "sess_chatB")
-	setSession(runChatID("wf_1"), "sess_host")
+	setSession(marotte.RunHostChatID("wf_1"), "sess_host")
 	// An entry with no session yet contributes nothing.
 	setSession("chatC", "")
 

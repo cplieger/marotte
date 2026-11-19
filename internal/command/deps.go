@@ -885,6 +885,8 @@ type Roles struct {
 	BotReloads BotReloader
 	// Models applies a model or effort pick through the model pill's own switch.
 	Models modelSwitcher
+	// Messaging converges a chat's resident session on its messaging choice.
+	Messaging messagingApplier
 	// SpecApprovals is the spec-phase approval record, and it may be nil: a build
 	// with no config dir has no store to persist one to. The handler answers a
 	// 503 in that state rather than reporting an approval nothing kept.
@@ -901,6 +903,12 @@ type Roles struct {
 	// AnswerBudget is how long a session change's request waits on kiro-cli before it answers still_applying;
 	// zero waits for the change on the request.
 	AnswerBudget time.Duration
+}
+
+// messagingApplier converges a chat's resident session on its recorded messaging choice once the chat is idle, without
+// waiting for it: the record is the choice whatever kiro-cli answers.
+type messagingApplier interface {
+	ApplyChatMessaging(ctx context.Context, chatID marotte.ChatID)
 }
 
 // promptRoles holds the prompt path's collaborators. It is built once at

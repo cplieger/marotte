@@ -171,8 +171,10 @@ type SessionFeatures struct {
 	AwarenessMode string `json:"-"`
 	// Workflows gives the agent its workflow tools; the zero value withholds them.
 	Workflows bool
-	// Messaging is KAS's sessionToolsMessaging switch; KAS delivers only between sessions that both have it on.
-	Messaging bool
+	// Messaging is KAS's sessionToolsMessaging switch; KAS delivers only between sessions that both have it on. It
+	// is pushed to resident sessions live (agent's ensureChatMessaging), so it stays out of the session-door
+	// fingerprint.
+	Messaging bool `json:"-"`
 	// Awareness is KAS's sessionToolsAwareness switch, which gives the session the tools that list and search others.
 	Awareness            bool
 	SpecAskClarification bool

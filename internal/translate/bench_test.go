@@ -29,7 +29,7 @@ type baseDeps struct {
 	onSetGovernance func(marotte.GovernanceStatePayload)
 	// onPolicyChanged observes the other governance write.
 	onPolicyChanged func(errs []marotte.PolicyErrorItem, reloaded bool)
-	// withdrawn records each PendingPermsWithdraw call as "<chat>/<toolCallID>".
+	// withdrawn records each PendingPermsWithdraw call as "<chat>/<askId>".
 	withdrawn []string
 	// notices records each Notify call, in order.
 	notices []marotte.NotificationPayload
@@ -811,12 +811,12 @@ func (d *baseDeps) PolicyChanged(_ context.Context, errs []marotte.PolicyErrorIt
 	}
 }
 
-func (*baseDeps) PendingPermsAdd(_ context.Context, _ int64, evt marotte.ServerEvent, _ AskOrigin) (marotte.ServerEvent, bool) {
+func (*baseDeps) PendingPermsAdd(_ context.Context, _ int64, _ string, evt marotte.ServerEvent, _ AskOrigin) (marotte.ServerEvent, bool) {
 	return evt, true
 }
 
-func (d *baseDeps) PendingPermsWithdraw(chatID marotte.ChatID, toolCallID string) bool {
-	d.withdrawn = append(d.withdrawn, string(chatID)+"/"+toolCallID)
+func (d *baseDeps) PendingPermsWithdraw(chatID marotte.ChatID, askID string) bool {
+	d.withdrawn = append(d.withdrawn, string(chatID)+"/"+askID)
 	return true
 }
 
