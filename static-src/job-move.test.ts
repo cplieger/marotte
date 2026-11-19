@@ -111,12 +111,27 @@ describe("the gate", () => {
   });
 
   const hidden: [string, () => void, Partial<ToolCall>, string][] = [
-    ["Background jobs off", () => { jobsOn(false); }, {}, "c1"],
-    ["no settings read yet", () => { shownSettingsSignal.value = null; }, {}, "c1"],
+    [
+      "Background jobs off",
+      () => {
+        jobsOn(false);
+      },
+      {},
+      "c1",
+    ],
+    [
+      "no settings read yet",
+      () => {
+        shownSettingsSignal.value = null;
+      },
+      {},
+      "c1",
+    ],
     ["waiting for approval", () => undefined, { status: "pending" }, "c1"],
     ["completed", () => undefined, { status: "completed" }, "c1"],
     ["already a job", () => undefined, { job: { id: "7" } }, "c1"],
     ["a subagent's or step's call", () => undefined, { agent_subtask_id: "sub-1" }, "c1"],
+    ["a command in marotte's terminal", () => undefined, { terminal_id: "term-1" }, "c1"],
     ["another kind of call", () => undefined, { kind: "other" }, "c1"],
     ["no chat", () => undefined, {}, ""],
   ];
@@ -183,6 +198,35 @@ describe("a press", () => {
       ]);
     });
   }
+
+  it("keeps the control for another press when the post never reached the server", async () => {
+    let fail = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        fail ? Promise.reject(new TypeError("Failed to fetch")) : Promise.resolve(answer()),
+      ),
+    );
+    const tc = running();
+    const c = card(tc);
+    syncMoveAction(c, tc, "c1");
+
+    control(c)?.click();
+
+    await vi.waitFor(() => {
+      expect(control(c)?.disabled).toBe(false);
+    });
+    expect(control(c)?.hasAttribute("aria-busy")).toBe(false);
+    syncMoveAction(c, tc, "c1");
+    expect(control(c)).not.toBeNull();
+
+    fail = false;
+    control(c)?.click();
+
+    await vi.waitFor(() => {
+      expect(control(c)).toBeNull();
+    });
+  });
 
   it("does not toggle the card's details", () => {
     const tc = running();

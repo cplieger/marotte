@@ -10,7 +10,7 @@ import { toolCallSigKey } from "./store-signals.js";
 import type { ToolCall } from "./types.js";
 import type { BackgroundJobMoveRequest } from "./wire/types.gen.js";
 
-/** Cards whose move kiro-cli answered, keyed `toolCallSigKey`: any answer ends the control for that call. */
+/** Cards whose move the server answered, keyed `toolCallSigKey`: any answer ends the control for that call. */
 const answered = new Set<string>();
 
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for an action with no result
@@ -36,6 +36,8 @@ function movable(tc: ToolCall, chatID: string): boolean {
     tc.job === undefined &&
     // A subagent's or a workflow step's call runs in a session with no jobs.
     (tc.agent_subtask_id ?? "") === "" &&
+    // A command in marotte's terminal ran before the chat's session took the setting; only kiro-cli's own shell moves.
+    (tc.terminal_id ?? "") === "" &&
     !answered.has(toolCallSigKey(chatID, tc.id))
   );
 }
@@ -67,7 +69,13 @@ export function syncMoveAction(card: HTMLElement, tc: ToolCall, chatID: string):
   btn.addEventListener("click", () => {
     btn.disabled = true;
     btn.setAttribute("aria-busy", "true");
-    void moveJob.dispatch({ chatID, toolCallID: tc.id }).outcome.then(() => {
+    void moveJob.dispatch({ chatID, toolCallID: tc.id }).outcome.then((o) => {
+      // A transport failure or a cancel never reached kiro-cli, so the control stays for another press.
+      if (o.status === "cancelled" || (o.status === "error" && (o.error.status ?? 0) === 0)) {
+        btn.disabled = false;
+        btn.removeAttribute("aria-busy");
+        return;
+      }
       answered.add(key);
       btn.remove();
     });
