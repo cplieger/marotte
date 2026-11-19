@@ -30,6 +30,8 @@ const (
 	mcpStateSigningIn mcpServerState = "signing_in"
 	mcpStateFailed    mcpServerState = "failed"
 	mcpStateDisabled  mcpServerState = "disabled"
+	// mcpStateNeedsOrgSignIn waits on the organization sign-in, never on its own: its remedy is the card's Sign in.
+	mcpStateNeedsOrgSignIn mcpServerState = "needs_org_sign_in"
 )
 
 // signInTTL bounds a sign-in nobody ended: KAS's 600 s connect ceiling plus margin.
@@ -379,7 +381,7 @@ func resolveServers(views []mcpView) []mcpResolution {
 // connection, then the rest.
 func reportRank(state translate.MCPReportState) int {
 	switch state {
-	case translate.MCPReportNeedsAuth:
+	case translate.MCPReportNeedsAuth, translate.MCPReportNeedsOrgSignIn:
 		return 0
 	case translate.MCPReportFailed:
 		return 1
@@ -561,6 +563,8 @@ func (reg *mcpRegistry) recordFor(s *translate.MCPServerReport, configured map[s
 		state = mcpStateConnected
 	case translate.MCPReportNeedsAuth:
 		state = mcpStateOAuth
+	case translate.MCPReportNeedsOrgSignIn:
+		state = mcpStateNeedsOrgSignIn
 	case translate.MCPReportFailed:
 		state = mcpStateFailed
 	default:

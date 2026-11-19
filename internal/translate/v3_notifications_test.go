@@ -319,7 +319,8 @@ func TestHandleMCPStatus_CarriesTheIdentityProvider(t *testing.T) {
 }
 
 // KAS's boundStatus: a failed enterprise row carries its reason and the server's description, with
-// failedAuthorization false and KAS's own sentence; a connected one an empty block.
+// failedAuthorization false and KAS's own sentence; a connected one an empty block. The two reasons the organization
+// sign-in remedies (no provider session, an expired one) wait on it; any other enterprise failure stays failed.
 func TestHandleMCPStatus_DecodesEnterpriseAuthorization(t *testing.T) {
 	got := recordedFrame(t, map[string]any{"sessionId": "s1", "servers": []map[string]any{
 		{
@@ -327,13 +328,29 @@ func TestHandleMCPStatus_DecodesEnterpriseAuthorization(t *testing.T) {
 			"errorMessage":            "Sign in to your organization to use this server.",
 			"enterpriseAuthorization": map[string]any{"reason": "idp-sign-in-required", "serverDescription": "Acme docs"},
 		},
+		{
+			"name": "expired", "status": "failed", "errorMessage": "Your organization sign-in expired.",
+			"enterpriseAuthorization": map[string]any{"reason": "idp-session-expired"},
+		},
+		{
+			"name": "refused", "status": "failed", "errorMessage": "Your organization did not grant access.",
+			"enterpriseAuthorization": map[string]any{"reason": "denied"},
+		},
 		{"name": "wiki", "status": "connected", "enterpriseAuthorization": map[string]any{}},
 		{"name": "plain", "status": "connected"},
 	}}).Servers
 	want := []MCPServerReport{
 		{
-			Name: "docs", State: MCPReportFailed, Error: "Sign in to your organization to use this server.",
+			Name: "docs", State: MCPReportNeedsOrgSignIn, Error: "Sign in to your organization to use this server.",
 			Enterprise: &marotte.MCPEnterpriseAuth{Reason: "idp-sign-in-required", ServerDescription: "Acme docs"},
+		},
+		{
+			Name: "expired", State: MCPReportNeedsOrgSignIn, Error: "Your organization sign-in expired.",
+			Enterprise: &marotte.MCPEnterpriseAuth{Reason: "idp-session-expired"},
+		},
+		{
+			Name: "refused", State: MCPReportFailed, Error: "Your organization did not grant access.",
+			Enterprise: &marotte.MCPEnterpriseAuth{Reason: "denied"},
 		},
 		{Name: "wiki", State: MCPReportConnected, Enterprise: &marotte.MCPEnterpriseAuth{}},
 		{Name: "plain", State: MCPReportConnected},

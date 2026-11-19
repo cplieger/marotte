@@ -174,7 +174,7 @@ type MCPResourceTemplateInfo struct {
 }
 
 // MCPServerState is the lifecycle status of one MCP server KAS reported: "idle", "connected",
-// "needs_auth", "signing_in", "failed" or "disabled", declared where produced (the runtime's mcpRegistry).
+// "needs_auth", "needs_org_sign_in", "signing_in", "failed" or "disabled", declared where produced (the runtime's mcpRegistry).
 // "disabled" is recorded only for a server marotte did NOT configure; a configured one's off state
 // is its config row's `enabled: false`.
 type MCPServerState string

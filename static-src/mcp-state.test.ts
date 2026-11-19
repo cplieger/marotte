@@ -260,6 +260,22 @@ describe("adaptStatus", () => {
       expected: { name: "aws", origin: "power", originPower: "aws-infra", state: "connected" },
     },
     {
+      name: "a server waiting on the organization sign-in keeps its state and kiro-cli's reason",
+      input: {
+        name: "corp",
+        state: "needs_org_sign_in",
+        origin: "user",
+        error: "Sign in to your organization to use this server.",
+        enterprise: { reason: "idp-sign-in-required" },
+      },
+      expected: {
+        name: "corp",
+        origin: "user",
+        enterprise: { reason: "idp-sign-in-required" },
+        state: "needs_org_sign_in",
+      },
+    },
+    {
       name: "a shadowing server says so",
       input: { name: "mine", state: "connected", origin: "workspace", shadows: true },
       expected: { name: "mine", origin: "workspace", shadows: true, state: "connected" },

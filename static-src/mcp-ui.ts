@@ -719,6 +719,7 @@ const SIGN_IN_TIME_LIMIT =
 const STATUS_META: Readonly<Record<RuntimeState, { css: string; title: string }>> = {
   connected: { css: "connected", title: "Connected" },
   needs_auth: { css: "oauth", title: "Needs authentication" },
+  needs_org_sign_in: { css: "oauth", title: "Needs organization sign-in" },
   signing_in: { css: "oauth", title: "Signing in" },
   idle: { css: "idle", title: "Not connected because no chat is running" },
   failed: { css: "failed", title: "Failed to initialise" },
@@ -896,7 +897,10 @@ export function renderMeta(s: Server, st: RuntimeStatus, notInRegistry = false, 
 }
 
 /** kiro-cli's reasons a server waits on the organization sign-in, which its row's Sign in starts. */
-const ORG_SIGN_IN_REASONS: ReadonlySet<string> = new Set(["idp-sign-in-required", "idp-session-expired"]);
+const ORG_SIGN_IN_REASONS: ReadonlySet<string> = new Set([
+  "idp-sign-in-required",
+  "idp-session-expired",
+]);
 
 /** Whether a row offers the organization Sign in: the server waits on it and no organization sign-in runs. Reactive. */
 function offersOrgSignIn(st: RuntimeStatus): boolean {

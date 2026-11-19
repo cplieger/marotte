@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -405,5 +407,59 @@ func TestIdentityProviderRoute(t *testing.T) {
 	rec = doJSON(t, mux, http.MethodGet, "/api/mcp/identity-provider", nil)
 	if !strings.Contains(rec.Body.String(), `"config":null`) {
 		t.Errorf("GET after DELETE = %s, want a null config", rec.Body.String())
+	}
+}
+
+// A write that changes only the organization provider is a change like a server edit: the store's change callback
+// runs, so every open page refetches it and an Edit opens on the stored provider. An unchanged one fires none.
+func TestIdentityProviderOnlyWrites_NotifyTheChange(t *testing.T) {
+	cases := []struct {
+		name  string
+		write func(t *testing.T, s *Store)
+		want  int32
+	}{
+		{"a_paste_naming_only_a_provider", func(t *testing.T, s *Store) {
+			if _, err := s.importServers(t.Context(), &importRequest{identityProvider: acme()}); err != nil {
+				t.Fatalf("importServers: %v", err)
+			}
+		}, 1},
+		{"a_saved_provider", func(t *testing.T, s *Store) {
+			if _, err := s.putIdentityProvider(t.Context(), acme()); err != nil {
+				t.Fatalf("putIdentityProvider: %v", err)
+			}
+		}, 1},
+		{"the_same_provider_saved_again", func(t *testing.T, s *Store) {
+			for range 2 {
+				if _, err := s.putIdentityProvider(t.Context(), acme()); err != nil {
+					t.Fatalf("putIdentityProvider: %v", err)
+				}
+			}
+		}, 1},
+		{"a_removed_provider", func(t *testing.T, s *Store) {
+			if _, err := s.putIdentityProvider(t.Context(), acme()); err != nil {
+				t.Fatalf("putIdentityProvider: %v", err)
+			}
+			if err := s.deleteIdentityProvider(t.Context()); err != nil {
+				t.Fatalf("deleteIdentityProvider: %v", err)
+			}
+		}, 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			synctest.Test(t, func(t *testing.T) {
+				var calls atomic.Int32
+				s, err := New(t.Context(), dir, func(context.Context) { calls.Add(1) },
+					withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+				if err != nil {
+					t.Fatalf("New: %v", err)
+				}
+				tc.write(t, s)
+				synctest.Wait()
+				if got := calls.Load(); got != tc.want {
+					t.Errorf("change callbacks = %d, want %d", got, tc.want)
+				}
+			})
+		})
 	}
 }

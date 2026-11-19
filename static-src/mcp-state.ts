@@ -14,10 +14,7 @@ import {
   type Collection,
 } from "@cplieger/reactive";
 import { createMirror, type MirrorChange } from "./mirror.js";
-import {
-  decodeIdentityProviderResponse,
-  decodeMCPStatusResponse,
-} from "./wire/decoders.gen.js";
+import { decodeIdentityProviderResponse, decodeMCPStatusResponse } from "./wire/decoders.gen.js";
 import {
   asObject,
   decodeArray,
@@ -190,7 +187,7 @@ export interface ServerDiscovery {
 }
 
 export type RuntimeState =
-  "connected" | "needs_auth" | "signing_in" | "idle" | "failed" | "disabled";
+  "connected" | "needs_auth" | "needs_org_sign_in" | "signing_in" | "idle" | "failed" | "disabled";
 
 /**
  * `origin` picks the row a live status belongs to, never editability. `shadows`: marotte's config holds the name, so
@@ -214,6 +211,8 @@ export type RuntimeStatus = Provenance &
     | { name: string; state: "connected" }
     /** `error` is why kiro-cli refused the last Sign in, absent when none was refused. */
     | { name: string; state: "needs_auth"; error?: string }
+    /** Waits on the organization sign-in; `enterprise` carries kiro-cli's reason, which the row words. */
+    | { name: string; state: "needs_org_sign_in" }
     /** `oauth_url` is the consent page of the sign-in the user started. `relayed` rides the status wire, so a reload
      *  or second device does not offer the paste box for a spent code. */
     | { name: string; state: "signing_in"; oauth_url: string; relayed: boolean }
@@ -269,6 +268,8 @@ export function adaptStatus(w: MCPServerStatus): RuntimeStatus {
         oauth_url: w.oauth_url ?? "",
         relayed: w.relayed ?? false,
       };
+    case "needs_org_sign_in":
+      return { name: w.name, ...prov, state: "needs_org_sign_in" };
     case "failed":
       return { name: w.name, ...prov, state: "failed", error: w.error ?? "" };
     case "connected":
@@ -304,10 +305,11 @@ export interface IdentityProviderConfig {
   readonly unreadable: boolean;
 }
 
-export const identityProviderConfig: Signal<IdentityProviderConfig> = signal<IdentityProviderConfig>({
-  config: null,
-  unreadable: false,
-});
+export const identityProviderConfig: Signal<IdentityProviderConfig> =
+  signal<IdentityProviderConfig>({
+    config: null,
+    unreadable: false,
+  });
 
 /** Whether a provider is in force, so the remote form offers organization sign-in. Untracked. */
 export function identityProviderConfigured(): boolean {
@@ -322,7 +324,11 @@ const IDP_KEY = "";
 const identityProviderMirror = createMirror<string, MCPIdentityProviderPayload>({
   kind: "mcp_identity_provider",
   async fetch(signal) {
-    const d = await apiGetTyped("/api/mcp/identity-provider", decodeIdentityProviderResponse, signal);
+    const d = await apiGetTyped(
+      "/api/mcp/identity-provider",
+      decodeIdentityProviderResponse,
+      signal,
+    );
     if (d === null) {
       return null;
     }

@@ -129,6 +129,12 @@ type v3EnterpriseAuthorization struct {
 	ServerDescription string `json:"serverDescription"`
 }
 
+// needsOrgSignIn reports whether the organization sign-in, not the server, is the remedy: KAS's two reasons for a
+// provider with no session or an expired one.
+func (e *v3EnterpriseAuthorization) needsOrgSignIn() bool {
+	return e != nil && (e.Reason == "idp-sign-in-required" || e.Reason == "idp-session-expired")
+}
+
 func (e *v3EnterpriseAuthorization) auth() *marotte.MCPEnterpriseAuth {
 	if e == nil {
 		return nil
@@ -206,10 +212,12 @@ const (
 	MCPReportFailed
 	// MCPReportDisabled is a server KAS reports switched off.
 	MCPReportDisabled
+	// MCPReportNeedsOrgSignIn is a failed server waiting on the organization sign-in, its reason in Error.
+	MCPReportNeedsOrgSignIn
 )
 
 // MCPServerReport is one server as its session's frame reports it. Error is set for
-// MCPReportFailed, AuthorizationURL for MCPReportNeedsAuth, the four lists for MCPReportConnected.
+// MCPReportFailed and MCPReportNeedsOrgSignIn, AuthorizationURL for MCPReportNeedsAuth, the four lists for MCPReportConnected.
 // Enterprise is set on a server signing in through the organization provider, empty when connected.
 type MCPServerReport struct {
 	Name              string
@@ -279,9 +287,12 @@ func (s *v3MCPServer) report() (MCPServerReport, bool) {
 		r.Resources, r.ResourceTemplates = mcpResources(s.Resources), mcpResourceTemplates(s.ResourceTemplates)
 	case "failed":
 		// The URL outranks failedAuthorization: an OAuth server needing sign-in carries both.
-		if s.AuthorizationURL != "" {
+		switch {
+		case s.AuthorizationURL != "":
 			r.State, r.AuthorizationURL = MCPReportNeedsAuth, s.AuthorizationURL
-		} else {
+		case s.EnterpriseAuthorization.needsOrgSignIn():
+			r.State, r.Error = MCPReportNeedsOrgSignIn, s.failureReason()
+		default:
 			r.State, r.Error = MCPReportFailed, s.failureReason()
 		}
 	case "disabled":
