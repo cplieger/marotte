@@ -273,7 +273,13 @@ func alive(t *testing.T, pidFile string) bool {
 	if err != nil {
 		t.Fatalf("the fake rg never started its child: %v", err)
 	}
-	stat, err := os.ReadFile("/proc/" + strings.TrimSpace(string(raw)) + "/stat")
+	// A stop between the shell's open of the pid file and its write leaves the file empty, and
+	// "/proc//stat" is the system-wide /proc/stat.
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Fatalf("the fake rg's pid file holds %q, want the pid of its child", raw)
+	}
+	stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
 	if err != nil {
 		return false
 	}
@@ -458,10 +464,12 @@ func TestSearch_RGExitingBeforeTheDeadlineAnswersWhole(t *testing.T) {
 }
 
 // twoRootRG lists n files in a root holding a "fast" file, and in any other root lists nothing until
-// it is killed, leaving a child whose pid it writes to pidFile.
+// it is killed, leaving a child whose pid it writes to pidFile. The fast root lists only once that
+// pid is written, so a stop its files trigger always meets a recorded child.
 func twoRootRG(t *testing.T, n int, pidFile string) string {
 	t.Helper()
 	return fakeRG(t, `if [ -e fast ]; then
+  while [ ! -s `+pidFile+` ]; do /bin/sleep 0.01; done
   i=0; while [ $i -lt `+strconv.Itoa(n)+` ]; do echo ./f$i.go; i=$((i+1)); done
 else
   /bin/sleep 60 &
@@ -489,9 +497,7 @@ func TestFiles_FirstRootFillingTheLimitEndsTheSearchWhole(t *testing.T) {
 	if len(got) != 11 || slices.ContainsFunc(got, isPartialNotice) {
 		t.Errorf("Files = %q, want 11 files and no partial notice", got)
 	}
-	if _, err := os.Stat(pidFile); err == nil {
-		awaitGone(t, pidFile)
-	}
+	awaitGone(t, pidFile)
 }
 
 // A later root the deadline cut still makes the answer partial while the earlier roots left room.
