@@ -7,22 +7,31 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// KAS emits it for every approval it resolves; outcome "cancelled" means the asker ended and KAS
-// stopped waiting, so the request's JSON-RPC id is answered by nobody.
+// KAS emits it for every approval it resolves. Outcome "cancelled" (the asker ended) and
+// "rule_decided" (a policy recheck decided the ask while it waited) both close an ask nobody
+// answered, so its JSON-RPC id expects no answer.
 type interactionResolvedBlock struct {
 	ToolCallID     string `json:"toolCallId"`
 	Outcome        string `json:"outcome"`
 	SelectedOption string `json:"selectedOption"`
 }
 
-// interactionOutcomeCancelled is the outcome of an ask KAS withdrew.
-const interactionOutcomeCancelled = "cancelled"
+// The outcomes of an ask KAS closed without an answer from marotte.
+const (
+	interactionOutcomeCancelled   = "cancelled"
+	interactionOutcomeRuleDecided = "rule_decided"
+)
 
-// handleInteractionResolved retires an ask KAS withdrew. Every other outcome
+// withdrawnOutcome reports whether outcome closes an ask nobody answered.
+func withdrawnOutcome(outcome string) bool {
+	return outcome == interactionOutcomeCancelled || outcome == interactionOutcomeRuleDecided
+}
+
+// handleInteractionResolved retires an ask KAS closed without an answer. Every other outcome
 // echoes an answer marotte sent and already claimed. No response is sent: KAS no
 // longer awaits the id.
 func (t *Translator) handleInteractionResolved(key marotte.ChatID, r *interactionResolvedBlock) {
-	if r.Outcome != interactionOutcomeCancelled || r.ToolCallID == "" {
+	if !withdrawnOutcome(r.Outcome) || r.ToolCallID == "" {
 		return
 	}
 	if !t.pendingPerms.PendingPermsWithdraw(key, r.ToolCallID) {
