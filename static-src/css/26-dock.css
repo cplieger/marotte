@@ -870,7 +870,8 @@
     flex: none;
   }
 
-  &:not(:has(.steer-row, .run-bar:not(.hidden), .jobs-strip:not([hidden])))) {
+  /* stylelint-disable-next-line selector-max-pseudo-class -- a hide that loses to the tight-band hides' specificity needs this one :not(:has()) shape */
+  &:not(:has(.steer-row, .run-bar:not(.hidden), .jobs-strip:not([hidden]))) {
     display: none;
   }
 }
