@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """One measure shard's results.json, the file cplieger/ci's perf_gate.py reads, from the raw reps
 under --raw: per unit `<scenario>.<scale>.<engine>.<width>`, view.mjs's `.r<n>.json` reps, the
-profiled `.rp.json` rep, servercpu.py's `.r<n>.servercpu.json` replays and run.sh's `.seconds`.
+profiled `.rp.json` rep, servercpu.py's `.r<n>.servercpu.json` replays, and run.sh's `.seconds`
+and `.profile.seconds`, the time of the reps and of the profiled rep.
 Each metric of a window becomes one cell with its reps in rep order; a time metric a rep lacks,
 a failed rep, or a planned window a rep did not measure is an error; a count a rep did not see
 is 0 in that rep.
@@ -171,16 +172,22 @@ def glob_escape(text: str) -> str:
     return re.sub(r'([*?\[])', r'[\1]', text)
 
 
+def spent(path: pathlib.Path) -> float:
+    try:
+        return round(float(path.read_text()), 1)
+    except (OSError, ValueError) as e:
+        raise SummaryError(f'{path}: {e}') from e
+
+
 def results(units: list[dict], raw: pathlib.Path) -> dict:
     cells, seconds = [], []
     for unit in units:
         cells.extend(unit_cells(unit, raw))
-        spent = raw / f'{stem(unit)}.seconds'
-        try:
-            value = float(spent.read_text())
-        except (OSError, ValueError) as e:
-            raise SummaryError(f'{spent}: {e}') from e
-        seconds.append({**{f: unit[f] for f in UNIT_FIELDS}, 'seconds': round(value, 1)})
+        timed = {f: unit[f] for f in UNIT_FIELDS}
+        timed['seconds'] = spent(raw / f'{stem(unit)}.seconds')
+        if unit.get('profile'):
+            timed['profile_seconds'] = spent(raw / f'{stem(unit)}.profile.seconds')
+        seconds.append(timed)
     return {'schema': 1, 'cells': cells, 'seconds': seconds}
 
 

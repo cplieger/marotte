@@ -189,6 +189,18 @@ class Plan(unittest.TestCase):
         s = self.plan['sets']['pr']
         self.assertIsNone(pr_shard_problem([c['seconds'] for c in s['cells']], s['shards']))
 
+    def test_a_pr_cell_takes_less_than_its_full_set_twin_that_adds_a_profiled_rep(self):
+        full = {
+            tuple(c[f] for f in UNIT_FIELDS): c
+            for c in self.plan['sets']['full']['cells']
+            if c.get('profile')
+        }
+        for c in self.plan['sets']['pr']['cells']:
+            twin = full.get(tuple(c[f] for f in UNIT_FIELDS))
+            if twin and 'windows' not in c:
+                with self.subTest(cell=c):
+                    self.assertLess(c['seconds'], twin['seconds'])
+
     def test_a_pr_set_over_the_job_or_with_a_shard_too_many_is_named(self):
         over = pr_shard_problem([PR_JOB_SECONDS - PR_SETUP_SECONDS + 1, 60], 2)
         self.assertRegex(over, r'slowest shard, .* is over the pull request')
