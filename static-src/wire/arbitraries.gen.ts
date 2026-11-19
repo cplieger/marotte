@@ -1897,8 +1897,9 @@ const arbModel = fc.letrec<{
       workflow_id: fc.string(),
       chat_id: fc.string(),
       executing: fc.boolean(),
+      started_at: fc.double({ noNaN: true, noDefaultInfinity: true }),
     },
-    { requiredKeys: ["workflow_id", "chat_id", "executing"] },
+    { requiredKeys: ["workflow_id", "chat_id", "executing", "started_at"] },
   ),
   LiveRunPayload: fc.record(
     {
@@ -1906,8 +1907,9 @@ const arbModel = fc.letrec<{
       chat_id: fc.string(),
       live: fc.boolean(),
       executing: fc.boolean(),
+      started_at: fc.double({ noNaN: true, noDefaultInfinity: true }),
     },
-    { requiredKeys: ["workflow_id", "chat_id", "live", "executing"] },
+    { requiredKeys: ["workflow_id", "chat_id", "live", "executing", "started_at"] },
   ),
   LiveRunsResponse: fc.record(
     {

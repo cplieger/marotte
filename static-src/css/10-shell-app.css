@@ -203,26 +203,155 @@ body.sidebar-resizing {
   }
 }
 
-/* The sidebar's one scroll region: every section and its header scroll together, so no section hides another's rows behind a nested scrollbar. */
-[id="tab-sections"] {
+/* The sidebar's middle: the tab sections over the docked Runs (12-tabs.css), sized by need with no
+   height measured in script. Runs' floor is the one fixed claim, so a run that wants you shows at any
+   tab count. Runs grows past it only into what is left once the tab sections keep `--tabs-keep`; the
+   tab sections take the rest, down to the Open header and one tab row, and give even that up before
+   Runs' floor. Only the tab scroller and Runs' own list scroll, never the middle. */
+.sidebar-middle {
+  /* Runs around its list: its padding, its hairline and its header. */
+  --runs-chrome: calc(2 * var(--sp-1) + var(--hairline) + var(--row-tap-dense));
+  /* Runs with its list's inset and one row. */
+  --runs-floor: calc(var(--runs-chrome) + var(--sp-1) + var(--tab-row-h));
+
+  /* The rows each tab section shows, up to three, and whether its header shows: the rules below set them. */
+  --open-head: 0;
+  --open-n: 0;
+  --pinned-on: 0;
+  --pinned-n: 0;
+  --history-on: 0;
+  --history-n: 0;
+
+  /* The tab sections' height with those rows: the Open list's inset and header, Pinned's and History's
+     gap, header and inset while shown (a folded list keeps its inset), every counted row, and the
+     scroller's end padding. */
+  --tabs-need: calc(
+    2 * var(--sp-1) + var(--open-head) * var(--row-tap-dense) + var(--open-n) * var(--tab-row-h) +
+      max(0, var(--open-n) - 1) * var(--sp-05) + var(--pinned-on) *
+      (
+        2 * var(--sp-1) + var(--row-tap-dense) + var(--pinned-n) * var(--tab-row-h) +
+          max(0, var(--pinned-n) - 1) * var(--sp-05)
+      ) +
+      var(--history-on) *
+      (
+        2 * var(--sp-1) + var(--row-tap-dense) + var(--history-n) * var(--tab-row-h) +
+          max(0, var(--history-n) - 1) * var(--sp-05)
+      )
+  );
+
+  /* The Open header, the list's inset and three tab rows, or what the rows shown need where that is
+     less. Below the tab track's floor the grid holds the floor itself. */
+  --tabs-keep: min(
+    var(--row-tap-dense) + var(--sp-1) + 3 * var(--tab-row-h) + 2 * var(--sp-05),
+    var(--tabs-need)
+  );
+
   flex: 1;
+  min-height: 0;
+  container-type: size;
+  display: grid;
+  grid-template-rows:
+    minmax(
+      min(var(--row-tap-dense) + var(--sp-1) + var(--tab-row-h), 100% - var(--runs-floor)),
+      1fr
+    )
+    auto;
+  overflow: clip;
+
+  /* Each section shows its header while it holds a row, and every row unfolded; folded, only the row
+     you are on (section-header.ts `foldRows`). `data-folded` is the stored fold, set at the press, so a
+     count moves with the slide's start both ways. The folded rules come last at the same specificity,
+     so they win. */
+  &:has([id="tab-list"] > .tab) {
+    --open-head: 1;
+    --open-n: 1;
+  }
+
+  &:has([id="tab-list"] > :nth-child(2 of .tab)) {
+    --open-n: 2;
+  }
+
+  &:has([id="tab-list"] > :nth-child(3 of .tab)) {
+    --open-n: 3;
+  }
+
+  &:has([id="tab-list"][data-folded] > .tab) {
+    --open-n: 0;
+  }
+
+  &:has([id="tab-list"][data-folded] > .active) {
+    --open-n: 1;
+  }
+
+  &:has([id="pinned-section"]:not([hidden])) {
+    --pinned-on: 1;
+  }
+
+  &:has([id="pinned-list"] > .tab) {
+    --pinned-n: 1;
+  }
+
+  &:has([id="pinned-list"] > :nth-child(2 of .tab)) {
+    --pinned-n: 2;
+  }
+
+  &:has([id="pinned-list"] > :nth-child(3 of .tab)) {
+    --pinned-n: 3;
+  }
+
+  &:has([id="pinned-list"][data-folded] > .tab) {
+    --pinned-n: 0;
+  }
+
+  &:has([id="pinned-list"][data-folded] > .active) {
+    --pinned-n: 1;
+  }
+
+  &:has([id="history-section"]:not([hidden])) {
+    --history-on: 1;
+  }
+
+  &:has([id="history-list"] > li) {
+    --history-n: 1;
+  }
+
+  &:has([id="history-list"] > :nth-child(2 of li)) {
+    --history-n: 2;
+  }
+
+  &:has([id="history-list"] > :nth-child(3 of li)) {
+    --history-n: 3;
+  }
+
+  &:has([id="history-list"][data-folded] > li) {
+    --history-n: 0;
+  }
+
+  /* History's row you are on is More, while its page shows. */
+  &:has([id="history-list"][data-folded] > li > .active) {
+    --history-n: 1;
+  }
+}
+
+/* The tab sections and History scroll together inside the middle, so none hides another's rows behind a nested scrollbar. */
+[id="tab-sections"] {
   overflow-y: auto;
   overscroll-behavior: contain;
-  min-height: 0;
   display: flex;
   flex-direction: column;
   padding-block-end: var(--sp-1);
 }
 
 .side-section-list,
-.history-list {
+.history-list,
+.runs-list {
   /* THE SAME INSET `.sidebar-actions` TAKES, so a tab's border box and the New chat
    button's are the same box: the list carries no border and no inset of its own
    beyond this, so there is no second expression to keep in step. */
   padding: var(--sp-1) var(--sp-2) 0;
   display: flex;
   flex-direction: column;
-  gap: 0.125rem;
+  gap: var(--sp-05);
 
   &[hidden] {
     display: none;

@@ -72,6 +72,7 @@ import { initTerminalStream } from "./terminal-stream.js";
 import { initTooltips } from "./tooltip.js";
 import { guardBackspaceChars } from "./backspace-char.js";
 import { initHistorySection } from "./history-section.js";
+import { initRunsSection } from "./runs-section.js";
 import { initNewChatControl } from "./new-chat-control.js";
 import { initKeyboardShortcuts } from "./keys.js";
 import { openShortcutsSheet } from "./shortcuts.js";
@@ -328,6 +329,7 @@ function init(): void {
   $.docsBtn.addEventListener("click", () => {
     void toggleDocsView();
   });
+  initRunsSection();
   initHistorySection();
   initTerminalStream();
   initTooltips();

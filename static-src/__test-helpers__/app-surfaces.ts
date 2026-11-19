@@ -229,6 +229,20 @@ export function plantHistorySection(): void {
   list.prepend(li);
 }
 
+/** The Runs section unfolded with one working run, as `runs-section.ts` draws it. */
+export function plantRunsSection(): void {
+  q("#runs-section").hidden = false;
+  const link = make("a", "runs-row", { href: "/run/wf_1", "data-tooltip": "deadset-ci" });
+  link.append(
+    make("span", "tab-status-dot", { "aria-hidden": "true", "data-status": "working" }),
+    text("bdi", "runs-row-name", "deadset-ci"),
+    text("span", "sr-only", ", working"),
+  );
+  const li = make("li", "runs-item");
+  li.appendChild(link);
+  q("#runs-list").replaceChildren(li);
+}
+
 export function turn(...body: HTMLElement[]): HTMLElement {
   const t = make("div", "turn");
   const header = buildTurnHeader({
@@ -1510,6 +1524,7 @@ export const SURFACES: readonly Surface[] = [
     setup: (size) => {
       plantTabs();
       plantHistorySection();
+      plantRunsSection();
       q("#pointer-mode-btn").classList.remove("hidden");
       if (size === 390) {
         q("#sidebar").classList.add("open");
@@ -1520,6 +1535,8 @@ export const SURFACES: readonly Surface[] = [
       "#history-list .history-row",
       "#history-list .history-row-delete",
       "#history-more",
+      "#runs-section .side-section-toggle",
+      "#runs-list .runs-row",
       "#theme-btn",
       "#pointer-mode-btn",
       "#account-btn",
@@ -1529,7 +1546,12 @@ export const SURFACES: readonly Surface[] = [
     rows: ["#tab-list .tab"],
     rowStep: {
       row: "#tab-list .tab",
-      controls: ["#new-chat", "#history-list .history-row", "#history-more"],
+      controls: [
+        "#new-chat",
+        "#history-list .history-row",
+        "#history-more",
+        "#runs-list .runs-row",
+      ],
     },
   },
   {

@@ -2188,7 +2188,7 @@ const NEUTRAL_PHRASE: Readonly<Record<Exclude<TabDotStatus, "done" | "failed">, 
 /** The ONE resolver, so the tooltip and the announced word cannot drift per kind. A phrase claims
  *  only what its producer supports (`store.ts` `outcomeLatch`). `since` reaches only the two
  *  OUTCOMES: the other states describe NOW. */
-function dotPhrase(kind: TabKind, status: TabDotStatus, since?: number): string {
+export function dotPhrase(kind: TabKind, status: TabDotStatus, since?: number): string {
   if (status === "done") {
     return withAge(`${DOT_SUBJECT[kind]} finished`, since);
   }
@@ -3247,10 +3247,10 @@ function createTabEl(row: TabRow): HTMLElement {
     // unseeded dot would shift the name.
     paintDot(node, kind, row.dotStatus ?? "idle", row.dotSince);
   } else {
-    // Other kinds keep their glyph and use the trailing slot for the editor's unsaved mark; no `idle`
-    // floor.
+    // Other kinds share the leading slot between their dot (a run's, a delegate's, the editor's
+    // unsaved mark) and their glyph, which 12-tabs.css hides while the dot has a state; no `idle` floor.
     const icon = el("span", { className: "tab-icon" }, iconEl(TAB_ICONS[kind]));
-    node.append(icon, name, statusSR, pin, statusDot, close);
+    node.append(statusDot, icon, name, statusSR, pin, close);
     // No producer supplies an age here, and the argument is passed anyway so this is
     // not the one paint site a reader has to reason about.
     paintDot(node, kind, row.dotStatus ?? "", row.dotSince);

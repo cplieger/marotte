@@ -454,7 +454,7 @@ func nonNilStamps(s []marotte.SubjectStamp) []marotte.SubjectStamp {
 	return s
 }
 
-// handleLiveRuns serves GET /api/runs/live: every live lease as `{workflow_id, chat_id, executing}`.
+// handleLiveRuns serves GET /api/runs/live: every live lease as `{workflow_id, chat_id, executing, started_at}`.
 // Presence over local state, no KAS call; staleness errs to keeping.
 func (rr *runRoutes) handleLiveRuns(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -478,7 +478,17 @@ func (rs *Runs) liveRunRowsStamped() ([]marotte.LiveRun, *marotte.SubjectStamp) 
 }
 
 func liveRunOf(r runlease.Row) marotte.LiveRun {
-	return marotte.LiveRun{WorkflowID: r.WorkflowID, ChatID: r.ChatID, Executing: r.Executing}
+	return marotte.LiveRun{
+		WorkflowID: r.WorkflowID, ChatID: r.ChatID, Executing: r.Executing, StartedAt: startMillis(r),
+	}
+}
+
+// startMillis is the row's start in unix ms, 0 for a row that names none (a removal's).
+func startMillis(r runlease.Row) int64 {
+	if r.StartedAt.IsZero() {
+		return 0
+	}
+	return r.StartedAt.UnixMilli()
 }
 
 // announceLiveRun is the lease store's announcer: one stamped live_run frame per row change. The store calls
@@ -486,6 +496,7 @@ func liveRunOf(r runlease.Row) marotte.LiveRun {
 func (b *bus) announceLiveRun(r runlease.Row, live bool, version string) {
 	frame := marotte.NewEvent(marotte.EventLiveRun, "", marotte.LiveRunPayload{
 		WorkflowID: r.WorkflowID, ChatID: r.ChatID, Live: live, Executing: r.Executing,
+		StartedAt: startMillis(r),
 	})
 	frame.Subject = marotte.NewSubjectStamp(string(subject.KindRuns), "", version)
 	b.Broadcast(context.Background(), frame)

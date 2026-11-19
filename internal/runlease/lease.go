@@ -39,7 +39,7 @@ func (o Origin) valid() bool {
 
 // Lease is marotte's record of one run. Field order is govet fieldalignment's.
 type Lease struct {
-	// StartedAt is when marotte put the run on the wire; diagnosis only.
+	// StartedAt is when marotte put the run on the wire.
 	StartedAt time.Time `json:"started_at"`
 	// Deadline is the ONE instant this run is cancelled. Mutable: re-stamped on every start,
 	// cleared on every pause, rolled forward by progress. ZERO means marotte is not bounding it.
@@ -165,6 +165,7 @@ func (l *Lease) Bounded() bool { return !l.Deadline.IsZero() }
 
 // Row is one lease as the live-runs inventory shows it.
 type Row struct {
+	StartedAt  time.Time
 	WorkflowID string
 	ChatID     string
 	Executing  bool
@@ -172,7 +173,7 @@ type Row struct {
 
 // Row projects the lease onto its inventory row; every reader of the inventory projects through it.
 func (l *Lease) Row() Row {
-	return Row{WorkflowID: l.WorkflowID, ChatID: l.ChatID, Executing: l.Bounded()}
+	return Row{StartedAt: l.StartedAt, WorkflowID: l.WorkflowID, ChatID: l.ChatID, Executing: l.Bounded()}
 }
 
 // Bounds is the input set NextDeadline composes. A struct, so two same-typed durations

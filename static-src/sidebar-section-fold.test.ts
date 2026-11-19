@@ -1,7 +1,7 @@
 // Every sidebar section folds the one way: its list slides, never its section, at the same tween,
 // marked folded at the press, inert under a drag, instant under reduced motion, and a fold that
-// hides the focused row hands focus to the header. The sections are read off the markup, so a new
-// one is held to this without a case of its own.
+// hides the focused row hands focus to the header. The sections are read off the markup, the docked
+// Runs among them, so a new one is held to this without a case of its own.
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 
 import indexHtml from "../static/index.html?raw";
@@ -62,11 +62,16 @@ vi.mock("./api-client.js", async (importOriginal) => {
   return {
     ...(await importOriginal<typeof ApiClient>()),
     apiGetTyped: vi.fn((path: string) => tabs(path)),
+    // No run header: a run's row then draws with no state, which no case here asserts.
+    apiGetOrError: vi.fn(() =>
+      Promise.resolve({ ok: false, status: 404, data: null, error: "not found" }),
+    ),
     apiGet: vi.fn(() => Promise.resolve(null)),
   };
 });
 
 import { adoptRetention } from "./retention.js";
+import { applyLiveRunFrame } from "./run-store.js";
 import { LS_UI_STATE_KEY } from "./ls-keys.js";
 import { closeTab, openTab, setTabPinned, tabIdFor, _resetForTest } from "./tabs.js";
 import * as tabsModule from "./tabs.js";
@@ -92,12 +97,14 @@ const shell = document.createElement("div");
   document.body.appendChild(shell);
 }
 const { initHistorySection } = await import("./history-section.js");
+const { initRunsSection } = await import("./runs-section.js");
 
 let style: HTMLStyleElement;
 
 beforeAll(() => {
   style = mountAppCSS();
   initHistorySection();
+  initRunsSection();
 });
 
 afterAll(() => {
@@ -139,6 +146,9 @@ afterEach(async () => {
     );
   }
   tabServer.emitRecent([]);
+  for (const id of [...liveRuns]) {
+    liveRun(id, false);
+  }
   for (const s of tabServer.subjects()) {
     await closeTab(s.id);
   }
@@ -157,9 +167,29 @@ interface Section {
   readonly list: HTMLElement;
 }
 
+/** The runs a case made live, by workflow id. */
+const liveRuns = new Set<string>();
+let runsVersion = 0;
+
+/** One `live_run` frame: the run `id`, parentless, gains or loses its lease. */
+function liveRun(id: string, live: boolean): void {
+  runsVersion++;
+  applyLiveRunFrame(
+    { workflow_id: id, live, chat_id: "", executing: live, started_at: live ? runsVersion : 0 },
+    { kind: "runs", ref: "", version: String(runsVersion) },
+  );
+  if (live) {
+    liveRuns.add(id);
+  } else {
+    liveRuns.delete(id);
+  }
+}
+
 /** Every section the sidebar's markup ships, its header toggle and the list that toggle controls. */
 function sections(): Section[] {
-  return [...shell.querySelectorAll<HTMLElement>("#tab-sections > section")].map((section) => {
+  return [
+    ...shell.querySelectorAll<HTMLElement>(".sidebar-middle > section, #tab-sections > section"),
+  ].map((section) => {
     const toggle = section.querySelector<HTMLButtonElement>(
       ":scope > h2.side-section-h > button.side-section-toggle",
     );
@@ -187,7 +217,7 @@ async function paint(): Promise<void> {
 const chatID = (ref: string): string => tabIdFor("chat", ref);
 
 /** Every section shown with a row its fold hides: Pinned holds p and q, Open holds a and the
- *  active b, History two closed chats, and every section starts unfolded. */
+ *  active b, History two closed chats, Runs two live runs, and every section starts unfolded. */
 async function everySectionShown(): Promise<void> {
   for (const ref of ["p", "q", "a", "b"]) {
     await openTab({ kind: "chat", ref });
@@ -199,6 +229,8 @@ async function everySectionShown(): Promise<void> {
     { ref: "c-x", name: "Closed X", closed_at: Date.now() - 60_000 },
     { ref: "c-y", name: "Closed Y", closed_at: Date.now() - 120_000 },
   ]);
+  liveRun("wf_r1", true);
+  liveRun("wf_r2", true);
   await paint();
   stubReducedMotion();
   for (const s of sections()) {
@@ -235,14 +267,19 @@ const slideEnd = async (box: HTMLElement): Promise<void> => {
   });
 };
 
+/** The fold's slides on `box`: Runs' cap also transitions with a neighbour's fold, which is no slide. */
+const slidesOf = (box: HTMLElement): Animation[] =>
+  box.getAnimations().filter((a) => !(a instanceof CSSTransition));
+
 const blockSizes = (a: Animation | undefined): unknown[] =>
   ((a?.effect as KeyframeEffect | null)?.getKeyframes() ?? []).map((k) => k["blockSize"]);
 
-/** A row of `s` its fold hides: an inactive tab row, or a closed chat's reopen button. */
+/** A row of `s` its fold hides: an inactive tab row, a closed chat's reopen button or a run's link. */
 function hideableRow(s: Section): HTMLElement {
   const r =
     s.list.querySelector<HTMLElement>(":scope > [data-tab-id]:not(.active)") ??
-    s.list.querySelector<HTMLElement>(":scope > li > button.history-row");
+    s.list.querySelector<HTMLElement>(":scope > li > button.history-row") ??
+    s.list.querySelector<HTMLElement>(":scope > li > a.runs-row");
   if (r === null) {
     throw new Error(`no row in #${s.name} its fold hides`);
   }
@@ -281,9 +318,9 @@ async function selectElsewhere(s: Section): Promise<void> {
 }
 
 describe("every sidebar section's fold", () => {
-  it("covers the Open, Pinned and History sections", () => {
+  it("covers the Open, Pinned, History and Runs sections", () => {
     expect(sections().map((s) => s.name)).toEqual(
-      expect.arrayContaining(["open-section", "pinned-section", "history-section"]),
+      expect.arrayContaining(["open-section", "pinned-section", "history-section", "runs-section"]),
     );
   });
 
@@ -294,7 +331,7 @@ describe("every sidebar section's fold", () => {
       expect(s.toggle.getAttribute("aria-expanded"), s.name).toBe("false");
       expect(s.list.hasAttribute("data-folded"), `${s.name}: the list is marked folded`).toBe(true);
       expect(s.section.getAnimations(), `${s.name}: the section does not slide`).toHaveLength(0);
-      const [shut] = s.list.getAnimations();
+      const [shut] = slidesOf(s.list);
       expect(shut, `${s.name}: the list slides shut`).toBeDefined();
       expect(hideableRow(s).checkVisibility(), `${s.name}: mid-slide the rows stay`).toBe(true);
       await slideEnd(s.list);
@@ -307,7 +344,7 @@ describe("every sidebar section's fold", () => {
       expect(s.toggle.getAttribute("aria-expanded"), s.name).toBe("true");
       expect(s.list.hasAttribute("data-folded"), s.name).toBe(false);
       expect(s.section.getAnimations(), `${s.name}: the section does not slide`).toHaveLength(0);
-      expect(s.list.getAnimations(), `${s.name}: the list slides open`).not.toHaveLength(0);
+      expect(slidesOf(s.list), `${s.name}: the list slides open`).not.toHaveLength(0);
       expect(hideableRow(s).checkVisibility(), `${s.name}: an open shows its rows at once`).toBe(
         true,
       );
@@ -319,7 +356,7 @@ describe("every sidebar section's fold", () => {
     await everySectionShown();
     const timings = sections().map((s) => {
       s.toggle.click();
-      const t = s.list.getAnimations()[0]?.effect?.getTiming();
+      const t = slidesOf(s.list)[0]?.effect?.getTiming();
       return { name: s.name, duration: t?.duration, easing: t?.easing, fill: t?.fill };
     });
     const root = getComputedStyle(shell.querySelector<HTMLElement>("#tab-sections") ?? shell);
@@ -345,7 +382,7 @@ describe("every sidebar section's fold", () => {
       s.toggle.click();
       expect(s.list.hasAttribute("data-folded"), s.name).toBe(true);
       expect(hideableRow(s).checkVisibility(), `${s.name}: the rows hide at the press`).toBe(false);
-      expect([...s.section.getAnimations(), ...s.list.getAnimations()], s.name).toHaveLength(0);
+      expect([...s.section.getAnimations(), ...slidesOf(s.list)], s.name).toHaveLength(0);
       s.toggle.click();
       expect(s.list.hasAttribute("data-folded"), s.name).toBe(false);
       expect(hideableRow(s).checkVisibility(), s.name).toBe(true);
@@ -391,7 +428,7 @@ describe("every sidebar section's fold", () => {
         s.toggle.click();
         expect(s.toggle.getAttribute("aria-expanded"), s.name).toBe("true");
         expect(s.list.hasAttribute("data-folded"), s.name).toBe(false);
-        expect([...s.section.getAnimations(), ...s.list.getAnimations()], s.name).toHaveLength(0);
+        expect([...s.section.getAnimations(), ...slidesOf(s.list)], s.name).toHaveLength(0);
       }
       expect(localStorage.getItem(LS_UI_STATE_KEY), "no fold stored").toBe(stored);
     } finally {
@@ -404,11 +441,12 @@ describe("every sidebar section's fold", () => {
 
   it("keeps the selected row through a fold and closes the slide on it", async () => {
     await everySectionShown();
-    for (const s of sections()) {
+    // A run a tab shows leaves Runs, so Runs never holds the row you are on.
+    for (const s of sections().filter((x) => x.name !== "runs-section")) {
       const row = await selectIn(s);
       expect(row.classList.contains("active"), `${s.name}: the row is selected`).toBe(true);
       s.toggle.click();
-      const [shut] = s.list.getAnimations();
+      const [shut] = slidesOf(s.list);
       await slideEnd(s.list);
       expect(row.checkVisibility(), `${s.name}: the selected row stays`).toBe(true);
       expect(hideableRow(s).checkVisibility(), `${s.name}: the other rows hide`).toBe(false);

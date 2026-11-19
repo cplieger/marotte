@@ -32,6 +32,7 @@ import {
   clearSurface,
   mountSurface as mountCatalogue,
   plantHistorySection,
+  plantRunsSection,
   type Size,
   type Surface as CatalogueSurface,
 } from "./__test-helpers__/app-surfaces.js";
@@ -915,6 +916,7 @@ const CENSUS: readonly Family[] = [
   { name: "new chat", selector: "#new-chat", kind: "tab-row" },
   { name: "closed row", selector: "#history-list .history-row", kind: "tab-row" },
   { name: "history more", selector: "#history-more", kind: "tab-row" },
+  { name: "run row", selector: "#runs-list .runs-row", kind: "tab-row" },
   { name: "sidebar header", selector: ".sidebar-header-actions .icon-btn", kind: "toolbar" },
   { name: "account", selector: "#account-btn", kind: "toolbar" },
   { name: "log out", selector: "#logout-btn", kind: "toolbar" },
@@ -1054,7 +1056,7 @@ const CENSUS: readonly Family[] = [
   {
     name: "in a sentence",
     selector:
-      ".inline-file-link, .steer-note-run, .turn-wake-run, .turn-pill-link, .tool-file-link, .approval-policy-link, :is(p, li, td, dd, blockquote, .msg-body, .message) a[href]:not(.btn-small, .git-pr-row-title)",
+      ".inline-file-link, .steer-note-run, .turn-wake-run, .turn-pill-link, .tool-file-link, .approval-policy-link, :is(p, li, td, dd, blockquote, .msg-body, .message) a[href]:not(.btn-small, .git-pr-row-title, .runs-row)",
     kind: "inline",
     documented:
       "61-mcp-tools.css: links and inline controls in prose carry no expander (WCAG 2.5.8)",
@@ -1307,6 +1309,7 @@ const SIDEBAR_COVERS = [
   "#history-list .history-row",
   ".history-row-delete",
   "#history-more",
+  "#runs-list .runs-row",
   "#theme-btn",
   "#account-btn",
   "#logout-btn",
@@ -1314,8 +1317,8 @@ const SIDEBAR_COVERS = [
 ];
 
 /** The sidebar with its drawer open (a phone's closed drawer is off screen) and one chat tab in the
- *  child order `tabs.ts` builds, the row New chat, a closed row and More are held to, and the
- *  History section unfolded with that closed row. */
+ *  child order `tabs.ts` builds, the row New chat, a closed row, More and a run row are held to,
+ *  with History unfolded on that closed row and Runs on that run. */
 async function mountSidebar(
   viewport: readonly [number, number],
   pointer: Pointer,
@@ -1342,6 +1345,7 @@ async function mountSidebar(
   tab.append(name, close);
   byId("tab-list").replaceChildren(tab);
   plantHistorySection();
+  plantRunsSection();
   // `pointer-mode.ts` shows the Touch mode toggle on a touch-capable device; `settings.ts` writes the address.
   byId("pointer-mode-btn").classList.remove("hidden");
   byId("user-email").textContent = "reader@example.com";

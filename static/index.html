@@ -86,58 +86,72 @@
           New chat
         </button>
       </div>
-      <div id="tab-sections" class="tab-sections">
-        <section id="open-section" class="side-section" aria-labelledby="open-section-name">
-          <h2 class="side-section-h" hidden>
-            <button type="button" class="side-section-toggle" aria-expanded="true" aria-controls="tab-list" aria-labelledby="open-section-name" aria-describedby="open-section-desc">
-              <span class="disclosure-chevron side-section-chevron" aria-hidden="true"><svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
-              <span class="side-section-name" id="open-section-name">Open</span>
-              <span class="side-section-dot tab-status-dot" aria-hidden="true"></span>
-              <span class="side-section-count" aria-hidden="true"></span>
-              <span class="sr-only" id="open-section-desc"></span>
-            </button>
-          </h2>
-          <!-- The strip's pending state, authored so it paints before any script has
-               run. boot.ts removes it when the tab set has been adopted (or provably
-               cannot be), and tabs.ts leaves it alone: renderDOM reconciles children
-               by data-tab-id and this row set carries none. -->
-          <div id="tab-list" class="side-section-list" role="tablist" aria-label="Open tabs" aria-orientation="vertical">
-            <div id="tab-strip-skeleton" aria-hidden="true">
-              <div class="skeleton skeleton-tab-row"></div>
-              <div class="skeleton skeleton-tab-row"></div>
-              <div class="skeleton skeleton-tab-row"></div>
-            </div>
-          </div>
-        </section>
-        <section id="pinned-section" class="side-section" aria-labelledby="pinned-section-name" hidden>
-          <h2 class="side-section-h">
-            <button type="button" class="side-section-toggle" aria-expanded="true" aria-controls="pinned-list" aria-labelledby="pinned-section-name" aria-describedby="pinned-section-desc">
-              <span class="disclosure-chevron side-section-chevron" aria-hidden="true"><svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
-              <span class="side-section-name" id="pinned-section-name">Pinned</span>
-              <span class="side-section-dot tab-status-dot" aria-hidden="true"></span>
-              <span class="side-section-count" aria-hidden="true"></span>
-              <span class="sr-only" id="pinned-section-desc"></span>
-            </button>
-          </h2>
-          <div id="pinned-list" class="side-section-list" role="tablist" aria-label="Pinned" aria-orientation="vertical"></div>
-        </section>
-        <section id="history-section" class="side-section" aria-labelledby="history-section-name" hidden>
-          <h2 class="side-section-h">
-            <button type="button" class="side-section-toggle" aria-expanded="false" aria-controls="history-list" aria-labelledby="history-section-name" aria-describedby="history-section-desc">
-              <span class="disclosure-chevron side-section-chevron" aria-hidden="true"><svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
-              <span class="side-section-name" id="history-section-name">History</span>
-              <span class="side-section-count" aria-hidden="true"></span>
-              <span class="sr-only" id="history-section-desc"></span>
-            </button>
-          </h2>
-          <ul id="history-list" class="history-list">
-            <li>
-              <button type="button" id="history-more" class="history-more" aria-label="More history">
-                <svg class="ic-ui" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-                More
+      <div class="sidebar-middle">
+        <div id="tab-sections" class="tab-sections">
+          <section id="open-section" class="side-section" aria-labelledby="open-section-name">
+            <h2 class="side-section-h" hidden>
+              <button type="button" class="side-section-toggle" aria-expanded="true" aria-controls="tab-list" aria-labelledby="open-section-name" aria-describedby="open-section-desc">
+                <span class="disclosure-chevron side-section-chevron" aria-hidden="true"><svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+                <span class="side-section-name" id="open-section-name">Open</span>
+                <span class="side-section-dot tab-status-dot" aria-hidden="true"></span>
+                <span class="side-section-count" aria-hidden="true"></span>
+                <span class="sr-only" id="open-section-desc"></span>
               </button>
-            </li>
-          </ul>
+            </h2>
+            <!-- The strip's pending state, authored so it paints before any script has
+                 run. boot.ts removes it when the tab set has been adopted (or provably
+                 cannot be), and tabs.ts leaves it alone: renderDOM reconciles children
+                 by data-tab-id and this row set carries none. -->
+            <div id="tab-list" class="side-section-list" role="tablist" aria-label="Open tabs" aria-orientation="vertical">
+              <div id="tab-strip-skeleton" aria-hidden="true">
+                <div class="skeleton skeleton-tab-row"></div>
+                <div class="skeleton skeleton-tab-row"></div>
+                <div class="skeleton skeleton-tab-row"></div>
+              </div>
+            </div>
+          </section>
+          <section id="pinned-section" class="side-section" aria-labelledby="pinned-section-name" hidden>
+            <h2 class="side-section-h">
+              <button type="button" class="side-section-toggle" aria-expanded="true" aria-controls="pinned-list" aria-labelledby="pinned-section-name" aria-describedby="pinned-section-desc">
+                <span class="disclosure-chevron side-section-chevron" aria-hidden="true"><svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+                <span class="side-section-name" id="pinned-section-name">Pinned</span>
+                <span class="side-section-dot tab-status-dot" aria-hidden="true"></span>
+                <span class="side-section-count" aria-hidden="true"></span>
+                <span class="sr-only" id="pinned-section-desc"></span>
+              </button>
+            </h2>
+            <div id="pinned-list" class="side-section-list" role="tablist" aria-label="Pinned" aria-orientation="vertical"></div>
+          </section>
+          <section id="history-section" class="side-section" aria-labelledby="history-section-name" hidden>
+            <h2 class="side-section-h">
+              <button type="button" class="side-section-toggle" aria-expanded="false" aria-controls="history-list" aria-labelledby="history-section-name" aria-describedby="history-section-desc">
+                <span class="disclosure-chevron side-section-chevron" aria-hidden="true"><svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+                <span class="side-section-name" id="history-section-name">History</span>
+                <span class="side-section-count" aria-hidden="true"></span>
+                <span class="sr-only" id="history-section-desc"></span>
+              </button>
+            </h2>
+            <ul id="history-list" class="history-list">
+              <li>
+                <button type="button" id="history-more" class="history-more" aria-label="More history">
+                  <svg class="ic-ui" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                  More
+                </button>
+              </li>
+            </ul>
+          </section>
+        </div>
+        <section id="runs-section" class="side-section runs-section" aria-labelledby="runs-section-name" hidden>
+          <h2 class="side-section-h">
+            <button type="button" class="side-section-toggle" aria-expanded="true" aria-controls="runs-list" aria-labelledby="runs-section-name" aria-describedby="runs-section-desc">
+              <span class="disclosure-chevron side-section-chevron" aria-hidden="true"><svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+              <span class="side-section-name" id="runs-section-name">Runs</span>
+              <span class="side-section-dot tab-status-dot" aria-hidden="true"></span>
+              <span class="side-section-count" aria-hidden="true"></span>
+              <span class="sr-only" id="runs-section-desc"></span>
+            </button>
+          </h2>
+          <ul id="runs-list" class="runs-list" aria-labelledby="runs-section-name"></ul>
         </section>
       </div>
       <div class="sidebar-footer">
@@ -1804,7 +1818,7 @@
         </div>
       </div>
       <div id="run-view" class="hidden" data-tab-view>
-        <div class="page-content">
+        <div class="page-content" tabindex="-1">
           <!-- Deliberately NOT a .list-container. That class is a hairline row
                rack: it paints a border-coloured BACKGROUND so its 1px gaps read
                as row separators, and carries no padding because every child is a
