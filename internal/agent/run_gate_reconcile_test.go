@@ -876,6 +876,7 @@ func TestSignInGate_TheClosingPauseLandsAfterAnInFlightResume(t *testing.T) {
 // A sign-in that commits while the closing sweep's pause is sent but not yet taken finds the run still running, so
 // no opening edge resumes it then: the pause, once taken with the gate open, is resumed.
 func TestSignInGate_APauseTakenAfterTheGateOpenedIsResumed(t *testing.T) {
+	t.Parallel()
 	g := newGateRun(t, filemodetest.NewDisk(), fastGateRetries())
 	g.signIn(t)
 	g.awaitEdgeFinder(t)

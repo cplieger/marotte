@@ -135,6 +135,7 @@ func observeWritingState(t *testing.T, h *Runtime, dir string) {
 // Nothing loads a pass's session again, so a closed pass leaves no state on disk: left there, it is a session no
 // chat names, which the orphan sweep refuses to judge on an install that has no chat yet.
 func TestObserverPass_RemovesItsSessionStateOnceClosed(t *testing.T) {
+	t.Parallel()
 	sessionsDir := t.TempDir()
 	h, o := passFixture(t, sessionsDir, "sess_pass1")
 	dir := filepath.Join(sessionsDir, "hash01", "sess_pass1")
@@ -151,6 +152,7 @@ func TestObserverPass_RemovesItsSessionStateOnceClosed(t *testing.T) {
 
 // A pass whose session neither closes nor deletes is still live in KAS, so its state stays.
 func TestObserverPass_KeepsTheStateOfASessionItCouldNotEnd(t *testing.T) {
+	t.Parallel()
 	sessionsDir := t.TempDir()
 	h, o := passFixture(t, sessionsDir, "sess_pass2")
 	o.mu.Lock()

@@ -58,6 +58,7 @@ func leaseDepthOf(t *testing.T, h *Runtime, workflowID string) int {
 }
 
 func TestLeaseDepth_ARunTakesItsLaunchingTurnsDepth(t *testing.T) {
+	t.Parallel()
 	h, _ := depthHub(t)
 	openRuleTurn(t, h, 2)
 	startDepthRun(t, h, "wf_live")
@@ -68,6 +69,7 @@ func TestLeaseDepth_ARunTakesItsLaunchingTurnsDepth(t *testing.T) {
 
 // KAS sends run_start after the launching turn may have closed.
 func TestLeaseDepth_ARunStartAfterTheTurnClosedTakesTheClosedTurnsDepth(t *testing.T) {
+	t.Parallel()
 	h, _ := depthHub(t)
 	closeDepthTurn(t, h, openRuleTurn(t, h, 1))
 	startDepthRun(t, h, "wf_late")
@@ -78,6 +80,7 @@ func TestLeaseDepth_ARunStartAfterTheTurnClosedTakesTheClosedTurnsDepth(t *testi
 
 // A restart keeps no closed turn's depth, and neither does a new life of the chat's session.
 func TestLeaseDepth_ARunStartInANewSessionIsDepthZero(t *testing.T) {
+	t.Parallel()
 	h, _ := depthHub(t)
 	closeDepthTurn(t, h, openRuleTurn(t, h, 1))
 	h.coord.turns.endLife("c1")
@@ -88,6 +91,7 @@ func TestLeaseDepth_ARunStartInANewSessionIsDepthZero(t *testing.T) {
 }
 
 func TestLeaseDepth_AUsersTurnLaunchesAtDepthZero(t *testing.T) {
+	t.Parallel()
 	h, _ := depthHub(t)
 	id, _ := h.stagePromptTurn(t, "c1")
 	h.translateACPEvent("c1", h.originOf("c1"), newPromptTurnStartMsg(id))
@@ -98,6 +102,7 @@ func TestLeaseDepth_AUsersTurnLaunchesAtDepthZero(t *testing.T) {
 }
 
 func TestLeaseDepth_NoEngineGrantsDepthZero(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")
@@ -111,6 +116,7 @@ func TestLeaseDepth_NoEngineGrantsDepthZero(t *testing.T) {
 
 // The run's end keeps its lease depth for the wake KAS owes the chat, so the wake turn is one deeper.
 func TestWakeDepth_TheWakeTurnAfterAnAutomaticRunIsOneDeeper(t *testing.T) {
+	t.Parallel()
 	h, eng := depthHub(t)
 	closeDepthTurn(t, h, openRuleTurn(t, h, 1))
 	startDepthRun(t, h, "wf_auto")
@@ -125,6 +131,7 @@ func TestWakeDepth_TheWakeTurnAfterAnAutomaticRunIsOneDeeper(t *testing.T) {
 }
 
 func TestWakeDepth_TheWakeTurnAfterAUsersRunIsDepthZero(t *testing.T) {
+	t.Parallel()
 	h, eng := depthHub(t)
 	id, _ := h.stagePromptTurn(t, "c1")
 	h.translateACPEvent("c1", h.originOf("c1"), newPromptTurnStartMsg(id))
@@ -143,6 +150,7 @@ func TestWakeDepth_TheWakeTurnAfterAUsersRunIsDepthZero(t *testing.T) {
 // A run that ends after its parent's session ended owes that life no wake, so a person's run in the reopened chat
 // wakes a turn at depth 0, not one deeper than the old automatic run.
 func TestWakeDepth_ARunEndingAfterItsParentsSessionEndedDeepensNoLaterWake(t *testing.T) {
+	t.Parallel()
 	h, eng := depthHub(t)
 	closeDepthTurn(t, h, openRuleTurn(t, h, 1))
 	startDepthRun(t, h, "wf_auto")
@@ -194,6 +202,7 @@ func (e *endingTaps) RunEnded(parent marotte.ChatID, workflowID string, depth in
 }
 
 func TestWakeDepth_ASessionEndingAsTheRunEndsDeepensNoLaterWake(t *testing.T) {
+	t.Parallel()
 	h, eng := depthHub(t)
 	taps := &endingTaps{Engine: eng, end: func() { h.coord.turns.endLife("c1") }, ended: make(chan struct{})}
 	h.coord.turns.rules = taps
@@ -235,6 +244,7 @@ func retryDepthRun(t *testing.T, h *Runtime, keepLease bool) {
 
 // A person's Retry is a person's launch: its run's wake turn is depth 0 whether the old lease was released or held.
 func TestLeaseDepth_APersonsRetryIsDepthZero(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		held bool

@@ -1013,6 +1013,7 @@ func TestSteerRecords_DiscardLeavesARowReadBeforeTheClearRead(t *testing.T) {
 // The teardown marks the record gone before its cancel: the turn end that cancel
 // causes owes no job, and the rows nothing read come back for the close's notes.
 func TestSteerRecords_ATornDownChatOwesNothing(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s := newSteerHarness(t)
 		t.Cleanup(func() { shutdownHub(t, s.h) })
