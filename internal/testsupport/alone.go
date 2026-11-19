@@ -89,7 +89,21 @@ func childRun(name, run string) string {
 func splitRun(s string) [][]string {
 	var alts [][]string
 	var elems []string
-	brackets, parens, start := 0, 0, 0
+	start := 0
+	for _, i := range topSeparators(s) {
+		elems = append(elems, s[start:i])
+		start = i + 1
+		if s[i] == '|' {
+			alts, elems = append(alts, elems), nil
+		}
+	}
+	return append(alts, append(elems, s[start:]))
+}
+
+// topSeparators is the index of every '/' and '|' in s outside brackets and parentheses.
+func topSeparators(s string) []int {
+	var at []int
+	brackets, parens := 0, 0
 	for i := 0; i < len(s); i++ {
 		switch s[i] {
 		case '[':
@@ -108,13 +122,9 @@ func splitRun(s string) [][]string {
 			i++
 		case '/', '|':
 			if brackets == 0 && parens == 0 {
-				elems = append(elems, s[start:i])
-				start = i + 1
-				if s[i] == '|' {
-					alts, elems = append(alts, elems), nil
-				}
+				at = append(at, i)
 			}
 		}
 	}
-	return append(alts, append(elems, s[start:]))
+	return at
 }
