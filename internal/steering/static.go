@@ -125,9 +125,10 @@ func writeShellHint(b *strings.Builder, toolsDir string, onPath bool) {
 		b.WriteString(loginPathEnv + "`, which does not hold this server's PATH (the entrypoint sets it, so the server ")
 		b.WriteString("started without it). There a user runs an installed tool by its absolute ")
 	default:
-		b.WriteString("- Every login shell, the browser Shell panel's `bash --login` included, sources ")
-		b.WriteString("`/etc/profile.d/10-marotte-path.sh`, which restores this start's PATH, so an ")
-		b.WriteString("installed tool resolves by bare name there too; any shell also finds it by its absolute ")
+		b.WriteString("- Every login shell this server starts, the browser Shell panel's `bash --login` and agent shells ")
+		b.WriteString("included, sources `/etc/profile.d/10-marotte-path.sh`, which restores this start's PATH, so an ")
+		b.WriteString("installed tool resolves by bare name there too; a login shell started outside it (`docker exec`) ")
+		b.WriteString("gets the image's PATH instead. Any shell also finds an installed tool by its absolute ")
 	}
 	b.WriteString("path (`" + toolsDir + "/bin/<tool>`)")
 }

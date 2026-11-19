@@ -42,7 +42,9 @@ func TestWriteRuntime_PrintsTheLiveEnv(t *testing.T) {
 		"`/t/bin` is the tools engine's single bin dir",
 		"`/t/bin/<tool>`",
 		"Pin `HOME=/h` on any command",
-		"sources `/etc/profile.d/10-marotte-path.sh`, which restores this start's PATH, so an installed tool resolves by bare name there too",
+		"Every login shell this server starts, the browser Shell panel's `bash --login` and agent shells included, " +
+			"sources `/etc/profile.d/10-marotte-path.sh`, which restores this start's PATH, so an installed tool resolves by bare name there too",
+		"a login shell started outside it (`docker exec`) gets the image's PATH instead",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("writeRuntime output missing %q:\n%s", want, out)

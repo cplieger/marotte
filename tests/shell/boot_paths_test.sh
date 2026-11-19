@@ -4,8 +4,7 @@
 #   SC2015 - `[ cond ] && ok || no` cannot mis-fire: lib.sh's ok/no always return 0.
 #   SC2016 - the grep patterns and the stub's script match literal "$VAR" text.
 #   SC2034 - CONFIG_DIR and TOOLS are set for the extracted code to read or overwrite.
-#   SC1090 - the sourced path is produced by extract_range at runtime.
-#   SC2329 - the load_boot_paths/sleep stubs are called only by that runtime-sourced code.
+#   SC1090, SC2329 - extract_range makes the sourced path at runtime; only it calls the stubs.
 #   SC2030, SC2031 - each $(...) case sets MAROTTE_LOGIN_PATH for its own subshell only.
 # shellcheck disable=SC2015,SC2016,SC2034,SC1090,SC2329,SC2030,SC2031
 set -u

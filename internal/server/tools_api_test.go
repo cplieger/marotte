@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -15,7 +14,6 @@ import (
 
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/toolbelt/v3"
-	"golang.org/x/sys/unix"
 )
 
 type switchableTools struct {
@@ -129,23 +127,18 @@ func TestToolsAPI_AnErrorBodyServedThroughTheMiddlewareStackCarriesTheRequestID(
 	}
 }
 
-// aptRefusalHere is the reason toolbelt's docs give an apt install on this host: not root, or a
-// root filesystem dpkg cannot write. It skips where apt can install, or where there is no apt-get.
+// aptRefusalHere is the reason toolbelt gives an apt install on this host. It skips where apt can
+// install, or where there is no apt-get.
 func aptRefusalHere(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("apt-get"); err != nil {
 		t.Skip("no apt-get here, so this is not a Debian-derived host")
 	}
-	if os.Geteuid() != 0 {
-		return "apt packages need the container to run as root"
+	reason := toolbelt.AptUnavailableReason()
+	if reason == "" {
+		t.Skip("root on a writable root filesystem, where apt can install")
 	}
-	for _, dir := range []string{"/usr", "/var/lib/dpkg"} {
-		if unix.Access(dir, unix.W_OK) != nil {
-			return "apt packages need a writable root filesystem"
-		}
-	}
-	t.Skip("root on a writable root filesystem, where apt can install")
-	return ""
+	return reason
 }
 
 func TestToolsAPI_AnAptRowWhereAptCannotInstallSaysWhy(t *testing.T) {
@@ -164,8 +157,7 @@ func TestToolsAPI_AnAptRowWhereAptCannotInstallSaysWhy(t *testing.T) {
 		api.ServeHTTP(rec, req)
 		return rec
 	}
-	// A recorded version, as a row an earlier install left in tools.json carries, so the enable
-	// goes straight to the install rather than to resolving a latest version.
+	// A recorded version: toolbelt v3.16.0-dev.7 records no last_error when a versionless row's resolve fails.
 	if rec := send(http.MethodPost, toolsAPIPrefix, `{"name":"sl","source":"apt:sl","version":"5.02-1","disabled":true}`); rec.Code != http.StatusAccepted {
 		t.Fatalf("Setup: POST the apt:sl template = %d %s, want 202", rec.Code, rec.Body.String())
 	}
