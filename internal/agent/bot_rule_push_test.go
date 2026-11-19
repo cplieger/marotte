@@ -73,8 +73,8 @@ func TestPushTurnOutcome_PicksTheKindFromTheTurnsAutomaticMark(t *testing.T) {
 	}
 }
 
-// Nobody watches a Bot's automatic turn, and a launched run's own push says nothing about the Bot's turn failing, so
-// in a Bot the live-run withhold covers clean turns only.
+// A launched run's own push says nothing about a Bot's turn failing, so in a Bot the live-run withhold covers clean
+// turns only.
 func TestPushTurnOutcome_ABotsLiveRunWithholdsOnlyItsCleanTurns(t *testing.T) {
 	for name, tc := range map[string]struct {
 		caller    *marotte.Caller

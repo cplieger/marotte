@@ -560,8 +560,7 @@ func (bc *bridgeCoordinator) pushTurnOutcome(
 	defer bc.releaseFinish(ctx, chatID)
 	severity := marotte.SeverityOf(c.Outcome)
 	// The turn ended but a run it launched is still on the wire (`run_workflow` returns at creation); the run's
-	// own `run_outcome` push covers it. Not a Bot's broken turn: the run's push says nothing about it, and nobody
-	// watches an automatic turn.
+	// own `run_outcome` push covers it. Not a Bot's broken turn: the run's push says nothing about the turn failing.
 	if bc.chatHasLiveRun != nil && bc.chatHasLiveRun(chatID) &&
 		(severity != marotte.TurnSeverityBroken || !bc.isBot(ctx, chatID)) {
 		slog.Debug("withholding the turn notification: a run this chat launched is still live",
