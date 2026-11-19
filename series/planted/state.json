@@ -1,8 +1,8 @@
 {
  "last": {
-  "commit": "66756cb467c2799b999731d4cd56694339083f37",
-  "date": "2026-11-19T15:31:27Z",
-  "run_url": "https://github.com/cplieger/marotte/actions/runs/44555706527",
+  "commit": "d847cc49d9b8f70bfd31b439d9ed572a22a5327f",
+  "date": "2026-11-19T15:44:26Z",
+  "run_url": "https://github.com/cplieger/marotte/actions/runs/44558163572",
   "runner": "ubuntu-26.04"
  },
  "scenarios": {
@@ -43,7 +43,7 @@
    },
    "opened": "2026-11-19T15:11:12Z",
    "runner": "ubuntu-26.04",
-   "status": "open"
+   "status": "recovering"
   }
  },
  "schema": 1,
