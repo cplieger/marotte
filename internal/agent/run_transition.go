@@ -503,7 +503,7 @@ func (rs *Runs) holdPause(ctx context.Context, workflowID string) error {
 	// An opening edge while the pause was in flight listed the run as running, so its finder skipped it.
 	if open, moved := rs.gate.now(); open {
 		rs.applyGateMove(moved)
-		rs.findHoldsAsync(workflowID)
+		rs.startRelease(workflowID, "", moved.opening)
 	}
 	return nil
 }
