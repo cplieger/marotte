@@ -599,6 +599,7 @@ describe("frames", () => {
     await until(() => acks().length === 1, "the first heartbeat ack");
     expect(seen).toEqual([]);
     markHydrated();
+    await until(() => seen.length === 2, "the held frames to apply");
     expect(seen.map((e) => e.type)).toEqual(["connected", "permission_needed"]);
   });
 

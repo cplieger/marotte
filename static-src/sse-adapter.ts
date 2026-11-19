@@ -20,6 +20,7 @@ import {
 
 import { registerCleanup } from "./actions/index.js";
 import { BUS_PAGE_RESUMED, BUS_RECONCILE, decodeEnvelope, emitBus } from "./bus.js";
+import { _resetFramesForTest, flushFrames, queueFrame } from "./frame-dispatch.js";
 import { inventoryHeld } from "./git-prs-state.js";
 import { mcpState } from "./mcp-state.js";
 import { isMirrorKind } from "./mirror.js";
@@ -41,7 +42,8 @@ import { observeStamp, setObserveSink, versionMap } from "./subject-versions.js"
 import { listTabs } from "./tabs-sync.js";
 import type { ConnectionStatus, ServerEvent, SubjectStamp } from "./types.js";
 
-type MsgHandler = (evt: ServerEvent) => void;
+/** Applies one event; answers true when a handler threw, so its stamp stays unobserved. */
+type MsgHandler = (evt: ServerEvent) => boolean | undefined;
 type StatusHandler = (s: ConnectionStatus) => void;
 
 /** The digest's own budget, matching the server's `RouteTimeout` on `POST /api/sync`. */
@@ -84,6 +86,11 @@ let hydrated = false;
 let pending: ServerEvent[] = [];
 /** Watchdog that opens the gate if hydration never reports in. */
 let hydrateTimer: ReturnType<typeof setTimeout> | null = null;
+/** Refusals whose repair, a fresh hello, was asked for, keyed by subject and chat (`refusalKey`).
+ *  A refusal of a key already here keeps what applied until a frame of that key applies, so a
+ *  handler that throws for one chat on every live frame or every hello cannot reconnect the
+ *  stream in a loop. */
+const helloAsked = new Set<string>();
 
 const digest = createDigestClient({ url: "/api/sync", timeoutMs: DIGEST_TIMEOUT_MS });
 
@@ -159,11 +166,13 @@ export function markHydrated(): void {
   const held = pending;
   pending = [];
   for (const evt of held) {
-    deliver(evt);
+    queueFrame(() => {
+      deliver(evt);
+    });
   }
 }
 
-/** The library's `onFrame`: decode, then apply now or hold. A throw here rejects the frame — the
+/** The library's `onFrame`: decode, then queue or hold. A throw here rejects the frame — the
  *  library advances the cursor past it and schedules `revalidate("hello")`, whose digest names
  *  whatever the dropped frame would have moved, because its stamp was never observed. */
 function applyFrame(frame: Frame): void {
@@ -184,11 +193,14 @@ function applyFrame(frame: Frame): void {
     }
     return;
   }
-  deliver(evt);
+  queueFrame(() => {
+    deliver(evt);
+  });
 }
 
 /** Dispatch one envelope to the bus and THEN observe its stamp: a version is recorded after the
- *  state it certifies is applied, never before. */
+ *  state it certifies is applied, never before. A handler that threw leaves the stamp unobserved
+ *  and re-reads the subject, as a refused frame does. */
 function deliver(evt: ServerEvent): void {
   if (evt.type === "subject_changed") {
     // The refused frame's projection moved and nothing carried it; the action is the refetch and
@@ -198,7 +210,7 @@ function deliver(evt: ServerEvent): void {
       // is the one signal that they may have been refused with it.
       rereadHeldRuns();
     }
-    void runStampAction(evt.subject);
+    repair(evt.subject, evt.chat_id);
     return;
   }
   const run = runContentOf(evt);
@@ -206,10 +218,56 @@ function deliver(evt: ServerEvent): void {
     // Its stamp is not observed either: nothing here holds what it would certify.
     return;
   }
-  onMsg(evt);
-  if (evt.subject !== undefined && projectionHeld(evt.subject)) {
-    observeStamp(evt.subject);
+  const threw = onMsg(evt) === true;
+  const subject = evt.subject;
+  if (subject === undefined) {
+    return;
   }
+  if (threw) {
+    // A mirror's projection is held whenever it has applied a frame; any other projection only
+    // while this client holds what the stamp certifies, else there is nothing to repair.
+    if (isMirrorKind(subject.kind) || projectionHeld(subject)) {
+      repair(subject, evt.chat_id);
+    }
+    return;
+  }
+  helloAsked.delete(refusalKey(subject, evt.chat_id));
+  if (projectionHeld(subject)) {
+    observeStamp(subject);
+  }
+}
+
+/** What threw, not which frame: every live `chat_status` frame carries a new `status` version
+ *  with an empty ref, so a key without the chat would let each one reset the stream. */
+function refusalKey(stamp: SubjectStamp, chatID: string | undefined): string {
+  return `${stamp.kind}\0${stamp.ref}\0${chatID ?? ""}`;
+}
+
+/** A refused frame's path: run the subject's action and, when that action is a fresh hello,
+ *  reconnect for it, once per `refusalKey` until a frame of that key applies. */
+function repair(subject: SubjectStamp | undefined, chatID: string | undefined): void {
+  if (subject === undefined) {
+    return;
+  }
+  runStampAction(subject).then(
+    (hello) => {
+      if (!hello) {
+        return;
+      }
+      const key = refusalKey(subject, chatID);
+      if (helloAsked.has(key)) {
+        console.warn(
+          `sse: ${subject.kind} refused while its fresh hello is asked or already ran, keeping what applied`,
+        );
+        return;
+      }
+      helloAsked.add(key);
+      attachment?.reconnect({ resetCursor: true });
+    },
+    (e: unknown) => {
+      console.warn(`sse: re-reading ${subject.kind} failed:`, e);
+    },
+  );
 }
 
 /** Whether this client holds the projection a stamp certifies. A mirror observes its own
@@ -327,14 +385,11 @@ function salvageUndecodable(data: string, err: unknown): void {
   console.warn(`sse: ${type} did not decode (${why}), turn ${turnID} named no chat and no run`);
 }
 
-/** The refetch a moved subject earns, as a promise the revalidation
- *  awaits. `pending` and `status` reach the client only through the connect hook, so their
- *  action is a fresh hello — the caller runs that LAST, after every other refetch has settled,
- *  which is why this returns `false` for them instead of reconnecting itself. */
-function runStampAction(stamp: SubjectStamp | undefined, signal?: AbortSignal): Promise<boolean> {
-  if (stamp === undefined) {
-    return Promise.resolve(false);
-  }
+/** The refetch a moved subject earns, as a promise the revalidation awaits. `pending` and
+ *  `status` have no read of their own: only the connect hook sends their whole set, so their
+ *  action is a fresh hello. They resolve `true` and the caller runs that hello LAST, after every
+ *  other refetch has settled, instead of this reconnecting itself. */
+function runStampAction(stamp: SubjectStamp, signal?: AbortSignal): Promise<boolean> {
   switch (stamp.kind) {
     case "chats":
       return loadList(signal).then(() => false);
@@ -444,6 +499,8 @@ function helloIfMoved(ctx: RevalidateContext, moved: boolean): void {
 
 /** The per-tab stream's `revalidate`: this tab owns the connection and the map it digests. */
 async function revalidate(ctx: RevalidateContext): Promise<void> {
+  // The digest then presents every stamp a frame that has arrived carries.
+  flushFrames();
   // Before the wake, so the run tab's wake refresh finds this read out (`readRunUnlessOut`).
   rereadHeldRuns();
   if (isWake(ctx.cause)) {
@@ -481,6 +538,7 @@ async function revalidate(ctx: RevalidateContext): Promise<void> {
  *  epoch that dropped what this tab held makes the run full. The run's cause is the PROFILE's,
  *  so the wake refresh runs only in a visible tab. */
 async function tabRevalidate(ctx: TabRevalidateContext): Promise<void> {
+  flushFrames();
   rereadHeldRuns();
   const versions = versionMap();
   const dropped = ctx.epoch === null ? 0 : versions.bind(ctx.epoch);
@@ -546,6 +604,7 @@ export function init(msg: MsgHandler, status: StatusHandler): void {
     status(s);
   };
   holdUntilHydrated();
+  helloAsked.clear();
   presented = persistedTag();
   storageListener?.abort();
   storageListener = new AbortController();
@@ -652,6 +711,8 @@ export function _resetForTest(): void {
   };
   hydrated = false;
   pending = [];
+  helloAsked.clear();
+  _resetFramesForTest();
   presented = "";
 }
 

@@ -227,8 +227,16 @@ onSSE("pending_snapshot", (_chatID, p) => {
   dropRunDecisions();
   dropAllRunAsks();
   forgetAllStepSteers();
+  // Thrown after every item ran, so the outer dispatch answers it and the set's stamp stays
+  // unobserved: the inner dispatch caught the item's own throw.
+  let threw = 0;
   for (const evt of items) {
-    dispatch(evt);
+    if (dispatch(evt)) {
+      threw++;
+    }
+  }
+  if (threw > 0) {
+    throw new Error(`pending_snapshot: ${String(threw)} item handler(s) threw`);
   }
 });
 

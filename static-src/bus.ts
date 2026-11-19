@@ -220,22 +220,25 @@ export function onSSE<K extends keyof SSEPayloads>(type: K, fn: SSEHandler<K>): 
   return addHandler(sseHandlers, type, fn as AnyHandler);
 }
 
-/** Route an incoming SSE event to all onSSE handlers registered for its
- *  type. Called by transport.ts when an event arrives. */
-export function dispatch(evt: ServerEvent): void {
+/** Route an incoming SSE event to every onSSE handler registered for its type. Every handler
+ *  runs, past one that throws; the answer is whether one threw. */
+export function dispatch(evt: ServerEvent): boolean {
   const slot = sseHandlers.get(evt.type);
   if (slot === undefined) {
-    return;
+    return false;
   }
   const fns = getSnapshot(slot);
   const chatID = evt.chat_id ?? "";
+  let threw = false;
   for (const fn of fns) {
     try {
       fn(chatID, evt.payload, evt.subject);
     } catch (e) {
+      threw = true;
       console.error(`[bus] SSE handler error for "${evt.type}":`, e);
     }
   }
+  return threw;
 }
 
 // --- Generic cross-module bus ---

@@ -4,6 +4,7 @@
 
 import type { TabKind } from "./types.js";
 import { BUS_COMMAND_FAILED, emitBus } from "./bus.js";
+import { flushFrames } from "./frame-dispatch.js";
 import { get } from "./store.js";
 import {
   registerCleanup,
@@ -208,6 +209,8 @@ function cancelInflight(): void {
 registerCleanup(cancelInflight);
 
 export async function send(cmd: TypedCommand | Command, opts?: SendOptions): Promise<SendResult> {
+  // The command is decided from every frame that has arrived.
+  flushFrames();
   // The framework threads the action's key through every retry, so a retry dedupes; a bare send()
   // gets a fresh one.
   const requestID = idempotencyKeyOf(cmd) ?? newRequestID();
@@ -241,6 +244,8 @@ export async function send(cmd: TypedCommand | Command, opts?: SendOptions): Pro
         payload: "payload" in cmd && cmd.payload != null ? cmd.payload : {},
       }),
     });
+    // Its answer applies after every frame that arrived before it.
+    flushFrames();
     if (r.ok) {
       // A command whose body is not JSON is still a success — the status is what
       // says so, and only the creating commands read a body at all. Parsed here
@@ -284,6 +289,7 @@ export async function send(cmd: TypedCommand | Command, opts?: SendOptions): Pro
       ...(body !== undefined ? { body } : {}),
     };
   } catch (e: unknown) {
+    flushFrames();
     const err = e instanceof Error ? e : null;
     let msg: string;
     let code: string;

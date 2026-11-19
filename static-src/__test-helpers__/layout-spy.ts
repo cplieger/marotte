@@ -16,6 +16,8 @@ interface LayoutAccess {
 export interface LayoutSpy {
   /** Discard every pending record and open a counting window: the layout is clean from here. */
   begin(): void;
+  /** How many accesses the open window has logged: the index the next one takes in `end`'s log. */
+  logged(): number;
   /** Close the window: the forced count and every read and forcing write in it, in order. */
   end(): { readonly forced: number; readonly log: readonly LayoutAccess[] };
   /** Restore every wrapped reader and writer. */
@@ -123,6 +125,9 @@ export function installLayoutSpy(): LayoutSpy {
       dirty = false;
       log = [];
       open = true;
+    },
+    logged(): number {
+      return log.length;
     },
     end() {
       open = false;
