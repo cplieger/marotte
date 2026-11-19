@@ -1,8 +1,8 @@
 package forges
 
 // Tests for the merge route and the merge-status read: the merge body reaching the
-// library, the family rules the route adds before it, and the outcome and status
-// answers. The library's own refusals are driven through a real family client.
+// library and the outcome and status answers. The library's own refusals are
+// driven through a real family client.
 
 import (
 	"context"
@@ -294,32 +294,42 @@ func TestMergeRoute_GitLabStrategyIsRefused400(t *testing.T) {
 	}
 }
 
-func TestMergeRoute_GitHubAndGiteaWithoutAStrategyAre400(t *testing.T) {
-	body := `{"intent":"squash","head_sha":"` + mergeHead + `"}`
-	for name, row := range map[string]mergeRow{
-		"GitHub": githubMergeRow(), "Gitea": giteaMergeRow(), "Codeberg": codebergMergeRow(),
-	} {
-		t.Run(name, func(t *testing.T) {
-			core := &mergeCore{outcome: forgeapi.MergeOutcome{State: forgeapi.MergeOutcomeMerged}}
-			mux := mergeMux(t, row, core)
+// A merge naming no strategy on GitHub or Gitea reaches the real client, which
+// reads the repository record (here naming no merge method) and refuses before
+// any write; the route answers that refusal 409.
+func TestMergeRoute_NoStrategyIsTheLibrarysToRefuse(t *testing.T) {
+	body := `{"intent":"default","head_sha":"` + mergeHead + `"}`
+	cases := []struct {
+		name, host, token, user string
+		kind                    Kind
+	}{
+		{name: "GitHub", kind: KindGitHub, token: "ghp_secret", user: `{"login":"alice"}`},
+		{name: "Gitea", kind: KindGitea, host: "git.test:3000", token: "gitea-secret", user: `{"id":1,"login":"alice"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wire := &userWire{status: http.StatusOK, body: tc.user}
+			h := newConnectHarness(t, wire)
+			id := h.signedIn(t, tc.kind, tc.host, tc.token, "")
+			before := len(wire.requests())
 
-			rec := sendRoute(t, mux, http.MethodPost, row.mergePath("15"), body)
-			if got := decodeBody(t, rec); rec.Code != http.StatusBadRequest || got["code"] != "strategy_required" {
-				t.Errorf("POST merge %s on %s = %d %s, want 400 strategy_required", body, name, rec.Code, rec.Body)
+			rec := h.do(t, http.MethodPost, "/api/forges/"+url.PathEscape(id)+"/repos/v1.6f2f72/prs/15/merge", body)
+			got := decodeBody(t, rec)
+			if rec.Code != http.StatusConflict || got["code"] != forgeapi.CodeStrategyRequired || got["kind"] != "not_mergeable" {
+				t.Errorf("POST merge %s on %s = %d %s, want 409 %s kind not_mergeable",
+					body, tc.name, rec.Code, rec.Body, forgeapi.CodeStrategyRequired)
 			}
-			if got := core.merges(); len(got) != 0 {
-				t.Errorf("the library was asked to merge %+v with no strategy named, want nothing", got)
+			seen := wire.requests()[before:]
+			if len(seen) == 0 {
+				t.Errorf("the forge saw no request, want the repository record read")
+			}
+			for _, r := range seen {
+				if r.Method != http.MethodGet {
+					t.Errorf("the forge saw %s %s for a refused merge, want reads only", r.Method, r.URL.Path)
+				}
 			}
 		})
 	}
-
-	t.Run("GitLab takes the intent alone", func(t *testing.T) {
-		core := &mergeCore{outcome: forgeapi.MergeOutcome{State: forgeapi.MergeOutcomeMerged}}
-		mux := mergeMux(t, gitlabMergeRow(), core)
-		if rec := sendRoute(t, mux, http.MethodPost, gitlabMergeRow().mergePath("11"), body); rec.Code != http.StatusOK {
-			t.Errorf("POST merge %s on GitLab = %d %s, want 200", body, rec.Code, rec.Body)
-		}
-	})
 }
 
 // The library arms each forge's own auto-merge on every family, so a

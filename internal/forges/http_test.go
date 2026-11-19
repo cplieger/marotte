@@ -582,17 +582,16 @@ func TestCapabilitiesRoute_CarriesEvidence(t *testing.T) {
 }
 
 func TestCapabilitiesRoute_SaysWhereARerunStartsTheWholeRun(t *testing.T) {
-	cases := map[forgeapi.Product]bool{
-		forgeapi.ProductForgejo: true,
-		forgeapi.ProductGitea:   false,
-		forgeapi.ProductGitHub:  false,
-		forgeapi.ProductGitLab:  false,
+	cases := map[forgeapi.RerunScope]bool{
+		forgeapi.RerunScopeWholeRun:   true,
+		forgeapi.RerunScopeFailedJobs: false,
+		forgeapi.RerunScopeUnknown:    false,
 	}
-	for product, want := range cases {
-		t.Run(product.String(), func(t *testing.T) {
+	for scope, want := range cases {
+		t.Run(scope.String(), func(t *testing.T) {
 			core := &capsCore{conn: forgeapi.ConnectionCaps{
-				Caps:    map[forgeapi.Capability]forgeapi.Support{forgeapi.CapRerunChecks: forgeapi.SupportYes},
-				Product: product,
+				Caps:       map[forgeapi.Capability]forgeapi.Support{forgeapi.CapRerunChecks: forgeapi.SupportYes},
+				RerunScope: scope,
 			}}
 			rec := getRoute(t, repoRoutes(recordManager(t, core)), githubCapsPath)
 			if rec.Code != http.StatusOK {
