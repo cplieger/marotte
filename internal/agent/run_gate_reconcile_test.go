@@ -226,10 +226,13 @@ func TestSignInGate_AReleaseThatResumesTheRunServesALaterEdgeItRefused(t *testin
 	write.release()
 	awaitClosed(t, tried, "the end of the release's try that resumed the run")
 	waitUntil(t, "the closing sweep's pause of the resumed run", func() bool { return k.reads() == kasGateReason })
+	// The first edge's finder may have read the run resumed: a sign-in landing just after a pause lets holdPause
+	// start the release itself.
+	before := finds.Load()
 	g.b.set(true, true, nil)
 	g.signIn(t)
 	waitUntil(t, "the next opening edge's finder to read the pause and decide its claim", func() bool {
-		return finds.Load() == 2 && resumeLockFree(g.h.runs, gateRunID)
+		return finds.Load() > before && resumeLockFree(g.h.runs, gateRunID)
 	})
 	g.h.runs.gate.mu.Lock()
 	owner, opens := g.h.runs.gate.releases[gateRunID], g.h.runs.gate.opens
