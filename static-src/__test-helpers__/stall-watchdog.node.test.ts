@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ReportedHookContext, TestCase, TestModule, Vitest } from "vitest/node";
 
 import {
+  CHECK_EVERY_MS,
   RESULT_SLACK_MS,
   SILENCE_FLOOR_MS,
   StallWatchdog,
@@ -30,9 +31,20 @@ function testCase(
   } as unknown as TestCase;
 }
 
-function watchdog(): { dog: StallWatchdog; at: (ms: number) => void } {
+const started: StallWatchdog[] = [];
+
+afterEach(() => {
+  for (const dog of started.splice(0)) dog.onTestRunEnd();
+  vi.useRealTimers();
+});
+
+function watchdog(snapshot = (): string => ""): {
+  dog: StallWatchdog;
+  at: (ms: number) => void;
+} {
   let now = 0;
-  const dog = new StallWatchdog(() => now);
+  const dog = new StallWatchdog({ now: () => now, snapshot });
+  started.push(dog);
   return {
     dog,
     at: (ms) => {
@@ -66,9 +78,11 @@ describe("StallWatchdog.check", () => {
   });
 
   it("gives a running test whose timeout outlasts the floor its own silence, then the floor again", () => {
+    vi.useFakeTimers();
     const { dog, at } = watchdog();
     const mod = module("run-view-scale.test.ts");
     const slow = testCase(mod, "slow", { timeout: 300_000 });
+    dog.onTestRunStart();
     dog.onTestModuleQueued(mod);
     dog.onTestCaseReady(slow);
 
@@ -93,11 +107,71 @@ describe("StallWatchdog.check", () => {
     expect(dog.check(SILENCE_FLOOR_MS + 1)).toBeUndefined();
   });
 
-  it("ignores events of a file it never saw queued", () => {
+  it("names an open run that sends nothing for the floor while no file runs", () => {
+    vi.useFakeTimers();
+    const { dog, at } = watchdog();
+    const mod = module("frame-dispatch.test.ts");
+    dog.onTestRunStart();
+    dog.onTestModuleQueued(mod);
+    at(1_000);
+    dog.onTestModuleEnd(mod);
+
+    expect(dog.check(1_000 + SILENCE_FLOOR_MS)).toBeUndefined();
+    expect(dog.check(1_001 + SILENCE_FLOOR_MS)).toContain(
+      "no file running: the run sent no event for 150s since browser frame-dispatch.test.ts it ended",
+    );
+  });
+
+  it("never reports a closed run", () => {
+    vi.useFakeTimers();
     const { dog } = watchdog();
+    dog.onTestRunStart();
+    dog.onTestRunEnd();
+
+    expect(dog.check(2 * SILENCE_FLOOR_MS)).toBeUndefined();
+  });
+
+  it("counts a file it never saw queued toward the run's silence only", () => {
+    vi.useFakeTimers();
+    const { dog, at } = watchdog();
+    dog.onTestRunStart();
+    at(100_000);
     dog.onTestModuleStart(module("unqueued.test.ts"));
 
-    expect(dog.check(SILENCE_FLOOR_MS + 1)).toBeUndefined();
+    expect(dog.check(100_000 + SILENCE_FLOOR_MS)).toBeUndefined();
+    const stall = dog.check(100_001 + SILENCE_FLOOR_MS);
+    expect(stall).toContain("no file running");
+    expect(stall).not.toContain("unqueued.test.ts: silent");
+  });
+});
+
+describe("StallWatchdog run", () => {
+  it("exits 1 after writing the stall and the snapshot to stderr", () => {
+    vi.useFakeTimers();
+    const written: string[] = [];
+    vi.spyOn(process.stderr, "write").mockImplementation(((chunk: string, done?: () => void) => {
+      written.push(chunk);
+      done?.();
+      return true;
+    }) as typeof process.stderr.write);
+    const exit = vi
+      .spyOn(process, "exit")
+      .mockImplementation((() => undefined) as typeof process.exit);
+    const exitCode = process.exitCode;
+    try {
+      const { dog, at } = watchdog(() => "PROCESS SNAPSHOT");
+      dog.onTestRunStart();
+      dog.onTestModuleQueued(module("rail-position-css.test.ts"));
+      at(SILENCE_FLOOR_MS + 1);
+      vi.advanceTimersByTime(CHECK_EVERY_MS);
+
+      expect(process.exitCode).toBe(1);
+      expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+      expect(written.join("")).toContain("browser rail-position-css.test.ts: silent");
+      expect(written.join("")).toContain("PROCESS SNAPSHOT");
+    } finally {
+      process.exitCode = exitCode;
+    }
   });
 });
 
@@ -122,8 +196,9 @@ describe("testSilenceMs", () => {
 
 describe("stallWatchdog plugin", () => {
   type Ctx = { vitest: Vitest };
-  const configure = (config: object): unknown[] => {
-    const reporters: unknown[] = ["default"];
+  /** A reporter name as vitest's resolved config holds it. */
+  const named = ["default", {}];
+  const configure = (config: object, reporters: unknown[] = [named]): unknown[] => {
     const ctx = { vitest: { config: { watch: false, inspector: {}, reporters, ...config } } };
     const hook = stallWatchdog().configureVitest as (c: Ctx) => void;
     hook(ctx as unknown as Ctx);
@@ -136,8 +211,13 @@ describe("stallWatchdog plugin", () => {
     expect(reporters.filter((r) => r instanceof StallWatchdog)).toHaveLength(1);
   });
 
+  it("adds none when another project's copy of the module already added one", () => {
+    const otherCopy = { [Symbol.for("marotte.stall-watchdog")]: true };
+    expect(configure({}, [named, otherCopy])).toEqual([named, otherCopy]);
+  });
+
   it("stays out of watch mode and an inspector session", () => {
-    expect(configure({ watch: true })).toEqual(["default"]);
-    expect(configure({ inspector: { enabled: true } })).toEqual(["default"]);
+    expect(configure({ watch: true })).toEqual([named]);
+    expect(configure({ inspector: { enabled: true } })).toEqual([named]);
   });
 });

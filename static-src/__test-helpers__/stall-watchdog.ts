@@ -11,14 +11,17 @@ import type {
   Vite,
 } from "vitest/node";
 
-/** The longest a running file may send no event. Above the suite's longest hook timeout (120 s, in
- *  `frame-dispatch.test.ts`) and a cold module import: a hook given a longer timeout trips the watchdog until this is raised. */
+/** The longest a running file, or a run with no file running, may send no event. Above the suite's
+ *  longest hook timeout (120 s, in `frame-dispatch.test.ts`) and a cold module import: a hook given a longer timeout trips the watchdog until this is raised. */
 export const SILENCE_FLOOR_MS = 150_000;
 
 /** Time for a timed-out test's result to reach Node: its afterEach hooks and the runner's batched update. */
 export const RESULT_SLACK_MS = 30_000;
 
-const CHECK_EVERY_MS = 5_000;
+export const CHECK_EVERY_MS = 5_000;
+
+/** Marks an instance across module copies: vitest evaluates the config, and so this module, once per project. */
+const BRAND = Symbol.for("marotte.stall-watchdog");
 
 interface Running {
   readonly module: TestModule;
@@ -36,39 +39,47 @@ export function testSilenceMs(test: TestCase): number {
   return (timeout ?? test.project.config.testTimeout) * attempts + RESULT_SLACK_MS;
 }
 
-/** Fails a `--run` whose running file sends no event for longer than it may stay silent, naming the
- *  file and the last thing it did, instead of leaving the run to the CI job's timeout. */
+/** Fails a `--run` whose running file sends no event for longer than it may stay silent, or that sends
+ *  none at all for the floor while no file runs, naming what it last did, instead of leaving the run to
+ *  the CI job's timeout. */
 export class StallWatchdog implements Reporter {
+  readonly [BRAND] = true;
   private readonly running = new Map<string, Running>();
   private timer: ReturnType<typeof setInterval> | undefined;
+  private open = false;
+  private last = 0;
+  private doing = "";
   private readonly now: () => number;
+  private readonly snapshot: () => string;
 
-  constructor(now: () => number = Date.now) {
+  constructor({
+    now = Date.now,
+    snapshot = processSnapshot,
+  }: { now?: () => number; snapshot?: () => string } = {}) {
     this.now = now;
+    this.snapshot = snapshot;
   }
 
   onTestRunStart(): void {
+    this.open = true;
+    this.last = this.now();
+    this.doing = "the run started";
     this.timer ??= setInterval(() => {
       const stall = this.check(this.now());
       if (stall !== undefined) {
-        fail(stall);
+        this.stop();
+        fail(`${stall}\n${this.snapshot()}`);
       }
     }, CHECK_EVERY_MS).unref();
   }
 
   onTestRunEnd(): void {
-    clearInterval(this.timer);
-    this.timer = undefined;
-    this.running.clear();
+    this.stop();
   }
 
   onTestModuleQueued(module: TestModule): void {
-    this.running.set(module.id, {
-      module,
-      last: this.now(),
-      doing: "its import started",
-      tests: new Map(),
-    });
+    this.running.set(module.id, { module, last: 0, doing: "", tests: new Map() });
+    this.touch(module, "its import started");
   }
 
   onTestModuleCollected(module: TestModule): void {
@@ -80,6 +91,7 @@ export class StallWatchdog implements Reporter {
   }
 
   onTestModuleEnd(module: TestModule): void {
+    this.touch(module, "it ended");
     this.running.delete(module.id);
   }
 
@@ -110,33 +122,48 @@ export class StallWatchdog implements Reporter {
     this.touch(test.module, `test "${test.fullName}" ended`)?.tests.delete(test.id);
   }
 
-  /** What stalled at `now`, or undefined while every running file is inside its silence. */
+  /** What stalled at `now`, or undefined while every running file, and an open run with none, is inside its silence. */
   check(now: number): string | undefined {
-    const stalled = [...this.running.values()].filter(
-      (r) => now - r.last > Math.max(SILENCE_FLOOR_MS, ...r.tests.values()),
-    );
-    if (stalled.length === 0) {
+    const secs = (since: number): string => String(Math.round((now - since) / 1000));
+    const lines = [...this.running.values()]
+      .filter((r) => now - r.last > Math.max(SILENCE_FLOOR_MS, ...r.tests.values()))
+      .map((r) => `  ${label(r.module)}: silent ${secs(r.last)}s since ${r.doing}`);
+    if (this.open && this.running.size === 0 && now - this.last > SILENCE_FLOOR_MS) {
+      lines.push(
+        `  no file running: the run sent no event for ${secs(this.last)}s since ${this.doing}`,
+      );
+    }
+    if (lines.length === 0) {
       return undefined;
     }
-    const lines = stalled.map(
-      (r) =>
-        `  ${r.module.project.name} ${r.module.relativeModuleId}: silent ${String(Math.round((now - r.last) / 1000))}s since ${r.doing}`,
-    );
     return [
-      "Stall watchdog: a running test file sent no event for longer than its tests and hooks may take,",
-      "so its page or worker stopped answering. Failing the run instead of waiting for the job timeout.",
+      "Stall watchdog: the run sent no event for longer than its tests and hooks may take,",
+      "so a page or worker stopped answering. Failing the run instead of waiting for the job timeout.",
       ...lines,
     ].join("\n");
   }
 
+  private stop(): void {
+    clearInterval(this.timer);
+    this.timer = undefined;
+    this.open = false;
+    this.running.clear();
+  }
+
   private touch(module: TestModule, doing: string): Running | undefined {
+    this.last = this.now();
+    this.doing = `${label(module)} ${doing}`;
     const r = this.running.get(module.id);
     if (r !== undefined) {
-      r.last = this.now();
+      r.last = this.last;
       r.doing = doing;
     }
     return r;
   }
+}
+
+function label(module: TestModule): string {
+  return `${module.project.name} ${module.relativeModuleId}`;
 }
 
 function moduleOf(hook: ReportedHookContext): TestModule {
@@ -152,15 +179,17 @@ function processSnapshot(): string {
         encoding: "utf8",
       }).split("\n");
       const procs = rows.map((row) => {
-        const [pid = 0, ppid = 0] = row.trim().split(/\s+/, 2).map(Number);
-        return { row, pid, ppid };
+        const [pid = "0", ppid = "0", , , , ...args] = row.trim().split(/\s+/);
+        return { row, pid: Number(pid), ppid: Number(ppid), args: args.join(" ") };
       });
       const ours = new Set([process.pid]);
       for (let size = 0; size !== ours.size;) {
         size = ours.size;
         for (const p of procs) if (ours.has(p.ppid)) ours.add(p.pid);
       }
-      const tree = procs.filter((p) => p.pid !== process.pid && ours.has(p.pid));
+      const isThisPs = (p: (typeof procs)[number]): boolean =>
+        p.ppid === process.pid && p.args.startsWith("ps -eo");
+      const tree = procs.filter((p) => p.pid !== process.pid && ours.has(p.pid) && !isThisPs(p));
       return [header, ...tree.map((p) => p.row.slice(0, 200))].join("\n");
     } catch (e) {
       return `ps failed: ${String(e)}`;
@@ -171,12 +200,14 @@ function processSnapshot(): string {
   return `${first}\n-- 5 s later --\n${take()}`;
 }
 
-function fail(stall: string): never {
-  process.stderr.write(`\n${stall}\n${processSnapshot()}\n`);
-  process.exit(1);
+/** Exits 1 once the report has reached stderr: a pipe write is asynchronous on POSIX, so exiting at once
+ *  can cut it off (https://nodejs.org/api/process.html#a-note-on-process-io). */
+function fail(report: string): void {
+  process.exitCode = 1;
+  process.stderr.write(`\n${report}\n`, () => process.exit(1));
 }
 
-/** Installs {@link StallWatchdog} in a `--run` with no inspector, whichever `--reporter` the command
+/** Installs one {@link StallWatchdog} in a `--run` with no inspector, whichever `--reporter` the command
  *  line names (a CLI reporter list replaces the config's). */
 export function stallWatchdog(): Vite.Plugin {
   return {
@@ -187,7 +218,7 @@ export function stallWatchdog(): Vite.Plugin {
       if (
         config.watch ||
         config.inspector.enabled === true ||
-        config.reporters.some((r) => r instanceof StallWatchdog)
+        config.reporters.some((r) => BRAND in r)
       ) {
         return;
       }
