@@ -54,6 +54,7 @@ func peerRowsOf(t *testing.T, cs *testChatStore, id marotte.ChatID) []marotte.En
 // target; the delivery gate itself is KAS's. The notify half pins the pairing: a From row in the receiving chat and a
 // To row in the sending one.
 func TestChatMessaging_BothChatsOpenWithMessagingOnAndPairThePeerRows(t *testing.T) {
+	t.Parallel()
 	h, cs, open := twoChatsWithMessaging(t)
 	for i, sb := range open {
 		if opts := fakeOf(sb).lastSessionOpts(); opts == nil || !opts.Features.Messaging {

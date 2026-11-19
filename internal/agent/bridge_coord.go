@@ -1478,6 +1478,11 @@ func (bc *bridgeCoordinator) NoticeTarget(ctx context.Context, chatID marotte.Ch
 	return notice.ChatTarget(chatID, bc.chatName(ctx, chatID))
 }
 
+func (bc *bridgeCoordinator) isBot(ctx context.Context, chatID marotte.ChatID) bool {
+	rec, ok := bc.chatStore.Get(ctx, chatID)
+	return ok && rec.Bot != nil
+}
+
 func (bc *bridgeCoordinator) chatName(ctx context.Context, chatID marotte.ChatID) string {
 	if chatID == "" {
 		return ""

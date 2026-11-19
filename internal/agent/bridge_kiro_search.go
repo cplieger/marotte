@@ -88,7 +88,7 @@ func (in *inbound) searchRun(chatID marotte.ChatID, sessionID marotte.SessionID)
 
 // answerKiroSearch never answers with an error, a malformed request and a panic included: KAS
 // reruns a search whose client answer is an error or lacks its matches or files member (3.0.0),
-// or arrives after its 30 s wait (from 3.4.0), with its own Node walker, which ignores
+// or arrives after its 30 s wait (from 3.3.0), with its own Node walker, which ignores
 // includePattern while walking, cannot be cancelled and has no time limit for a text search.
 func (in *inbound) answerKiroSearch(ctx, searchCtx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) {
 	defer func() {

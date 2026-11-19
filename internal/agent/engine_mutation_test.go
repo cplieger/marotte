@@ -13,12 +13,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// answerBudgetOf shortens clientAnswerBudget for one test, which must not run in parallel.
-func answerBudgetOf(t *testing.T, d time.Duration) {
-	t.Helper()
-	prev := clientAnswerBudget
-	clientAnswerBudget = d
-	t.Cleanup(func() { clientAnswerBudget = prev })
+// withAnswerBudget shortens how long the runtime's person requests wait on the engine (lifetime.answerBudget).
+func withAnswerBudget(d time.Duration) Option {
+	return func(h *Runtime) { h.lifecycle.answerBudget = d }
 }
 
 // holdCall parks every Call of method until the returned release runs; the test's cleanup releases it too.
@@ -83,6 +80,7 @@ func awaitEventCount(t *testing.T, h *Runtime, typ marotte.EventType, want int) 
 // change that landed, and after any answer the client was told is still applying, a failure included, since the
 // client's list shows "still" until it re-reads; an on-time refusal changed nothing and the client already knows.
 func TestAnswerEngineMutation_SettlesTheListOnlyForAChangeOrALateAnswer(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name        string
 		late        bool
@@ -95,8 +93,7 @@ func TestAnswerEngineMutation_SettlesTheListOnlyForAChangeOrALateAnswer(t *testi
 		{"a late failure", true, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			answerBudgetOf(t, 50*time.Millisecond)
-			h, _, _ := newTestHub()
+			h, _, _ := newTestHub(withAnswerBudget(50 * time.Millisecond))
 			t.Cleanup(func() { shutdownHub(t, h) })
 			gate := make(chan struct{})
 			if !tc.late {
@@ -135,10 +132,10 @@ func TestAnswerEngineMutation_SettlesTheListOnlyForAChangeOrALateAnswer(t *testi
 // A change whose call has not yet written it cannot apply, so the budget does not answer still_applying: the request
 // waits for the call's own answer. Once the call marks it written, the budget answers still_applying.
 func TestAnswerEngineMutation_StillApplyingOnlyOnceTheChangeWasWritten(t *testing.T) {
+	t.Parallel()
 	for _, written := range []bool{false, true} {
 		t.Run(map[bool]string{false: "not yet written", true: "written"}[written], func(t *testing.T) {
-			answerBudgetOf(t, 20*time.Millisecond)
-			h, _, _ := newTestHub()
+			h, _, _ := newTestHub(withAnswerBudget(20 * time.Millisecond))
 			t.Cleanup(func() { shutdownHub(t, h) })
 			sent := make(chan struct{})
 			gate := make(chan struct{})

@@ -18,12 +18,7 @@ import (
 const stepQuestionReason = "Step requested user input via send_message."
 
 // fastUnattendedPause shortens the budget a scheduled run's pause gets before it is ended.
-func fastUnattendedPause(t *testing.T) {
-	t.Helper()
-	prev := unattendedPauseBudget
-	unattendedPauseBudget = 20 * time.Millisecond
-	t.Cleanup(func() { unattendedPauseBudget = prev })
-}
+func fastUnattendedPause() Option { return withUnattendedPauseBudget(20 * time.Millisecond) }
 
 // TestScheduledRun_APauseNobodyResumesEndsTheRun pins that a scheduled run never waits paused on nobody: a pause no
 // person owns ends the run at the budget, long before its next slot, and says so on the row and in the log.
@@ -53,8 +48,7 @@ func TestScheduledRun_APauseNobodyResumesEndsTheRun(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			logs := captureLogs(t)
-			fastUnattendedPause(t)
-			h, br, st, entry := scheduledHub(t)
+			h, br, st, entry := scheduledHub(t, fastUnattendedPause())
 			br.callResults[methodKiroWorkflowInspect] = tc.inspect(t)
 			before := failureCounts(t)
 			leaseScheduledWithSlot(t, h, br, &entry, gateRunID, time.Hour)
@@ -162,8 +156,7 @@ func TestScheduledRun_AFaultPastItsHealsEndsTheRun(t *testing.T) {
 // left paused for the whole budget names the budget on the row and in the log.
 func TestScheduledRun_AFaultThePauseBudgetEndsLogsTheBudget(t *testing.T) {
 	logs := captureLogs(t)
-	fastUnattendedPause(t)
-	h, br, st, entry := scheduledHub(t)
+	h, br, st, entry := scheduledHub(t, fastUnattendedPause())
 	br.callResults[methodKiroWorkflowInspect] = inspectPaused(t, gateRunID, interruptedReason)
 	leaseScheduledWithSlot(t, h, br, &entry, gateRunID, time.Hour)
 	h.runs.armDeadline(t.Context(), gateRunID)
@@ -185,6 +178,7 @@ func TestScheduledRun_AFaultThePauseBudgetEndsLogsTheBudget(t *testing.T) {
 // TestScheduledRun_APauseSomeoneOwnsIsLeftToItsSlot pins the pauses the budget must not end: a person's, the sign-in
 // gate's and a heal the closed gate holds each have someone to resume them, and a resume since the pause owns the run.
 func TestScheduledRun_APauseSomeoneOwnsIsLeftToItsSlot(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		inspect  func(t *testing.T) json.RawMessage
 		setup    func(h *Runtime)
@@ -206,10 +200,7 @@ func TestScheduledRun_APauseSomeoneOwnsIsLeftToItsSlot(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			prev := unattendedPauseBudget
-			unattendedPauseBudget = 50 * time.Millisecond
-			t.Cleanup(func() { unattendedPauseBudget = prev })
-			h, br, st, entry := scheduledHub(t)
+			h, br, st, entry := scheduledHub(t, withUnattendedPauseBudget(50*time.Millisecond))
 			br.callResults[methodKiroWorkflowInspect] = tc.inspect(t)
 			if tc.setup != nil {
 				tc.setup(h)
@@ -238,8 +229,8 @@ func TestScheduledRun_APauseSomeoneOwnsIsLeftToItsSlot(t *testing.T) {
 // TestManualRun_AStepQuestionStaysPaused pins that the budget is a scheduled run's only: a person launched a manual run
 // and its tab shows the question.
 func TestManualRun_AStepQuestionStaysPaused(t *testing.T) {
-	fastUnattendedPause(t)
-	h, _, br := newTestHub()
+	t.Parallel()
+	h, _, br := newTestHub(fastUnattendedPause())
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
 		methodKiroWorkflowInspect: inspectPaused(t, gateRunID, stepQuestionReason),
@@ -258,8 +249,8 @@ func TestManualRun_AStepQuestionStaysPaused(t *testing.T) {
 // TestBootSweep_EndsAScheduledRunLeftPausedOnAQuestion pins that a restart cannot drop the budget: the boot pass
 // watches every parked scheduled lease it reads from disk.
 func TestBootSweep_EndsAScheduledRunLeftPausedOnAQuestion(t *testing.T) {
-	fastUnattendedPause(t)
-	h, br, st, entry := scheduledHub(t)
+	t.Parallel()
+	h, br, st, entry := scheduledHub(t, fastUnattendedPause())
 	br.callResults[methodKiroWorkflowList] = kasRuns(t, map[string]any{
 		"workflowId": gateRunID, "name": "nightly", "workflowName": "nightly", "status": "paused",
 	})
@@ -279,15 +270,13 @@ func TestBootSweep_EndsAScheduledRunLeftPausedOnAQuestion(t *testing.T) {
 // TestParentlessRun_AFaultPauseIsResumedOnItsFrame pins that a parentless run's paused frame, which arrives with no
 // chat id, still reaches the heal: otherwise nothing resumes a transient fault and a scheduled run is ended for it.
 func TestParentlessRun_AFaultPauseIsResumedOnItsFrame(t *testing.T) {
+	t.Parallel()
 	for name, origin := range map[string]launchOrigin{
 		"scheduled": scheduledLaunch(launchrule.Row{ID: "s1"}, time.Now().Add(time.Hour)),
 		"manual":    {origin: runlease.OriginManual},
 	} {
 		t.Run(name, func(t *testing.T) {
-			prev := healBaseDelay
-			healBaseDelay = time.Millisecond
-			t.Cleanup(func() { healBaseDelay = prev })
-			h, _, br := newTestHub()
+			h, _, br := newTestHub(withHealBaseDelay(time.Millisecond))
 			br.callResults = map[string]json.RawMessage{
 				methodKiroWorkflowInspect: inspectPaused(t, gateRunID, interruptedReason),
 				methodKiroWorkflowResume:  json.RawMessage(`{}`),
@@ -312,8 +301,8 @@ func TestParentlessRun_AFaultPauseIsResumedOnItsFrame(t *testing.T) {
 // TestScheduledRun_AnUnattendedEndRefusedOnceIsRetried pins that ending a paused run nobody resumes survives a
 // refused cancel: the pause has no deadline to fire again, so only the retry stops the run before its next slot.
 func TestScheduledRun_AnUnattendedEndRefusedOnceIsRetried(t *testing.T) {
-	fastUnattendedPause(t)
-	h, br, st, entry := scheduledHub(t)
+	t.Parallel()
+	h, br, st, entry := scheduledHub(t, fastUnattendedPause())
 	setCancelRetryDelay(h.runs, time.Millisecond)
 	refuseCancelOnce(br)
 	br.callResults[methodKiroWorkflowInspect] = inspectPaused(t, gateRunID, stepQuestionReason)
@@ -336,10 +325,8 @@ func TestScheduledRun_AnUnattendedEndRefusedOnceIsRetried(t *testing.T) {
 // TestScheduledRun_AnUnattendedEndsRetryLeavesAPauseAfterAResume pins that a refused end's retry is for the pause
 // that was refused: a run resumed and paused again before it gets the new pause's own budget, not the old one's end.
 func TestScheduledRun_AnUnattendedEndsRetryLeavesAPauseAfterAResume(t *testing.T) {
-	prev := unattendedPauseBudget
-	unattendedPauseBudget = time.Hour
-	t.Cleanup(func() { unattendedPauseBudget = prev })
-	h, br, st, entry := scheduledHub(t)
+	t.Parallel()
+	h, br, st, entry := scheduledHub(t, withUnattendedPauseBudget(time.Hour))
 	const retryDelay = 100 * time.Millisecond
 	setCancelRetryDelay(h.runs, retryDelay)
 	refuseCancelOnce(br)

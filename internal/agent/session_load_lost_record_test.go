@@ -164,6 +164,7 @@ func TestSessionLoad_ALoadThatReplaysNothingForItsBoundSessionOpensANewOne(t *te
 }
 
 func TestSessionLoad_AnEmptyReplayOfASessionWithNoBoundTurnKeepsIt(t *testing.T) {
+	t.Parallel()
 	h, cs, fakes := lostRecordHub(t, nil)
 	const chatID marotte.ChatID = "c1"
 	onSession(t, cs, chatID, "s-a")
@@ -186,6 +187,7 @@ func TestSessionLoad_AnEmptyReplayOfASessionWithNoBoundTurnKeepsIt(t *testing.T)
 }
 
 func TestSessionLoad_AnEmptyReplayAfterEveryBoundTurnWasRewoundKeepsIt(t *testing.T) {
+	t.Parallel()
 	h, cs, fakes := lostRecordHub(t, nil)
 	const chatID marotte.ChatID = "c1"
 	onSession(t, cs, chatID, lostSession)
@@ -210,6 +212,7 @@ func TestSessionLoad_AnEmptyReplayAfterEveryBoundTurnWasRewoundKeepsIt(t *testin
 }
 
 func TestSessionLoad_ARefusedLoadOfABoundSessionRecordsAContextReset(t *testing.T) {
+	t.Parallel()
 	h, cs, fakes := lostRecordHub(t, func(b *fakeBridge) { b.loadErr = errors.New("session/load refused") })
 	const chatID marotte.ChatID = "c1"
 	onSession(t, cs, chatID, lostSession)
@@ -228,6 +231,7 @@ func TestSessionLoad_ARefusedLoadOfABoundSessionRecordsAContextReset(t *testing.
 }
 
 func TestSessionLoad_ARefusedLoadOfAnUnboundSessionRecordsNothing(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := lostRecordHub(t, func(b *fakeBridge) { b.loadErr = errors.New("session/load refused") })
 	const chatID marotte.ChatID = "c1"
 	onSession(t, cs, chatID, "s-b")
@@ -285,6 +289,7 @@ func TestSessionLoad_ABlankLoadUnderAPromptSendsThePromptToTheNewSession(t *test
 }
 
 func TestOpenBridge_ABlankLoadRecordsTheUnservedModelOnce(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := lostRecordHub(t, nil)
 	const chatID marotte.ChatID = "c1"
 	onSession(t, cs, chatID, lostSession)
@@ -321,6 +326,7 @@ func TestOpenBridge_ABlankLoadRecordsTheUnservedModelOnce(t *testing.T) {
 }
 
 func TestSessionLoad_ASessionEndingDuringItsReplayFailsTheOpenAndKeepsTheSession(t *testing.T) {
+	t.Parallel()
 	h, cs, fakes := lostRecordHub(t, func(b *fakeBridge) {
 		b.notifsOnStart = []*marotte.RPCResponse{
 			replayNotif(t, "user_message_chunk", "ONE", ""),
@@ -368,6 +374,7 @@ func TestSessionLoad_ASessionEndingDuringItsReplayFailsTheOpenAndKeepsTheSession
 }
 
 func TestSwapProjectedTranscript_ZeroFramesForABoundSessionRestoredNothing(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	onSession(t, cs, chatID, lostSession)
@@ -391,6 +398,7 @@ func TestSwapProjectedTranscript_ZeroFramesForABoundSessionRestoredNothing(t *te
 }
 
 func TestHoldsTurnsOf(t *testing.T) {
+	t.Parallel()
 	bind := func(turn, session string) marotte.Entry {
 		raw, err := json.Marshal(marotte.EntryTurnBind{KASMessageID: "kas", SessionID: session})
 		if err != nil {
@@ -422,6 +430,7 @@ func TestHoldsTurnsOf(t *testing.T) {
 // An empty turn's retry runs on a new session, so a chat that showed turns the old one was sent gets exactly one
 // context_reset, between the empty turn and the retry.
 func TestPromptTurn_AnEmptyTurnsRetryRecordsOneContextReset(t *testing.T) {
+	t.Parallel()
 	gate := make(chan struct{})
 	h, cs, fakes := lostRecordHub(t, func(b *fakeBridge) {
 		if b.sessionID == "sess-1" {
@@ -482,6 +491,7 @@ var unansweredLoads = map[string]error{
 // A live run's steps take its launching session's presets, so a new session would cut the run off for good. A lease
 // whose launching session marotte has not recorded yet may be this session's.
 func TestSessionLoad_AReplayTimeoutKeepsALiveRunsLaunchingSession(t *testing.T) {
+	t.Parallel()
 	leases := map[string]string{"a run launched from it": lostSession, "a run whose launching session is unrecorded": ""}
 	for leaseName, parent := range leases {
 		for name, loadErr := range unansweredLoads {
@@ -513,6 +523,7 @@ func TestSessionLoad_AReplayTimeoutKeepsALiveRunsLaunchingSession(t *testing.T) 
 
 // A run launched from a session the chat already retired cannot be driven from this one, so it keeps nothing.
 func TestSessionLoad_AReplayTimeoutWithNoRunOfThatSessionStillOpensANewOne(t *testing.T) {
+	t.Parallel()
 	leases := map[string][]runlease.Lease{
 		"no run":                                nil,
 		"a run launched from a retired session": {{WorkflowID: "wf_1", ChatID: "c1", ParentSessionID: "sess_retired"}},

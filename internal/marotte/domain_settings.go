@@ -168,13 +168,14 @@ type EffectiveSettings struct {
 	MCPWaitForReady bool `json:"mcp_wait_for_ready"`
 	// NotificationsEnabled is the push master switch, default off. The per-kind
 	// switches below take their defaults from settings.Default*, and those are not
-	// uniform either: pr_status is OFF where its siblings are ON. That asymmetry is
-	// why the client must not guess any of them.
+	// uniform either: pr_status and bot_rule are OFF where their siblings are ON. That
+	// asymmetry is why the client must not guess any of them.
 	NotificationsEnabled bool `json:"notifications_enabled"`
 	NotifyAgentFinished  bool `json:"notify_agent_finished"`
 	NotifyPRStatus       bool `json:"notify_pr_status"`
 	NotifyRunOutcome     bool `json:"notify_run_outcome"`
 	NotifySignIn         bool `json:"notify_sign_in"`
+	NotifyBotRule        bool `json:"notify_bot_rule"`
 	// SupervisedDefault seeds newly created chats; ScheduledAutoApprove decides an
 	// unattended run's permission ask at its deadline and BotAutoApprove an automatic
 	// Bot turn's, both fail-closed by decision. DebugLogs raises the log level. All

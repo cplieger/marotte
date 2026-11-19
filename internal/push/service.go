@@ -248,6 +248,7 @@ var kindRegistry = []KindPref{
 	{marotte.PushKindPRStatus, settings.KeyNotifyPRStatus, settings.DefaultNotifyPRStatus},
 	{marotte.PushKindRunOutcome, settings.KeyNotifyRunOutcome, settings.DefaultNotifyRunOutcome},
 	{marotte.PushKindSignIn, settings.KeyNotifySignIn, settings.DefaultNotifySignIn},
+	{marotte.PushKindBotRule, settings.KeyNotifyBotRule, settings.DefaultNotifyBotRule},
 	{marotte.PushKindPermission, "", true},
 }
 

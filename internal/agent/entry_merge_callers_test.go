@@ -43,6 +43,7 @@ func hasGoMod(dir string) bool {
 }
 
 func TestSwapMerged_RewriteHasOneProductionCaller(t *testing.T) {
+	t.Parallel()
 	root := moduleRoot(t)
 	var sites []rewriteSite
 	files := 0

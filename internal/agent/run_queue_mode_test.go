@@ -13,6 +13,7 @@ import (
 // halves; a send goes where its own mode says, and a send naming none (the notify route, an API caller) follows the
 // interrupt_mode setting.
 func TestSubmit_ASendsModeDecidesBesideASteerableTurn(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		setting string

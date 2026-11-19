@@ -16,6 +16,7 @@ import (
 // A projection may report any subset of what is live, never a value nothing minted. Bounded
 // by connects, so the mutation is in flight while streamInitialState runs.
 func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
+	t.Parallel()
 	rt := newBudgetRuntime(t)
 	const fixtureChats, fixtureRuns, readers = 4, 4, 3
 

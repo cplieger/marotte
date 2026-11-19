@@ -55,6 +55,7 @@ func rowsAfterRestart(t *testing.T, cs *testChatStore) []marotte.RunEntry {
 // own log decides a held steer, and grelot sends again while its wake stays unread. Each steer and each wake the
 // restart cut gets its restart entry, a waiting wake's carrying its words.
 func TestHoldUnread_CarriesOnlyTheUsersWords(t *testing.T) {
+	t.Parallel()
 	s, cs, br := steerOpsHub(t)
 	kas320On(s.h, "c1", br)
 	gate := make(chan struct{})
@@ -117,6 +118,7 @@ func TestHoldUnread_CarriesOnlyTheUsersWords(t *testing.T) {
 // A wake waiting on a chat whose session is not running when the process stops still gets its restart entry, with
 // its words.
 func TestHoldUnread_AWakeOnAChatWithNoSessionIsRecorded(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
 	lc := h.coord.turns.testLifecycle("c1")
@@ -143,6 +145,7 @@ func TestHoldUnread_AWakeOnAChatWithNoSessionIsRecorded(t *testing.T) {
 // A close notes each steer kiro-cli still held as not read, the user's and a wake's, with its words and its sender;
 // a delete notes none. Neither comes back as a queued row in the chat's next life.
 func TestBeginChatTeardown_ACloseNotesEverySteerTheAgentHolds(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		keep bool

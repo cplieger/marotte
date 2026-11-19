@@ -16,9 +16,9 @@ import (
 )
 
 // scheduledHub is a hub with one daily schedule in a real store and a run bridge whose cancel lands.
-func scheduledHub(t *testing.T) (*Runtime, *fakeBridge, *launchrule.Store, launchrule.Rule) {
+func scheduledHub(t *testing.T, opts ...Option) (*Runtime, *fakeBridge, *launchrule.Store, launchrule.Rule) {
 	t.Helper()
-	h, _, br := newTestHub()
+	h, _, br := newTestHub(opts...)
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
@@ -40,6 +40,7 @@ func launchScheduled(t *testing.T, h *Runtime, br *fakeBridge, entry *launchrule
 // A launch refused by the single-run rule names the live run and is not a hold; the manual route still answers 409
 // with the sentence.
 func TestLaunch_ARecipeBusyRefusalNamesTheLiveRun(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_new")
 	br.callResults[methodKiroWorkflowList] = kasRuns(t, map[string]any{
@@ -68,6 +69,7 @@ func TestLaunch_ARecipeBusyRefusalNamesTheLiveRun(t *testing.T) {
 // that run at the slot. A person's retry reuses the scheduled run's workflow id under a manual lease, which no
 // schedule bounds, so its refusal names no schedule.
 func TestLaunch_ARecipeBusyRefusalCarriesTheLiveRunsLease(t *testing.T) {
+	t.Parallel()
 	busyHub := func(t *testing.T) (*Runtime, *launchrule.Store, launchrule.Rule) {
 		t.Helper()
 		h, br, st, entry := scheduledHub(t)
@@ -116,6 +118,7 @@ func TestLaunch_ARecipeBusyRefusalCarriesTheLiveRunsLease(t *testing.T) {
 // its lease: the retried run is not the schedule's (no row, no slot, not unattended), and the row keeps how the
 // scheduled run ended.
 func TestRetry_AScheduledRunWhoseEndWasMissedIsRetriedAsThePersons(t *testing.T) {
+	t.Parallel()
 	h, br, st, entry := scheduledHub(t)
 	const id = "wf_1"
 	launchScheduled(t, h, br, &entry, id)
@@ -165,6 +168,7 @@ func onlyRow(t *testing.T, st *launchrule.Store) launchrule.Clock {
 // TestScheduledRun_TheRowRecordsHowItsRunEnded pins that a scheduled run's terminal `run_complete` lands on its
 // schedule row; without it the row reads `started` forever after a run that completed or failed.
 func TestScheduledRun_TheRowRecordsHowItsRunEnded(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		status, stopReason string
 		wantStatus         string
@@ -201,6 +205,7 @@ func TestScheduledRun_TheRowRecordsHowItsRunEnded(t *testing.T) {
 // TestScheduledRun_ALongStopReasonIsCappedOnTheRow pins that KAS's stop reason, persisted on the row at every fire and
 // shown on one line, is bounded.
 func TestScheduledRun_ALongStopReasonIsCappedOnTheRow(t *testing.T) {
+	t.Parallel()
 	h, br, st, entry := scheduledHub(t)
 	const id = "wf_1"
 	launchScheduled(t, h, br, &entry, id)
@@ -221,6 +226,7 @@ func TestScheduledRun_ALongStopReasonIsCappedOnTheRow(t *testing.T) {
 // TestScheduledRun_TheRowReadsStartedFromItsLease pins that a run's row says started from the moment its lease is
 // granted, before invoke: a run that ends before the launch returns would otherwise leave no ending to fill.
 func TestScheduledRun_TheRowReadsStartedFromItsLease(t *testing.T) {
+	t.Parallel()
 	h, br, st, entry := scheduledHub(t)
 	launchScheduled(t, h, br, &entry, "wf_1")
 
@@ -232,6 +238,7 @@ func TestScheduledRun_TheRowReadsStartedFromItsLease(t *testing.T) {
 // TestScheduledRun_ALateEndingNeverLandsOnANewerFire pins that an older run's terminal frame, arriving after the
 // schedule fired again, leaves the newer run's row alone.
 func TestScheduledRun_ALateEndingNeverLandsOnANewerFire(t *testing.T) {
+	t.Parallel()
 	h, br, st, entry := scheduledHub(t)
 	launchScheduled(t, h, br, &entry, "wf_old")
 	launchScheduled(t, h, br, &entry, "wf_new")
@@ -249,6 +256,7 @@ func TestScheduledRun_ALateEndingNeverLandsOnANewerFire(t *testing.T) {
 // TestScheduledRun_AStallSaysWhyOnTheRow pins that a stall writes its reason on the row, and the cancel's own
 // terminal frame, which carries none, does not overwrite it.
 func TestScheduledRun_AStallSaysWhyOnTheRow(t *testing.T) {
+	t.Parallel()
 	h, br, st, entry := scheduledHub(t)
 	const id = "wf_1"
 	launchScheduled(t, h, br, &entry, id)
@@ -270,6 +278,7 @@ func TestScheduledRun_AStallSaysWhyOnTheRow(t *testing.T) {
 // TestScheduledRun_ASilenceStopSaysWhyOnTheRow pins that a scheduled run stopped for an hour of silence on an open step
 // says so on its row, while one with only a container open is the idle window's 15-minute stall.
 func TestScheduledRun_ASilenceStopSaysWhyOnTheRow(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		arrange    func(r runTree)
 		wantReason string
@@ -311,6 +320,7 @@ func TestScheduledRun_ASilenceStopSaysWhyOnTheRow(t *testing.T) {
 // TestScheduledRun_ABoundStopRecordsOnlyOnceItsCancelLands pins that a refused cancel leaves the row reading
 // started while the run still runs, and the retry that lands writes the bound's reason.
 func TestScheduledRun_ABoundStopRecordsOnlyOnceItsCancelLands(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		slotIn     time.Duration
 		wantReason string
@@ -419,6 +429,7 @@ func TestScheduledRun_ABoundStopWhoseCancelIsNeverAcceptedSaysSo(t *testing.T) {
 // TestScheduledRun_AReleaseWithoutAFrameRecordsTheEnding pins both paths that release a terminal run's lease with no
 // `run_complete` (a cancel with no node in flight, a run list read): each writes the run's ending on the row.
 func TestScheduledRun_AReleaseWithoutAFrameRecordsTheEnding(t *testing.T) {
+	t.Parallel()
 	t.Run("releaseIfOver", func(t *testing.T) {
 		h, br, st, entry := scheduledHub(t)
 		const id = "wf_1"
@@ -470,6 +481,7 @@ func assertClockRowUntouched(t *testing.T, st *launchrule.Store) {
 // A triggered run's ending reaches its rule's row through the confirmer, which applies the rule's last_run_id
 // guard; the ending is handed over as an ending, so it cannot overwrite a cause written first.
 func TestTriggeredRunOutcomeOnRuleRow(t *testing.T) {
+	t.Parallel()
 	h, fc, st := triggeredHub(t)
 
 	h.runs.observeComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{
@@ -487,6 +499,7 @@ func TestTriggeredRunOutcomeOnRuleRow(t *testing.T) {
 // confirmer matches against the rule's last_run_id, so an abandoned attempt's run, which never confirmed, writes
 // nothing on the row; the agent itself writes no row.
 func TestAbandonedRunOutcomeReachesNoRow(t *testing.T) {
+	t.Parallel()
 	t.Run("its cancel's terminal frame", func(t *testing.T) {
 		h, fc, st := triggeredHub(t)
 		h.runs.observeComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{

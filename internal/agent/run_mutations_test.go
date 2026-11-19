@@ -65,6 +65,7 @@ var (
 )
 
 func TestRunMutations_UnwrittenAndRefusedSettleAtOnce(t *testing.T) {
+	t.Parallel()
 	f := newMutationFixture(time.Hour)
 	f.m.enter("wf_1", mutationDrive, 1).unwritten()
 	if !f.m.empty() {
@@ -82,6 +83,7 @@ func TestRunMutations_UnwrittenAndRefusedSettleAtOnce(t *testing.T) {
 
 // An answer that arrived but could not be read is no refusal: the write may have taken effect.
 func TestRunMutations_AnUnreadReplyKeepsTheEntry(t *testing.T) {
+	t.Parallel()
 	parseErr := &marotte.RPCError{Code: marotte.RPCCodeParseError}
 	for name, err := range map[string]error{
 		"an undecoded answer": fmt.Errorf("%w: %w", marotte.ErrReplyUndecoded, parseErr),
@@ -98,6 +100,7 @@ func TestRunMutations_AnUnreadReplyKeepsTheEntry(t *testing.T) {
 }
 
 func TestRunMutations_ARunStartBeforeTheReplySettlesAtTheReplysDrain(t *testing.T) {
+	t.Parallel()
 	f := newMutationFixture(time.Hour)
 	e := f.m.enter("wf_1", mutationDrive, 1)
 	// run_start was consumed at position 3, and the run clock now covers the run, before the reply lands at 5.
@@ -114,6 +117,7 @@ func TestRunMutations_ARunStartBeforeTheReplySettlesAtTheReplysDrain(t *testing.
 }
 
 func TestRunMutations_ALaterLifecycleFrameSettles(t *testing.T) {
+	t.Parallel()
 	f := newMutationFixture(time.Hour)
 	f.m.enter("wf_1", mutationDrive, 1).replied(&marotte.RPCResponse{}, nil, ownerLane, 5)
 	f.m.observeFrame(ownerLane, 5, "")
@@ -129,6 +133,7 @@ func TestRunMutations_ALaterLifecycleFrameSettles(t *testing.T) {
 // The reply and the run's frames share the owner's lane: a lifecycle frame at or before the reply's position predates
 // the write, and a frame on another lane is not ordered against it at all.
 func TestRunMutations_AStaleOwnerLaneFrameDoesNotSettle(t *testing.T) {
+	t.Parallel()
 	f := newMutationFixture(time.Hour)
 	f.m.enter("wf_1", mutationDrive, 1).replied(&marotte.RPCResponse{}, nil, ownerLane, 5)
 	f.m.observeFrame(ownerLane, 4, "wf_1")
@@ -143,6 +148,7 @@ func TestRunMutations_AStaleOwnerLaneFrameDoesNotSettle(t *testing.T) {
 }
 
 func TestRunMutations_TheCeilingInspectSettles(t *testing.T) {
+	t.Parallel()
 	f := newMutationFixture(5 * time.Millisecond)
 	f.m.enter("wf_1", mutationDrive, 1).replied(nil, errors.New("reply lost"), ownerLane, 0)
 	waitEmpty(t, f.m, 2*time.Second)
@@ -152,6 +158,7 @@ func TestRunMutations_TheCeilingInspectSettles(t *testing.T) {
 }
 
 func TestRunMutations_AFailedInspectKeepsTheEntryAndRetries(t *testing.T) {
+	t.Parallel()
 	f := newMutationFixture(5 * time.Millisecond)
 	f.mu.Lock()
 	f.inspectErr = errors.New("engine busy")
@@ -174,6 +181,7 @@ func TestRunMutations_AFailedInspectKeepsTheEntryAndRetries(t *testing.T) {
 }
 
 func TestRunMutations_DropGenerationMakesLateRepliesNoOps(t *testing.T) {
+	t.Parallel()
 	f := newMutationFixture(time.Hour)
 	e := f.m.enter("wf_1", mutationDrive, 1)
 	keep := f.m.enter("wf_2", mutationDrive, 2)
@@ -193,6 +201,7 @@ func TestRunMutations_DropGenerationMakesLateRepliesNoOps(t *testing.T) {
 
 // Every verb that drives or stops a run is in the registry while KAS holds its reply.
 func TestRunMutations_EveryDrivingVerbEnters(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		method string
@@ -250,6 +259,7 @@ func TestRunMutations_EveryDrivingVerbEnters(t *testing.T) {
 // A verb written on a host session settles from that session's own forward: the lifecycle frame its lane reads
 // past the reply decides it, with no wait for the ceiling's inspect.
 func TestRunMutations_AHostSessionVerbSettlesFromItsLanesFrames(t *testing.T) {
+	t.Parallel()
 	h, br := seedChatParentedRun(t, true)
 	if err := driveOnHost(t, h, methodKiroWorkflowRetry); err != nil {
 		t.Fatalf("Setup: retry on the host session: %v", err)

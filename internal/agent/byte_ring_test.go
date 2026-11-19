@@ -4,6 +4,7 @@ import "testing"
 
 // Past capacity the ring keeps only the newest bytes, holds exactly capacity, and reports Truncated.
 func TestByteRing_WrapBehaviour(t *testing.T) {
+	t.Parallel()
 	r := newByteRing(4)
 	r.write([]byte("ab")) // partial fill, pos=2
 	r.write([]byte("cd")) // fills + wraps, pos=0, full

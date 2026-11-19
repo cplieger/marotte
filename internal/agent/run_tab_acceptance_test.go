@@ -93,6 +93,7 @@ func openChatTab(t *testing.T, h *Runtime, opID string) marotte.TabSubject {
 // TestAcceptance_ADeepLinkOpensTheRunAsAChildOfItsChat drives an `open_tab` carrying only a workflow id
 // through the command boundary.
 func TestAcceptance_ADeepLinkOpensTheRunAsAChildOfItsChat(t *testing.T) {
+	t.Parallel()
 	h, dir := newTabbedRuntime(t)
 	chatTab := openChatTab(t, h, "op-chat")
 	// The lease names the launching chat the deep link cannot carry.
@@ -124,6 +125,7 @@ func TestAcceptance_ADeepLinkOpensTheRunAsAChildOfItsChat(t *testing.T) {
 // was released: the run inventory still names the session that launched it. A run no source names, or
 // one that names no launching session, could be any chat's, so its new tab is refused.
 func TestAcceptance_AnEndedRunOpensAsAChildOfItsChat(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		row         map[string]any
 		wantNested  bool
@@ -196,6 +198,7 @@ func TestAcceptance_AnEndedRunOpensAsAChildOfItsChat(t *testing.T) {
 // TestAcceptance_AnEndedRunReopensItsClosedChatTab drives the same click when the launching chat's
 // tab was closed and its record kept: the chat's tab comes back with the run nested under it.
 func TestAcceptance_AnEndedRunReopensItsClosedChatTab(t *testing.T) {
+	t.Parallel()
 	r := newTabbedRig(t)
 	const launcher = marotte.ChatID("c-launcher")
 	if _, err := r.chats.Mutate(t.Context(), launcher, func(c *marotte.Chat, _ bool) bool {
@@ -237,6 +240,7 @@ func TestAcceptance_AnEndedRunReopensItsClosedChatTab(t *testing.T) {
 // TestAcceptance_AnUnreadableLauncherOpensNoRunTab pins that a failed read refuses the click, because
 // a run opened top level then could never nest once the read recovers.
 func TestAcceptance_AnUnreadableLauncherOpensNoRunTab(t *testing.T) {
+	t.Parallel()
 	for name, arrange := range map[string]func(t *testing.T, r tabbedRig){
 		"the run inventory cannot be read": func(_ *testing.T, r tabbedRig) {
 			r.br.callErrs = map[string]error{methodKiroWorkflowList: errors.New("the engine went away")}
@@ -294,6 +298,7 @@ func liveRunOfTablessChat(t *testing.T, r tabbedRig, launcher marotte.ChatID, wo
 // TestAcceptance_ALiveRunWhoseLauncherCannotBeReadOpensNoRunTab — the lease names the chat, its tab
 // is closed and its record unreadable, so it may still exist: the click is refused, not top level.
 func TestAcceptance_ALiveRunWhoseLauncherCannotBeReadOpensNoRunTab(t *testing.T) {
+	t.Parallel()
 	r := newTabbedRig(t)
 	bystander := openChatTab(t, r.h, "op-chat")
 	const launcher = marotte.ChatID("c-launcher")
@@ -322,6 +327,7 @@ func TestAcceptance_ALiveRunWhoseLauncherCannotBeReadOpensNoRunTab(t *testing.T)
 // TestAcceptance_AClosedSuppliedParentStillNestsTheRun — the page named the launching chat's tab and
 // another device closed it first: the launcher's tab comes back with the run nested under it.
 func TestAcceptance_AClosedSuppliedParentStillNestsTheRun(t *testing.T) {
+	t.Parallel()
 	r := newTabbedRig(t)
 	const launcher = marotte.ChatID("c-launcher")
 	liveRunOfTablessChat(t, r, launcher, "wf_live")
@@ -350,6 +356,7 @@ func TestAcceptance_AClosedSuppliedParentStillNestsTheRun(t *testing.T) {
 
 // TestAcceptance_AParentlessRunKeepsItsLeaseWithNoChat pins that a manual or scheduled run's lease exists and names no chat.
 func TestAcceptance_AParentlessRunKeepsItsLeaseWithNoChat(t *testing.T) {
+	t.Parallel()
 	h, _ := newTabbedRuntime(t)
 	openChatTab(t, h, "op-chat")
 

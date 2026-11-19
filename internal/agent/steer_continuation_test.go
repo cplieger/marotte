@@ -52,6 +52,7 @@ func carriedPrompts(t *testing.T, cs *testChatStore) []*marotte.EntryPrompt {
 // mid-turn read delivers the row. A clear in that window would empty the buffer under the decided
 // continuation, which then runs on KAS's hidden "Additional input arrived" prompt alone.
 func TestSteerTurnEnd_KASContinuationDeliversTheRowWithNoClear(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s, cs, br := turnEndedBesideASteer(t)
 
@@ -86,6 +87,7 @@ func TestSteerTurnEnd_KASContinuationDeliversTheRowWithNoClear(t *testing.T) {
 // KAS stops instead (its continuation cap, or no unread past its cursor): its own boundary clear names the row
 // before the prompt's hold ends. marotte sends no clear of its own and carries the row as the next prompt, once.
 func TestSteerTurnEnd_KASStoppingCarriesTheRowAsTheNextPromptOnce(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s, cs, br := turnEndedBesideASteer(t)
 		if n := countCalls(br, marotte.MethodSessionSteerClear); n != 0 {
@@ -109,6 +111,7 @@ func TestSteerTurnEnd_KASStoppingCarriesTheRowAsTheNextPromptOnce(t *testing.T) 
 // gone by marotte's clear, then carried; the clear waits for the idle report, never racing the run KAS still
 // reports.
 func TestSteerTurnEnd_TheStrayClearWaitsForKASIdle(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s, cs, br := turnEndedBesideASteer(t)
 
@@ -133,6 +136,7 @@ func TestSteerTurnEnd_TheStrayClearWaitsForKASIdle(t *testing.T) {
 // The delivering state is a fact of the record, not of the row: the turn end frames it and a reconnect replays it,
 // and KAS going idle frames the row out of it.
 func TestSteerTurnEnd_TheDeliveringStateIsFramedAndReplayed(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s, _, _ := turnEndedBesideASteer(t)
 
@@ -159,6 +163,7 @@ func TestSteerTurnEnd_TheDeliveringStateIsFramedAndReplayed(t *testing.T) {
 // KAS has no per-steer removal, so any clear in the turn-end window empties the buffer a continuation reads: a delete
 // of a row KAS took after the turn end folded is refused like the end's own rows.
 func TestSteerTurnEnd_ARowSentAfterTheEndIsNotDeletedUnderTheContinuation(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s, _, br := turnEndedBesideASteer(t)
 		s.steer("steer-b", "and this")
@@ -177,6 +182,7 @@ func TestSteerTurnEnd_ARowSentAfterTheEndIsNotDeletedUnderTheContinuation(t *tes
 
 // Discard all is one clear of the whole buffer, so in the turn-end window it is refused until KAS settles the end.
 func TestSteerTurnEnd_DiscardAllWaitsOutTheTurnEnd(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s, _, br := turnEndedBesideASteer(t)
 
@@ -195,6 +201,7 @@ func TestSteerTurnEnd_DiscardAllWaitsOutTheTurnEnd(t *testing.T) {
 // Once a continuation's turn_start binds, the end's unread row is still the continuation's to read: a delete of
 // another row would clear it too, so it is refused until that read.
 func TestSteerTurnEnd_AContinuationKeepsTheEndsRowUntilItReadsIt(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s, _, br := turnEndedBesideASteer(t)
 		send(t, s.h, newTurnStartMsg())
@@ -227,6 +234,7 @@ func TestSteerTurnEnd_AContinuationKeepsTheEndsRowUntilItReadsIt(t *testing.T) {
 // the continuation's to read, so Discard all is refused until that read: its clear would leave KAS's hidden
 // "Additional input arrived" prompt with nothing after it.
 func TestSteerTurnEnd_ANoticeOnlyContinuationKeepsItsNoticeUntilItReadsIt(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s, _, br := steerOpsHub(t)
 		br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
@@ -290,6 +298,7 @@ func turnEndedWithNothingUnread(t *testing.T) (*steerHarness, *fakeBridge) {
 // next may run for that row alone: a delete of it before the continuation reads it would leave KAS's hidden
 // "Additional input arrived" prompt with nothing after it.
 func TestSteerTurnEnd_ARowKASTookAfterTheEndStaysDeliveringPastTheBind(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s, br := turnEndedWithNothingUnread(t)
 		s.steer("steer-b", "late")
@@ -321,6 +330,7 @@ func TestSteerTurnEnd_ARowKASTookAfterTheEndStaysDeliveringPastTheBind(t *testin
 // The same holds for a workflow notice KAS took after the turn_end folded: Discard all stays refused past the
 // continuation's bind until the continuation reads it.
 func TestSteerTurnEnd_ANoticeKASTookAfterTheEndKeepsDiscardRefusedPastTheBind(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s, br := turnEndedWithNothingUnread(t)
 		discard := marotte.ClientCommand{Type: marotte.CmdSteerClear, ChatID: "c1"}

@@ -46,6 +46,7 @@ func (f *frameLog) appendedResults(t *testing.T) []marotte.EntryToolResult {
 // A step's result KAS sends after its turn closed is announced titled from the call the close aborted, as a
 // reload of the run log titles it.
 func TestRunAppendAfterClosed_TitlesALateResultFromItsCall(t *testing.T) {
+	t.Parallel()
 	step := workflow.PathKey([]string{"wf1", "build"})
 	tests := []struct {
 		name       string

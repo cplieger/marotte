@@ -14,6 +14,7 @@ import (
 )
 
 func TestAffordance_AMaxIterationsPauseOffersExtendAndFinishNotResume(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		facts runFacts
@@ -59,6 +60,7 @@ func TestAffordance_AMaxIterationsPauseOffersExtendAndFinishNotResume(t *testing
 
 // An offered verb needs a route, or its button 404s.
 func TestMaxIterationsVerbsHaveRoutes(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	mux := http.NewServeMux()
 	(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(mux)
@@ -80,6 +82,7 @@ func TestMaxIterationsVerbsHaveRoutes(t *testing.T) {
 }
 
 func TestExtendRepeat_SendsNodeAndCountOnResume(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	h.insertBridgeNow(marotte.RunHostChatID("wf_1"), testBridge(br, bridgeReady))
 	br.setCallResult(methodKiroWorkflowInspect, inspectPaused(t, "wf_1", ""))
@@ -104,6 +107,7 @@ func TestExtendRepeat_SendsNodeAndCountOnResume(t *testing.T) {
 }
 
 func TestExtendRepeat_RefusesACountOutsideTheCap(t *testing.T) {
+	t.Parallel()
 	for _, n := range []int{0, -1, maxExtendIterations + 1} {
 		h, _, br := newTestHub()
 		h.insertBridgeNow(marotte.RunHostChatID("wf_1"), testBridge(br, bridgeReady))
@@ -117,6 +121,7 @@ func TestExtendRepeat_RefusesACountOutsideTheCap(t *testing.T) {
 }
 
 func TestFinishRepeat_SendsNodeIdAndCompleted(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	h.insertBridgeNow(marotte.RunHostChatID("wf_1"), testBridge(br, bridgeReady))
 	br.setCallResult(methodKiroWorkflowInspect, inspectAtCap(t))
@@ -138,6 +143,7 @@ func TestFinishRepeat_SendsNodeIdAndCompleted(t *testing.T) {
 }
 
 func TestFinishRepeat_AnUpdatedFalseIsARefusal(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	h.insertBridgeNow(marotte.RunHostChatID("wf_1"), testBridge(br, bridgeReady))
 	br.callResults = map[string]json.RawMessage{
@@ -186,6 +192,7 @@ func maxIterationsHub(t *testing.T) (*Runtime, *fakeBridge) {
 }
 
 func TestHandleControls_CarriesThePausedRepeat(t *testing.T) {
+	t.Parallel()
 	h, _ := maxIterationsHub(t)
 	rr := &runRoutes{runs: h.runs, epoch: h.Epoch}
 	req := httptest.NewRequest(http.MethodGet, "/api/runs/wf_1/controls", http.NoBody)
@@ -207,6 +214,7 @@ func TestHandleControls_CarriesThePausedRepeat(t *testing.T) {
 }
 
 func TestHandleExtend_ARefusalIsA409WithKASsSentence(t *testing.T) {
+	t.Parallel()
 	h, br := maxIterationsHub(t)
 	br.callErrs = map[string]error{methodKiroWorkflowResume: &marotte.RPCError{
 		Code: -32603, Message: "Repeat 'loop' has no definition in the workflow plan.",
@@ -228,6 +236,7 @@ func TestHandleExtend_ARefusalIsA409WithKASsSentence(t *testing.T) {
 }
 
 func TestHandleExtend_RefusedOnAnOrdinaryPause(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	h.insertBridgeNow(marotte.RunHostChatID("wf_1"), testBridge(br, bridgeReady))
 	br.callResults = map[string]json.RawMessage{
@@ -253,6 +262,7 @@ func TestHandleExtend_RefusedOnAnOrdinaryPause(t *testing.T) {
 }
 
 func TestHandleExtend_ACountOutsideTheCapIsA400BeforeAnyCall(t *testing.T) {
+	t.Parallel()
 	for _, n := range []int{0, 1001} {
 		h, br := maxIterationsHub(t)
 		rr := &runRoutes{runs: h.runs, epoch: h.Epoch}
@@ -273,6 +283,7 @@ func TestHandleExtend_ACountOutsideTheCapIsA400BeforeAnyCall(t *testing.T) {
 }
 
 func TestHandleFinishLoop_AnUpdatedFalseIsA409WithKASsSentence(t *testing.T) {
+	t.Parallel()
 	h, br := maxIterationsHub(t)
 	br.callResults[methodKiroWorkflowUpdate] = json.RawMessage(
 		`{"workflowId":"wf_1","updated":false,"message":"Cannot update node 'loop': it is not a paused repeat."}`,

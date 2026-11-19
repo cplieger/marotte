@@ -11,6 +11,7 @@ import (
 
 // TestPendingPermsTracker_ConcurrentAddTakeList races Add, TakeIfPresent, askRefs, clearForRun and List under -race.
 func TestPendingPermsTracker_ConcurrentAddTakeList(t *testing.T) {
+	t.Parallel()
 	tracker := newPendingPermsTracker()
 	const N = 100
 
@@ -56,6 +57,7 @@ func TestPendingPermsTracker_ConcurrentAddTakeList(t *testing.T) {
 // TestPendingPermsTracker_TakeIfPresent_OneWinnerPerRequest pins that every goroutine contends for one
 // id, and exactly one may win; kiro-cli silently discards a loser's answer.
 func TestPendingPermsTracker_TakeIfPresent_OneWinnerPerRequest(t *testing.T) {
+	t.Parallel()
 	const answerers = 16
 	const rounds = 200
 

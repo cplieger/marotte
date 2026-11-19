@@ -66,6 +66,7 @@ func openTextEntry(t *testing.T, h *Runtime, chatID marotte.ChatID) marotte.Open
 // The first chunk of a turn marotte never prompted opens a wire turn and a text
 // entry in one frame each.
 func TestTranslateACPEvent_AssistantChunk(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
@@ -86,6 +87,7 @@ func TestTranslateACPEvent_AssistantChunk(t *testing.T) {
 // A second chunk extends the open entry rather than opening another: same id, the
 // text coalesced, and the frame is entry_delta, never a second entry_opened.
 func TestTranslateACPEvent_ASecondChunkExtendsTheOpenEntry(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
@@ -116,6 +118,7 @@ func TestTranslateACPEvent_ASecondChunkExtendsTheOpenEntry(t *testing.T) {
 // A tool_call frame is held open until its terminal update seals the tool_result; the create's locations and
 // diffs ride the entry, the update's the result.
 func TestTranslateACPEvent_ToolCalls(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		assert func(*testing.T, []marotte.Entry, *turnlog.Turn)
 		name   string
@@ -259,6 +262,7 @@ func TestTranslateACPEvent_ToolCalls(t *testing.T) {
 
 // A plan frame is one plan entry in the turn it arrived in.
 func TestTranslateACPEvent_PlanIsOneEntry(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
@@ -281,6 +285,7 @@ func TestTranslateACPEvent_PlanIsOneEntry(t *testing.T) {
 }
 
 func TestTranslateACPEvent_PermissionRequestEmitsAndPushes(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
@@ -307,6 +312,7 @@ func TestTranslateACPEvent_PermissionRequestEmitsAndPushes(t *testing.T) {
 }
 
 func TestTranslateACPEvent_MalformedJSONIgnored(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
@@ -494,6 +500,7 @@ func FuzzHandleSessionUpdate(f *testing.F) {
 
 // An fs/* request is routed to the FS handler, which answers through the bridge.
 func TestTranslateACPEvent_RoutesFSRequest(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	if err := os.WriteFile(filepath.Join(work, "r.txt"), []byte("hi"), 0o644); err != nil {
 		t.Fatal(err)
@@ -515,6 +522,7 @@ func TestTranslateACPEvent_RoutesFSRequest(t *testing.T) {
 
 // A terminal/* request is routed to the terminal handler, which answers through the bridge.
 func TestTranslateACPEvent_RoutesTerminalRequest(t *testing.T) {
+	t.Parallel()
 	h, br := hubForFSTest(t, t.TempDir())
 	// A terminal owned by c1, so output resolves and answers through its bridge.
 	h.agentTerms.mu.Lock()
@@ -567,6 +575,7 @@ func captureAttribution(t *testing.T, h *Runtime, chatID marotte.ChatID, session
 // TestHandleSessionUpdate_StepFrameIsAttributedWithoutAMetaBlock pins that KAS's session_info_update carries no
 // `_meta.kiro.workflow` (buildSessionInfoUpdate merges no promptMeta), so the step fact must come from the session.
 func TestHandleSessionUpdate_StepFrameIsAttributedWithoutAMetaBlock(t *testing.T) {
+	t.Parallel()
 	const (
 		chatID  = marotte.ChatID("chat-step")
 		stepSID = "step-session-1"
@@ -589,6 +598,7 @@ func TestHandleSessionUpdate_StepFrameIsAttributedWithoutAMetaBlock(t *testing.T
 
 // A step's config_option_update keeps its attribution through the dispatch table, or the step's model becomes the chat's.
 func TestHandleSessionUpdate_AStepsConfigFrameLeavesTheChatsModelAlone(t *testing.T) {
+	t.Parallel()
 	const (
 		chatID  = marotte.ChatID("chat-step")
 		stepSID = "step-session-1"
@@ -639,6 +649,7 @@ func dispatchUpdate(t *testing.T, h *Runtime, kind marotte.ACPUpdateKind, extra 
 // (kiro-cli 2.16.0: 9 frames, 6 tagged), and ungated they open a phantom turn. The flag is at
 // `update._meta.kiro.replay`, not `params._meta`.
 func TestHandleSessionUpdate_DropsReplayedFrames(t *testing.T) {
+	t.Parallel()
 	replayMeta := map[string]any{"kiro": map[string]any{"replay": true}}
 
 	tests := []struct {
@@ -689,6 +700,7 @@ func TestHandleSessionUpdate_DropsReplayedFrames(t *testing.T) {
 // TestHandleSessionUpdate_CatalogFrameSurvivesALoad pins that the gate is per frame. config_option_update is untagged
 // current state; gating on the load would empty the mode pill on every resume.
 func TestHandleSessionUpdate_CatalogFrameSurvivesALoad(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	if !dispatchUpdate(t, h, marotte.ACPUpdateConfigOption, nil) {
 		t.Error("config_option_update was dropped; it is untagged by KAS and carries current session state")

@@ -18,6 +18,7 @@ func (b *framesBus) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 // A parent's message and its take-up filed into a step's open turn while the step streams leave
 // the step's say one entry, written after both rows in the run's own log.
 func TestRunSteer_MidStreamLeavesTheStepsSayWhole(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	r := newRunLog(t.TempDir())
 	openStepTurn(t, r, "s")

@@ -41,6 +41,7 @@ func inspectWithStep(t *testing.T, workflowID, nodeID, status, signal string) js
 }
 
 func TestStepClose_GradedUnderKASsRecord(t *testing.T) {
+	t.Parallel()
 	limit := stepClose{
 		outcome: marotte.TurnOutcomeFailed, kind: marotte.FailureKindModelCallLimit,
 		reason: marotte.ModelCallLimitStepReason, rawStop: marotte.StopReasonToolUse,
@@ -229,6 +230,7 @@ func runRecordedStep(t *testing.T, h *Runtime, workflowID, nodePath string, path
 // the model's tool_use stop after update_workflow's handoff ends it, and KAS records the step completed on a success
 // signal. No surface may grade it failed.
 func TestStepEnd_AKiroCLI232HandoffStepReadsCompleted(t *testing.T) {
+	t.Parallel()
 	const (
 		id     = "wf_04b7a7ba1affa505"
 		chatID = marotte.ChatID("c1")
@@ -265,6 +267,7 @@ func TestStepEnd_AKiroCLI232HandoffStepReadsCompleted(t *testing.T) {
 // 300 model calls (2.31.0, `[IterationLimit] Reached iteration limit` in kiro.log): KAS records it completed with no
 // completion signal.
 func TestStepEnd_AStepKASCompletedWithNoSignalAfterAToolUseStopIsTheModelCallLimit(t *testing.T) {
+	t.Parallel()
 	const (
 		id     = "wf_42066808f4c28538"
 		chatID = marotte.ChatID("c1")
@@ -328,6 +331,7 @@ func armReplayEndingOn(br *fakeBridge, sessionID string, stop marotte.StopReason
 // TestStepEnd_AReplayedStepTurnReadsUnderKASsRecord reads a step marotte's run log holds no turn for, so its
 // transcript is KAS's replay, whose projection grades a tool_use turn_end the model-call limit on its own.
 func TestStepEnd_AReplayedStepTurnReadsUnderKASsRecord(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		desc, id, session, inspect, tail string
 		path                             []string
@@ -377,6 +381,7 @@ func TestStepEnd_AReplayedStepTurnReadsUnderKASsRecord(t *testing.T) {
 // TestStepEnd_AStoredModelCallLimitFailureOfAStepKASCompletedOnSuccessReadsCompleted reads a run log as kiro-cli
 // 2.32.0's first marotte build wrote it, failed at the model-call limit, back under KAS's record of the step.
 func TestStepEnd_AStoredModelCallLimitFailureOfAStepKASCompletedOnSuccessReadsCompleted(t *testing.T) {
+	t.Parallel()
 	const id = "wf_04b7a7ba1affa505"
 	nodePath := workflow.PathKey([]string{id, "create-workflow"})
 	h, br := seedChatParentedRun(t, true)
@@ -411,6 +416,7 @@ func TestStepEnd_AStoredModelCallLimitFailureOfAStepKASCompletedOnSuccessReadsCo
 // after a tool result: KAS records the step completed with no signal, and its session holds no answer or KAS's
 // "No assistant response was recorded" stand-in.
 func TestStepEnd_AStepKASCompletedWithNoSignalAfterAnEmptyAnswerReadsFailed(t *testing.T) {
+	t.Parallel()
 	const (
 		id      = "wf_aabb60d3e105b178"
 		session = "step-session-1"
@@ -605,6 +611,7 @@ func (s *stepEnding) complete(status string) {
 // done and the parent's update_status clear the signal (applyPausedStepFinish), and a run's end closes what is open.
 // Mark step done and update_status read completed, ended by hand.
 func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *testing.T) {
+	t.Parallel()
 	const (
 		id      = "wf_aabb60d3e105b178"
 		session = "step-session-1"
@@ -824,6 +831,7 @@ func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *tes
 // A replayed close folds its grade as a recorded one does (stepClose.withGrade): its refusal survives only a refused
 // grade.
 func TestGradeNewestClose_KeepsARefusalOnlyUnderARefusedGrade(t *testing.T) {
+	t.Parallel()
 	refusal := &marotte.RefusalInfo{Category: "policy"}
 	unsignalled := workflow.StepRecord{Status: "completed"}
 	for _, tc := range []struct {

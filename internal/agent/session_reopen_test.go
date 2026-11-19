@@ -90,6 +90,7 @@ func sessionClosed(br *fakeBridge) bool {
 }
 
 func TestMarkSessionsForReload_AnIdleChatReloadsAtItsNextOpen(t *testing.T) {
+	t.Parallel()
 	h, _ := reopenFixture(t)
 	first, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
@@ -125,6 +126,7 @@ func TestMarkSessionsForReload_AnIdleChatReloadsAtItsNextOpen(t *testing.T) {
 
 // A host session keeps the presets its run launched with, so a mark never reaches it.
 func TestMarkSessionsForReload_LeavesHostSessionsUnmarked(t *testing.T) {
+	t.Parallel()
 	h, _ := reopenFixture(t)
 	lc := h.coord.turns.lifecycleForRun(marotte.RunHostChatID("wf-1"))
 	sb := newSharedBridge(lc)
@@ -142,6 +144,7 @@ func TestMarkSessionsForReload_LeavesHostSessionsUnmarked(t *testing.T) {
 
 // The Settings profile is the default for new chats: an open chat keeps the profile its header names.
 func TestSecurityProfileChanged_LeavesOpenChatsOnTheirProfile(t *testing.T) {
+	t.Parallel()
 	h, configDir := reopenFixture(t)
 	first, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
@@ -157,6 +160,7 @@ func TestSecurityProfileChanged_LeavesOpenChatsOnTheirProfile(t *testing.T) {
 }
 
 func TestSpecPlanningAskFirst_ReopensOnlyWhilePlanningIsOn(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		planning string
 		want     bool
@@ -180,6 +184,7 @@ func TestSpecPlanningAskFirst_ReopensOnlyWhilePlanningIsOn(t *testing.T) {
 // KAS reads a session's messaging switch on every send, so a Settings flip reaches an open chat's session through
 // set_config_option, with no reload: off until the user turns it on, then on in place.
 func TestChatMessaging_ReachesOpenChatsLive(t *testing.T) {
+	t.Parallel()
 	h, configDir := reopenFixture(t)
 	first, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
@@ -201,6 +206,7 @@ func TestChatMessaging_ReachesOpenChatsLive(t *testing.T) {
 // KAS fixes a session's search method at session/new and keeps it on load, so a change reloads no open chat and
 // reaches the next new chat.
 func TestChatAwarenessMode_ReachesNewChatsOnly(t *testing.T) {
+	t.Parallel()
 	h, configDir := reopenFixture(t)
 	writeSetting(t, configDir, settings.KeyChatAwareness, true)
 
@@ -221,6 +227,7 @@ func TestChatAwarenessMode_ReachesNewChatsOnly(t *testing.T) {
 }
 
 func TestWorkflowLaunch_ReopensOnlyWhileWorkflowsAreOn(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		workflows bool
 		want      bool
@@ -317,6 +324,7 @@ var configWrites = []struct {
 	{key: settings.KeyNotifyPRStatus, value: false, reach: reachNoChat},
 	{key: settings.KeyNotifyRunOutcome, value: false, reach: reachNoChat},
 	{key: settings.KeyNotifySignIn, value: false, reach: reachNoChat},
+	{key: settings.KeyNotifyBotRule, value: true, reach: reachNoChat},
 	{key: settings.KeyDebugLogs, value: true, reach: reachEngine},
 	{key: settings.KeyChatRetentionDays, value: 30, reach: reachNoChat},
 	// The Recently closed expiry runner reads it, through Runtime.SettingsWritten.
@@ -351,6 +359,7 @@ var kiroCLIWrites = []struct {
 }
 
 func TestConfigWrites_RouteEveryKnownKey(t *testing.T) {
+	t.Parallel()
 	routed := map[string]struct{}{}
 	for _, w := range configWrites {
 		routed[w.key] = struct{}{}
@@ -397,6 +406,7 @@ func reloadsAfter(t *testing.T, h *Runtime, write func()) bool {
 }
 
 func TestConfigWrites_ReachChatsByTheirRoute(t *testing.T) {
+	t.Parallel()
 	for i, tc := range configWrites {
 		t.Run(fmt.Sprintf("%02d_%s", i, tc.key), func(t *testing.T) {
 			h, configDir := reopenFixture(t)
@@ -609,6 +619,7 @@ func settleConfig(t *testing.T, configDir string) {
 }
 
 func TestOpenBridge_AHandEditOfConfigReopensTheChatAtItsNextOpen(t *testing.T) {
+	t.Parallel()
 	h, configDir := reopenFixture(t)
 	first, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
@@ -632,6 +643,7 @@ func TestOpenBridge_AHandEditOfConfigReopensTheChatAtItsNextOpen(t *testing.T) {
 }
 
 func TestReconcileSessionSettings_ABusyChatSwitchesAfterItsTurn(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, configDir := reopenFixture(t)
 		first, err := h.coord.openReleased(t.Context(), "c1", "")
@@ -663,6 +675,7 @@ func TestReconcileSessionSettings_ABusyChatSwitchesAfterItsTurn(t *testing.T) {
 }
 
 func TestReconcileSessionSettings_AChatHostingALiveRunSwitchesAfterTheRun(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, configDir := reopenFixture(t)
 		first, err := h.coord.openReleased(t.Context(), "c1", "")
@@ -693,6 +706,7 @@ func TestReconcileSessionSettings_AChatHostingALiveRunSwitchesAfterTheRun(t *tes
 }
 
 func TestReconcileSessionSettings_ACancelledCallerReopensNothing(t *testing.T) {
+	t.Parallel()
 	h, configDir := reopenFixture(t)
 	writeSetting(t, configDir, settings.KeySecurityProfile, policyfile.ProfileUnrestricted)
 	h.ReconcileSessionSettings(t.Context())
@@ -768,6 +782,7 @@ func TestReset_CloseDoneLoadFailedKeepsReloadNeededAndNeverRestoresTheHandle(t *
 
 // A reload whose close KAS refused keeps the chat on its session and keeps the mark for the next open.
 func TestReset_RefusedCloseKeepsTheHandleAndTheMark(t *testing.T) {
+	t.Parallel()
 	h, _ := reopenFixture(t)
 	first, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
@@ -800,6 +815,7 @@ func TestReset_RefusedCloseKeepsTheHandleAndTheMark(t *testing.T) {
 
 // One chat's reload closes and loads only that chat's session: the engine and the other chat's session stay.
 func TestSessionReset_LeavesEngineAndCoTenantUntouched(t *testing.T) {
+	t.Parallel()
 	h, _ := reopenFixture(t)
 	if _, err := h.chatStore.Mutate(t.Context(), "c2", func(c *marotte.Chat, _ bool) bool { c.Name = "B"; return true }); err != nil {
 		t.Fatalf("Setup: seed c2: %v", err)
@@ -834,6 +850,7 @@ func TestSessionReset_LeavesEngineAndCoTenantUntouched(t *testing.T) {
 // A mark waits for the chat's turn and for the run step it hosts to close, so a session is never closed under a live
 // turn or step.
 func TestReloadIfMarked_WaitsForTheTurnAndTheHostedStep(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		hold func(t *testing.T, h *Runtime, sb *sharedBridge) (release func())
 		name string

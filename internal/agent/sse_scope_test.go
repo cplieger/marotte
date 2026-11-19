@@ -137,6 +137,7 @@ func publishRunsThenChat(h *Runtime, runs ...string) {
 }
 
 func TestHandleSSE_EachScopeReceivesItsOwnRunsAndEveryBroadcast(t *testing.T) {
+	t.Parallel()
 	h, srv := scopeServer(t)
 	streams := map[string]*liveStream{
 		`["run:wf_a"]`: openStream(t, srv, `["run:wf_a"]`),
@@ -160,6 +161,7 @@ func TestHandleSSE_EachScopeReceivesItsOwnRunsAndEveryBroadcast(t *testing.T) {
 }
 
 func TestHandleSSE_AScopeOutsideTheTopicGrammarIs400(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	for name, topics := range map[string]string{
 		"not JSON":        `["run:wf_a"`,
@@ -210,6 +212,7 @@ func scopeBody(conn string, seq int, topics string) string {
 }
 
 func TestScopeRoute_ReplacesTheScopeOfALiveConnection(t *testing.T) {
+	t.Parallel()
 	h, srv := scopeServer(t)
 	s := openStream(t, srv, `[]`)
 	if s.conn == "" {
@@ -227,6 +230,7 @@ func TestScopeRoute_ReplacesTheScopeOfALiveConnection(t *testing.T) {
 }
 
 func TestScopeRoute_AnswersTheWireContractsRefusals(t *testing.T) {
+	t.Parallel()
 	_, srv := scopeServer(t)
 	s := openStream(t, srv, `[]`)
 
@@ -257,6 +261,7 @@ func TestScopeRoute_AnswersTheWireContractsRefusals(t *testing.T) {
 // A connection whose owner is not the caller is refused 403, so the scope route can only narrow the caller's
 // own connections.
 func TestScopeRoute_RefusesAConnectionAnotherPrincipalOwns(t *testing.T) {
+	t.Parallel()
 	h, srv := scopeServer(t)
 	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.bus.fanout.Serve(w, r, sse.WithRequestScope("another principal"))
@@ -298,6 +303,7 @@ func openForeignStream(t *testing.T, srv *httptest.Server) string {
 // The drain gate refuses new streams, but a live one may still narrow: a late scope request changes nothing
 // a shutdown cares about.
 func TestScopeRoute_AnswersWhileDraining(t *testing.T) {
+	t.Parallel()
 	h, srv := scopeServer(t)
 	s := openStream(t, srv, `[]`)
 	h.lifecycle.draining.Store(true)

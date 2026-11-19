@@ -8,6 +8,7 @@ import (
 )
 
 func TestAwaitTurnBound_AnswersWhetherKASBoundThePrompt(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		bind, end, want bool
 	}{
@@ -38,6 +39,7 @@ func TestAwaitTurnBound_AnswersWhetherKASBoundThePrompt(t *testing.T) {
 }
 
 func TestAwaitTurnBound_ARunningUnboundTurnWaitsForItsContext(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	id, _ := h.stagePromptTurn(t, "c1")
 	defer h.coord.releaseTurn("c1", id)

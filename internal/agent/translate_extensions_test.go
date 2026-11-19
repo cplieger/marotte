@@ -14,6 +14,7 @@ import (
 )
 
 func TestTranslateMCPStatus(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		params     any
@@ -96,6 +97,7 @@ func availableCommandsFrame(t *testing.T) *marotte.RPCResponse {
 
 // A chat's frame fills GET /api/slash-commands' catalog, announced once; a repeat changes nothing.
 func TestTranslateV3_AvailableCommandsUpdateFeedsTheCatalog(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	before := h.bus.fanout.Position().Head
@@ -121,6 +123,7 @@ func TestTranslateV3_AvailableCommandsUpdateFeedsTheCatalog(t *testing.T) {
 // documents_changed fills the issues map keyed by KiroDoc.Path, announced once;
 // a failed frame changes nothing.
 func TestSteeringDocumentsChanged_ProducesIssuesKeyedByDocsPath(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	before := h.bus.fanout.Position().Head
 	frame := func(status string) *marotte.RPCResponse {
@@ -151,6 +154,7 @@ func TestSteeringDocumentsChanged_ProducesIssuesKeyedByDocsPath(t *testing.T) {
 
 // Not ready until KAS sends a catalog; an empty one still counts, letting the client release unknown names.
 func TestSlashCatalog_ReadyOnlyAfterAKASCatalog(t *testing.T) {
+	t.Parallel()
 	c := newSlashCatalog()
 	if cmds, ready := c.snapshot(); ready || len(cmds) != 0 {
 		t.Fatalf("Snapshot() before any frame = (%+v, %v), want ([], false)", cmds, ready)
@@ -168,6 +172,7 @@ func TestSlashCatalog_ReadyOnlyAfterAKASCatalog(t *testing.T) {
 
 // Every session shares the engine's one MCP pool, so the newest list from any session is the workspace's.
 func TestSlashCatalog_TheNewestListFromAnySessionWins(t *testing.T) {
+	t.Parallel()
 	c := newSlashCatalog()
 	first := []marotte.SlashCommand{{Name: "a", Kind: marotte.SlashKindPrompt}}
 	second := []marotte.SlashCommand{{Name: "b", Kind: marotte.SlashKindPrompt}}
@@ -184,6 +189,7 @@ func TestSlashCatalog_TheNewestListFromAnySessionWins(t *testing.T) {
 }
 
 func TestHandleSlashCommands_ReportsReadiness(t *testing.T) {
+	t.Parallel()
 	h := &Runtime{slash: newSlashCatalog()}
 	get := func() marotte.SlashCommandsResponse {
 		t.Helper()
@@ -205,6 +211,7 @@ func TestHandleSlashCommands_ReportsReadiness(t *testing.T) {
 }
 
 func TestTranslateV3_SummarizationRunningEmitsTransient(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	before := h.bus.fanout.Position().Head
@@ -227,6 +234,7 @@ func TestTranslateV3_SummarizationRunningEmitsTransient(t *testing.T) {
 }
 
 func TestTranslateV3_SummarizationSuccessPersistsEvent(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	summary := "summary text"
@@ -274,6 +282,7 @@ func TestTranslateV3_SummarizationSuccessPersistsEvent(t *testing.T) {
 }
 
 func TestTranslateV3_UsageUpdatePersistsContextPct(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
@@ -296,6 +305,7 @@ func TestTranslateV3_UsageUpdatePersistsContextPct(t *testing.T) {
 }
 
 func TestTranslateInitErrors_AgentNotFoundPersistsFallback(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
@@ -323,6 +333,7 @@ func TestTranslateInitErrors_AgentNotFoundPersistsFallback(t *testing.T) {
 }
 
 func TestTranslateInitErrors_AgentConfigErrorEmitsError(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	before := h.bus.fanout.Position().Head
@@ -341,6 +352,7 @@ func TestTranslateInitErrors_AgentConfigErrorEmitsError(t *testing.T) {
 }
 
 func TestTranslateInitErrors_RateLimitEmitsError(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	before := h.bus.fanout.Position().Head
@@ -358,6 +370,7 @@ func TestTranslateInitErrors_RateLimitEmitsError(t *testing.T) {
 }
 
 func TestTranslateKnowledgeIndexing_ReachesTheTranslator(t *testing.T) {
+	t.Parallel()
 	for _, method := range []string{"_kiro/knowledge/indexingStarted", "_kiro/knowledge/indexingCompleted"} {
 		t.Run(method, func(t *testing.T) {
 			h, cs, _ := newTestHub()
@@ -387,6 +400,7 @@ func systemNotifyMsg(t *testing.T) *marotte.RPCResponse {
 }
 
 func TestTranslateSystemNotify_EmitsASystemNoticeNotAnError(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	before := h.bus.fanout.Position().Head
 	h.translateACPEvent("c1", h.originOf("c1"), systemNotifyMsg(t))
@@ -402,6 +416,7 @@ func TestTranslateSystemNotify_EmitsASystemNoticeNotAnError(t *testing.T) {
 // The workspace table claims a session-less notify on whichever lane it arrives, and a host session's run:<id> lane
 // names its run in the toast.
 func TestTranslateSystemNotify_AHostSessionLaneNamesItsRun(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	before := h.bus.fanout.Position().Head

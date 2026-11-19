@@ -54,6 +54,7 @@ func reopenAndOpen(t *testing.T, h *Runtime, cs *testChatStore) *marotte.Chat {
 // A model pick whose apply meets the chat's ended life keeps the pick parked with no failure frame, and the
 // reopened chat's door applies it; a swap kiro-cli refused while the life is live still clears it.
 func TestSwitchModel_AnApplyOnAnEndedLifeKeepsThePick(t *testing.T) {
+	t.Parallel()
 	t.Run("after the commit", func(t *testing.T) {
 		h, cs, br, tab := closeTabHub(t)
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -167,6 +168,7 @@ func TestSwitchModel_AnApplyOnAnEndedLifeKeepsThePick(t *testing.T) {
 // alone: the pick stays parked with no failure frame, the reopen's door applies it, and the old tail sends nothing
 // to the new session.
 func TestCloseTab_AReopenWaitsForTheClosedLifesTail(t *testing.T) {
+	t.Parallel()
 	h, cs, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {

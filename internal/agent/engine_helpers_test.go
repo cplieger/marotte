@@ -506,7 +506,7 @@ func (e *fakeEngine) Stalled() bool {
 // newRuntimeOn builds a runtime over src and binds src's exit hook to it; Shutdown it from the test. A first engine
 // that is coming up is waited for with its boot work (awaitBoot), since that work reads the fakes a test then edits.
 func newRuntimeOn(ctx context.Context, workDir string, src *fakeEngineSource, chats chatRecords, opts ...Option) *Runtime {
-	h := New(ctx, workDir, src, chats, opts...)
+	h := New(ctx, workDir, src, chats, append([]Option{parkedHeals()}, opts...)...)
 	src.mu.Lock()
 	src.rt = h
 	src.mu.Unlock()
@@ -516,6 +516,23 @@ func newRuntimeOn(ctx context.Context, workDir string, src *fakeEngineSource, ch
 		awaitBoot(h)
 	}
 	return h
+}
+
+// parkedHeals parks the heal ladder past any test run, so a heal timer cannot outlive its test; a test that needs it
+// to fire passes withHealBaseDelay after it.
+func parkedHeals() Option { return withHealBaseDelay(time.Hour) }
+
+// withHealBaseDelay sets the runtime's first automatic resume delay.
+func withHealBaseDelay(d time.Duration) Option { return func(h *Runtime) { h.runs.healBaseDelay = d } }
+
+// withUnattendedAskBudget sets the runtime's floor wait on one ask nobody watches.
+func withUnattendedAskBudget(d time.Duration) Option {
+	return func(h *Runtime) { h.runs.unattendedAskBudget = d }
+}
+
+// withUnattendedPauseBudget sets how long the runtime lets a scheduled run sit paused before it ends it.
+func withUnattendedPauseBudget(d time.Duration) Option {
+	return func(h *Runtime) { h.runs.unattendedPauseBudget = d }
 }
 
 // laneOf is s as the engine lane when it is a plain fake, so one fake answers session and connection calls alike.

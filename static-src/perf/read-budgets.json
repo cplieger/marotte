@@ -24,7 +24,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1643
+          "maxBytes": 1667
         },
         "GET /api/whoami": {
           "count": 1,
@@ -187,7 +187,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1643
+          "maxBytes": 1667
         },
         "GET /api/whoami": {
           "count": 1,
@@ -350,7 +350,7 @@
         },
         "GET /api/settings": {
           "count": 2,
-          "maxBytes": 1643
+          "maxBytes": 1667
         },
         "GET /api/whoami": {
           "count": 1,
@@ -545,7 +545,7 @@
         },
         "GET /api/settings": {
           "count": 3,
-          "maxBytes": 1643
+          "maxBytes": 1667
         },
         "GET /api/whoami": {
           "count": 1,
@@ -729,7 +729,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1643
+          "maxBytes": 1667
         }
       },
       "topics": []
@@ -760,7 +760,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1643
+          "maxBytes": 1667
         },
         "GET /api/whoami": {
           "count": 1,
@@ -931,7 +931,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1643
+          "maxBytes": 1667
         },
         "GET /api/whoami": {
           "count": 1,
@@ -1118,7 +1118,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1643
+          "maxBytes": 1667
         },
         "GET /api/whoami": {
           "count": 1,
@@ -1297,7 +1297,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1643
+          "maxBytes": 1667
         },
         "GET /api/whoami": {
           "count": 1,
@@ -1460,7 +1460,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1643
+          "maxBytes": 1667
         },
         "GET /api/whoami": {
           "count": 1,
@@ -1619,7 +1619,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1643
+          "maxBytes": 1667
         },
         "GET /api/whoami": {
           "count": 1,
@@ -1774,7 +1774,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1643
+          "maxBytes": 1667
         },
         "GET /api/whoami": {
           "count": 1,
@@ -1949,7 +1949,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1643
+          "maxBytes": 1667
         },
         "GET /api/whoami": {
           "count": 1,
@@ -2124,7 +2124,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1643
+          "maxBytes": 1667
         },
         "GET /api/whoami": {
           "count": 1,
@@ -2299,7 +2299,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1643
+          "maxBytes": 1667
         },
         "GET /api/whoami": {
           "count": 1,
@@ -2429,7 +2429,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1643
+          "maxBytes": 1667
         },
         "GET /api/whoami": {
           "count": 1,

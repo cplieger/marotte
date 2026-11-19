@@ -51,6 +51,7 @@ func checkpointMsg(t *testing.T, artifactPath string) *marotte.RPCResponse {
 
 // The non-marking operation runs first, so a wrong mark could only come from it.
 func TestSpecProducers_MarkTheSpecDirectory(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		run  func(t *testing.T, h *Runtime, work string)
@@ -119,6 +120,7 @@ func TestSpecProducers_MarkTheSpecDirectory(t *testing.T) {
 
 // A refused write (a path escaping the workspace) marks nothing; the later good write is the one mark.
 func TestSpecProducers_ARefusedWriteMarksNothing(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	h, _ := hubForFSTest(t, work)
 	dirs := specRecorder(h)

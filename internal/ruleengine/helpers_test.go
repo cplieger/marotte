@@ -204,16 +204,18 @@ func (s *turnState) isWaiting(id marotte.ChatID) bool {
 var errWriteFault = errors.New("no space left on device")
 
 // faultStore is the real store with its writes made to fail on demand: failing refuses every write until cleared,
-// and dieAfter(n) lets n more writes through and then refuses the rest of the process's life, as a crash does. gets
-// counts the record reads; afterGet, when set, runs once a read has answered.
+// failsAfterApply does too but runs each write's closure first, as a disk refusing the save does, and dieAfter(n)
+// lets n more writes through and then refuses the rest of the process's life, as a crash does. gets counts the
+// record reads; afterGet, when set, runs once a read has answered.
 type faultStore struct {
 	afterGet     func(chatID marotte.ChatID)
 	beforeMutate func()
 	*chat.Store
-	failing atomic.Bool
-	gone    atomic.Bool
-	left    atomic.Int64
-	gets    atomic.Int64
+	failing         atomic.Bool
+	failsAfterApply atomic.Bool
+	gone            atomic.Bool
+	left            atomic.Int64
+	gets            atomic.Int64
 }
 
 func (s *faultStore) Get(ctx context.Context, chatID marotte.ChatID) (*marotte.Chat, bool) {
@@ -230,6 +232,12 @@ func (s *faultStore) Mutate(ctx context.Context, chatID marotte.ChatID, f func(c
 		s.beforeMutate()
 	}
 	if s.gone.Load() || s.failing.Load() {
+		return "", errWriteFault
+	}
+	if s.failsAfterApply.Load() {
+		if _, err := s.Store.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool { f(c, exists); return false }); err != nil {
+			return "", err
+		}
 		return "", errWriteFault
 	}
 	v, err := s.Store.Mutate(ctx, chatID, f)
@@ -273,9 +281,18 @@ func (w *syncBuffer) lines(level slog.Level, msg string) int {
 	return n
 }
 
+// undelivered is one push the engine asked for about a prompt it gave up on.
+type undelivered struct {
+	err  error
+	chat marotte.ChatID
+	rule string
+}
+
 // harness is one engine over a real chat store, run inside the test's synctest bubble.
 type harness struct {
 	t       *testing.T
+	failed  []undelivered
+	failMu  sync.Mutex
 	store   *chat.Store
 	fs      *faultStore
 	notes   *fakeNotifier
@@ -328,7 +345,12 @@ func (h *harness) start() {
 		Ready:    h.ready.Load,
 		TurnLive: h.turns.isLive,
 		Waiting:  h.turns.isWaiting,
-		Logger:   slog.New(slog.NewTextHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		NotDelivered: func(_ context.Context, chatID marotte.ChatID, ruleName string, err error) {
+			h.failMu.Lock()
+			defer h.failMu.Unlock()
+			h.failed = append(h.failed, undelivered{chat: chatID, rule: ruleName, err: err})
+		},
+		Logger: slog.New(slog.NewTextHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	})
 	h.notes.eng = h.eng
 	ctx, cancel := context.WithCancel(context.Background())
@@ -528,4 +550,10 @@ func eventBlock(t *testing.T, text string) map[string]any {
 		t.Fatalf("event block %q: %v", body, err)
 	}
 	return out
+}
+
+func (h *harness) undelivered() []undelivered {
+	h.failMu.Lock()
+	defer h.failMu.Unlock()
+	return slices.Clone(h.failed)
 }

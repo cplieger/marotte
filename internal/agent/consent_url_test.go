@@ -3,6 +3,7 @@ package agent
 import "testing"
 
 func TestWithGoogleOfflineAccess(t *testing.T) {
+	t.Parallel()
 	const redirect = "redirect_uri=http%3A%2F%2F127.0.0.1%3A41234%2Fcallback"
 	cases := map[string]struct{ in, want string }{
 		"the endpoint gains offline access and keeps every other segment in order": {

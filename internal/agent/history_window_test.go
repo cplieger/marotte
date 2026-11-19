@@ -36,6 +36,7 @@ func waitShown(t *testing.T, st *tabs.Store, want []string, after string) {
 }
 
 func TestSettingsWritten_ReappliesTheHistoryWindow(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	now := time.Now()
 	doc, err := json.Marshal(map[string]any{

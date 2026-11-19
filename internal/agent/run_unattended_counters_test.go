@@ -79,6 +79,7 @@ var (
 // The unattended counters are pre-set for exactly the origins a lease marks unattended: a missing origin's first
 // failure is missed by increase(), and an extra one is a series no run moves.
 func TestUnattendedCounters_PresetEveryOriginALeaseMarksUnattended(t *testing.T) {
+	t.Parallel()
 	h := &Runs{chats: newTestChatStore()}
 	launches := map[string]launchOrigin{
 		"wf_scheduled": scheduledLaunch(launchrule.Row{ID: "sched-1"}, time.Time{}),

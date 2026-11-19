@@ -78,6 +78,7 @@ func revOf(t *testing.T, h *Runtime) uint64 {
 
 // A changed step reaches a client as its own record and its containers', not as the whole run.
 func TestHandleRun_SinceAnswersTheChangedStepAndItsContainers(t *testing.T) {
+	t.Parallel()
 	h, br := hostedLeasedRun(t, lanesInspect(t, "running"))
 	rev := revOf(t, h)
 	br.setCallResult(methodKiroWorkflowInspect, lanesInspect(t, "completed"))
@@ -121,6 +122,7 @@ func TestHandleRun_SinceAnswersTheChangedStepAndItsContainers(t *testing.T) {
 // A grade marotte records is part of the run read, so it moves the revision even when KAS's
 // state did not change, and ?since carries it.
 func TestHandleRun_AGradeAdvancesTheRevision(t *testing.T) {
+	t.Parallel()
 	h, _ := hostedLeasedRun(t, lanesInspect(t, "completed"))
 	h.runs.log = newRunLog(t.TempDir())
 	path := []string{"root", "lane-a", "build"}
@@ -146,6 +148,7 @@ func TestHandleRun_AGradeAdvancesTheRevision(t *testing.T) {
 // The header view and a watch's capture read answer from the run's held read: neither asks the
 // engine again.
 func TestHandleRun_TheHeaderAndAWatchReadAnswerFromTheHeldRead(t *testing.T) {
+	t.Parallel()
 	reply, err := json.Marshal(map[string]any{
 		"workflowId": "wf_1",
 		"state": map[string]any{
@@ -199,6 +202,7 @@ func TestHandleRun_TheHeaderAndAWatchReadAnswerFromTheHeldRead(t *testing.T) {
 // A run's lifecycle frame makes the server re-read the run once and tell every client the new
 // revision, so no client has to read the run to learn that it moved.
 func TestRunRev_AFramePublishesTheNextRevision(t *testing.T) {
+	t.Parallel()
 	h, br := hostedLeasedRun(t, lanesInspect(t, "running"))
 	rev := revOf(t, h)
 	br.setCallResult(methodKiroWorkflowInspect, lanesInspect(t, "completed"))
@@ -227,6 +231,7 @@ func TestRunRev_AFramePublishesTheNextRevision(t *testing.T) {
 
 // A revision the server does not hold (another process's, or one past the ring) answers the run whole.
 func TestHandleRun_SinceAnUnknownRevisionAnswersWhole(t *testing.T) {
+	t.Parallel()
 	h, _ := hostedLeasedRun(t, lanesInspect(t, "running"))
 	rev := revOf(t, h)
 
@@ -239,6 +244,7 @@ func TestHandleRun_SinceAnUnknownRevisionAnswersWhole(t *testing.T) {
 
 // A node the run no longer holds is named removed, and its parent comes with it.
 func TestHandleRun_SinceNamesARemovedNode(t *testing.T) {
+	t.Parallel()
 	h, br := hostedLeasedRun(t, lanesInspect(t, "running"))
 	rev := revOf(t, h)
 	raw, err := json.Marshal(map[string]any{
@@ -291,6 +297,7 @@ func TestHandleRun_SinceNamesARemovedNode(t *testing.T) {
 // The silence flag is part of the run read, so setting it and clearing it each move the revision,
 // and ?since and the glance carry the flag as it then stands.
 func TestHandleRun_TheSilenceFlagMovesTheRevision(t *testing.T) {
+	t.Parallel()
 	h, br, deadline := silentStep(t, agentLaunch(), time.Hour)
 	br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, silentRunID, marotte.RunStatusRunning, ""))
 	silentAt := func(query string) (uint64, string) {

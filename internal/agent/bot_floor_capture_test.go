@@ -38,6 +38,7 @@ func capturedTurnReview(t *testing.T) string {
 // A supervised Bot turn's review is an ask like any other (Bots design §6): the floor rejects KAS's recorded review
 // with the Bot turn's note by default, and with the switch on accepts it once.
 func TestBotFloor_TheCapturedTurnReviewIsAnsweredLikeAnyAsk(t *testing.T) {
+	t.Parallel()
 	review := capturedTurnReview(t)
 	for _, tc := range []struct {
 		name     string

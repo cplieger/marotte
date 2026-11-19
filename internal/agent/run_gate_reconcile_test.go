@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -14,6 +13,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/marotte/internal/filemode"
+	"github.com/cplieger/marotte/internal/filemode/filemodetest"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/signin"
@@ -23,11 +24,9 @@ import (
 // lost resume write wakes it to try at once, rather than after its backoff, and starts no second release, so the
 // run's heal budget is charged once.
 func TestSignInGate_AGateFlapDuringAReleasesRetryWakesItsOneRelease(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		base := releaseRetryBase
-		releaseRetryBase = time.Hour
-		t.Cleanup(func() { releaseRetryBase = base })
-		g := newManualGateRun(t, signedInDir(t))
+		g := newManualGateRun(t, signedInDisk(), withReleaseRetryBase(time.Hour))
 		g.br.setCallResult(methodKiroWorkflowInspect, heldInspect(t, signInHoldReason))
 		g.br.setCallErr(methodKiroWorkflowResume, errors.New("engine busy"))
 		// The boot's release starts its wait only once the edge's finder claimed the run, so the claim meets the live
@@ -96,8 +95,8 @@ func (g *gateRun) lapseVault(t *testing.T) {
 // run then, still charged the one heal its lost write took: a release that ended there would leave the next edge a
 // new release, which claims a second.
 func TestSignInGate_AReleaseThatMeetsTheClosedGateResumesOnTheNextEdgeOnItsOneHeal(t *testing.T) {
-	fastGateRetries(t)
-	g := newManualGateRun(t, signedInDir(t))
+	t.Parallel()
+	g := newManualGateRun(t, signedInDisk(), fastGateRetries())
 	g.br.setCallResult(methodKiroWorkflowInspect, heldInspect(t, signInHoldReason))
 	verbs := g.watchVerbs(t)
 	failFirst(g.br, methodKiroWorkflowResume, 1)
@@ -123,22 +122,19 @@ func TestSignInGate_AReleaseThatMeetsTheClosedGateResumesOnTheNextEdgeOnItsOneHe
 	}
 }
 
-// signedInDir is a state dir whose signin.json the vault reads signed in at boot.
-func signedInDir(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "signin.json"), []byte(signedInAtBoot), 0o600); err != nil {
-		t.Fatalf("Setup: write signin.json: %v", err)
-	}
-	return dir
+// signedInDisk holds a signin.json the vault reads signed in at boot.
+func signedInDisk() *filemodetest.Disk {
+	d := filemodetest.NewDisk()
+	d.WriteFile(filepath.Join(vaultDir, "signin.json"), []byte(signedInAtBoot), 0o600)
+	return d
 }
 
 // newManualGateRun is newGateRun for a manual run, which no chat's rehydrate sweeps.
-func newManualGateRun(t *testing.T, dir string) *gateRun {
+func newManualGateRun(t *testing.T, disk filemode.Disk, opts ...Option) *gateRun {
 	t.Helper()
 	b := newGateBackend()
-	vault := openVault(t, dir, b)
-	h, _, br := newTestHub(WithSignIn(vault, gateBackendID))
+	vault := openVault(t, disk, b)
+	h, _, br := newTestHub(append([]Option{WithSignIn(vault, gateBackendID)}, opts...)...)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	leaseRun(t, h, runlease.Lease{
 		WorkflowID: gateRunID, Recipe: "publish", Origin: runlease.OriginManual, ParentSessionID: testLaunchSession,
@@ -154,8 +150,8 @@ func newManualGateRun(t *testing.T, dir string) *gateRun {
 // the refused claim started no release of its own, so ending there would leave the run held until a further sign-in.
 // The edge's tries lose two writes more, which only fresh tries outlast.
 func TestSignInGate_AReleaseThatSpendsItsTriesServesTheEdgeItRefused(t *testing.T) {
-	fastGateRetries(t)
-	g := newManualGateRun(t, t.TempDir())
+	t.Parallel()
+	g := newManualGateRun(t, filemodetest.NewDisk(), fastGateRetries())
 	verbs := g.watchVerbs(t)
 	failFirst(g.br, methodKiroWorkflowResume, maxReleaseAttempts+2)
 	// The heal's own read holds it; the release's last try is the read after its others.
@@ -191,7 +187,8 @@ func TestSignInGate_AReleaseThatSpendsItsTriesServesTheEdgeItRefused(t *testing.
 // write landed, and the gate opened again before the release ended, so ending there would leave the run held until a
 // further sign-in. The new pause is healed on a heal of its own.
 func TestSignInGate_AReleaseThatResumesTheRunServesALaterEdgeItRefused(t *testing.T) {
-	g := newManualGateRun(t, signedInDir(t))
+	t.Parallel()
+	g := newManualGateRun(t, signedInDisk())
 	k := &kasRun{
 		id: gateRunID, parent: testLaunchSession,
 		onWriteFault: func(writeFault) {}, onEntryRead: func() {}, onFlapWrite: func() {},
@@ -229,10 +226,13 @@ func TestSignInGate_AReleaseThatResumesTheRunServesALaterEdgeItRefused(t *testin
 	write.release()
 	awaitClosed(t, tried, "the end of the release's try that resumed the run")
 	waitUntil(t, "the closing sweep's pause of the resumed run", func() bool { return k.reads() == kasGateReason })
+	// The first edge's finder may have read the run resumed: a sign-in landing just after a pause lets holdPause
+	// start the release itself.
+	before := finds.Load()
 	g.b.set(true, true, nil)
 	g.signIn(t)
 	waitUntil(t, "the next opening edge's finder to read the pause and decide its claim", func() bool {
-		return finds.Load() == 2 && resumeLockFree(g.h.runs, gateRunID)
+		return finds.Load() > before && resumeLockFree(g.h.runs, gateRunID)
 	})
 	g.h.runs.gate.mu.Lock()
 	owner, opens := g.h.runs.gate.releases[gateRunID], g.h.runs.gate.opens
@@ -262,6 +262,7 @@ func TestSignInGate_AReleaseThatResumesTheRunServesALaterEdgeItRefused(t *testin
 // A run's release serves one opening edge of the gate at a time: a claim of a later edge while it runs starts no
 // other release, and a release that spends its tries before it served that edge serves it then.
 func TestRunGate_OneReleasePerRunAndOpeningEdge(t *testing.T) {
+	t.Parallel()
 	// at moves g to its read after opening edges.
 	at := func(g *runGate, opening uint64) {
 		g.mu.Lock()
@@ -442,17 +443,26 @@ func (g *gateRun) runningNow(t *testing.T) {
 	g.br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, gateRunID, marotte.RunStatusRunning, ""))
 }
 
-func fastGateRetries(t *testing.T) {
-	t.Helper()
-	sweep, release := sweepRetryBase, releaseRetryBase
-	sweepRetryBase, releaseRetryBase = time.Millisecond, time.Millisecond
-	t.Cleanup(func() { sweepRetryBase, releaseRetryBase = sweep, release })
+// fastGateRetries shortens the runtime's gate retry gaps to a millisecond.
+func fastGateRetries() Option {
+	return func(h *Runtime) { h.runs.sweepRetryBase, h.runs.releaseRetryBase = time.Millisecond, time.Millisecond }
+}
+
+// withSweepRetryBase sets the runtime's first gap between the closing edge's sweeps.
+func withSweepRetryBase(d time.Duration) Option {
+	return func(h *Runtime) { h.runs.sweepRetryBase = d }
+}
+
+// withReleaseRetryBase sets the runtime's first gap between a release's tries.
+func withReleaseRetryBase(d time.Duration) Option {
+	return func(h *Runtime) { h.runs.releaseRetryBase = d }
 }
 
 // The step whose credential ask finds the sign-in rejected is answered only once its run's pause was accepted: KAS
 // parks a step on a refused ask when a pause was requested first, and fails it permanently otherwise.
 func TestSignInGate_ARefusedAskIsAnsweredOnlyAfterTheRunningRunIsPaused(t *testing.T) {
-	g := newGateRun(t, t.TempDir())
+	t.Parallel()
+	g := newGateRun(t, filemodetest.NewDisk())
 	g.signIn(t)
 	g.runningNow(t)
 	log := &eventLog{}
@@ -517,9 +527,8 @@ func TestSignInGate_ARefusedAskWaitsUntilTheRunningRunIsPaused(t *testing.T) {
 		{name: "the run list fails until a sign-in", method: methodKiroWorkflowList, signIn: true, want: "answered"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fastGateRetries(t)
 			logs := captureLogs(t)
-			g := newGateRun(t, t.TempDir())
+			g := newGateRun(t, filemodetest.NewDisk(), fastGateRetries())
 			g.signIn(t)
 			g.runningNow(t)
 			step := newStepAsk(g.watchVerbs(t))
@@ -561,7 +570,7 @@ func TestSignInGate_ARefusedAskWaitsUntilTheRunningRunIsPaused(t *testing.T) {
 // still run, so the refusal waits out the drain rather than failing the asking step.
 func TestSignInGate_ARefusedAskWaitsOutTheEnginesRestart(t *testing.T) {
 	logs := captureLogs(t)
-	g := newGateRun(t, t.TempDir())
+	g := newGateRun(t, filemodetest.NewDisk())
 	g.signIn(t)
 	g.runningNow(t)
 	log := &eventLog{}
@@ -602,11 +611,8 @@ func TestSignInGate_ARefusedAskWaitsOutTheEnginesRestart(t *testing.T) {
 
 // A refused ask waiting between failed sweeps wakes on the sign-in, rather than at its next retry.
 func TestSignInGate_AHeldRefusalWakesOnTheSignIn(t *testing.T) {
-	base := sweepRetryBase
-	sweepRetryBase = time.Hour
-	t.Cleanup(func() { sweepRetryBase = base })
 	logs := captureLogs(t)
-	g := newGateRun(t, t.TempDir())
+	g := newGateRun(t, filemodetest.NewDisk(), withSweepRetryBase(time.Hour))
 	g.signIn(t)
 	g.runningNow(t)
 	step := newStepAsk(g.watchVerbs(t))
@@ -633,7 +639,8 @@ func TestSignInGate_AHeldRefusalWakesOnTheSignIn(t *testing.T) {
 // The ask KAS sends while its engine starts is answered at once: a starting engine runs no run, and an unanswered
 // ask would stall the start.
 func TestSignInGate_ARefusedAskWhileTheEngineStartsIsAnsweredAtOnce(t *testing.T) {
-	g := newGateRun(t, t.TempDir())
+	t.Parallel()
+	g := newGateRun(t, filemodetest.NewDisk())
 	src := fakeSourceOf(t, g.h)
 	starting := make(chan struct{})
 	hold := make(chan struct{})
@@ -668,7 +675,8 @@ func TestSignInGate_ARefusedAskWhileTheEngineStartsIsAnsweredAtOnce(t *testing.T
 // A sign-in that lands while a refused ask's sweep is pausing the running runs ends the sweep, and the ask is
 // answered again from the signed-in vault rather than refused.
 func TestSignInGate_ARefusedAskIsAskedAgainWhenASignInLandsMidSweep(t *testing.T) {
-	g := newGateRun(t, t.TempDir())
+	t.Parallel()
+	g := newGateRun(t, filemodetest.NewDisk())
 	g.signIn(t)
 	g.br.setCallResult(methodKiroWorkflowList, kasRuns(t,
 		map[string]any{"workflowId": gateRunID, "name": "x", "status": "running", "parentSessionId": parkSession},
@@ -704,7 +712,8 @@ func TestSignInGate_ARefusedAskIsAskedAgainWhenASignInLandsMidSweep(t *testing.T
 // A renewal whose lease is too short to use closes the gate like an outage: the running run is paused, with the
 // unreachable reason, before the refusal; nothing launches; the next usable renewal resumes it.
 func TestSignInGate_AShortLeaseClosesTheGateUntilAUsableRenewal(t *testing.T) {
-	g := newGateRun(t, t.TempDir())
+	t.Parallel()
+	g := newGateRun(t, filemodetest.NewDisk())
 	g.signIn(t)
 	g.runningNow(t)
 	log := &eventLog{}
@@ -736,6 +745,7 @@ func TestSignInGate_AShortLeaseClosesTheGateUntilAUsableRenewal(t *testing.T) {
 // A run verb admitted while the gate was open and landing after it closed is not left running: the gate's
 // closing sweep listed the run before the verb started it, so the verb's own settle sweeps again and pauses it.
 func TestSignInGate_AVerbCrossingTheClosingEdgeLeavesNoRunRunning(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		verb string
@@ -763,7 +773,7 @@ func TestSignInGate_AVerbCrossingTheClosingEdgeLeavesNoRunRunning(t *testing.T) 
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			g := newGateRun(t, t.TempDir())
+			g := newGateRun(t, filemodetest.NewDisk())
 			g.signIn(t)
 			g.br.setCallResult(methodKiroWorkflowNew, json.RawMessage(`{"workflowId":"wf_9"}`))
 			release := make(chan struct{})
@@ -818,7 +828,8 @@ func TestSignInGate_AVerbCrossingTheClosingEdgeLeavesNoRunRunning(t *testing.T) 
 // The closing sweep's pause waits for a resume already being written, so the pause is the run's last verb. The run
 // has no ask cell, whose own ordering (controlSerialized) would hide a missing one.
 func TestSignInGate_TheClosingPauseLandsAfterAnInFlightResume(t *testing.T) {
-	g := newGateRun(t, t.TempDir())
+	t.Parallel()
+	g := newGateRun(t, filemodetest.NewDisk())
 	g.signIn(t)
 	g.h.runs.asks.mu.Lock()
 	delete(g.h.runs.asks.cells, gateRunID)
@@ -862,6 +873,44 @@ func TestSignInGate_TheClosingPauseLandsAfterAnInFlightResume(t *testing.T) {
 	}
 }
 
+// A sign-in that commits while the closing sweep's pause is sent but not yet taken finds the run still running, so
+// no opening edge resumes it then: the pause, once taken with the gate open, is resumed.
+func TestSignInGate_APauseTakenAfterTheGateOpenedIsResumed(t *testing.T) {
+	t.Parallel()
+	g := newGateRun(t, filemodetest.NewDisk(), fastGateRetries())
+	g.signIn(t)
+	g.awaitEdgeFinder(t)
+	g.runningNow(t)
+	verbs := g.watchVerbs(t)
+	sent, take := make(chan struct{}), make(chan struct{})
+	g.br.mu.Lock()
+	watched := g.br.onCall
+	g.br.onCall = func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if method == methodKiroWorkflowPause {
+			close(sent)
+			<-take
+		}
+		return watched(method, params)
+	}
+	g.br.mu.Unlock()
+	g.b.set(false, false, func() error { return signin.ErrRejected })
+	asked := make(chan *marotte.RPCError, 1)
+	go func() { asked <- g.askVault(t.Context(), t) }()
+	select {
+	case <-sent:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Setup: the closing sweep sent no pause")
+	}
+
+	g.b.set(true, true, nil)
+	g.signIn(t)
+	close(take)
+	<-asked
+	waitUntil(t, "the pause taken", func() bool { return len(verbs.pauseParams()) == 1 })
+
+	awaitResumes(t, &verbs.resumes, 1)
+}
+
 // A closing sweep that cannot read the run list or pause a run tries again until the run is paused, and says so
 // at ERROR when it gives up.
 func TestSignInGate_TheClosingSweepRetriesUntilTheRunIsPaused(t *testing.T) {
@@ -873,8 +922,7 @@ func TestSignInGate_TheClosingSweepRetriesUntilTheRunIsPaused(t *testing.T) {
 		{name: "the pause fails", method: methodKiroWorkflowPause},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fastGateRetries(t)
-			g := newGateRun(t, t.TempDir())
+			g := newGateRun(t, filemodetest.NewDisk(), fastGateRetries())
 			g.signIn(t)
 			g.awaitEdgeFinder(t)
 			before := countCalls(g.br, tc.method)
@@ -896,9 +944,8 @@ func TestSignInGate_TheClosingSweepRetriesUntilTheRunIsPaused(t *testing.T) {
 	}
 
 	t.Run("it gives up loudly", func(t *testing.T) {
-		fastGateRetries(t)
 		logs := captureLogs(t)
-		g := newGateRun(t, t.TempDir())
+		g := newGateRun(t, filemodetest.NewDisk(), fastGateRetries())
 		g.signIn(t)
 		g.awaitEdgeFinder(t)
 		before := countCalls(g.br, methodKiroWorkflowList)
@@ -975,6 +1022,7 @@ func (g *gateRun) lapseAndAsk(t *testing.T) {
 // A person's pause is never replaced by the gate's, whichever lands first, so the next sign-in resumes nothing the
 // person paused.
 func TestSignInGate_APersonsPauseOutlivesTheGatesSweep(t *testing.T) {
+	t.Parallel()
 	gatePauses := func(v *gateVerbs) int {
 		n := 0
 		for _, p := range v.pauseParams() {
@@ -985,7 +1033,7 @@ func TestSignInGate_APersonsPauseOutlivesTheGatesSweep(t *testing.T) {
 		return n
 	}
 	t.Run("the person's pause landed before the sweep read the run", func(t *testing.T) {
-		g := newGateRun(t, t.TempDir())
+		g := newGateRun(t, filemodetest.NewDisk())
 		g.signIn(t)
 		g.runningNow(t)
 		verbs := g.kasPauses(t, 0)
@@ -1002,7 +1050,7 @@ func TestSignInGate_APersonsPauseOutlivesTheGatesSweep(t *testing.T) {
 		awaitResumes(t, &verbs.resumes, 0)
 	})
 	t.Run("the person's pause in flight when the sweep reached the run", func(t *testing.T) {
-		g := newGateRun(t, t.TempDir())
+		g := newGateRun(t, filemodetest.NewDisk())
 		g.signIn(t)
 		g.runningNow(t)
 		verbs := g.kasPauses(t, 100*time.Millisecond)
@@ -1022,7 +1070,7 @@ func TestSignInGate_APersonsPauseOutlivesTheGatesSweep(t *testing.T) {
 		awaitResumes(t, &verbs.resumes, 0)
 	})
 	t.Run("the person's pause pending on a step still running", func(t *testing.T) {
-		g := newGateRun(t, t.TempDir())
+		g := newGateRun(t, filemodetest.NewDisk())
 		g.signIn(t)
 		g.runningNow(t)
 		verbs := g.kasPauses(t, 0)
@@ -1037,7 +1085,7 @@ func TestSignInGate_APersonsPauseOutlivesTheGatesSweep(t *testing.T) {
 		}
 	})
 	t.Run("the gate's pause landed first", func(t *testing.T) {
-		g := newGateRun(t, t.TempDir())
+		g := newGateRun(t, filemodetest.NewDisk())
 		g.signIn(t)
 		g.runningNow(t)
 		verbs := g.kasPauses(t, 0)
@@ -1079,6 +1127,7 @@ func pendingInspect(t *testing.T) json.RawMessage {
 // The sweep pauses a listed run only on a fresh read of it: a read that fails, or answers about another run, is a
 // sweep to retry, and a run KAS no longer knows is done.
 func TestSignInGate_TheSweepPausesOnlyARunItReadRunning(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		set     func(g *gateRun)
 		name    string
@@ -1095,7 +1144,7 @@ func TestSignInGate_TheSweepPausesOnlyARunItReadRunning(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			g := newGateRun(t, t.TempDir())
+			g := newGateRun(t, filemodetest.NewDisk())
 			g.listed(marotte.RunStatusRunning)
 			tc.set(g)
 			pauses := countCalls(g.br, methodKiroWorkflowPause)

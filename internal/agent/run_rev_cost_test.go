@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/workflow"
 )
@@ -74,6 +75,9 @@ func liveCost(t *testing.T, lanes int) (perFrame, perSince uint64) {
 
 // A step turn's frame and a client's ?since cost what changed: ten times the nodes cost about the same.
 func TestRunRev_LiveWorkDoesNotGrowWithTheRun(t *testing.T) {
+	if !testsupport.Alone(t) {
+		return
+	}
 	frame1k, since1k := liveCost(t, 10)
 	frame10k, since10k := liveCost(t, 100)
 	t.Logf("per frame %d B at 1,000 nodes, %d B at 10,000; per ?since %d B, %d B", frame1k, frame10k, since1k, since10k)
@@ -88,6 +92,7 @@ func TestRunRev_LiveWorkDoesNotGrowWithTheRun(t *testing.T) {
 
 // A step turn opening moves that step's start row and its node into the next revision, with no engine read.
 func TestRunRev_AStepFrameRevisesThatStep(t *testing.T) {
+	t.Parallel()
 	h, br := hostedLeasedRun(t, wideRunInspect(t, 2, 3))
 	h.runs.log = newRunLog(t.TempDir())
 	rev := revOf(t, h)

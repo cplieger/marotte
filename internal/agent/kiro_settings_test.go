@@ -11,6 +11,7 @@ import (
 
 // A size mismatch is a miss even when the mtime matches.
 func TestCachedBoolField_SizeTermInvalidates(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cli.json")
 	if err := os.WriteFile(path, []byte(`{"k":false}`), 0o600); err != nil {
@@ -35,6 +36,7 @@ func TestCachedBoolField_SizeTermInvalidates(t *testing.T) {
 // TestCachedBoolField_EqualLengthRenamePublishInvalidates pins the os.SameFile leg: kiro-cli
 // publishes cli.json by rename (2.19.0), so an equal-length generation on the same mtime differs only by inode.
 func TestCachedBoolField_EqualLengthRenamePublishInvalidates(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cli.json")
@@ -83,6 +85,7 @@ func TestCachedBoolField_EqualLengthRenamePublishInvalidates(t *testing.T) {
 }
 
 func TestCachedBoolField_BOMPrefixedFileIsRead(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "cli.json")
 	if err := os.WriteFile(path, append([]byte{0xEF, 0xBB, 0xBF}, `{"k":false}`...), 0o600); err != nil {
 		t.Fatal(err)

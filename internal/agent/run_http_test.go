@@ -25,6 +25,7 @@ import (
 
 // TestHandleRun_RejectsNonGET pins that the surface is read-only.
 func TestHandleRun_RejectsNonGET(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	rec := httptest.NewRecorder()
 	h.runRoutes.handleRun(rec, httptest.NewRequest(http.MethodPost, "/api/runs/wf_1", nil))
@@ -34,6 +35,7 @@ func TestHandleRun_RejectsNonGET(t *testing.T) {
 }
 
 func TestHandleRun_RejectsAMissingID(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	rec := httptest.NewRecorder()
 	// A hand-built request can reach this: 400 before calling KAS.
@@ -74,6 +76,7 @@ func getRun(t *testing.T, h *Runtime, id string) (runReply, string) {
 // TestHandleRun_CarriesTheRunsStepEnds pins `step_ends`: KAS grades a step its iteration limit stopped `completed`
 // with no signal, so only the run log's close can tell the reader the step did not finish.
 func TestHandleRun_CarriesTheRunsStepEnds(t *testing.T) {
+	t.Parallel()
 	t.Run("a step kiro-cli stopped is named with its reason", func(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
 		br.setCallResult(methodKiroWorkflowInspect, inspectWithStep(t, "wf_1", "build", "completed", ""))
@@ -120,6 +123,7 @@ func TestHandleRun_CarriesTheRunsStepEnds(t *testing.T) {
 // TestHandleRun_CarriesTheRunsStepStarts pins `step_starts`: KAS restamps a resumed node's startedAt, so only the
 // run log's turn_open can tell the reader when the step began.
 func TestHandleRun_CarriesTheRunsStepStarts(t *testing.T) {
+	t.Parallel()
 	t.Run("an open step is named with its turn_open's time", func(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
 		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
@@ -169,6 +173,7 @@ func hostedLeasedRun(t *testing.T, reply json.RawMessage) (*Runtime, *fakeBridge
 // TestHandleRun_CarriesTheRunsOpenAsks pins `open_asks` and `asks_reachable`, so an agent handed a
 // deferral can find the question and its ask id, and can tell "nothing waits" from "unknown".
 func TestHandleRun_CarriesTheRunsOpenAsks(t *testing.T) {
+	t.Parallel()
 	t.Run("a parked step is an ask with its id, and the passthrough survives", func(t *testing.T) {
 		h, _ := hostedLeasedRun(t, inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 
@@ -233,6 +238,7 @@ func TestHandleRun_CarriesTheRunsOpenAsks(t *testing.T) {
 
 // TestHandleRun_GradesAFailedReadTwoWays pins that the client stops on 404 and retries otherwise, so each misgrade has a cost.
 func TestHandleRun_GradesAFailedReadTwoWays(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		arm  func(br *fakeBridge)
@@ -290,6 +296,7 @@ func getLiveRuns(t *testing.T, rr *runRoutes) marotte.LiveRunsResponse {
 }
 
 func TestHandleLiveRuns_RejectsNonGET(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	rec := httptest.NewRecorder()
 	h.runRoutes.handleLiveRuns(rec, httptest.NewRequest(http.MethodPost, "/api/runs/live", nil))
@@ -300,6 +307,7 @@ func TestHandleLiveRuns_RejectsNonGET(t *testing.T) {
 
 // TestHandleLiveRuns_ProjectsEveryLiveLeaseWithItsChat pins that chat-parented runs carry their chat, parentless none, served without KAS.
 func TestHandleLiveRuns_ProjectsEveryLiveLeaseWithItsChat(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	h.runs.observeStart(t.Context(), "c-live", runNotif(methodWFRunStart, map[string]any{
 		"workflowId": "wf_agent", "workflowName": "publish",
@@ -336,6 +344,7 @@ func TestHandleLiveRuns_ProjectsEveryLiveLeaseWithItsChat(t *testing.T) {
 
 // TestHandleLiveRuns_ATerminalRunLeavesTheProjection pins that the terminal frame releases the lease.
 func TestHandleLiveRuns_ATerminalRunLeavesTheProjection(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	h.runs.observeStart(t.Context(), "c-live", runNotif(methodWFRunStart, map[string]any{
 		"workflowId": "wf_agent", "workflowName": "publish",
@@ -356,6 +365,7 @@ func TestHandleLiveRuns_ATerminalRunLeavesTheProjection(t *testing.T) {
 
 // /api/runs/live projects the run for the chat's eviction exemption; History attributes it so the row nests the run's tab.
 func TestHandleLiveRuns_AndHistoryBothCarryAChatParentedRun(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	h.runs.observeStart(t.Context(), "c-live", runNotif(methodWFRunStart, map[string]any{
 		"workflowId": "wf_agent", "workflowName": "publish",
@@ -424,6 +434,7 @@ func TestHandleLiveRuns_ServesPersistedLeasesAcrossARestart(t *testing.T) {
 // TestHandleLiveRuns_ExecutingFollowsTheLeasesOwnClock pins that armed on start and resume, parked on pause, so a
 // parked run's eviction exemption lapses while its row survives.
 func TestHandleLiveRuns_ExecutingFollowsTheLeasesOwnClock(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	h.runs.observeStart(t.Context(), "c-live", runNotif(methodWFRunStart, map[string]any{
 		"workflowId": "wf_agent", "workflowName": "publish",
@@ -477,6 +488,7 @@ func TestHandleLiveRuns_APreUpgradeLeaseRowProjectsWithNoChat(t *testing.T) {
 
 // TestHandleControls pins the affordance route's envelope: the client cannot answer this from SSE state alone.
 func TestHandleControls(t *testing.T) {
+	t.Parallel()
 	controlsReq := func(id string) *http.Request {
 		req := httptest.NewRequest(http.MethodGet, "/api/runs/"+id+"/controls", nil)
 		req.SetPathValue("id", id)
@@ -544,6 +556,7 @@ func answerReq(t *testing.T, id, askID, text string) *http.Request {
 // An answer whose run lost its lease once its ask was claimed reads the run's origin by key; an engine that ended
 // before answering that read is a 503 naming the cause, never a 400 blaming the answer.
 func TestHandleAnswer_AnEngineExitDuringAnUnleasedRunsReadIsTryAgain(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1"})
@@ -566,6 +579,7 @@ func TestHandleAnswer_AnEngineExitDuringAnUnleasedRunsReadIsTryAgain(t *testing.
 // An answer to a parentless run whose lease recorded no security profile is refused 409 for that cause: its launching
 // session exists, and any profile would be a guess at its permissions.
 func TestHandleAnswer_AParentlessRunWithNoRecordedProfileIsRefusedForIt(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1", ParentSessionID: testLaunchSession})
@@ -613,6 +627,7 @@ func unleasedParentlessLaunch(t *testing.T, presets []string, recorded bool) (*R
 // An unleased live run marotte launched parentless is answered through its launching session, loaded with the
 // security recorded at launch rather than refused as a session this server cannot open.
 func TestHandleAnswer_AnUnleasedParentlessLaunchLoadsItsLaunchProfile(t *testing.T) {
+	t.Parallel()
 	launched, _ := policyfile.ProfileFor(policyfile.ProfileUnrestricted)
 	h, br, askID := unleasedParentlessLaunch(t, launched.Presets, true)
 
@@ -633,6 +648,7 @@ func TestHandleAnswer_AnUnleasedParentlessLaunchLoadsItsLaunchProfile(t *testing
 // An unleased live run marotte launched parentless whose launch security is missing from disk is refused 409 for that
 // cause, opening nothing: its launching session can be opened, and any profile would be a guess.
 func TestHandleAnswer_AnUnleasedParentlessLaunchWithNoProfileOnDiskIsRefusedForIt(t *testing.T) {
+	t.Parallel()
 	h, br, askID := unleasedParentlessLaunch(t, []string{}, false)
 	starts := br.startCount()
 
@@ -649,6 +665,7 @@ func TestHandleAnswer_AnUnleasedParentlessLaunchWithNoProfileOnDiskIsRefusedForI
 
 // TestHandleAnswer pins the guards and the coded refusals.
 func TestHandleAnswer(t *testing.T) {
+	t.Parallel()
 	t.Run("it refuses a non-POST", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		rec := httptest.NewRecorder()
@@ -761,6 +778,7 @@ func pauseReq(id string) *http.Request {
 
 // TestControlHandler_ForwardsKASsOwnRefusal pins that a hosted run's refused verb answers 409 with KAS's reason.
 func TestControlHandler_ForwardsKASsOwnRefusal(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList:    json.RawMessage(`{"runs":[]}`),
@@ -793,6 +811,7 @@ func TestControlHandler_ForwardsKASsOwnRefusal(t *testing.T) {
 
 // TestHandleResume_AClaimInFlightIsReaderText pins that KAS's "another process" refusal becomes plain words.
 func TestHandleResume_AClaimInFlightIsReaderText(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList:    json.RawMessage(`{"runs":[]}`),
@@ -864,6 +883,7 @@ func TestHandleResume_AQueuedClaimIsWaitedForNotRefused(t *testing.T) {
 // TestHandleResume_AQuestionParkWhoseTreeDoesNotDecodeIsUnread pins that a run whose step tree workflow.DecodeInspect
 // refuses is unreadable, never a run nobody waits on: its step may be parked on a question, which a resume re-parks.
 func TestHandleResume_AQuestionParkWhoseTreeDoesNotDecodeIsUnread(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	parked := inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step"))
 	br.callResults = map[string]json.RawMessage{

@@ -173,6 +173,7 @@ func stampTurn(turn recordTurn, stamp func(int) int64) recordTurn {
 
 // TestMergeEntries_IsIdempotentAndOrderPreserving pins idempotence and order preservation.
 func TestMergeEntries_IsIdempotentAndOrderPreserving(t *testing.T) {
+	t.Parallel()
 	rapid.Check(t, func(rt *rapid.T) {
 		plans := genTurnPlans().Draw(rt, "plans")
 		record, projected := buildSides(rt, plans, func(i int) int64 { return int64(1000 + i) })
@@ -197,6 +198,7 @@ func TestMergeEntries_IsIdempotentAndOrderPreserving(t *testing.T) {
 // file-order index: a merge drops no record turn, reverted ones included, and reorders none, so
 // no turn's index falls and a read chat cannot hide a later turn.
 func TestMergeEntries_KeepsEveryRecordTurnInOrder(t *testing.T) {
+	t.Parallel()
 	rapid.Check(t, func(rt *rapid.T) {
 		plans := genTurnPlans().Draw(rt, "plans")
 		record, projected := buildSides(rt, plans, func(i int) int64 { return int64(1000 + i) })
@@ -228,6 +230,7 @@ func TestMergeEntries_KeepsEveryRecordTurnInOrder(t *testing.T) {
 
 // TestMergeEntries_ReadsNoTimestamp pins that output is identical whether timestamps are meaningful or zero.
 func TestMergeEntries_ReadsNoTimestamp(t *testing.T) {
+	t.Parallel()
 	rapid.Check(t, func(rt *rapid.T) {
 		plans := genTurnPlans().Draw(rt, "plans")
 		// Descending stamps, so ordering by Ts would reverse the spine.

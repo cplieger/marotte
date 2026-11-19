@@ -77,6 +77,7 @@ func TestScheduledRun_APausedRunIsCancelledAtItsNextSlot(t *testing.T) {
 // TestScheduledRun_AResumeTakesTheSlotWatchBack pins that a resume's arm owns the run's clock again: the floor
 // gives it minRunBudget, so a slot inside that floor must not cancel it.
 func TestScheduledRun_AResumeTakesTheSlotWatchBack(t *testing.T) {
+	t.Parallel()
 	h, br, _, entry := scheduledHub(t)
 	const id = "wf_1"
 	leaseScheduledWithSlot(t, h, br, &entry, id, 100*time.Millisecond)
@@ -112,6 +113,7 @@ func TestManualRun_APauseStillParksItsClock(t *testing.T) {
 // TestBootSweep_WatchesTheSlotOfAScheduledRunLeftPaused pins that a restart cannot drop the slot: a lease is read
 // from disk parked and timerless, and a slot that came due while marotte was down cancels the run at once.
 func TestBootSweep_WatchesTheSlotOfAScheduledRunLeftPaused(t *testing.T) {
+	t.Parallel()
 	h, br, st, entry := scheduledHub(t)
 	const id = "wf_1"
 	const question = "Step requested user input via send_message."
@@ -148,6 +150,7 @@ func refuseCancelOnce(br *fakeBridge) {
 // TestScheduledRun_ASlotCancelRefusedOnceIsRetried pins that the slot watch's cancel goes through the refused-cancel
 // ladder like a deadline's: the watch's one timer is spent, so without a retry the paused run holds its recipe.
 func TestScheduledRun_ASlotCancelRefusedOnceIsRetried(t *testing.T) {
+	t.Parallel()
 	h, br, st, entry := scheduledHub(t)
 	const id = "wf_1"
 	setCancelRetryDelay(h.runs, time.Millisecond)

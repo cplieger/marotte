@@ -1,8 +1,8 @@
 package agent
 
 // The Bot turn floor: a turn a rule's prompt opened, or the wake turn after a run an automatic turn launched, has
-// nobody watching, so a permission ask in it is answered for the absent user after unattendedAskBudget rather than
-// holding the turn live and every later rule delivery behind it. Deny by default; `bot_auto_approve` opts in.
+// nobody watching, so a permission ask in it is answered for the absent user after Runs.unattendedAskBudget rather
+// than holding the turn live and every later rule delivery behind it. Deny by default; `bot_auto_approve` opts in.
 
 import (
 	"context"
@@ -38,7 +38,7 @@ func (rt *Runtime) permissionWithBotFloor(inner askHandler) askHandler {
 			return
 		}
 		acpID, params := *msg.ID, msg.Params
-		rt.lifecycle.afterUnlessDraining(unattendedAskBudget, func() {
+		rt.lifecycle.afterUnlessDraining(rt.runs.unattendedAskBudget, func() {
 			rt.answerBotTurn(chatID, origin, acpID, turnID, params)
 		})
 	}

@@ -30,9 +30,9 @@ var errRewindRunsInCut = errors.New("rewinding here stops workflow runs this con
 const reasonTurnOpen = "turn_open"
 
 // reserveRevert takes the chat for a revert whose intent began at stamp (runQueue.TakeIdle): a running turn refuses
-// at once, and a take or close still settling is waited out up to AdmissionWait.
+// at once, and a take or close still settling is waited out up to the queue's admission wait.
 func reserveRevert(ctx context.Context, runq runQueue, chatID marotte.ChatID, stamp uint64) (Reservation, error) {
-	out, res, _ := runq.TakeIdle(ctx, chatID, IdleRevert, stamp, AdmissionWait)
+	out, res, _ := runq.TakeIdle(ctx, chatID, IdleRevert, stamp)
 	switch out {
 	case IdleAcquired:
 		return res, nil
@@ -50,7 +50,7 @@ func reserveRevert(ctx context.Context, runq runQueue, chatID marotte.ChatID, st
 // cmdRewindChat reverts the chat to a past turn via KAS's checkpoint machinery, then appends the
 // turn_revert that records it. The record is required: the merge keeps a record turn the replay
 // lacks, and the appended revert refuses a projection built from the pre-revert replay. A running
-// turn refuses at once; a transient holder of the chat's slot is waited out up to AdmissionWait,
+// turn refuses at once; a transient holder of the chat's slot is waited out up to the queue's admission wait,
 // then the rewind answers busy. A live run the cut launched is stopRunsInCut's question.
 func cmdRewindChat(
 	ctx context.Context,

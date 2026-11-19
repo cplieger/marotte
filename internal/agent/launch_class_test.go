@@ -16,6 +16,7 @@ func classes(err error) (retryable, blocked bool) {
 }
 
 func TestLaunchClassTable(t *testing.T) {
+	t.Parallel()
 	t.Run("an unknown recipe is blocked", func(t *testing.T) {
 		h, _, br := newTestHub()
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -124,6 +125,7 @@ func TestLaunchClassTable(t *testing.T) {
 }
 
 func TestLaunchClassKeepsTheErrorsText(t *testing.T) {
+	t.Parallel()
 	err := classLaunch(errUnknownRecipe)
 	if err.Error() != errUnknownRecipe.Error() {
 		t.Errorf("classLaunch text = %q, want %q: the rule's row shows the refusal's own sentence", err, errUnknownRecipe)
@@ -133,6 +135,7 @@ func TestLaunchClassKeepsTheErrorsText(t *testing.T) {
 // A required input the rule leaves empty is no class of its own: marotte cannot see which inputs a recipe requires,
 // so the launch is decided by KAS's answer, replayed here from the probe of the pinned kiro-cli.
 func TestMissingInputLaunchesAsProbed(t *testing.T) {
+	t.Parallel()
 	var fx struct {
 		Error   *marotte.RPCError `json:"error"`
 		Created bool              `json:"created"`

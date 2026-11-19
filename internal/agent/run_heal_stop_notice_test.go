@@ -38,6 +38,7 @@ func runOutcomePushes(fp *runOutcomePush) []runPushSent {
 // When marotte stops resuming a throttled run, the agent that launched it is told in its own session, as a warning
 // notification its next turn reads, naming the run so it can resume or end it.
 func TestHealStop_TellsTheParentSession(t *testing.T) {
+	t.Parallel()
 	g := newThrottleRig(t, nil)
 	g.spend(t)
 	waitUntil(t, "the parent's notice", func() bool { return len(g.stopNotices()) > 0 })
@@ -59,6 +60,7 @@ func TestHealStop_TellsTheParentSession(t *testing.T) {
 
 // The user hears of the stop through a push of the "Workflow runs" kind, opening the run.
 func TestHealStop_PushesUnderWorkflowRuns(t *testing.T) {
+	t.Parallel()
 	fp := newRunOutcomePush()
 	g := newThrottleRig(t, nil, WithPush(fp))
 	g.spend(t)
@@ -67,7 +69,7 @@ func TestHealStop_PushesUnderWorkflowRuns(t *testing.T) {
 	pushes := runOutcomePushes(fp)
 	want := runPushSent{
 		title: "publish", body: "Workflow paused · marotte stopped resuming it after repeated model throttling",
-		kind: marotte.PushKindRunOutcome, subject: marotte.RunSubject(gateRunID),
+		chat: "c1", kind: marotte.PushKindRunOutcome, subject: marotte.RunSubject(gateRunID),
 	}
 	if len(pushes) != 1 || pushes[0] != want {
 		t.Errorf("the stop pushed %+v, want exactly %+v", pushes, want)
@@ -82,6 +84,7 @@ func TestHealStop_PushesUnderWorkflowRuns(t *testing.T) {
 // when its next throttles spend the budget again, that stop is told too. A pause read while the stop stands tells
 // nobody twice.
 func TestHealStop_AThrottleAfterAResumedStopIsToldAgain(t *testing.T) {
+	t.Parallel()
 	fp := newRunOutcomePush()
 	g := newThrottleRig(t, nil, WithPush(fp))
 	g.spend(t)

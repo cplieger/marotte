@@ -29,14 +29,12 @@ type PushSubscriptionKeys struct {
 type PushKind string
 
 // Push notification kind constants. These live in this package so
-// agent callers can reference them without importing the push package
-// (eliminating the runtime→push import that existed solely for constant
-// access).
+// agent callers can reference them without importing the push package.
 const (
 	PushKindAgentFinished PushKind = "agent_finished"
 	PushKindPermission    PushKind = "permission"
 	// PushKindPRStatus fires when a pull request the connected identity opened
-	// flips green or red. Unlike the other two it has no chat behind it: CI
+	// flips green or red. It has no chat behind it: CI
 	// finishes minutes after the turn that pushed, often with nothing open, which
 	// is exactly why the poll is server-side.
 	PushKindPRStatus PushKind = "pr_status"
@@ -48,6 +46,9 @@ const (
 	PushKindRunOutcome PushKind = "run_outcome"
 	// PushKindSignIn fires once when the Kiro sign-in starts failing or ends, and again only after it recovered.
 	PushKindSignIn PushKind = "sign_in"
+	// PushKindBotRule fires when a Bot's automatic turn (a rule's prompt, or the wake after a run one launched) ends
+	// clean; a broken one is PushKindAgentFinished's.
+	PushKindBotRule PushKind = "bot_rule"
 )
 
 // pushKinds is the authoritative set of push notification kinds, from which PushKind.Valid()
@@ -59,6 +60,7 @@ var pushKinds = map[PushKind]struct{}{
 	PushKindPRStatus:      {},
 	PushKindRunOutcome:    {},
 	PushKindSignIn:        {},
+	PushKindBotRule:       {},
 }
 
 // Valid reports whether k is a known push notification kind.

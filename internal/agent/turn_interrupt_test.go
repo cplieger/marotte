@@ -247,6 +247,7 @@ func (r *turnRegistry) turnByID(chatID marotte.ChatID, turnID string) (*activeTu
 // A stop during a notification re-wake targets that turn: the user's prompt waiting behind it is sent once the
 // re-wake ends and outlives the cancel grace.
 func TestCmdCancel_DuringARewakeLeavesThePromptWaitingBehindIt(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		// closing has a closer hold the re-wake's turn when the stop arrives.

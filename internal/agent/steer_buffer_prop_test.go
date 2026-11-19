@@ -13,6 +13,7 @@ import (
 // Any sequence leaves the record as its tables describe: a turn is bound exactly when the channel is not NONE,
 // an outstanding probe exists only while PROBING, and UNCONFIRMED holds no un-owned waiting row.
 func TestSteerRecords_InvariantsHoldOverAnySequence(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	var chats atomic.Int64
 	rapid.Check(t, func(rt *rapid.T) {

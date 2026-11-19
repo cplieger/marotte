@@ -212,9 +212,9 @@ func (rt *Runtime) Submit(ctx context.Context, chatID marotte.ChatID, stamp uint
 
 // TakeIdle takes the chat for a revert or a summary, which run now or not at all.
 func (rt *Runtime) TakeIdle(
-	ctx context.Context, chatID marotte.ChatID, kind command.IdleKind, stamp uint64, wait time.Duration,
+	ctx context.Context, chatID marotte.ChatID, kind command.IdleKind, stamp uint64,
 ) (command.IdleAdmission, command.Reservation, string) {
-	return rt.coord.TakeIdle(ctx, chatID, kind, stamp, wait)
+	return rt.coord.TakeIdle(ctx, chatID, kind, stamp)
 }
 
 // SummaryLaunched reports a granted summary's open, or its refusal before the open.

@@ -75,6 +75,7 @@ func termCwd(t *testing.T, h *Runtime, br *respondingBridge, cwd string) (string
 }
 
 func TestAdditionalDirectory_EveryVerbReachesIt(t *testing.T) {
+	t.Parallel()
 	h, br, f, file := extraRootHub(t)
 	if got, err := rootRead(t, h, br, file); err != nil || got != "one\ntwo\n" {
 		t.Errorf("read %s = %q, %v; want its content", file, got, err)
@@ -101,6 +102,7 @@ func TestAdditionalDirectory_EveryVerbReachesIt(t *testing.T) {
 }
 
 func TestAdditionalDirectory_ItselfCannotBeDeleted(t *testing.T) {
+	t.Parallel()
 	h, br, f, _ := extraRootHub(t)
 	if err := rootDelete(t, h, br, f.extra); err == nil {
 		t.Error("deleting the additional directory itself succeeded, want refused")
@@ -111,6 +113,7 @@ func TestAdditionalDirectory_ItselfCannotBeDeleted(t *testing.T) {
 }
 
 func TestAdditionalDirectory_PathOutsideEveryRootIsRefused(t *testing.T) {
+	t.Parallel()
 	h, br, _, _ := extraRootHub(t)
 	outside := canonDir(t, t.TempDir())
 	secret := filepath.Join(outside, "secret.txt")
@@ -138,6 +141,7 @@ func TestAdditionalDirectory_PathOutsideEveryRootIsRefused(t *testing.T) {
 }
 
 func TestAdditionalDirectory_SymlinkOutOfItIsRefused(t *testing.T) {
+	t.Parallel()
 	h, br, f, _ := extraRootHub(t)
 	outside := canonDir(t, t.TempDir())
 	secret := filepath.Join(outside, "secret.txt")
@@ -173,6 +177,7 @@ func TestAdditionalDirectory_SymlinkOutOfItIsRefused(t *testing.T) {
 }
 
 func TestAdditionalDirectory_DotDotTraversalIsRefused(t *testing.T) {
+	t.Parallel()
 	h, br, f, _ := extraRootHub(t)
 	// The config directory sits beside the additional directory, so one ".." reaches it.
 	escape := f.extra + "/../" + filepath.Base(f.config) + "/" + settings.Filename
@@ -193,6 +198,7 @@ func TestAdditionalDirectory_DotDotTraversalIsRefused(t *testing.T) {
 
 // A hand-edited config.json naming the config directory grants nothing there.
 func TestAdditionalDirectory_ConfigDirectoryCanNeverBeAdded(t *testing.T) {
+	t.Parallel()
 	f := newAgentRootsFixture(t)
 	writeSetting(t, f.config, settings.KeyAdditionalDirectories, []string{f.config, filepath.Dir(f.config)})
 	h, br := hubForFSTest(t, f.work, WithConfigDir(f.config))
@@ -214,6 +220,7 @@ func TestAdditionalDirectory_ConfigDirectoryCanNeverBeAdded(t *testing.T) {
 // The bridge reads the setting per operation, so removing it revokes access at once, for every
 // session open and new.
 func TestRemovingTheSetting_RevokesAccessForNewSessions_AtTheBridge(t *testing.T) {
+	t.Parallel()
 	h, br, f, file := extraRootHub(t)
 	if _, err := rootRead(t, h, br, file); err != nil {
 		t.Fatalf("read %s with the directory granted = %v, want nil", file, err)
@@ -236,6 +243,7 @@ func TestRemovingTheSetting_RevokesAccessForNewSessions_AtTheBridge(t *testing.T
 // A hand-edited list may name a directory and one inside it, in either order. Only the earlier
 // of the pair is granted, so no delete reaches a granted root as a path inside another.
 func TestAdditionalDirectory_OverlappingEntriesNeverLetADeleteRemoveAGrantedRoot(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		order func(outer, inner string) []string

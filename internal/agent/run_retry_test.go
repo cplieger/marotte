@@ -75,6 +75,7 @@ func gateAnswer(t *testing.T, h *Runtime, workflowID string) *runAffordance {
 
 // TestHandleRetry_AnswersTheOutcomeRatherThanOk pins that the reply carries KAS's status and reset node ids.
 func TestHandleRetry_AnswersTheOutcomeRatherThanOk(t *testing.T) {
+	t.Parallel()
 	for name, nodes := range map[string][]string{
 		"five nodes reset": {"phase-c-loop", "phase-d-loop", "final-verify", "plan", "setup"},
 		"one node reset":   {"final-verify"},
@@ -110,6 +111,7 @@ func TestHandleRetry_AnswersTheOutcomeRatherThanOk(t *testing.T) {
 // A retry of a chat-parented run goes out on the chat's resident session: keying on marotte.RunHostChatID alone would load a
 // second host session.
 func TestRetry_AChatParentedRunWhoseChatIsResidentOpensNoSession(t *testing.T) {
+	t.Parallel()
 	h, br := seedChatParentedRun(t, true, "final-verify")
 	aff := gateAnswer(t, h, "wf_1")
 	starts := br.startCount()
@@ -137,6 +139,7 @@ func TestRetry_AChatParentedRunWhoseChatIsResidentOpensNoSession(t *testing.T) {
 // A retried agent-launched run stays its chat's: the lease the retry mints names the chat and its
 // session, so the run's park is read through the chat's bridge and opening it opens no run host.
 func TestRetry_AChatParentedRunKeepsItsChatOnTheLease(t *testing.T) {
+	t.Parallel()
 	h, br := seedChatParentedRun(t, true, "final-verify")
 
 	if _, err := h.runs.retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1")); err != nil {
@@ -164,6 +167,7 @@ func TestRetry_AChatParentedRunKeepsItsChatOnTheLease(t *testing.T) {
 
 // TestRetry_ReachesANonResidentChatRunThroughItsChat pins that the retry goes out on the launching chat's session.
 func TestRetry_ReachesANonResidentChatRunThroughItsChat(t *testing.T) {
+	t.Parallel()
 	// Nothing here holds the run.
 	h, br := seedChatParentedRun(t, false, "phase-c-loop")
 
@@ -185,6 +189,7 @@ func TestRetry_ReachesANonResidentChatRunThroughItsChat(t *testing.T) {
 
 // TestRetry_ARefusedRetryThroughTheLaunchingChatLeavesNothingBehind pins that no stray host session or lease is left; the chat's session stays.
 func TestRetry_ARefusedRetryThroughTheLaunchingChatLeavesNothingBehind(t *testing.T) {
+	t.Parallel()
 	h, br := seedChatParentedRun(t, false)
 	br.setCallRPCErr(methodKiroWorkflowRetry,
 		&marotte.RPCError{Code: -32603, Message: "Workflow wf_1 not found on disk"})
@@ -205,6 +210,7 @@ func TestRetry_ARefusedRetryThroughTheLaunchingChatLeavesNothingBehind(t *testin
 
 // TestRetry_AnInBandRefusalIsAFailure pins that KAS refuses in band, so the reply's `error` must fail the verb.
 func TestRetry_AnInBandRefusalIsAFailure(t *testing.T) {
+	t.Parallel()
 	h, br := seedChatParentedRun(t, true)
 	br.setCallRPCErr(methodKiroWorkflowRetry,
 		&marotte.RPCError{Code: -32603, Message: "Cannot retry a completed workflow"})
@@ -221,6 +227,7 @@ func TestRetry_AnInBandRefusalIsAFailure(t *testing.T) {
 
 // TestHandleRetry_ForwardsKASsOwnSentence pins that a constant "internal error" hides the reason.
 func TestHandleRetry_ForwardsKASsOwnSentence(t *testing.T) {
+	t.Parallel()
 	h, br := seedChatParentedRun(t, true)
 	br.setCallRPCErr(methodKiroWorkflowRetry, &marotte.RPCError{
 		Code:    -32603,
@@ -284,6 +291,7 @@ func TestHandleRetry_AnEngineThatWillNotStartAnswersInsideTheClientsWindow(t *te
 // A retry verb KAS read but did not answer within retryTimeout may still run, so the reply says it is still applying
 // rather than that nothing was retried, and the run keeps the lease the retry minted for its deadline.
 func TestHandleRetry_AVerbLeftUnansweredKeepsItsLeaseAndIsStillApplying(t *testing.T) {
+	t.Parallel()
 	h, br := seedChatParentedRun(t, true, "final-verify")
 	br.setBlockOn(methodKiroWorkflowRetry, make(chan struct{}))
 	// KAS taking the verb ends the caller's context, which carries no deadline of its own, so the deadline the verb
@@ -325,6 +333,7 @@ func TestHandleRetry_AVerbLeftUnansweredKeepsItsLeaseAndIsStillApplying(t *testi
 // An answer to the retry verb that arrived but could not be read may hide a retry KAS took, so the run keeps the
 // lease the retry minted and is re-armed; a -32700 KAS itself sends is a refusal and gives the lease back.
 func TestHandleRetry_AnAnswerThatCouldNotBeReadKeepsItsLease(t *testing.T) {
+	t.Parallel()
 	unreadable := map[string]error{
 		"an undecoded answer": fmt.Errorf("%w: %w", marotte.ErrReplyUndecoded,
 			&marotte.RPCError{Code: marotte.RPCCodeParseError, Message: "marotte could not decode kiro-cli's answer"}),
@@ -372,6 +381,7 @@ func TestHandleRetry_AnAnswerThatCouldNotBeReadKeepsItsLease(t *testing.T) {
 
 // TestHandleRetry_RefusesWhatTheAffordanceRefuses pins that the gate is server-side.
 func TestHandleRetry_RefusesWhatTheAffordanceRefuses(t *testing.T) {
+	t.Parallel()
 	t.Run("a completed run is refused, naming its status", func(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
 		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "completed", ""))
@@ -428,6 +438,7 @@ func TestHandleRetry_RefusesWhatTheAffordanceRefuses(t *testing.T) {
 // TestRetry_AnUnreadableOutcomeIsNotReportedAsAFailedRetry pins that KAS accepted the verb, so keep the lease and
 // bridge and re-arm.
 func TestRetry_AnUnreadableOutcomeIsNotReportedAsAFailedRetry(t *testing.T) {
+	t.Parallel()
 	// One reply per usable-outcome-free shape.
 	unreadable := map[string]json.RawMessage{
 		"a reply that is not an object": json.RawMessage(`"retried"`),
@@ -480,6 +491,7 @@ func TestRetry_AnUnreadableOutcomeIsNotReportedAsAFailedRetry(t *testing.T) {
 
 // The answer must not be a "try again" 500.
 func TestHandleRetry_AnUnreadableOutcomeTellsTheReaderToRefresh(t *testing.T) {
+	t.Parallel()
 	h, br := seedChatParentedRun(t, true)
 	br.setCallResult(methodKiroWorkflowRetry, json.RawMessage(`"retried"`))
 
@@ -504,6 +516,7 @@ func TestHandleRetry_AnUnreadableOutcomeTellsTheReaderToRefresh(t *testing.T) {
 // since a second read can lose the parent and load a second host for a live run. Asserted as a mechanism: background
 // listing makes counts unstable.
 func TestRetry_KeepsTheParentItReadBeforeTheVerb(t *testing.T) {
+	t.Parallel()
 	h, br := seedChatParentedRun(t, true, "final-verify")
 	aff := gateAnswer(t, h, "wf_1")
 	// Once the verb is sent, the run's state forgets its parent session.
@@ -534,6 +547,7 @@ func TestRetry_KeepsTheParentItReadBeforeTheVerb(t *testing.T) {
 }
 
 func TestHandleRetry_RejectsNonPOSTAndAMissingID(t *testing.T) {
+	t.Parallel()
 	h, _ := seedChatParentedRun(t, true)
 	rec := httptest.NewRecorder()
 	h.runRoutes.handleRetry(rec, httptest.NewRequest(http.MethodGet, "/api/runs/wf_1/retry", nil))
@@ -550,6 +564,7 @@ func TestHandleRetry_RejectsNonPOSTAndAMissingID(t *testing.T) {
 // A retried run starts with its own heal budget even when marotte missed its last run's terminal frame and kept that
 // run's lease: the retry is a new run, and the budget is a run's.
 func TestRetry_ARunWhoseEndWasMissedStartsWithItsOwnBudgets(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowRetry: json.RawMessage(`{}`),
@@ -580,6 +595,7 @@ func TestRetry_ARunWhoseEndWasMissedStartsWithItsOwnBudgets(t *testing.T) {
 // A person's retry of a triggered run whose end marotte missed records that ending on the rule's row through the
 // confirmer and keeps the triggered lease; a run the rule abandoned records nothing.
 func TestRetrySettlesTriggeredMissedEnd(t *testing.T) {
+	t.Parallel()
 	t.Run("live", func(t *testing.T) {
 		fc := &fakeConfirmer{}
 		h, _ := triggeredRetryHub(t, fc, t.TempDir())
@@ -613,6 +629,7 @@ func TestRetrySettlesTriggeredMissedEnd(t *testing.T) {
 // A gate read kiro-cli does not answer (its deadline passes or the engine ends) is a 503 naming the cause, never 409
 // "cannot be opened on this server" or 500: a later try usually reads the run. Nothing is sent and no lease minted.
 func TestHandleRetry_AnUnansweredReadOfTheRunIsTryAgain(t *testing.T) {
+	t.Parallel()
 	for name, cause := range map[string]error{
 		"a deadline":    fmt.Errorf("workflow inspect call: %w", context.DeadlineExceeded),
 		"an engine end": fmt.Errorf("workflow inspect call: %w", marotte.ErrBridgeExited),
@@ -642,6 +659,7 @@ func TestHandleRetry_AnUnansweredReadOfTheRunIsTryAgain(t *testing.T) {
 // A retry of a run kiro-cli names no launching session for is refused 409 for that cause, naming delete as what still
 // works: a failed or aborted run offers no cancel.
 func TestHandleRetry_ARunWithNoLaunchingSessionNamesDeleteAsWhatStillWorks(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", marotte.RunStatusFailed, ""))
@@ -665,6 +683,7 @@ func TestHandleRetry_ARunWithNoLaunchingSessionNamesDeleteAsWhatStillWorks(t *te
 // The retry reads the one run it retries: KAS's whole run inventory, which can take longer than the client waits,
 // is not on its path.
 func TestRetry_ReadsNoRunInventory(t *testing.T) {
+	t.Parallel()
 	h, br := seedChatParentedRun(t, true, "final-verify")
 	holdCall(t, br, methodKiroWorkflowList)
 
@@ -677,6 +696,7 @@ func TestRetry_ReadsNoRunInventory(t *testing.T) {
 
 // A chat-parented run's retry scans the chat store once: the gate's origin and the retry's holders share one scan.
 func TestHandleRetry_AChatParentedRunsRetryScansTheChatsOnce(t *testing.T) {
+	t.Parallel()
 	h, _ := seedChatParentedRun(t, true, "final-verify")
 	cs, ok := h.chatStore.(*testChatStore)
 	if !ok {
@@ -715,6 +735,7 @@ func TestHandleRetry_TheRunReadIsBoundedByRetryTimeout(t *testing.T) {
 
 // A person's verb whose status read kiro-cli did not answer is a 503 naming the cause, on every gated route.
 func TestRunControls_AnUnansweredStatusReadIsTryAgain(t *testing.T) {
+	t.Parallel()
 	routes := map[string]func(rr *runRoutes, w http.ResponseWriter, r *http.Request){
 		"resume": (*runRoutes).handleResume,
 		"pause":  (*runRoutes).handlePause,

@@ -165,6 +165,7 @@ func postSteer(t *testing.T, h *Runtime, messageID, text string) int {
 // A Stop over two unread user steers on kiro-cli 3.2.0: the cancel clears both in one steering_cleared and KAS starts
 // no turn from them; marotte keeps the user's words on its queue, paused by the Stop, in order.
 func TestFakeEngine_CancelClearsUserSteersAndRewakesNone(t *testing.T) {
+	t.Parallel()
 	s, cs, br := steerOpsHub(t)
 	s.recs.note = s.h.coord.recordSteer
 	k := kas320On(s.h, "c1", br)
@@ -203,6 +204,7 @@ func TestFakeEngine_CancelClearsUserSteersAndRewakesNone(t *testing.T) {
 // A steer kiro-cli 3.2.0 answers {"queued":false,"dropped":"epoch_changed"} is not in its buffer: marotte keeps the
 // user's words and sends them as the next turn's prompt.
 func TestFakeEngine_SteerEpochDrop(t *testing.T) {
+	t.Parallel()
 	s, cs, br := steerOpsHub(t)
 	s.recs.note = s.h.coord.recordSteer
 	k := kas320On(s.h, "c1", br)

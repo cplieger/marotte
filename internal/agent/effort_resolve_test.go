@@ -115,6 +115,7 @@ func specLand(in *effortInput, asked string) effortOutcome {
 
 // Every combination of what a move's effort depends on, against the spec.
 func TestResolveEffort_MatchesTheSpecOverEveryInput(t *testing.T) {
+	t.Parallel()
 	targets := map[string]modelTiers{
 		"unknown":           {},
 		"tierless":          {known: tiersNone},
@@ -200,6 +201,7 @@ func tally(reached map[string]int, in *effortInput, o *effortOutcome) {
 
 // The rules, one explicit row each.
 func TestResolveEffort_Rulings(t *testing.T) {
+	t.Parallel()
 	three := modelTiers{known: tiersListed, levels: []string{"low", "medium", "high"}, def: "medium"}
 	tests := []struct {
 		name string

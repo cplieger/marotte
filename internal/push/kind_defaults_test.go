@@ -21,6 +21,7 @@ func TestKindRegistry_DefaultsMatchEffectiveDefaults(t *testing.T) {
 		settings.KeyNotifyPRStatus:      eff.NotifyPRStatus,
 		settings.KeyNotifyRunOutcome:    eff.NotifyRunOutcome,
 		settings.KeyNotifySignIn:        eff.NotifySignIn,
+		settings.KeyNotifyBotRule:       eff.NotifyBotRule,
 	}
 
 	var keyed int
@@ -72,5 +73,31 @@ func TestService_TheSignInSwitchSilencesItsPushes(t *testing.T) {
 	s.SetPreferences(map[marotte.PushKind]bool{marotte.PushKindSignIn: false})
 	if s.Wants(marotte.PushKindSignIn) {
 		t.Error("Wants(sign_in) with its switch off = true, want false")
+	}
+}
+
+// An automatic Bot turn has its own switch, off by default: a Bot's rules can start a turn every few minutes, and a
+// failed one still pushes under agent_finished.
+func TestKindRegistry_BotRuleHasItsOwnSwitchOffByDefault(t *testing.T) {
+	i := slices.IndexFunc(Kinds(), func(k KindPref) bool { return k.Kind == marotte.PushKindBotRule })
+	if i < 0 {
+		t.Fatal("no registry row for bot_rule")
+	}
+	if k := Kinds()[i]; k.SettingsKey != "notify_bot_rule" || k.DefaultOn {
+		t.Errorf("bot_rule row = %+v, want settings key notify_bot_rule, off by default", k)
+	}
+}
+
+func TestService_TheBotRuleSwitchGatesItsPushes(t *testing.T) {
+	sub := marotte.PushSubscription{Endpoint: "https://fcm.googleapis.com/fcm/send/1"}
+	s := New(t.Context(), t.TempDir(), testSubject)
+	defer s.Close()
+	s.Subscribe(sub)
+	if s.Wants(marotte.PushKindBotRule) {
+		t.Error("Wants(bot_rule) on a fresh install with a subscription = true, want false")
+	}
+	s.SetPreferences(map[marotte.PushKind]bool{marotte.PushKindBotRule: true})
+	if !s.Wants(marotte.PushKindBotRule) {
+		t.Error("Wants(bot_rule) with its switch on = false, want true")
 	}
 }

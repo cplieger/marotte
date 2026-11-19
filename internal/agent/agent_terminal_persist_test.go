@@ -62,6 +62,7 @@ const completedWithTerminal = `{"sessionUpdate":"tool_call_update","toolCallId":
 // TestPersistedToolCall_CarriesTerminalOutputAndSpans is the reload test: KAS releases
 // before reporting the result (~3ms, measured), and the log must carry text and spans.
 func TestPersistedToolCall_CarriesTerminalOutputAndSpans(t *testing.T) {
+	t.Parallel()
 	h, cs := hubWithRealStore(t)
 	seedTerminal(h, "term-1", "c1", "\x1b[31mred\x1b[0m output\n")
 
@@ -98,6 +99,7 @@ func TestPersistedToolCall_CarriesTerminalOutputAndSpans(t *testing.T) {
 // the real turn registry: a failure that lands after the reader's stop persists as `aborted`,
 // one that landed before it stays `failed`.
 func TestPersistedToolCall_KASsFailedAfterTheReadersStopRecordsAborted(t *testing.T) {
+	t.Parallel()
 	const failed = `{"sessionUpdate":"tool_call_update","toolCallId":"tc-1","status":"failed",` +
 		`"rawOutput":"This tool was interrupted before it reported a result, so it may or may not have taken effect."}`
 	for _, tt := range []struct {
@@ -132,6 +134,7 @@ func TestPersistedToolCall_KASsFailedAfterTheReadersStopRecordsAborted(t *testin
 // TestPersistedToolCall_AdoptsWhenLinkAndCompletionShareAFrame pins the fold order: the
 // terminal link is folded before `completed`, or adoption finds no id.
 func TestPersistedToolCall_AdoptsWhenLinkAndCompletionShareAFrame(t *testing.T) {
+	t.Parallel()
 	h, cs := hubWithRealStore(t)
 	seedTerminal(h, "term-1", "c1", "one frame\n")
 
@@ -146,6 +149,7 @@ func TestPersistedToolCall_AdoptsWhenLinkAndCompletionShareAFrame(t *testing.T) 
 // TestPersistedToolCall_TerminalOutputBeatsAContentFragment pins that the terminal's full
 // output wins over an earlier content fragment.
 func TestPersistedToolCall_TerminalOutputBeatsAContentFragment(t *testing.T) {
+	t.Parallel()
 	h, cs := hubWithRealStore(t)
 	seedTerminal(h, "term-1", "c1", "line 1\nline 2\nline 3\n")
 
@@ -163,6 +167,7 @@ func TestPersistedToolCall_TerminalOutputBeatsAContentFragment(t *testing.T) {
 
 // TestPersistedToolCall_SurvivesTheTurnBoundary pins that adoption has until the turn's closer evicts the record.
 func TestPersistedToolCall_SurvivesTheTurnBoundary(t *testing.T) {
+	t.Parallel()
 	h, cs := hubWithRealStore(t)
 	seedTerminal(h, "term-1", "c1", "kept\n")
 	// Without the release nothing enters `retired` and the eviction assertion is vacuous.

@@ -24,6 +24,7 @@ func (p *parkedPush) SetPreferences(prefs map[marotte.PushKind]bool) {
 }
 
 func TestSyncProcessLive_TogglesReadBeforeAHandEditCannotLandAfterTheOpenThatReadIt(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		configDir := t.TempDir()
 		push := &parkedPush{liveRecorder: newLiveRecorder(t), entered: make(chan struct{}), release: make(chan struct{})}

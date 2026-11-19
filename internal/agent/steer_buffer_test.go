@@ -258,6 +258,7 @@ var wantRowRules = [nSteerEvents][rowRead]rowRule{
 }
 
 func TestSteerTables_EveryCellIsTheRatifiedOne(t *testing.T) {
+	t.Parallel()
 	for ev := range nSteerEvents {
 		for c := range nChannelStates {
 			if got, want := channelRule(c, ev), wantChannelRules[ev][c]; got != want || want == cUnhandled {
@@ -290,6 +291,7 @@ func probeSent(s *steerHarness) command.SteerOpResult {
 // that applies it, with the row and channel it must leave. rowDone means the row
 // left the dock.
 func TestSteerTables_TheFoldsApplyTheirCells(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		run     func(s *steerHarness)
 		name    string
@@ -508,6 +510,7 @@ func rowKeys(s *steerHarness, owner string) []string {
 // is ONE probe whose read is observed; the steers behind it wait for that read and
 // then go out as themselves.
 func TestSteerRecords_AfterAClearTheFirstSendIsOneProbe(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.bind()
 	s.steer("steer-a", "first")
@@ -548,6 +551,7 @@ func TestSteerRecords_AfterAClearTheFirstSendIsOneProbe(t *testing.T) {
 // read that arrives after that is a fact the turn end's job reads, not a reason to
 // reopen a channel that no longer exists.
 func TestSteerRecords_ALateProbeReadInNoneIsAFactOnly(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.bind()
 	s.steer("steer-a", "first")
@@ -576,6 +580,7 @@ func TestSteerRecords_ALateProbeReadInNoneIsAFactOnly(t *testing.T) {
 // A clear somebody else issued (KAS's own boundary, another client) moves the rows
 // it named to cleared, and a kept row in that state still joins the probe.
 func TestSteerRecords_AKeptRowARacingClearMovedJoinsTheProbe(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.bind()
 	s.steer("steer-a", "first")
@@ -597,6 +602,7 @@ func TestSteerRecords_AKeptRowARacingClearMovedJoinsTheProbe(t *testing.T) {
 // The target the agent read before the clear landed was delivered, so the delete
 // answers consumed; the rows the reader kept still go.
 func TestSteerRecords_ATargetReadBeforeTheClearIsConsumed(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.bind()
 	s.steer("steer-a", "first")
@@ -621,6 +627,7 @@ func TestSteerRecords_ATargetReadBeforeTheClearIsConsumed(t *testing.T) {
 // The same while the turn is starting, before KAS bound it: a target read before the clear's reply was delivered,
 // so the delete still answers consumed, and the steer the reader kept goes again.
 func TestSteerRecords_ATargetReadBeforeTheClearIsConsumedWhileTheTurnStarts(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.recs.turnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
 	s.h.stagePromptTurn(t, s.chat)
@@ -661,6 +668,7 @@ func wantGoneUnnoted(t *testing.T, s *steerHarness, key string) {
 
 // Every way the reader deletes a row writes no entry for it; the rows beside it are untouched.
 func TestSteerRecords_ADeletedRowLeavesNoEntry(t *testing.T) {
+	t.Parallel()
 	t.Run("through the clear and resubmit", func(t *testing.T) {
 		s := newSteerHarness(t)
 		s.bind()
@@ -720,6 +728,7 @@ func TestSteerRecords_ADeletedRowLeavesNoEntry(t *testing.T) {
 
 // A row KAS does not hold goes at once with no clear: parked, cleared, unsent.
 func TestSteerRecords_ARowKASDoesNotHoldIsDeletedWithoutAClear(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.q.RouteSteer(s.chat, "steer-a", "first", nil, command.SteerHolder{Held: true, PromptClass: true})
 	s.mustState("steer-a", rowParked)
@@ -734,6 +743,7 @@ func TestSteerRecords_ARowKASDoesNotHoldIsDeletedWithoutAClear(t *testing.T) {
 
 // With no started turn, a queued row's delete goes to the clear.
 func TestSteerRecords_ADeleteInNoneWithNoStartedTurnGoesAhead(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.recs.turnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
 	sends, _ := s.q.RouteSteer(s.chat, "steer-a", "first", nil, promptHolder)
@@ -748,6 +758,7 @@ func TestSteerRecords_ADeleteInNoneWithNoStartedTurnGoesAhead(t *testing.T) {
 // A row a turn-end job holds is the delete's when KAS cannot hold it, and refused
 // while it may, because the job is about to decide whether KAS still has it.
 func TestSteerRecords_AJobsRowIsTakenOverOrRefusedSettling(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.bind()
 	s.steer("steer-a", "in kas")
@@ -767,6 +778,7 @@ func TestSteerRecords_AJobsRowIsTakenOverOrRefusedSettling(t *testing.T) {
 // The turn closing under a delete hands the op the end: once the op lets go, the
 // rows it kept are a pending end for the close's pipeline, lead first.
 func TestSteerRecords_ATurnEndingUnderTheOpRecordsTheEndWithItsLead(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.bind()
 	s.steer("steer-a", "first")
@@ -800,6 +812,7 @@ func TestSteerRecords_ATurnEndingUnderTheOpRecordsTheEndWithItsLead(t *testing.T
 // op's to resolve: EndOp turns the kept row into a pending end, never a row left
 // unowned with no channel and no end.
 func TestSteerRecords_ATurnEndingAfterTheResubmitIsAnsweredByEndOp(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.bind()
 	s.steer("steer-a", "a")
@@ -834,6 +847,7 @@ func TestSteerRecords_ATurnEndingAfterTheResubmitIsAnsweredByEndOp(t *testing.T)
 // A turn ending under a delete hands every row it leaves to the op, the parked ones
 // the op never marked included, so one boundary goes back as one send.
 func TestSteerRecords_ATurnEndingUnderADeleteHandsItTheParkedRowsToo(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.steer("steer-a", "a")
 	s.steer("steer-b", "b")
@@ -865,6 +879,7 @@ func TestSteerRecords_ATurnEndingUnderADeleteHandsItTheParkedRowsToo(t *testing.
 // A discard takes no row a turn end leaves: a row sent after Discard all began is the
 // turn end's own, and the discard does not drop it.
 func TestSteerRecords_ATurnEndingUnderADiscardLeavesALaterRowToItsEnd(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.steer("steer-a", "a")
 	const op = "op-discard"
@@ -891,6 +906,7 @@ func TestSteerRecords_ATurnEndingUnderADiscardLeavesALaterRowToItsEnd(t *testing
 // A dead bridge's buffer may come back in KAS's log on the next load, so rows it
 // held are marked for the post-load clear; the pending end carries the death.
 func TestSteerRecords_ABridgeDeathCollectsTheRowsAndArmsThePostLoadClear(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.bind()
 	s.steer("steer-a", "first")
@@ -913,6 +929,7 @@ func TestSteerRecords_ABridgeDeathCollectsTheRowsAndArmsThePostLoadClear(t *test
 // A bridge that dies with no turn bound leaves the rows its buffer held unsent for
 // the next prompt, and owes the post-load clear.
 func TestSteerRecords_ABridgeGoneWithNoTurnLeavesTheRowsUnsent(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.recs.turnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
 	sends, _ := s.q.RouteSteer(s.chat, "steer-a", "first", nil, promptHolder)
@@ -932,6 +949,7 @@ func TestSteerRecords_ABridgeGoneWithNoTurnLeavesTheRowsUnsent(t *testing.T) {
 // The send-now arrow's row leads only while it waits in the dock: once the agent read it, the arrow has nothing left
 // to send first.
 func TestSteerRecords_ALeadIsWaitingOnlyWhileItsRowIsInTheDock(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.bind()
 	s.steer("steer-a", "first")
@@ -952,6 +970,7 @@ func TestSteerRecords_ALeadIsWaitingOnlyWhileItsRowIsInTheDock(t *testing.T) {
 // A steer sent while the prompt waited for MCP is in KAS when the post-load clear
 // lands; the clear's ids put it back to parked so the drain resends it in order.
 func TestSteerRecords_ThePostLoadClearParksARowSentDuringTheWait(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.steer("steer-a", "first")
 	s.recs.bridgeGone(s.chat)
@@ -972,6 +991,7 @@ func TestSteerRecords_ThePostLoadClearParksARowSentDuringTheWait(t *testing.T) {
 // Discard all: a row the agent read before the clear keeps its read and gets no second entry;
 // the unread row leaves with none.
 func TestSteerRecords_DiscardLeavesARowReadBeforeTheClearRead(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.bind()
 	s.steer("steer-a", "first")
@@ -993,6 +1013,7 @@ func TestSteerRecords_DiscardLeavesARowReadBeforeTheClearRead(t *testing.T) {
 // The teardown marks the record gone before its cancel: the turn end that cancel
 // causes owes no job, and the rows nothing read come back for the close's notes.
 func TestSteerRecords_ATornDownChatOwesNothing(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s := newSteerHarness(t)
 		t.Cleanup(func() { shutdownHub(t, s.h) })
@@ -1027,6 +1048,7 @@ func TestSteerRecords_ATornDownChatOwesNothing(t *testing.T) {
 
 // A steer routed after the teardown began is refused: no row.
 func TestSteerRecords_ATornDownChatTakesNoNewRow(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.bind()
 	s.recs.beginTeardown(s.chat, nil)
@@ -1098,6 +1120,7 @@ func TestSteerRecords_BeginTeardownWaitsForAnActivePublication(t *testing.T) {
 // for every id a row is held under that is not its key, so a reconnecting dock
 // rebuilds its batch map.
 func TestSteerRecords_TheReplayListsEachRowWithItsBatch(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.bind()
 	s.steer("steer-a", "first")
@@ -1128,6 +1151,7 @@ func TestSteerRecords_TheReplayListsEachRowWithItsBatch(t *testing.T) {
 // a clear that never answered and a clear an agent row blocked both keep it, and a clear that lands gives it back,
 // still a steer for the turn whose start ran the clear.
 func TestSteerRecords_AnUnsettledPostLoadClearHoldsTheReloadedEntry(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		settle   func(s *steerHarness)
 		name     string
@@ -1180,6 +1204,7 @@ func fatedAs(fs []entryFate, id string, fate steerFate) bool {
 // Steps publish in the order they took the lock: a later step's frame waits behind
 // an earlier step's frame still being published, so a client never meets them reversed.
 func TestSteerRecords_StepsPublishInTheOrderTheyRan(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	parked := command.SteerHolder{Held: true, PromptClass: true}
 	s.q.RouteSteer(s.chat, "steer-a", "a", nil, parked)
@@ -1228,6 +1253,7 @@ func TestSteerRecords_StepsPublishInTheOrderTheyRan(t *testing.T) {
 // A clear answers the agent rows alone: a user row's entry is written at its own
 // terminal transition, so a row resent after the clear is never noted unread.
 func TestSteerRecords_AClearAnswersOnlyAgentRows(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.bind()
 	s.steer("steer-a", "first")
@@ -1244,6 +1270,7 @@ func TestSteerRecords_AClearAnswersOnlyAgentRows(t *testing.T) {
 // A user row sent under its key comes back as its own row frame, and a combined
 // send comes back as one batch frame naming the rows it carries.
 func TestSteerRecords_AQueuedFrameIsTheRowsOwnOrABatch(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.bind()
 	s.steer("steer-a", "first")
@@ -1268,6 +1295,7 @@ func TestSteerRecords_AQueuedFrameIsTheRowsOwnOrABatch(t *testing.T) {
 // A read answers the rows its id carries when that id is not a row's own key, by
 // either read path, for the read entry's Resends; a row read under its key carries none.
 func TestSteerRecords_AReadAnswersTheRowsItsIDCarries(t *testing.T) {
+	t.Parallel()
 	combined := func(s *steerHarness) string {
 		s.bind()
 		s.steer("steer-a", "a")
@@ -1328,6 +1356,7 @@ func readByAck(s *steerHarness, id string) []string {
 
 // A chat whose teardown began answers no frame.
 func TestSteerRecords_AGoneChatAnswersNoFrame(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.recs.beginTeardown(s.chat, nil)
 
@@ -1338,6 +1367,7 @@ func TestSteerRecords_AGoneChatAnswersNoFrame(t *testing.T) {
 
 // An agent row waits until read, and a 65th evicts the oldest rather than growing.
 func TestSteerRecords_AgentRowsWaitAndAreBounded(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	for i := range maxSteerRows + 1 {
 		s.recs.SteerWaiting(s.chat, &marotte.SteerQueuedPayload{SteerID: "notify-" + strings.Repeat("x", i+1), Origin: marotte.SteerOriginAgent})
@@ -1355,6 +1385,7 @@ func TestSteerRecords_AgentRowsWaitAndAreBounded(t *testing.T) {
 }
 
 func TestHandleSSE_ReplaysTheSteerRows(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	s := harnessOn(h, "c1", t.Fatalf)
 	s.bind()
@@ -1372,6 +1403,7 @@ func TestHandleSSE_ReplaysTheSteerRows(t *testing.T) {
 
 // The chat teardown forgets the record, and a reopened chat starts a fresh one.
 func TestCleanupChatState_ForgetsTheSteerRecord(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	s := harnessOn(h, "c1", t.Fatalf)
 	s.bind()
@@ -1398,6 +1430,7 @@ func equalStrings(a, b []string) bool { return slices.Equal(a, b) }
 // The unread rows' joined text always fits one prompt, because the drain sends them
 // as one: a row that would push the join past MaxPromptBytes is refused full.
 func TestSteerRecords_TheJoinedRowsFitOnePrompt(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	a := strings.Repeat("a", command.MaxPromptBytes/2)
 	b := strings.Repeat("b", command.MaxPromptBytes/2-2)
@@ -1417,6 +1450,7 @@ func TestSteerRecords_TheJoinedRowsFitOnePrompt(t *testing.T) {
 // ShutdownTake marks the record gone and takes every live row in one section, so a
 // fold or a new steer arriving after it changes nothing.
 func TestSteerRecords_ShutdownTakeLeavesNothingToFold(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.bind()
 	s.steer("steer-a", "in kas")
@@ -1461,6 +1495,7 @@ func (s *steerHarness) replayed(key string) marotte.SteerQueuedPayload {
 // While KAS may re-inject a dead bridge's rows, an offered entry's row awaits the next prompt's post-load clear and
 // stays on the dock; a landed clear retires it, its words the run list's again as a steer.
 func TestSteerRecords_AReinjectedEntryAwaitsAPromptUntilThePostLoadClear(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.offerEntry("m-a")
 	s.recs.bridgeGone(s.chat)
@@ -1485,6 +1520,7 @@ func TestSteerRecords_AReinjectedEntryAwaitsAPromptUntilThePostLoadClear(t *test
 // The recorded shape with KAS's queued report still in flight: a steer sent to a prompt whose execution has not
 // reported anything is not proven read, so its delete goes to KAS's clear, whose reply decides what was taken.
 func TestSteerRecords_ADeleteBeforeTheStartingTurnReportsGoesToTheClear(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.recs.turnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
 	s.h.stagePromptTurn(t, s.chat)
@@ -1499,6 +1535,7 @@ func TestSteerRecords_ADeleteBeforeTheStartingTurnReportsGoesToTheClear(t *testi
 
 // An owed probe carries one sender's waiting rows: grelot's words and the user's never go to the agent as one steer.
 func TestSteerRecords_AnOwedProbeJoinsOneSendersRows(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.bind()
 	s.steer("steer-a", "first")
@@ -1531,6 +1568,7 @@ func TestSteerRecords_AnOwedProbeJoinsOneSendersRows(t *testing.T) {
 // its key, since its key may already be in kiro-cli's log; the refusal itself takes it off the dock, the list holding
 // its words again.
 func TestSteerRecords_AnEntryOfferedAgainGoesOutUnderAFreshID(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.bind()
 	first, refuse := s.q.RouteEntry(s.chat, &command.EntrySteer{Entry: "n-1", Text: "1 new", Offer: 1}, promptHolder)

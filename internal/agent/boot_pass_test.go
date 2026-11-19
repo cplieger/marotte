@@ -46,7 +46,7 @@ func heldBootPass(t *testing.T) (*Runtime, *fakeBridge) {
 	}
 	cs := newTestChatStore()
 	// newRuntimeOn without its awaitBoot, which would wait out the pass this test holds open.
-	h := New(context.Background(), t.TempDir(), src, cs)
+	h := New(context.Background(), t.TempDir(), src, cs, parkedHeals())
 	src.mu.Lock()
 	src.rt = h
 	src.mu.Unlock()

@@ -16,6 +16,7 @@ var (
 // TestCatalog_NeverRecordsTheBotRole pins that the role is one session's agent, not a workspace fact, so the catalog
 // drops it by id before it compares or stores, and a Bot's list equal to a regular chat's changes nothing.
 func TestCatalog_NeverRecordsTheBotRole(t *testing.T) {
+	t.Parallel()
 	c := &catalog{}
 
 	if !c.setModes([]marotte.SessionMode{vibeMode, botMode, specMode}) {
@@ -49,6 +50,7 @@ func TestCatalog_NeverRecordsTheBotRole(t *testing.T) {
 // TestCatalog_AListOfOnlyTheBotRoleIsIgnored pins that a list the drop leaves empty is treated as the empty report
 // it now is, on a seeded and an empty catalog alike.
 func TestCatalog_AListOfOnlyTheBotRoleIsIgnored(t *testing.T) {
+	t.Parallel()
 	for name, seed := range map[string][]marotte.SessionMode{"a seeded catalog": {vibeMode}, "an empty catalog": nil} {
 		t.Run(name, func(t *testing.T) {
 			c := &catalog{}

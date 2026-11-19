@@ -8,16 +8,21 @@
 export const KEYED_PUSH_KINDS: Readonly<
   Record<
     string,
-    "notify_agent_finished" | "notify_pr_status" | "notify_run_outcome" | "notify_sign_in"
+    | "notify_agent_finished"
+    | "notify_pr_status"
+    | "notify_run_outcome"
+    | "notify_sign_in"
+    | "notify_bot_rule"
   >
 > = {
   agent_finished: "notify_agent_finished",
   pr_status: "notify_pr_status",
   run_outcome: "notify_run_outcome",
   sign_in: "notify_sign_in",
+  bot_rule: "notify_bot_rule",
 };
 
-/** Each keyed kind's default (`pr_status` is OFF). A mirror the payload cannot
+/** Each keyed kind's default (`pr_status` and `bot_rule` are OFF). A mirror the payload cannot
  *  replace: `EffectiveSettings` carries values in force, so a switched-off kind
  *  looks like one defaulting off. push-kinds.test.ts keeps the two in step. */
 export const KEYED_PUSH_DEFAULTS: Readonly<Record<keyof typeof KEYED_PUSH_KINDS, boolean>> = {
@@ -25,4 +30,5 @@ export const KEYED_PUSH_DEFAULTS: Readonly<Record<keyof typeof KEYED_PUSH_KINDS,
   pr_status: false,
   run_outcome: true,
   sign_in: true,
+  bot_rule: false,
 };

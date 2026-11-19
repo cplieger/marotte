@@ -13,6 +13,7 @@ import (
 // A close that commits while a turn's tail runs stops the tail before its next step: the steps after the commit
 // write nothing into the chat's record.
 func TestAfterTurnClose_ALifeEndedMidTailRunsNoLaterStep(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")

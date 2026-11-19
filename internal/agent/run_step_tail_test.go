@@ -40,6 +40,7 @@ func startTail(t *testing.T, r *runLog, path string) (turn, tail string) {
 // TestRunLog_StepStartsCarryAnInFlightStepsTurnAndLine pins the row a dock line is seeded from: an in-flight step's
 // newest turn and the last line its own lane printed, by the dock line's rule (run-step-tail.ts lastPrintedLine).
 func TestRunLog_StepStartsCarryAnInFlightStepsTurnAndLine(t *testing.T) {
+	t.Parallel()
 	step := workflow.PathKey([]string{"wf1", "build"})
 	t.Run("a sealed text's last prose line, its markdown markers dropped", func(t *testing.T) {
 		r := newRunLog(t.TempDir())
@@ -254,6 +255,7 @@ func TestRunLog_StepStartsCarryAnInFlightStepsTurnAndLine(t *testing.T) {
 
 // For every card kind, a step's dock line settles where a reload draws its card, live and read back from the log.
 func TestRunLog_TheDockSettlesOnTheReloadedCardsTitle(t *testing.T) {
+	t.Parallel()
 	step := workflow.PathKey([]string{"wf1", "build"})
 	placeholder := marotte.EntryToolCall{ID: "call-1", Title: "Run Command", Kind: marotte.ToolKindExecute, Input: json.RawMessage(`{}`)}
 	vet := json.RawMessage(`{"command":"go vet ./..."}`)
@@ -390,6 +392,7 @@ func reloadedCardTitle(t *testing.T, entries []marotte.Entry, id string) string 
 // A page that attaches while a step's call is in flight is seeded with the call's card title, so the result that
 // settles a different title moves its dock line.
 func TestRunLog_StepStartsCarryTheOpenTurnsUnsettledCalls(t *testing.T) {
+	t.Parallel()
 	step := workflow.PathKey([]string{"wf1", "build"})
 	r := newRunLog(t.TempDir())
 	turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
@@ -418,6 +421,7 @@ func TestRunLog_StepStartsCarryTheOpenTurnsUnsettledCalls(t *testing.T) {
 
 // A card appended settled, as a hook's is, takes no result, so the dock prints its title and holds nothing for it.
 func TestRunLog_ABornSettledCardIsNotHeldForAResult(t *testing.T) {
+	t.Parallel()
 	step := workflow.PathKey([]string{"wf1", "build"})
 	hook := &marotte.EntryToolCall{ID: "hook-1", Title: "Hook fired: lint", Kind: marotte.ToolKindHook, Status: marotte.ToolCompleted}
 	t.Run("the dock prints its title", func(t *testing.T) {
@@ -465,6 +469,7 @@ func TestRunLog_ABornSettledCardIsNotHeldForAResult(t *testing.T) {
 // A page that attaches after an interruption aborted a step's call, before KAS sends the call's late result, is seeded
 // with that call, so the late result moves its dock line as it moves the server's.
 func TestRunLog_AnInterruptedStepsRowCarriesTheCallItsLateResultSettles(t *testing.T) {
+	t.Parallel()
 	step := workflow.PathKey([]string{"wf1", "build"})
 	r := newRunLog(t.TempDir())
 	turn, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: step}, "c-1")
@@ -544,6 +549,7 @@ func servedRow(t *testing.T, h *Runtime, query, path string) servedStart {
 // step carries the streaming root-lane entry as it stands when the read is written: its id and delta count, which the
 // next entry_delta follows, and text from which the dock line reads.
 func TestHandleRun_AnInFlightStepsRowCarriesItsStreamingEntry(t *testing.T) {
+	t.Parallel()
 	h, _ := hostedLeasedRun(t, repeatInspect(t, 1))
 	h.runs.log = newRunLog(t.TempDir())
 	path := workflow.PathKey([]string{"wf_1", "lane", "iter-0", "build"})
@@ -597,6 +603,7 @@ func TestHandleRun_AnInFlightStepsRowCarriesItsStreamingEntry(t *testing.T) {
 // A step's turn prints between revisions with no revision of its own, so a read's in-flight row carries the line
 // as it stands when the read is written.
 func TestHandleRun_AnInFlightStepsRowCarriesTheLinePrintedSinceTheRevision(t *testing.T) {
+	t.Parallel()
 	h, _ := hostedLeasedRun(t, repeatInspect(t, 1))
 	h.runs.log = newRunLog(t.TempDir())
 	path := workflow.PathKey([]string{"wf_1", "lane", "iter-0", "build"})

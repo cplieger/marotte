@@ -36,6 +36,7 @@ func mustHold(t *testing.T, v *subject.Versions, name string, step func()) {
 }
 
 func TestPendingPermsTracker_EveryMutationMovesTheSharedCounter(t *testing.T) {
+	t.Parallel()
 	v := &subject.Versions{}
 	tr := newPendingPermsTracker()
 	tr.versions = v
@@ -77,6 +78,7 @@ func TestPendingPermsTracker_EveryMutationMovesTheSharedCounter(t *testing.T) {
 }
 
 func TestRunAsks_EveryPublishMovesTheSharedCounter(t *testing.T) {
+	t.Parallel()
 	v := &subject.Versions{}
 	rs := &Runs{chats: newTestChatStore()}
 	rs.asks.versions = v
@@ -100,6 +102,7 @@ func TestRunAsks_EveryPublishMovesTheSharedCounter(t *testing.T) {
 }
 
 func TestSteerRecords_EveryMutationMovesTheSharedCounter(t *testing.T) {
+	t.Parallel()
 	v := &subject.Versions{}
 	b := newSteerRecords()
 	b.versions = v
@@ -117,6 +120,7 @@ func TestSteerRecords_EveryMutationMovesTheSharedCounter(t *testing.T) {
 // TestPendingStores_ShareOneCounter pins one subject for all three stores: the client learns the
 // whole pending set from one connect frame.
 func TestPendingStores_ShareOneCounter(t *testing.T) {
+	t.Parallel()
 	v := &subject.Versions{}
 	tr := newPendingPermsTracker()
 	tr.versions = v

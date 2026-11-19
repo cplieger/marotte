@@ -53,6 +53,7 @@ func awaitNoPush(t *testing.T, h *Runtime, fp *runOutcomePush, why string) {
 // run_workflow returns once the run is created, so the launching turn ends cleanly while the run continues; a push
 // then claims the work is done. The withhold sits ahead of the severity switch, so all four cases are covered.
 func TestPushTurnOutcome_WithheldWhileALaunchedRunIsLive(t *testing.T) {
+	t.Parallel()
 	tests := map[string]struct {
 		stop     marotte.StopReason
 		liveRun  bool
@@ -92,7 +93,7 @@ func TestPushTurnOutcome_WithheldWhileALaunchedRunIsLive(t *testing.T) {
 				seedRunLease(t, h, "wf_1", "c1")
 			}
 
-			h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(tc.stop), "")
+			h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(tc.stop), "", nil, false)
 
 			if !tc.wantPush {
 				awaitNoPush(t, h, fp, tc.why)
@@ -113,10 +114,11 @@ func TestPushTurnOutcome_WithheldWhileALaunchedRunIsLive(t *testing.T) {
 
 // Another chat's run must not mute this chat: the withhold is keyed on the lease's ChatID.
 func TestPushTurnOutcome_AnotherChatsRunDoesNotWithhold(t *testing.T) {
+	t.Parallel()
 	h, fp := newWithholdHub(t)
 	seedRunLease(t, h, "wf_1", "c2")
 
-	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonEndTurn), "")
+	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonEndTurn), "", nil, false)
 
 	select {
 	case got := <-fp.sent:
@@ -130,10 +132,11 @@ func TestPushTurnOutcome_AnotherChatsRunDoesNotWithhold(t *testing.T) {
 
 // A parentless run (manual or scheduled) withholds nothing; its outcome travels on run_outcome.
 func TestPushTurnOutcome_AParentlessRunDoesNotWithhold(t *testing.T) {
+	t.Parallel()
 	h, fp := newWithholdHub(t)
 	seedRunLease(t, h, "wf_1", "")
 
-	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonEndTurn), "")
+	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonEndTurn), "", nil, false)
 
 	select {
 	case <-fp.sent:
@@ -144,11 +147,12 @@ func TestPushTurnOutcome_AParentlessRunDoesNotWithhold(t *testing.T) {
 
 // A nil chatHasLiveRun withholds nothing, so a coordinator built without the runtime wiring behaves as before.
 func TestPushTurnOutcome_NilPredicateWithholdsNothing(t *testing.T) {
+	t.Parallel()
 	h, fp := newWithholdHub(t)
 	seedRunLease(t, h, "wf_1", "c1")
 	h.coord.chatHasLiveRun = nil
 
-	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonEndTurn), "")
+	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonEndTurn), "", nil, false)
 
 	select {
 	case <-fp.sent:
@@ -159,6 +163,7 @@ func TestPushTurnOutcome_NilPredicateWithholdsNothing(t *testing.T) {
 
 // A cancel earns no push either way, so the withhold cannot take credit for the silence a stopped severity gives.
 func TestPushTurnOutcome_ACancelPushesNothingEitherWay(t *testing.T) {
+	t.Parallel()
 	for name, live := range map[string]bool{"with a live run": true, "with no live run": false} {
 		t.Run(name, func(t *testing.T) {
 			h, fp := newWithholdHub(t)
@@ -167,7 +172,7 @@ func TestPushTurnOutcome_ACancelPushesNothingEitherWay(t *testing.T) {
 			}
 
 			h.coord.pushTurnOutcome(t.Context(), "c1",
-				marotte.ConcludeStopReason(marotte.StopReasonCancelled), "")
+				marotte.ConcludeStopReason(marotte.StopReasonCancelled), "", nil, false)
 
 			awaitNoPush(t, h, fp, "a cancel is the reader's own gesture, so no severity arm notifies")
 		})
@@ -176,9 +181,10 @@ func TestPushTurnOutcome_ACancelPushesNothingEitherWay(t *testing.T) {
 
 // A turn kiro-cli cut at its model-call limit did not report an error, so its push says what happened and what to do.
 func TestPushTurnOutcome_AModelCallLimitStopPushesItsOwnRemedy(t *testing.T) {
+	t.Parallel()
 	h, fp := newWithholdHub(t)
 
-	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonToolUse), "")
+	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonToolUse), "", nil, false)
 
 	select {
 	case got := <-fp.sent:

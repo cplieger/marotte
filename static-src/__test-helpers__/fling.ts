@@ -3,7 +3,7 @@
 // built back to back on a busy page can sit further apart than a fling's window.
 
 /** A momentum scroll fires `scroll` once a frame, 16 ms apart at 60 Hz. */
-export const FLING_FRAME_MS = 16;
+const FLING_FRAME_MS = 16;
 
 /** Longer than any momentum scroll's gap between two `scroll` events: the scroller had stopped. */
 export const SCROLLER_RESTED_MS = 150;

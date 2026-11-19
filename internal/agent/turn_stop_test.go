@@ -45,6 +45,7 @@ func stopNow(h *Runtime) *command.TurnStop {
 // KAS never answering a stopped prompt's call leaves marotte to cancel it at exactly the grace, with the cause that
 // concludes `cancelled` rather than `interrupted`.
 func TestArmStopGrace_CancelsAnUnansweredCallAtTheGrace(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, turn, callCtx := stagedCall(t)
 		stop := stopNow(h)
@@ -70,6 +71,7 @@ func TestArmStopGrace_CancelsAnUnansweredCallAtTheGrace(t *testing.T) {
 
 // A call that returned inside the grace keeps its context: endPromptCall disarms the budget.
 func TestArmStopGrace_AnAnsweredCallIsLeftAlone(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, turn, callCtx := stagedCall(t)
 		h.coord.ArmStopGrace(stopNow(h), stopGrace)
@@ -84,6 +86,7 @@ func TestArmStopGrace_AnAnsweredCallIsLeftAlone(t *testing.T) {
 
 // A stop captured on one prompt's call never reaches the next prompt's, however late its grace is armed.
 func TestArmStopGrace_ALaterPromptsCallIsNeverReached(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, first, _ := stagedCall(t)
 		stop := stopNow(h)
@@ -107,6 +110,7 @@ func TestArmStopGrace_ALaterPromptsCallIsNeverReached(t *testing.T) {
 // An open that replaces a turn is refused once a stop followed that turn, in the open's own section, and goes ahead
 // when no stop did.
 func TestOpenTurn_ReplacingAStoppedTurnIsRefused(t *testing.T) {
+	t.Parallel()
 	retry := func(h *Runtime, replaces string) error {
 		id, err := h.coord.openTurnNow(t.Context(), "c1", command.TurnOpen{
 			Source: marotte.TurnSourceEmptyRetry, Prompt: &marotte.EntryPrompt{ID: "m-r", Text: "prompt"}, Replaces: replaces,
@@ -146,6 +150,7 @@ func TestOpenTurn_ReplacingAStoppedTurnIsRefused(t *testing.T) {
 // stopped turn ended goes only once the cancel is out, so KAS's cancel cannot land on it, and the stop's grace then
 // leaves it running with its words sent once.
 func TestCmdCancel_AStopOutlivingItsTurnLeavesTheNextPromptAlone(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, br, _, answerFirst, prompted := interruptHub(t)
 		cancelOut := make(chan struct{})
@@ -180,6 +185,7 @@ func TestCmdCancel_AStopOutlivingItsTurnLeavesTheNextPromptAlone(t *testing.T) {
 // chat's admission: a stop with KAS's turn open beside it cancels that call at the grace too, so the chat takes
 // the user's next prompt.
 func TestCmdCancel_ASupersededPromptsUnansweredCallIsReleased(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, br, first, _, prompted := interruptHub(t)
 		br.deliver(br.promptTurnStartMsg())
@@ -308,6 +314,7 @@ func assertNextPromptSent(t *testing.T, h *Runtime, br *fakeBridge) {
 // A stop between a prompt's take and its turn's open withdraws the take: no turn opens or closes, nothing reaches
 // KAS, the message waits paused on the list for the reader's next turn, and the chat takes the next prompt.
 func TestCmdCancel_BetweenTheTakeAndTheOpenPutsThePromptBackPaused(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, br := newTestHub()
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -345,6 +352,7 @@ func TestCmdCancel_BetweenTheTakeAndTheOpenPutsThePromptBackPaused(t *testing.T)
 // prompt as its call: the prompt is never written, so the stop's session/cancel cannot precede it on the wire, and
 // it closes cancelled, quietly.
 func TestCmdCancel_BetweenTheSendGateAndTheWriteKeepsThePromptUnsent(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, br := newTestHub()
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -436,6 +444,7 @@ func busyFirstAttempt(t *testing.T, br *fakeBridge, h *Runtime) {
 // A stop while a busy prompt's retry waits out its delay stops that prompt: the retry is never written after the
 // stop's session/cancel, the turn closes cancelled, quietly, and the chat takes the next prompt.
 func TestCmdCancel_DuringABusyRetrysDelayKeepsTheRetryUnwritten(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, br := newTestHub()
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -456,6 +465,7 @@ func TestCmdCancel_DuringABusyRetrysDelayKeepsTheRetryUnwritten(t *testing.T) {
 
 // With no stop, the busy prompt's retry is written once the delay passes.
 func TestPromptTurn_ABusyAnswerIsRetriedAfterTheDelay(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, br := newTestHub()
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -539,6 +549,7 @@ func assertRetryCancelledQuietly(t *testing.T, h *Runtime, cs *testChatStore, re
 // A stop after the send gate let the empty turn's retry through, before its frame reached the write lock, keeps the
 // retry unwritten and closes it cancelled, quietly.
 func TestCmdCancel_BetweenTheEmptyRetrysGateAndItsWriteKeepsItUnwritten(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		write := make(chan struct{})
 		h, cs, br := emptyRetryHub(t, func(br *fakeBridge) {
@@ -572,6 +583,7 @@ func TestCmdCancel_BetweenTheEmptyRetrysGateAndItsWriteKeepsItUnwritten(t *testi
 // A stop while the empty turn's retry waits out a busy answer's delay keeps its next attempt unwritten and closes
 // it cancelled, quietly.
 func TestCmdCancel_DuringTheEmptyRetrysBusyDelayKeepsItUnwritten(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, br := emptyRetryHub(t, func(br *fakeBridge) {
 			br.callErrs = map[string]error{marotte.MethodPrompt: busyReply()}
@@ -596,6 +608,7 @@ func TestCmdCancel_DuringTheEmptyRetrysBusyDelayKeepsItUnwritten(t *testing.T) {
 // The send gate judges every attempt of a turn against the stops since its first attempt was let through: a stop
 // after it refuses a later attempt, and with none the later attempt goes.
 func TestAwaitPromptSend_ALaterAttemptAnswersTheStopsSinceTheFirst(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		want error
 		name string

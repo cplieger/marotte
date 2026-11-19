@@ -15,6 +15,7 @@ import (
 
 // openTurn refuses a dead context before it appends, so the log is untouched and the registry holds nothing.
 func TestOpenTurn_RefusesAnAlreadyDeadContext(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		source marotte.TurnOpenSource
@@ -47,6 +48,7 @@ func TestOpenTurn_RefusesAnAlreadyDeadContext(t *testing.T) {
 // startTurn answers false for a dead ctx after a successful openTurn and the turn stays open for the caller's
 // turn end rule.
 func TestStartTurn_RefusesADeadContextAfterTheOpen(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")
@@ -72,6 +74,7 @@ func TestStartTurn_RefusesADeadContextAfterTheOpen(t *testing.T) {
 // TestPromptTurn_ShutdownPreGoroutineStillDrainsTheTurn, which passes through a closer race, this pins that no turn
 // opens and the prompt takes its zero-epoch branch.
 func TestPromptTurn_ShutdownBeforeTheTurnOpensStartsNoTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
 	entered, gate := gateSessionOpen(h)

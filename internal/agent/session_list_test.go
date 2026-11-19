@@ -52,6 +52,7 @@ func ownedBy(t *testing.T, owners map[string][]string) *Runtime {
 // TestToResumable_ExcludesWorkflowSessions pins that _meta.kiro.workflow is the discriminator (93 of 399 sessions on
 // 2.16.0); `createdReason` is always null.
 func TestToResumable_ExcludesWorkflowSessions(t *testing.T) {
+	t.Parallel()
 	// Claimed on purpose: an agent run's step uses a chat-owned session, so the workflow marker must win.
 	h := ownedBy(t, map[string][]string{
 		"c1": {"sess_a"}, "c2": {"sess_b"}, "c3": {"sess_wf"},
@@ -78,6 +79,7 @@ func TestToResumable_ExcludesWorkflowSessions(t *testing.T) {
 
 // TestToResumable_NewestFirst pins the order and the RFC3339 conversion; a lexical sort breaks across precisions and zones.
 func TestToResumable_NewestFirst(t *testing.T) {
+	t.Parallel()
 	h := ownedBy(t, map[string][]string{"c1": {"old"}, "c2": {"new"}, "c3": {"mid"}})
 	got := toResumable(h.claimedSessions(t.Context()), []kasSessionRow{
 		row("old", "older", "2026-08-01T10:00:00.000Z", false),
@@ -99,6 +101,7 @@ func TestToResumable_NewestFirst(t *testing.T) {
 // TestToResumable_OffersOneRowPerOwningChat keys the claim on the whole chain: RecordSession retires the old id
 // into PriorACPSessionIDs, and a chat earns one row however many it held.
 func TestToResumable_OffersOneRowPerOwningChat(t *testing.T) {
+	t.Parallel()
 	store := newTestChatStore()
 	ctx := t.Context()
 	if _, err := store.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
@@ -139,6 +142,7 @@ func TestToResumable_OffersOneRowPerOwningChat(t *testing.T) {
 
 // An UpdatedAt tie breaks toward the later-created session, the chat's live member.
 func TestToResumable_TiedRowsKeepTheLaterCreatedSession(t *testing.T) {
+	t.Parallel()
 	h := ownedBy(t, map[string][]string{"c1": {"sess_retired", "sess_live"}})
 	got := toResumable(h.claimedSessions(t.Context()), []kasSessionRow{
 		// Listed and created first, so only creation separates them.
@@ -157,6 +161,7 @@ func TestToResumable_TiedRowsKeepTheLaterCreatedSession(t *testing.T) {
 
 // With only ids to separate them, the survivor must not depend on arrival order.
 func TestToResumable_TieBreakIgnoresArrivalOrder(t *testing.T) {
+	t.Parallel()
 	h := ownedBy(t, map[string][]string{"c1": {"sess_a", "sess_b"}})
 	a := row("sess_a", "listed first", "2026-08-02T12:00:00.000Z", false)
 	b := row("sess_b", "listed second", "2026-08-02T12:00:00.000Z", false)
@@ -180,6 +185,7 @@ func TestToResumable_TieBreakIgnoresArrivalOrder(t *testing.T) {
 // Only ownership separates conversations: session/list carries no message count, and a session no chat owns can
 // carry a title; unfiltered, an observer pass's session sorts to the top.
 func TestToResumable_ExcludesEverySessionNoChatOwns(t *testing.T) {
+	t.Parallel()
 	h := ownedBy(t, map[string][]string{"c1": {"sess_real"}})
 	got := toResumable(h.claimedSessions(t.Context()), []kasSessionRow{
 		// Newest, so it would sort first.
@@ -204,6 +210,7 @@ func TestToResumable_ExcludesEverySessionNoChatOwns(t *testing.T) {
 
 // TestToResumable_SanitizesAndBoundsTheDescription pins that this copy comes from KAS's session.json, which nothing upstream bounds or sanitizes.
 func TestToResumable_SanitizesAndBoundsTheDescription(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		desc string
@@ -250,6 +257,7 @@ func TestToResumable_SanitizesAndBoundsTheDescription(t *testing.T) {
 
 // TestParseKASTime pins that a bad value sinks rather than floats to now.
 func TestParseKASTime(t *testing.T) {
+	t.Parallel()
 	cases := map[string]int64{
 		"2026-08-02T13:32:21.286Z": 1785677541286,
 		"":                         0,
@@ -265,6 +273,7 @@ func TestParseKASTime(t *testing.T) {
 
 // TestWorkflowRunAttribution attributes a run through the chain: the recorded parentSessionId may be retired.
 func TestWorkflowRunAttribution(t *testing.T) {
+	t.Parallel()
 	store := newTestChatStore()
 	ctx := t.Context()
 	if _, err := store.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
@@ -291,6 +300,7 @@ func TestWorkflowRunAttribution(t *testing.T) {
 
 // TestStepSessionsAreNotRuns pins that 93 workflow rows spanned 6 runs (one loop gave 76), and a step's status is always idle.
 func TestStepSessionsAreNotRuns(t *testing.T) {
+	t.Parallel()
 	h := ownedBy(t, map[string][]string{"c1": {"sess_chat"}})
 	rows := make([]kasSessionRow, 0, 77)
 	rows = append(rows, row("sess_chat", "A real conversation", "2026-08-01T03:00:00.000Z", false))
@@ -323,6 +333,7 @@ func wfRun(id, name, status, parentSession, updated string) kasWorkflowRun {
 // A chat-launched run is listed: retry is legal only from failed and aborted, which kiro-cli's restore skips,
 // so this row is its only door.
 func TestToWorkflowRuns_ListsEveryRunAndAttributesTheChatLaunchedOnes(t *testing.T) {
+	t.Parallel()
 	h := ownedBy(t, map[string][]string{"c1": {"sess_retired", "sess_now"}})
 	got := h.runs.toWire(h.claimedSessions(t.Context()), []kasWorkflowRun{
 		wfRun("wf_manual", "nightly", "completed", "", "2026-08-02T12:00:00.000Z"),
@@ -489,6 +500,7 @@ func TestHandleSessionList_NamesAnOversizeList(t *testing.T) {
 // TestWithChatFacts_CopiesHeaderFacts pins that a History row states its chat's model, mode, turns and credits from
 // the stored header, so a chat opened from History and closed again keeps its second line.
 func TestWithChatFacts_CopiesHeaderFacts(t *testing.T) {
+	t.Parallel()
 	rows := []marotte.ResumableSession{
 		{SessionID: "s1", ChatID: "c1"},
 		{SessionID: "s2", ChatID: "c-gone"},
@@ -516,6 +528,7 @@ func TestWithChatFacts_CopiesHeaderFacts(t *testing.T) {
 // TestWithChatFacts_LabelsABotsRow pins that History labels a closed Bot without its chat open: the row takes the
 // fact from the owning chat's header, and a regular chat's row stays unlabelled.
 func TestWithChatFacts_LabelsABotsRow(t *testing.T) {
+	t.Parallel()
 	rows := []marotte.ResumableSession{
 		{SessionID: "s-bot", ChatID: "c-bot"},
 		{SessionID: "s-plain", ChatID: "c-plain"},
@@ -541,6 +554,7 @@ func TestWithChatFacts_LabelsABotsRow(t *testing.T) {
 
 // TestWithParentNames_NamesTheLaunchingChat pins that a run row carries its launching chat's stored name.
 func TestWithParentNames_NamesTheLaunchingChat(t *testing.T) {
+	t.Parallel()
 	runs := []marotte.WorkflowRun{
 		{WorkflowID: "w1", ParentChatID: "c1"},
 		{WorkflowID: "w2"},
@@ -559,6 +573,7 @@ func TestWithParentNames_NamesTheLaunchingChat(t *testing.T) {
 
 // The reply is KAS's own row shape, step counts included, so a wrong json tag fails here.
 func TestToWorkflowRuns_StatesWhereALiveRunStands(t *testing.T) {
+	t.Parallel()
 	raw := `{"runs":[
 		{"workflowId":"wf_step","status":"running","updatedAt":"2026-08-02T12:00:00.000Z",
 		 "stepsCompleted":1,"stepsTotal":4,"currentNodeId":"build","waitingOnWatch":false},

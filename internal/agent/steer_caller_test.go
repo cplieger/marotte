@@ -8,6 +8,7 @@ import (
 
 // An API caller's steer keeps its attribution from the dock row to the read entry's source.
 func TestSteerRecord_KeepsAnAPICallersAttributionToTheRead(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.bind()
 	sends, refuse := s.q.RouteSteer(s.chat, "steer-a", "Agent Mail: 1 new message", &marotte.Caller{Label: "Agent Mail"}, promptHolder)
@@ -31,6 +32,7 @@ func TestSteerRecord_KeepsAnAPICallersAttributionToTheRead(t *testing.T) {
 }
 
 func TestSteerRecord_TheUsersSteerNamesNoCaller(t *testing.T) {
+	t.Parallel()
 	s := newSteerHarness(t)
 	s.bind()
 	s.steer("steer-a", "use tabs")

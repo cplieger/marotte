@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cplieger/go/textsafe"
+	"github.com/cplieger/marotte/internal/filemode"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/signin"
 )
@@ -98,7 +99,7 @@ func newHarness(t *testing.T, opts ...Option) *harness {
 	ctx, cancel := context.WithCancel(context.Background())
 	dir := t.TempDir()
 	b := newFakeBackend()
-	v := signin.Open(ctx, dir, b)
+	v := signin.Open(ctx, dir, filemode.OS(), b)
 	t.Cleanup(func() {
 		cancel()
 		v.Wait()

@@ -35,6 +35,7 @@ func opensOf(t *testing.T, entries []marotte.Entry) []marotte.EntryTurnOpen {
 }
 
 func TestPrompt_AutoCreatesChatAndPersistsUserMessage(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 
 	rec := postCmd(t, h, marotte.ClientCommand{
@@ -83,6 +84,7 @@ func waitForSessionID(t *testing.T, cs *testChatStore, chatID marotte.ChatID) {
 }
 
 func TestPrompt_RejectsEmptyText(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c-2",
@@ -94,6 +96,7 @@ func TestPrompt_RejectsEmptyText(t *testing.T) {
 }
 
 func TestPrompt_RejectsMissingMessageID(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c-3",
@@ -105,6 +108,7 @@ func TestPrompt_RejectsMissingMessageID(t *testing.T) {
 }
 
 func TestCreateChat_Idempotent(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 
 	post := func() int {
@@ -126,6 +130,7 @@ func TestCreateChat_Idempotent(t *testing.T) {
 }
 
 func TestDeleteChat_IsUserOnly(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c-del", func(c *marotte.Chat, _ bool) bool { c.Name = "to-delete"; return true })
 
@@ -141,6 +146,7 @@ func TestDeleteChat_IsUserOnly(t *testing.T) {
 }
 
 func TestUnknownCommandReturns400(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "nonsense",
@@ -151,6 +157,7 @@ func TestUnknownCommandReturns400(t *testing.T) {
 }
 
 func TestCancel_NoBridgeIsOK(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	rec := postCmd(t, h, marotte.ClientCommand{Type: "cancel", ChatID: "no-bridge"})
 	if rec.Code != http.StatusOK {
@@ -159,6 +166,7 @@ func TestCancel_NoBridgeIsOK(t *testing.T) {
 }
 
 func TestCancel_NotifiesBridge(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
@@ -178,6 +186,7 @@ func TestCancel_NotifiesBridge(t *testing.T) {
 // An answer whose ask is no longer pending, its bridge's end included (which retires the ask), is
 // the same refusal as a second answer, so the client reads it as superseded.
 func TestPermission_AnAnswerWithNoPendingAskIs409(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "permission_response", ChatID: "no-bridge",
@@ -189,6 +198,7 @@ func TestPermission_AnAnswerWithNoPendingAskIs409(t *testing.T) {
 }
 
 func TestPermission_InvalidPayloadIs400(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	_, err := h.coord.openReleased(t.Context(), "c1", "")
@@ -205,6 +215,7 @@ func TestPermission_InvalidPayloadIs400(t *testing.T) {
 }
 
 func TestPermission_ForwardsToBridge(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	_, err := h.coord.openReleased(t.Context(), "c1", "")
@@ -227,6 +238,7 @@ func TestPermission_ForwardsToBridge(t *testing.T) {
 
 // TestPermission_SecondAnswerIs409 is the cross-tab double answer: the second answer is refused, not silently dropped by kiro-cli.
 func TestPermission_SecondAnswerIs409(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
@@ -252,6 +264,7 @@ func TestPermission_SecondAnswerIs409(t *testing.T) {
 }
 
 func TestCommand_RejectsInvalidChatID(t *testing.T) {
+	t.Parallel()
 	// Unsafe chat ids are rejected at the dispatcher before any handler (mirrors chat.chatIDPattern).
 	h, _, _ := newTestHub()
 
@@ -279,6 +292,7 @@ func TestCommand_RejectsInvalidChatID(t *testing.T) {
 }
 
 func TestPrompt_RejectsOversizedText(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
@@ -300,6 +314,7 @@ func TestPrompt_RejectsOversizedText(t *testing.T) {
 }
 
 func TestPrompt_RejectsBadMessageID(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
@@ -337,6 +352,7 @@ func newCmdRec() *httptest.ResponseRecorder {
 }
 
 func TestPrompt_BangPrefixedTextReachesTheAgent(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHubIn(t.TempDir())
 	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
 	seedChat(t, cs, "c-bang")
@@ -362,6 +378,7 @@ func TestPrompt_BangPrefixedTextReachesTheAgent(t *testing.T) {
 }
 
 func TestBuildPromptBlocks(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		setupFile       func(dir string)
 		name            string
@@ -544,6 +561,7 @@ func BenchmarkHandleCommand(b *testing.B) {
 }
 
 func TestPermission_RejectsOptionNotOfferedByRequest(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {

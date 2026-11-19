@@ -33,6 +33,7 @@ func (b *fakeBridge) workflowLaunchHealsSeen() []string {
 }
 
 func TestConfigOptionUpdate_HealsWorkflowLaunchOnTheChatsOwnFrame(t *testing.T) {
+	t.Parallel()
 	h, br := healEffortFixture(t, "")
 
 	h.handleSessionUpdate(t.Context(), "c1", workflowLaunchFrame(t, marotte.WorkflowLaunchWhenAsked, "", false))
@@ -44,6 +45,7 @@ func TestConfigOptionUpdate_HealsWorkflowLaunchOnTheChatsOwnFrame(t *testing.T) 
 }
 
 func TestConfigOptionUpdate_LeavesWorkflowLaunchAloneOnAStepsFrame(t *testing.T) {
+	t.Parallel()
 	h, br := healEffortFixture(t, "")
 
 	h.handleSessionUpdate(t.Context(), "c1", workflowLaunchFrame(t, marotte.WorkflowLaunchWhenAsked, "sess-step", true))
@@ -55,6 +57,7 @@ func TestConfigOptionUpdate_LeavesWorkflowLaunchAloneOnAStepsFrame(t *testing.T)
 }
 
 func TestConfigOptionUpdate_HealsNoWorkflowLaunchTheFrameDoesNotOffer(t *testing.T) {
+	t.Parallel()
 	h, br := healEffortFixture(t, "max")
 
 	h.handleSessionUpdate(t.Context(), "c1", configOptionFrame(t, "high", "", false))

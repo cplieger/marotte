@@ -26,6 +26,8 @@ func TestStatusFor_EveryKindAndEveryListedCode(t *testing.T) {
 		{"scope insufficient", forgeapi.Error{Kind: forgeapi.KindForbidden, Code: forgeapi.CodeScopeInsufficient}, http.StatusForbidden},
 		{"not found", forgeapi.Error{Kind: forgeapi.KindNotFound}, http.StatusNotFound},
 		{"not mergeable", forgeapi.Error{Kind: forgeapi.KindNotMergeable}, http.StatusConflict},
+		{"strategy required", forgeapi.Error{Kind: forgeapi.KindNotMergeable, Code: forgeapi.CodeStrategyRequired}, http.StatusConflict},
+		{"a local code riding a kind answers the kind", forgeapi.Error{Kind: forgeapi.KindNotMergeable, Code: forgeapi.CodeStrategyNotAllowed}, http.StatusConflict},
 		{"conflict", forgeapi.Error{Kind: forgeapi.KindConflict}, http.StatusConflict},
 		{"rate limited", forgeapi.Error{Kind: forgeapi.KindRateLimited}, http.StatusTooManyRequests},
 		{"transient", forgeapi.Error{Kind: forgeapi.KindTransient}, http.StatusServiceUnavailable},

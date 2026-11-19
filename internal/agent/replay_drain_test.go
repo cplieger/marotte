@@ -4,6 +4,7 @@ import "testing"
 
 // TestReplayDrain_Complete covers the shared condition for both routes.
 func TestReplayDrain_Complete(t *testing.T) {
+	t.Parallel()
 	// The two facts a drain accepts.
 	consumed := func(gen, seq uint64) func(*replayDrain) {
 		return func(d *replayDrain) { d.noteConsumed(drainPoint{gen: gen, seq: seq}) }
@@ -92,6 +93,7 @@ func TestReplayDrain_Complete(t *testing.T) {
 
 // A same-attachment report with a lower number must not undo the high-water mark.
 func TestReplayDrain_ObservedNeverGoesBackward(t *testing.T) {
+	t.Parallel()
 	var d replayDrain
 	d.markLoadedAt(drainPoint{gen: 1, seq: 5})
 	d.noteConsumed(drainPoint{gen: 1, seq: 5})

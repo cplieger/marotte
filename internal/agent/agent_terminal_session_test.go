@@ -45,6 +45,7 @@ func procIDs(t *testing.T, pid int) (pgrp, sid int) {
 // An id read inside an agent command must name only that command's tree, so the shell leads its
 // own session and group, distinct from its host's.
 func TestAgentTerminal_LeadsItsOwnSession(t *testing.T) {
+	t.Parallel()
 	pidFile := filepath.Join(t.TempDir(), "head.pid")
 	h, termID, pid := startBaitTerminal(t, "echo $$ > "+pidFile+"; sleep 300", pidFile)
 	t.Cleanup(func() { h.translateACPEvent("c1", h.originOf("c1"), termIDMsg(t, 99, methodTermKill, termID)) })
@@ -97,6 +98,7 @@ var harnessMarker = regexp.MustCompile(`HARNESS_ALIVE kills=(\d+) refused=(\d+)`
 // The incident, replayed: the loop runs inside an agent terminal spawned by a harness process that
 // stands in for marotte in a session of its own, so a regression kills the harness, never the runner.
 func TestAgentTerminal_IncidentLoopLeavesItsHostAlive(t *testing.T) {
+	t.Parallel()
 	for _, bin := range []string{"bash", "pgrep", "ps"} {
 		if _, err := exec.LookPath(bin); err != nil {
 			t.Skipf("%s is not on PATH; the incident loop needs it", bin)
@@ -169,6 +171,7 @@ func TestAgentTerminal_IncidentLoopLeavesItsHostAlive(t *testing.T) {
 // TestAgentTerminalIncidentHarness is TestAgentTerminal_IncidentLoopLeavesItsHostAlive's child and
 // skips when run on its own.
 func TestAgentTerminalIncidentHarness(t *testing.T) {
+	t.Parallel()
 	if os.Getenv(incidentHarnessEnv) != "1" {
 		t.Skip("runs only as the child of TestAgentTerminal_IncidentLoopLeavesItsHostAlive")
 	}
@@ -200,6 +203,7 @@ func TestAgentTerminalIncidentHarness(t *testing.T) {
 // Teardown takes the whole tree, including a grandchild that left the group: GNU timeout calls
 // setpgid unless --foreground is given.
 func TestKillTerminalSession_ReapsGrandchildrenInOtherGroups(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("timeout"); err != nil {
 		t.Skip("timeout is not on PATH")
 	}

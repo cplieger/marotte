@@ -26,6 +26,7 @@ import (
 func bareTerminals() *agentTerminals { return newAgentTerminals(nil, nil, nil, nil) }
 
 func TestRingBuffer(t *testing.T) {
+	t.Parallel()
 	r := newByteRing(10)
 	r.write([]byte("hello"))
 	if r.String() != "hello" {
@@ -43,6 +44,7 @@ func TestRingBuffer(t *testing.T) {
 }
 
 func TestRingBufferUTF8(t *testing.T) {
+	t.Parallel()
 	r := newByteRing(8)
 	r.write([]byte("aaaaaé"))
 	got := r.String()
@@ -52,6 +54,7 @@ func TestRingBufferUTF8(t *testing.T) {
 }
 
 func TestAgentTerminalsNewAndLookup(t *testing.T) {
+	t.Parallel()
 	terms := bareTerminals()
 	if len(terms.terms) != 0 {
 		t.Errorf("expected empty, got %d", len(terms.terms))
@@ -158,6 +161,7 @@ func FuzzByteRing_WriteRead(f *testing.F) {
 
 // drainAll clears the maps even when a terminal already exited.
 func TestDrainAll_ClearsExitedTerminals(t *testing.T) {
+	t.Parallel()
 	at := bareTerminals()
 	done := make(chan struct{})
 	close(done) // already exited
@@ -178,6 +182,7 @@ func TestDrainAll_ClearsExitedTerminals(t *testing.T) {
 
 // release removes only the named terminal and reports (nil, false) for an unknown id.
 func TestAgentTerminals_Release(t *testing.T) {
+	t.Parallel()
 	at := bareTerminals()
 	at.terms["t1"] = newAgentTerminal(nil, "c1", 64)
 	at.terms["t2"] = newAgentTerminal(nil, "c1", 64)
@@ -260,6 +265,7 @@ func firstEventID(evs []ringEvent, typ marotte.EventType) (uint64, bool) {
 // TestTerminalCreated_BroadcastBeforeOutputAndExited pins terminal_created ahead of any
 // output or exit; otherwise the client drops them and the tab stays "running".
 func TestTerminalCreated_BroadcastBeforeOutputAndExited(t *testing.T) {
+	t.Parallel()
 	work := t.TempDir()
 	br := newRecordingTermBridge()
 	h := hubWithBridge(t, work, br)
@@ -325,6 +331,7 @@ func (c *chunkReader) Read(p []byte) (int, error) {
 
 // A rune split across the 4 KB read boundary must arrive intact in the live broadcast while the ring keeps every raw byte.
 func TestPumpTerminalOutput_RuneSplitAcrossReadBoundaryNotCorrupted(t *testing.T) {
+	t.Parallel()
 	h := newRuntimeOn(t.Context(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), newTestChatStore())
 	term := newAgentTerminal(nil, "c1", 1024)
 	// Reads split every multi-byte rune: é = C3 A9, € = E2 82 AC, 😀 = F0 9F 98 80.
@@ -462,6 +469,7 @@ func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 
 // Once the head is reaped its pid may lead a stranger's session; the fixture stands one in with a Setsid sleep.
 func TestKillTerminalSession_AfterReapSignalsNothing(t *testing.T) {
+	t.Parallel()
 	stranger := exec.Command("sleep", "30") // #nosec G204 -- fixed test command
 	stranger.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := stranger.Start(); err != nil {
@@ -508,6 +516,7 @@ func termIDMsg(t *testing.T, id int64, method, termID string) *marotte.RPCRespon
 
 // A running command's whole tree goes with terminal/kill, via the session captured at spawn.
 func TestKillTerminalSession_LiveHeadTakesTheTree(t *testing.T) {
+	t.Parallel()
 	pidFile := filepath.Join(t.TempDir(), "child.pid")
 	h, termID, childPID := startBaitTerminal(t, "sleep 300 & echo $! > "+pidFile+"; wait", pidFile)
 	t.Cleanup(func() { _ = syscall.Kill(childPID, syscall.SIGKILL) })
@@ -581,6 +590,7 @@ func processAlive(pid int) bool {
 
 // A stream ending mid-escape must still deliver the held bytes, or a command killed mid-write loses its tail.
 func TestPumpTerminalOutput_ReleasesATruncatedEscapeSequenceAtEOF(t *testing.T) {
+	t.Parallel()
 	h := newRuntimeOn(t.Context(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), newTestChatStore())
 
 	// "\x1b[3" has no final byte, so the parser holds it and neutralizes the ESC on release.
@@ -617,6 +627,7 @@ func TestExitStatusFromState_CleanExitIsACodeNotASignal(t *testing.T) {
 
 // An incomplete rune held at EOF must still reach the transcript, matching the ring.
 func TestPumpTerminalOutput_DeliversTheHeldRuneTailAtEOF(t *testing.T) {
+	t.Parallel()
 	h := newRuntimeOn(t.Context(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), newTestChatStore())
 
 	// "hi" then the first two bytes of "€".

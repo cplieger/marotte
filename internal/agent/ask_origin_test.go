@@ -57,6 +57,7 @@ func askFamilies() map[string]askFamily {
 // An ask's answer goes back on the bridge it arrived on, under the ACP id that bridge sent: the
 // chat's current bridge would resolve an unrelated request under the same id.
 func TestAskAnswer_GoesBackOnTheBridgeTheAskArrivedOn(t *testing.T) {
+	t.Parallel()
 	for name, tc := range askFamilies() {
 		t.Run(name, func(t *testing.T) {
 			h, _, _ := newTestHub()
@@ -79,6 +80,7 @@ func TestAskAnswer_GoesBackOnTheBridgeTheAskArrivedOn(t *testing.T) {
 
 // A delivered answer settles the ask once, attributed to whoever answered.
 func TestAskAnswer_ADeliveredAnswerSettlesItOnceAsTheUsers(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	origin := newFakeBridge()
 	h.insertBridgeNow("c1", testBridge(origin, bridgeReady))
@@ -146,6 +148,7 @@ func (b *endingBridge) Respond(context.Context, int64, any, error) error {
 // An end that lands during the claimed answer's write settles it ended exactly once: the end
 // marks the claim, the failed write settles it.
 func TestAskAnswer_AnEndDuringTheWriteSettlesItEndedOnce(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	br := &endingBridge{fakeBridge: newFakeBridge(), h: h}
 	h.insertBridgeNow("c1", testBridge(br, bridgeReady))
@@ -170,6 +173,7 @@ func TestAskAnswer_AnEndDuringTheWriteSettlesItEndedOnce(t *testing.T) {
 // question: the command is refused rather than acknowledged, the chat keeps waiting on the user, and
 // the ask is pending and re-offered to every surface, unannounced, for another answer.
 func TestAskAnswer_AFailedWriteOnALiveBridgeRefusesTheAnswerAndReoffersTheAsk(t *testing.T) {
+	t.Parallel()
 	for name, tc := range askFamilies() {
 		t.Run(name, func(t *testing.T) {
 			h, _, _ := newTestHub()
@@ -209,6 +213,7 @@ func TestAskAnswer_AFailedWriteOnALiveBridgeRefusesTheAnswerAndReoffersTheAsk(t 
 // the command says so (410 ask_withdrawn) instead of acknowledging delivery, and the answer does not
 // discharge the chat's wait; the transition that won owns the card and the chat's status.
 func TestAskAnswer_AnAskSettledDuringTheWriteRefusesTheAnswerAsWithdrawn(t *testing.T) {
+	t.Parallel()
 	transitions := map[string]func(h *Runtime, origin acpResponder){
 		"bridgeEnded": func(h *Runtime, origin acpResponder) { h.bus.endAsksOf(origin) },
 	}
@@ -250,6 +255,7 @@ func (b *duringWriteBridge) Respond(context.Context, int64, any, error) error {
 // write's result, delivered or failed on the still-running bridge, can neither reopen it nor
 // settle it a second time, and the bridge's later end finds nothing.
 func TestAskAnswer_ATerminalTransitionDuringTheWriteSettlesTheClaimOnce(t *testing.T) {
+	t.Parallel()
 	const toolCallID, kasAskID, workflowID = "tc-1", "pr-1", "wf-1"
 	cases := map[string]struct {
 		transition func(h *Runtime) bool

@@ -46,6 +46,7 @@ func liveRows(t *testing.T, h *Runtime) []marotte.LiveRun {
 }
 
 func TestLiveRunInventory_ListsAParentlessRunWithNoChatWhileItRunsPausesOrWaits(t *testing.T) {
+	t.Parallel()
 	h := launchParentless(t)
 	running := []marotte.LiveRun{{WorkflowID: "wf_1", ChatID: "", Executing: true}}
 	parked := []marotte.LiveRun{{WorkflowID: "wf_1", ChatID: "", Executing: false}}
@@ -74,6 +75,7 @@ func TestLiveRunInventory_ListsAParentlessRunWithNoChatWhileItRunsPausesOrWaits(
 
 // A run's launching chat is on its row, so only a parentless run's row has none.
 func TestLiveRunInventory_AnAgentsRunIsListedUnderItsLaunchingChat(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 
 	h.translateACPEvent("c1", h.originOf("c1"),
@@ -86,6 +88,7 @@ func TestLiveRunInventory_AnAgentsRunIsListedUnderItsLaunchingChat(t *testing.T)
 }
 
 func TestLiveRunInventory_AParentlessRunLeavesAtItsTerminalRunComplete(t *testing.T) {
+	t.Parallel()
 	for _, status := range []string{"completed", "failed", "aborted", "cancelled"} {
 		t.Run(status, func(t *testing.T) {
 			h := launchParentless(t)
@@ -101,6 +104,7 @@ func TestLiveRunInventory_AParentlessRunLeavesAtItsTerminalRunComplete(t *testin
 
 // An onMaxIterations pause ends in a run_complete that is not terminal: the run is resumable, so it stays.
 func TestLiveRunInventory_AParentlessRunStaysAtAPausedRunComplete(t *testing.T) {
+	t.Parallel()
 	h := launchParentless(t)
 
 	onRunLane(t, h, methodWFRunComplete, map[string]any{"workflowId": "wf_1", "status": "paused"})
@@ -113,6 +117,7 @@ func TestLiveRunInventory_AParentlessRunStaysAtAPausedRunComplete(t *testing.T) 
 
 // KAS's run list is the other ending: a terminal status there, or six hours unlisted, releases the run.
 func TestLiveRunInventory_AParentlessRunLeavesWhenKASListsItOverOrStopsListingIt(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 
 	t.Run("listed with a terminal status", func(t *testing.T) {
@@ -168,6 +173,7 @@ func liveRunFramesSince(t *testing.T, h *Runtime, since uint64) []marotte.LiveRu
 
 // Every page learns each change of a parentless run's row from a pushed frame, with no read of its own.
 func TestLiveRunInventory_PushesEachChangeOfAParentlessRunsRow(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_1")
 	start := h.bus.fanout.Position().Head
@@ -214,6 +220,7 @@ func TestLiveRunInventory_PushesEachChangeOfAParentlessRunsRow(t *testing.T) {
 
 // A row says when marotte put its run on the wire, so every page orders runs started at different times alike.
 func TestLiveRunInventory_ARowCarriesWhenItsRunWentOnTheWire(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_1")
 	start := h.bus.fanout.Position().Head

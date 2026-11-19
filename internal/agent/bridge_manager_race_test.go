@@ -9,6 +9,7 @@ import (
 
 // TestBridgeManager_ConcurrentGetOrInsertClose races orInsert against close on one chatID under -race.
 func TestBridgeManager_ConcurrentGetOrInsertClose(t *testing.T) {
+	t.Parallel()
 	bm := newBridgeManager()
 
 	const N = 100
@@ -46,6 +47,7 @@ func TestBridgeManager_ConcurrentGetOrInsertClose(t *testing.T) {
 
 // TestBridgeManager_CloseConcurrentDrain races per-chat close against drain (a tab close during Shutdown).
 func TestBridgeManager_CloseConcurrentDrain(t *testing.T) {
+	t.Parallel()
 	bm := newBridgeManager()
 
 	for i := range 20 {

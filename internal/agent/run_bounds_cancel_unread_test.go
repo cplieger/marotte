@@ -12,6 +12,7 @@ import (
 // A cancel whose answer could not be read took if a fresh read finds the run ended: the stop is recorded and nothing
 // re-attempts it. A run still running after it is re-attempted, as a refused cancel is.
 func TestFinishTermination_AnUnreadCancelIsSettledByAFreshRead(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		status     marotte.RunStatus
 		wantErr    bool

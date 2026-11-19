@@ -3,6 +3,7 @@ package agent
 import "testing"
 
 func TestReadRun_EndsTheReadAtOnceWhenNoReadStarts(t *testing.T) {
+	t.Parallel()
 	draining := &lifetime{shutdownCtx: t.Context()}
 	draining.draining.Store(true)
 	for _, tc := range []struct {

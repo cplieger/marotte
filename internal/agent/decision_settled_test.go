@@ -37,6 +37,7 @@ func settledEvents(t *testing.T, events []sse.ReplayEvent) []marotte.DecisionSet
 }
 
 func TestTakePendingPerm_AnnouncesTheDeliveredDecision(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		event     marotte.EventType
@@ -95,6 +96,7 @@ func TestTakePendingPerm_AnnouncesTheDeliveredDecision(t *testing.T) {
 
 // TestTakePendingPerm_LosingClaimAnnouncesNothing pins that an unanswered request must stay on screen.
 func TestTakePendingPerm_LosingClaimAnnouncesNothing(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	askID := requestIDOf(t, h.bus.pendingPerms.add(9, "", marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 		marotte.PermissionNeededPayload{}), newFakeBridge()))
@@ -117,6 +119,7 @@ func TestTakePendingPerm_LosingClaimAnnouncesNothing(t *testing.T) {
 
 // A withdrawn ask retires as moot by the askId KAS named, in its own chat.
 func TestPendingPermsWithdraw_RetiresTheChatsAskAsMoot(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	head := h.bus.fanout.Position().Head
 	named := requestIDOf(t, h.bus.pendingPerms.add(3, "pr-1", marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
@@ -169,6 +172,7 @@ func TestPendingPermsWithdraw_RetiresTheAskKASNamed(t *testing.T) {
 // A settled ask retracts its held push under the subject it was pushed under: a step's ask is
 // the run's, whichever chat's bridge carried it.
 func TestTakePendingPerm_RetractsTheAsksOwnSubject(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		chatID  marotte.ChatID

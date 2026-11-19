@@ -775,7 +775,7 @@ func (rr *runRoutes) handleStepPost(w http.ResponseWriter, r *http.Request) {
 		if !httpreply.DecodeJSON(w, r, &body) {
 			return
 		}
-		out, err := rr.runs.messageStep(r.Context(), rr.runs.residentUntil(answerDeadline()),
+		out, err := rr.runs.messageStep(r.Context(), rr.runs.residentUntil(rr.runs.lifecycle.answerDeadline()),
 			id, nodePath, body.Text, body.MessageID, body.AskID, apiCaller(r))
 		if err != nil {
 			rr.writeStepErr(w, "message", id, nodePath, err)

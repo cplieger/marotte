@@ -451,6 +451,10 @@ type askRead struct {
 // readAsks is an explicit refresh, waiting for any query in flight: a verb's pre-send check or a run read. A failed
 // or undecodable read keeps the last asks and reads unreachable.
 func (rs *Runs) readAsks(ctx context.Context, c *askCell) (askRead, error) {
+	// With ctx done, a free slot and ctx.Done would both be ready, and select picks at random.
+	if err := ctx.Err(); err != nil {
+		return askRead{}, err
+	}
 	select {
 	case c.query <- struct{}{}:
 	case <-ctx.Done():
@@ -791,7 +795,13 @@ func (a *runAsks) snapshotCells() []*askCell {
 
 // The serializer.
 
+// acquire takes the run's turn, waiting at most until ctx is done; a free turn is taken at once, whatever ctx.
 func (c *askCell) acquire(ctx context.Context) error {
+	select {
+	case c.serial <- struct{}{}:
+		return nil
+	default:
+	}
 	select {
 	case c.serial <- struct{}{}:
 		return nil

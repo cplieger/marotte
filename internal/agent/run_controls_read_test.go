@@ -99,6 +99,7 @@ func checkControls(t *testing.T, got marotte.RunControlsResponse, verbs []string
 // TestHandleControls_DecidesFromTheInspectReadAlone pins that the controls answer reads the run's own state,
 // never the workspace's run list.
 func TestHandleControls_DecidesFromTheInspectReadAlone(t *testing.T) {
+	t.Parallel()
 	for name, tc := range headCases {
 		t.Run(name, func(t *testing.T) {
 			h := blockedListHub(t, inspectHead(t, tc.status, tc.extra))
@@ -118,6 +119,7 @@ func TestHandleControls_DecidesFromTheInspectReadAlone(t *testing.T) {
 // TestHandleControls_APauseFieldOfAnotherShapeKeepsTheStatusVerbs pins that a kiro-cli release changing a
 // pause field's type costs only that fact: the status still decides the verbs, Cancel included.
 func TestHandleControls_APauseFieldOfAnotherShapeKeepsTheStatusVerbs(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		extra   map[string]any
 		status  marotte.RunStatus
@@ -155,6 +157,7 @@ func TestHandleControls_APauseFieldOfAnotherShapeKeepsTheStatusVerbs(t *testing.
 // TestHandleRun_CarriesTheControlsOfItsOwnRead pins that the run read states its verbs beside the state they
 // were decided from, so a client never shows a paused run with the verbs of the running one.
 func TestHandleRun_CarriesTheControlsOfItsOwnRead(t *testing.T) {
+	t.Parallel()
 	for name, tc := range headCases {
 		t.Run(name, func(t *testing.T) {
 			h := blockedListHub(t, inspectHead(t, tc.status, tc.extra))

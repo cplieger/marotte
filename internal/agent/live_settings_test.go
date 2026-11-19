@@ -169,6 +169,7 @@ func TestOpenBridge_AHandEditPushesExactlyTheLiveSurfacesItMoved(t *testing.T) {
 			want: livePushesSeen{prefs: []map[marotte.PushKind]bool{{
 				marotte.PushKindAgentFinished: true, marotte.PushKindPermission: true,
 				marotte.PushKindPRStatus: true, marotte.PushKindRunOutcome: true, marotte.PushKindSignIn: true,
+				marotte.PushKindBotRule: false,
 			}}},
 		},
 		{name: "an_unrelated_key", body: `{"last_merge_method":"squash"}`},
@@ -226,6 +227,7 @@ func TestOpenBridge_AHandEditOfDebugLogsSwitchesTheLogLevel(t *testing.T) {
 }
 
 func TestOpenBridge_ADocumentTurnedUnreadableIsReportedOnce(t *testing.T) {
+	t.Parallel()
 	h, configDir := reopenFixture(t)
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
@@ -256,6 +258,7 @@ func TestOpenBridge_ADocumentTurnedUnreadableIsReportedOnce(t *testing.T) {
 }
 
 func TestOpenBridge_ValuesTheDocumentHeldBeforeBootReachTheSurfacesThatNeverAppliedThem(t *testing.T) {
+	t.Parallel()
 	configDir := t.TempDir()
 	rewriteConfigByHand(t, configDir, `{"mcp_wait_for_ready":true,"debug_logs":true,"notify_pr_status":true}`)
 	rec := newLiveRecorder(t)
@@ -282,6 +285,7 @@ func TestOpenBridge_ValuesTheDocumentHeldBeforeBootReachTheSurfacesThatNeverAppl
 }
 
 func TestOpenBridge_AnMCPFileTheBootRenderFailedToWriteIsRenderedAtTheFirstOpen(t *testing.T) {
+	t.Parallel()
 	render := &fakeMCPRender{unknown: true, render: func(context.Context, int) (bool, error) { return false, nil }}
 	h, _ := reopenFixture(t, WithKASMCPRenderer(render))
 
@@ -297,6 +301,7 @@ func TestOpenBridge_AnMCPFileTheBootRenderFailedToWriteIsRenderedAtTheFirstOpen(
 
 // The engine starts at construction, so the report rides its spawn: counted from the ring's start.
 func TestEngineSpawn_ADocumentUnreadableAtBootIsReportedOnce(t *testing.T) {
+	t.Parallel()
 	configDir := t.TempDir()
 	rewriteConfigByHand(t, configDir, "{not json")
 	h := reopenFixtureIn(t, configDir, nil)
@@ -325,6 +330,7 @@ func TestEngineSpawn_ADocumentUnreadableAtBootIsReportedOnce(t *testing.T) {
 }
 
 func TestEngineSpawn_TheUnreadableReportFollowsTheDocumentTheEngineSpawnedOver(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, atBoot, atSpawn string
 		want                  int
@@ -396,6 +402,7 @@ func openChat(t *testing.T, h *Runtime, chatID marotte.ChatID) {
 // A write landing while the readers decode is the next read's document: the readers decode the snapshot they were
 // handed, whatever the file holds by then.
 func TestReadLiveSettings_AWriteDuringTheReadersIsTheNextReadsDocument(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name         string
 		next         string

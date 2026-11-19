@@ -60,12 +60,12 @@ var errLaunchNewUnconfirmed = errors.New("the engine's answer to the launch was 
 var launchTimeout = 120 * time.Second
 
 // launch starts one parentless attended run of the recipe for POST /api/runs and returns its workflow id, its name and
-// KAS's launch warnings. Every step before workflow/new answers within clientAnswerBudget; sent, when set, runs just
+// KAS's launch warnings. Every step before workflow/new answers within lifetime.answerBudget; sent, when set, runs just
 // before workflow/new is written.
 func (rs *Runs) launch(
 	ctx context.Context, source string, inputs map[string]string, defaults marotte.RunDefaults, sent func(),
 ) (id, name string, warnings []string, err error) {
-	return rs.launchAs(ctx, source, inputs, defaults, manualLaunch(), &launchRequest{sent: sent, prepareBy: clientAnswerBudget})
+	return rs.launchAs(ctx, source, inputs, defaults, manualLaunch(), &launchRequest{sent: sent, prepareBy: rs.lifecycle.answerBudget})
 }
 
 // LaunchScheduled launches an unattended run for a schedule. slotAt is its next slot; zero leaves the idle window.
@@ -891,7 +891,7 @@ func (rs *Runs) answerInput(ctx context.Context, workflowID, askID, text string,
 	if c == nil {
 		return errAskGone
 	}
-	host, releaseHost, err := rs.residentUntil(answerDeadline())(ctx, workflowID)
+	host, releaseHost, err := rs.residentUntil(rs.lifecycle.answerDeadline())(ctx, workflowID)
 	defer releaseHost()
 	if err != nil {
 		return err
@@ -1352,18 +1352,18 @@ func resumablePause(reason string, detail *pauseDetail) bool {
 	return slices.ContainsFunc(resumableReasonPrefixes, func(p string) bool { return strings.HasPrefix(reason, p) })
 }
 
-// orphanResumeDelay is when the resume sweep re-reads a run KAS still lists running after an engine end:
+// defaultOrphanResumeDelay is when the resume sweep re-reads a run KAS still lists running after an engine end:
 // KAS judges a run's owner dead 135 s after its last beat (staleAfterMs, 4.5 beats of 30 s)
-// and allows one beat of reader drift (kiro-cli 2.29.1). A var for tests.
-var orphanResumeDelay = 165 * time.Second
+// and allows one beat of reader drift (kiro-cli 2.29.1). Runs.orphanResumeDelay carries it.
+const defaultOrphanResumeDelay = 165 * time.Second
 
 // resumeInterruptedRuns resumes the restart-paused runs this chat's session chain launched, and sweeps again after
-// orphanResumeDelay while KAS has not yet reconciled one; never resumeAll, which would undo deliberate pauses. Each
+// Runs.orphanResumeDelay while KAS has not yet reconciled one; never resumeAll, which would undo deliberate pauses. Each
 // later sweep is lc's work, so once the chat's life ended the sweeps stand down: its next open runs its own.
 func (rs *Runs) resumeInterruptedRuns(ctx context.Context, lc *chatLifecycle, chatID marotte.ChatID) {
 	if s := rs.resumeChainRuns(ctx, chatID, lc.endedNow); s.running || s.failed {
 		slog.Info("rehydrate: a run is still listed running, or the chat's runs could not be listed or resumed; sweeping again later",
-			"chat_id", chatID, "delay", orphanResumeDelay)
+			"chat_id", chatID, "delay", rs.orphanResumeDelay)
 		begin := func() (context.Context, func(), bool) {
 			ctx, done, ok := lc.beginWork(workSweep)
 			if !ok {
@@ -1382,7 +1382,7 @@ func (rs *Runs) resumeInterruptedRuns(ctx context.Context, lc *chatLifecycle, ch
 // maxResweeps bounds a resume's tries, the caller's first included (retryResumeLater).
 const maxResweeps = 5
 
-// retryResumeLater follows the caller's one try: it calls try after orphanResumeDelay, again while it reports a
+// retryResumeLater follows the caller's one try: it calls try after Runs.orphanResumeDelay, again while it reports a
 // failed resume, until maxResweeps tries in all, then spent with that count. Each try runs on the context begin
 // answers and calls its done when it returns; a refused begin, or a stopping runtime, tries nothing more.
 func (rs *Runs) retryResumeLater(begin func() (context.Context, func(), bool), try func(context.Context) (failed bool), spent func(tries int)) {
@@ -1392,7 +1392,7 @@ func (rs *Runs) retryResumeLater(begin func() (context.Context, func(), bool), t
 			spent(tries)
 			return
 		}
-		rs.lifecycle.afterUnlessDraining(orphanResumeDelay, func() {
+		rs.lifecycle.afterUnlessDraining(rs.orphanResumeDelay, func() {
 			ctx, done, ok := begin()
 			if !ok {
 				return
@@ -1464,9 +1464,9 @@ func (rs *Runs) resumeChainRuns(ctx context.Context, chatID marotte.ChatID, ende
 // maxAutoHeals bounds automatic resumes between two pieces of progress; a fourth try against a dead network says nothing.
 const maxAutoHeals = 3
 
-// healBaseDelay is the first automatic resume's delay, doubling (5s, 10s, 20s), so a deliberate cancel
-// can land first. A var for tests.
-var healBaseDelay = 5 * time.Second
+// defaultHealBaseDelay is the first automatic resume's delay, doubling (5s, 10s, 20s), so a deliberate cancel
+// can land first. Runs.healBaseDelay carries it.
+const defaultHealBaseDelay = 5 * time.Second
 
 // healRecheckWait bounds how long a question pause's heal waits for its step's turn end, which KAS streams on the
 // step's session and so can land after the pause frame. A var for tests.
@@ -1536,7 +1536,7 @@ func (rs *Runs) scheduleHeal(ctx context.Context, chatID marotte.ChatID, f *paus
 		})
 		return
 	}
-	delay := healBaseDelay * time.Duration(1<<spent)
+	delay := rs.healBaseDelay * time.Duration(1<<spent)
 	level, what := slog.LevelInfo, "scheduling the automatic resume of an involuntarily paused run"
 	if plan == healRecheck {
 		level, what = slog.LevelDebug, "scheduling a re-read of a step's question pause, which a throttle may have caused"

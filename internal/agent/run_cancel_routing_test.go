@@ -61,6 +61,7 @@ func agentRunList(t *testing.T, status string) json.RawMessage {
 
 // TestFinishTermination_ARefusedCancelKEEPSTheDeadline pins that a refused cancel's run is still bounded.
 func TestFinishTermination_ARefusedCancelKEEPSTheDeadline(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner pid 979344 is live")}
 	leased(t, h.runs, "wf_1")
@@ -81,6 +82,7 @@ func TestFinishTermination_ARefusedCancelKEEPSTheDeadline(t *testing.T) {
 
 // TestFinishTermination_ALandedCancelRELEASESTheDeadline pins that a stopped run must not keep a deadline.
 func TestFinishTermination_ALandedCancelRELEASESTheDeadline(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowCancel: json.RawMessage(`{}`),
@@ -102,6 +104,7 @@ func TestFinishTermination_ALandedCancelRELEASESTheDeadline(t *testing.T) {
 
 // TestRecordEnd_IsNotStampedOnARunThatDidNotStop pins that the reason is recorded when the stop lands, not when attempted.
 func TestRecordEnd_IsNotStampedOnARunThatDidNotStop(t *testing.T) {
+	t.Parallel()
 	t.Run("a refused ceiling cancel records nothing", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner is live")}
@@ -144,6 +147,7 @@ func setCancelRetryDelay(rs *Runs, d time.Duration) {
 
 // TestRetryTermination_IsBoundedAndDoesNotReFireForever pins that the retry is bounded, and once spent the run is still bounded.
 func TestRetryTermination_IsBoundedAndDoesNotReFireForever(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner is live")}
 	setCancelRetryDelay(h.runs, time.Millisecond)
@@ -182,6 +186,7 @@ func TestRetryTermination_IsBoundedAndDoesNotReFireForever(t *testing.T) {
 // TestRetryTermination_AStallCancelRefusedOnceIsRetried pins that a deadline's refused cancel is retried and lands
 // with the reason the expiry decided.
 func TestRetryTermination_AStallCancelRefusedOnceIsRetried(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	h, br := stepFixture(t, id)
 	setCancelRetryDelay(h.runs, time.Millisecond)
@@ -267,6 +272,7 @@ func callsOf(br *fakeBridge, method string) int {
 // TestRetryTermination_ARunNoLongerBoundedIsLeftAlone pins that the retry re-reads before acting, so a parked or
 // released run is not cancelled.
 func TestRetryTermination_ARunNoLongerBoundedIsLeftAlone(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, _, br := newTestHub()
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -296,6 +302,7 @@ func TestRetryTermination_ARunNoLongerBoundedIsLeftAlone(t *testing.T) {
 // A refused cancel's re-attempt speaks for the run it was refused on: once that run ended and a person retried the
 // same workflow id, the re-attempt must not cancel the retried run.
 func TestRetryTermination_ARetriedRunIsNotCancelledForItsLastRun(t *testing.T) {
+	t.Parallel()
 	for name, endSeen := range map[string]bool{"its end seen": true, "its end missed": false} {
 		inBubble(t, name, func(t *testing.T) {
 			h, _, br := newTestHub()
@@ -340,6 +347,7 @@ func TestRetryTermination_ARetriedRunIsNotCancelledForItsLastRun(t *testing.T) {
 // TestResumeIfInterrupted_ArmsTheDeadline pins that this path calls `_kiro/workflow/resume` directly, so it must
 // arm itself rather than rely on the `run_start` frame.
 func TestResumeIfInterrupted_ArmsTheDeadline(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		// stalePauseReason is a restart-reconciled run's reason; the resume reads the run's own state.
@@ -375,6 +383,7 @@ func TestResumeIfInterrupted_ArmsTheDeadline(t *testing.T) {
 
 // TestResumeIfInterrupted_DoesNotArmARefusedResume pins that a refused resume re-drove nothing.
 func TestResumeIfInterrupted_DoesNotArmARefusedResume(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "paused", stalePauseReason),
@@ -403,6 +412,7 @@ func TestResumeIfInterrupted_DoesNotArmARefusedResume(t *testing.T) {
 // TestCancelUnretriedMessage_IsGreppable pins the one line an operator must act on, a constant so one
 // search finds it. It claims nothing unverified: any non-nil cancel error reaches it.
 func TestCancelUnretriedMessage_IsGreppable(t *testing.T) {
+	t.Parallel()
 	for _, unverified := range []string{"still executing", "holds its recipe"} {
 		if strings.Contains(logMsgCancelUnretried, unverified) {
 			t.Errorf("logMsgCancelUnretried = %q, want no claim about the run's own state: "+

@@ -63,6 +63,7 @@ func executingLease(t *testing.T, h *Runtime, wf string) {
 
 // KAS reads its log level only from the spawn environment, so a Debug logs move reaches it at the next engine.
 func TestSettings_DebugLogsMoveIsAnEngineRestartReason(t *testing.T) {
+	t.Parallel()
 	h, dir, src := restartFixture(t)
 	if off := h.resolveEngine(t.Context(), "/fake/kiro-cli").opts; off.DebugLogs {
 		t.Fatal("EngineOpts.DebugLogs = true with no debug_logs saved, want false")
@@ -84,6 +85,7 @@ func TestSettings_DebugLogsMoveIsAnEngineRestartReason(t *testing.T) {
 }
 
 func TestEngineRestart_FiresAtQuiescence(t *testing.T) {
+	t.Parallel()
 	h, dir, src := restartFixture(t)
 	pendRestart(t, h, dir, 1024)
 	assertOneRestart(t, h, src)
@@ -93,6 +95,7 @@ func TestEngineRestart_FiresAtQuiescence(t *testing.T) {
 }
 
 func TestEngineRestart_DoesNotFireWhileARunExecutes(t *testing.T) {
+	t.Parallel()
 	h, dir, src := restartFixture(t)
 	executingLease(t, h, "wf_1")
 	pendRestart(t, h, dir, 1024)
@@ -106,6 +109,7 @@ func TestEngineRestart_DoesNotFireWhileARunExecutes(t *testing.T) {
 }
 
 func TestEngineRestart_PendingClearsWhenTheSettingIsChangedBack(t *testing.T) {
+	t.Parallel()
 	h, dir, src := restartFixture(t)
 	executingLease(t, h, "wf_1")
 	pendRestart(t, h, dir, 1024)
@@ -122,6 +126,7 @@ func TestEngineRestart_PendingClearsWhenTheSettingIsChangedBack(t *testing.T) {
 
 // Every quiescence term holds an automatic restart off, and its own closing edge fires exactly one.
 func TestEngineRestart_AutoNeverFiresWhileAnyQuiescenceTermHolds(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		hold func(t *testing.T, h *Runtime) (release func())
@@ -168,6 +173,7 @@ func TestEngineRestart_AutoNeverFiresWhileAnyQuiescenceTermHolds(t *testing.T) {
 
 // An open turn, not only an admission, holds an automatic restart, and its close is the edge that fires it.
 func TestEngineRestart_WaitsForOpenTurns(t *testing.T) {
+	t.Parallel()
 	h, dir, src := restartFixture(t)
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: OpenBridge: %v", err)
@@ -182,6 +188,7 @@ func TestEngineRestart_WaitsForOpenTurns(t *testing.T) {
 }
 
 func TestEngineRestart_NewTurnsWaitOnTheGateOnlyDuringTheRestart(t *testing.T) {
+	t.Parallel()
 	h, _, src := restartFixture(t)
 	stopped := make(chan struct{})
 	release := make(chan struct{})
@@ -210,6 +217,7 @@ func TestEngineRestart_NewTurnsWaitOnTheGateOnlyDuringTheRestart(t *testing.T) {
 }
 
 func TestEngineRestart_IdleChatsKeepRecordsAndLoadLazily(t *testing.T) {
+	t.Parallel()
 	h, _, src := restartFixture(t)
 	first, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
@@ -234,6 +242,7 @@ func TestEngineRestart_IdleChatsKeepRecordsAndLoadLazily(t *testing.T) {
 }
 
 func TestEngineRestart_ConfirmedSnapshotsFirstAndWritesNoCancel(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")
@@ -261,6 +270,7 @@ func TestEngineRestart_ConfirmedSnapshotsFirstAndWritesNoCancel(t *testing.T) {
 }
 
 func TestEngineRestart_ARunPausedOnAPersonIsNotResumed(t *testing.T) {
+	t.Parallel()
 	h, _, _ := restartFixture(t)
 	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_waiting"})
 	if set := h.snapshotInterrupted(1, nil); slices.Contains(set.runs, "wf_waiting") {
@@ -299,6 +309,7 @@ func awaitResumes(t *testing.T, resumes *atomic.Int32, want int32) {
 }
 
 func TestEngineRestart_ParentlessRunResumedOnceUnderTheHealBudget(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		spent int
@@ -329,10 +340,8 @@ func TestEngineRestart_ParentlessRunResumedOnceUnderTheHealBudget(t *testing.T) 
 
 // A parentless run whose host session fails to load after an engine end is resumed by the next try.
 func TestEngineRestart_AParentlessRunWhoseHostFailsToLoadOnceIsResumedByTheNextTry(t *testing.T) {
-	prevDelay := orphanResumeDelay
-	orphanResumeDelay = 10 * time.Millisecond
-	t.Cleanup(func() { orphanResumeDelay = prevDelay })
-	h, _, br := newTestHub()
+	t.Parallel()
+	h, _, br := newTestHub(withOrphanResumeDelay(10 * time.Millisecond))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.setCallResult(methodKiroWorkflowInspect, inspectPaused(t, "wf_1", stalePauseReason))
 	resumes := countResumes(t, br, "wf_1")
@@ -363,10 +372,8 @@ func TestEngineRestart_AParentlessRunWhoseHostFailsToLoadOnceIsResumedByTheNextT
 // A resume that keeps failing is tried maxResweeps times in all, the caller's first included, and reported spent with
 // that count.
 func TestRetryResumeLater_TriesMaxResweepsTimesInAll(t *testing.T) {
-	prevDelay := orphanResumeDelay
-	orphanResumeDelay = time.Millisecond
-	t.Cleanup(func() { orphanResumeDelay = prevDelay })
-	h, _, _ := newTestHub()
+	t.Parallel()
+	h, _, _ := newTestHub(withOrphanResumeDelay(time.Millisecond))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	var later atomic.Int32
 	spent := make(chan int, 1)
@@ -389,6 +396,7 @@ func TestRetryResumeLater_TriesMaxResweepsTimesInAll(t *testing.T) {
 
 // A try falling due once the runtime has begun to stop is not made.
 func TestRetryResumeLater_AStoppedRuntimeTriesNothing(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, _, _ := newTestHub()
 		var tries atomic.Int32
@@ -398,7 +406,7 @@ func TestRetryResumeLater_AStoppedRuntimeTriesNothing(t *testing.T) {
 		}, func(int) {})
 		shutdownHub(t, h)
 		// The bubble's clock passes every try's due time, and Wait lets anything a due timer started finish.
-		time.Sleep(maxResweeps * orphanResumeDelay)
+		time.Sleep(maxResweeps * h.runs.orphanResumeDelay)
 		synctest.Wait()
 		if n := tries.Load(); n != 0 {
 			t.Errorf("a stopped runtime made %d tries, want 0", n)
@@ -409,11 +417,9 @@ func TestRetryResumeLater_AStoppedRuntimeTriesNothing(t *testing.T) {
 // After a restart the chat's return (the rehydrate sweep) and the restart pause's own heal both reach the run; the
 // transition's read under the run's resume lock (Runs.transition) lets only the first write a resume.
 func TestEngineRestart_ChatParentedRunGetsExactlyOneResume(t *testing.T) {
-	prev := healBaseDelay
-	healBaseDelay = time.Millisecond
-	t.Cleanup(func() { healBaseDelay = prev })
+	t.Parallel()
 	const id = "wf_1"
-	h, br := agentRunOnChat(t, id)
+	h, br := agentRunOnChat(t, id, withHealBaseDelay(time.Millisecond))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	h.runs.grantLease(t.Context(), id, "publish", agentLaunch(), hostSec())
 	h.runs.recordParentSession(t.Context(), id, parkSession)
@@ -453,6 +459,7 @@ func assertWindowHeld(t *testing.T, h *Runtime) {
 }
 
 func TestEngineRestart_InvokeReadBeforeRunStartBlocksQuiescenceAndIsResumed(t *testing.T) {
+	t.Parallel()
 	h, _, _ := restartFixture(t)
 	m := mutationWindow(t, h)
 	m.replied(&marotte.RPCResponse{}, nil, laneRef{session: newFakeBridge()}, 3)
@@ -460,12 +467,14 @@ func TestEngineRestart_InvokeReadBeforeRunStartBlocksQuiescenceAndIsResumed(t *t
 }
 
 func TestEngineRestart_AnswerReadBeforeTurnStartBlocksQuiescenceAndIsResumed(t *testing.T) {
+	t.Parallel()
 	h, _, _ := restartFixture(t)
 	mutationWindow(t, h)
 	assertWindowHeld(t, h)
 }
 
 func TestEngineCrash_MutationWindowsAreInTheSnapshot(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.setCallResult(methodKiroWorkflowInspect, inspectPaused(t, "wf_1", stalePauseReason))
@@ -497,6 +506,7 @@ func healsOf(h *Runtime, wf string) int {
 }
 
 func TestEngineRestart_AnUnsettledPauseIsNotResumed(t *testing.T) {
+	t.Parallel()
 	h, _, _ := restartFixture(t)
 	executingLease(t, h, "wf_1")
 	_, gen := h.engine.current()
@@ -508,6 +518,7 @@ func TestEngineRestart_AnUnsettledPauseIsNotResumed(t *testing.T) {
 
 // The exit hook snapshots on the read loop before any late frame is consumed.
 func TestEngineExit_SnapshotIsTakenBeforeLateFrames(t *testing.T) {
+	t.Parallel()
 	h, _, _ := restartFixture(t)
 	_, gen := h.engine.current()
 	r := genRouter{r: h.router, gen: gen}
@@ -523,6 +534,7 @@ func TestEngineExit_SnapshotIsTakenBeforeLateFrames(t *testing.T) {
 }
 
 func TestUnreadableConfig_AConfirmedRestartWithAQueueIsRefusedUntilConfigReads(t *testing.T) {
+	t.Parallel()
 	h, dir, src := restartFixture(t)
 	executingLease(t, h, "wf_1")
 	pendRestart(t, h, dir, 1024)
@@ -554,6 +566,7 @@ func TestUnreadableConfig_AConfirmedRestartWithAQueueIsRefusedUntilConfigReads(t
 // Restart now on a down engine wakes its respawn even with a queue over an unreadable config.json: the next
 // generation is a spawn, which starts on the last readable values.
 func TestUnreadableConfig_ADownEngineIsWokenByRestartNow(t *testing.T) {
+	t.Parallel()
 	h, dir, src := restartFixture(t)
 	executingLease(t, h, "wf_1")
 	pendRestart(t, h, dir, 1024)

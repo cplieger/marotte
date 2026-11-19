@@ -16,6 +16,7 @@ import (
 )
 
 func TestEpoch_IsTheHubsCurrentEpoch(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	if got, want := h.Epoch(), h.bus.fanout.Position().Epoch; got != want || got == "" {
 		t.Errorf("Epoch() = %q, want the hub's non-empty %q", got, want)
@@ -23,6 +24,7 @@ func TestEpoch_IsTheHubsCurrentEpoch(t *testing.T) {
 }
 
 func TestLiveRuns_SubjectIsTheLeaseStoresVersionWithTheEpoch(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	st := runlease.NewMemory()
 	if err := st.Put(t.Context(), &runlease.Lease{WorkflowID: "wf1", ChatID: "c1", Origin: runlease.OriginAgent}); err != nil {
@@ -45,6 +47,7 @@ func TestLiveRuns_SubjectIsTheLeaseStoresVersionWithTheEpoch(t *testing.T) {
 // The `runs` subject has one version source: a wake's digest answers the version the inventory read carries,
 // so a client holding that read is told nothing changed.
 func TestLiveRunsStampIsTheDigestVersion(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{WorkflowID: "wf1", ChatID: "c1", Origin: runlease.OriginAgent}); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -68,6 +71,7 @@ func TestLiveRunsStampIsTheDigestVersion(t *testing.T) {
 // Each lease row change reaches every page as one workspace-wide live_run frame stamped `runs` at a strictly greater
 // version, and the inventory read serves the version of the last frame it reflects.
 func TestLeaseRowChangesBroadcastStampedLiveRunFrames(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	store := h.runs.leaseStore()
 	before := h.bus.fanout.Position().Head
@@ -120,6 +124,7 @@ func TestLeaseRowChangesBroadcastStampedLiveRunFrames(t *testing.T) {
 }
 
 func TestConfigTemplate_SubjectIsTheCatalogVersionWithTheEpoch(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	h.catalog.setModes([]marotte.SessionMode{{ID: "vibe", Name: "Default"}})
 	h.catalog.SetModels([]marotte.SessionModel{{ID: "m1", Name: "One"}})
@@ -146,6 +151,7 @@ func TestConfigTemplate_SubjectIsTheCatalogVersionWithTheEpoch(t *testing.T) {
 
 // An unreloaded catalog stamps Unminted, as the resolver answers.
 func TestConfigTemplate_UnmintedCatalogStampsZero(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	rec := httptest.NewRecorder()
 	h.handleConfigTemplate(rec, httptest.NewRequest(http.MethodGet, "/api/config-template", nil))

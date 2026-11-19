@@ -34,7 +34,7 @@ func (rt *Runtime) registerCommandHandlers() {
 			UploadsDir: marotte.DefaultUploadDir,
 		},
 		Lifecycle:      rt.lifecycle,
-		AnswerBudget:   clientAnswerBudget,
+		AnswerBudget:   rt.lifecycle.answerBudget,
 		Admission:      rt,
 		TurnOutcome:    rt,
 		Steers:         rt.steerLedger,

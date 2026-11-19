@@ -55,6 +55,7 @@ func newSpawnProbeHub(t *testing.T, dir string) (*Runtime, *engineSpawnProbe) {
 // TestEngineSpawn_AConcurrentIgnoreSaveReachesTheSpawningEngine pins send-time resolution: no push reached the engine
 // before its Start returned, so only the spawn's own send can carry the new list.
 func TestEngineSpawn_AConcurrentIgnoreSaveReachesTheSpawningEngine(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeIgnoreFiles(t, dir, []string{"pre.ignore"})
 	h, probe := newSpawnProbeHub(t, dir)
@@ -76,6 +77,7 @@ func TestEngineSpawn_AConcurrentIgnoreSaveReachesTheSpawningEngine(t *testing.T)
 
 // A mid-spawn timeout save reaches the engine through its own resolver.
 func TestEngineSpawn_AConcurrentTimeoutSaveReachesTheSpawningEngine(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeAgentSettings(t, dir, `{"terminal_command_timeout_ms": 30000}`)
 	h, probe := newSpawnProbeHub(t, dir)
@@ -96,6 +98,7 @@ func TestEngineSpawn_AConcurrentTimeoutSaveReachesTheSpawningEngine(t *testing.T
 
 // A settings write sends the shell timeout once, on the engine, however many sessions are open.
 func TestSettingsWrite_SendsTheShellTimeoutOnceOnTheEngine(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeAgentSettings(t, dir, `{"terminal_command_timeout_ms": 30000}`)
 	cs := newTestChatStore()

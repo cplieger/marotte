@@ -108,6 +108,7 @@ func (p *recordingPush) last() (marotte.PushSubject, string) {
 
 // On session/new the override model wins over the stored value, and the persisted model comes from the opened session.
 func TestOpenBridge_ANewSessionTakesTheOverrideModel(t *testing.T) {
+	t.Parallel()
 	h, cs, rb := newRecordingStartHub(t)
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
@@ -133,6 +134,7 @@ func TestOpenBridge_ANewSessionTakesTheOverrideModel(t *testing.T) {
 
 // A resume carries the chat's supervised choice on its door: KAS's fork copies no autopilot.
 func TestOpenBridge_CarriesSupervisedOntoTheLoadDoor(t *testing.T) {
+	t.Parallel()
 	var mu sync.Mutex
 	var opened []*recordingStartBridge
 	cs := newTestChatStore()
@@ -181,6 +183,7 @@ func TestOpenBridge_CarriesSupervisedOntoTheLoadDoor(t *testing.T) {
 
 // A successful SetModel returns true and re-applies the effort level, which KAS reconciles against the new model's tiers.
 func TestApplyModelSwitch_SucceedsAndReAppliesEffort(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
@@ -198,6 +201,7 @@ func TestApplyModelSwitch_SucceedsAndReAppliesEffort(t *testing.T) {
 
 // A switch never touches a turn: the session survives, and the reply on every screen stays.
 func TestApplyModelSwitch_TouchesNoOpenTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
@@ -220,6 +224,7 @@ func TestApplyModelSwitch_TouchesNoOpenTurn(t *testing.T) {
 
 // A chat with no chosen level sends no effort call.
 func TestApplyModelSwitch_NoEffortChoiceSendsNoEffortCall(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
@@ -237,6 +242,7 @@ func TestApplyModelSwitch_NoEffortChoiceSendsNoEffortCall(t *testing.T) {
 
 // A prompt on an already-open bridge re-asserts the level KAS moved on its own.
 func TestOpenBridge_RepairsTheEffortOnAnOpenBridge(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
@@ -263,6 +269,7 @@ func TestOpenBridge_RepairsTheEffortOnAnOpenBridge(t *testing.T) {
 
 // No choice and no seed asks for nothing.
 func TestOpenBridge_RepairsNothingWithoutAChoice(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
@@ -296,6 +303,7 @@ func writeEffortSeed(t *testing.T, dir string, seed map[string]string) {
 // A chat holding no level reads the seed for its own model, refusing a malformed level; a
 // well-formed seed flows while no session has reported the model. No catalog is loaded here.
 func TestLevelRanOrFirst_ReadsTheSeedForItsOwnModel(t *testing.T) {
+	t.Parallel()
 	tests := map[string]struct {
 		model string
 		seed  map[string]string
@@ -326,6 +334,7 @@ func TestLevelRanOrFirst_ReadsTheSeedForItsOwnModel(t *testing.T) {
 
 // A pick on one model must not retract another model's remembered level.
 func TestEffortSeedFor_OneModelsPickDoesNotRetractAnother(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeEffortSeed(t, dir, map[string]string{"m1": "max", "m2": "low"})
 	h, _, _ := newTestHub(WithConfigDir(dir))
@@ -339,6 +348,7 @@ func TestEffortSeedFor_OneModelsPickDoesNotRetractAnother(t *testing.T) {
 
 // A default-off model with thinking never chosen has its session level capped as KAS caps it.
 func TestSessionEffort_CapsAHighTierOnADefaultOffModel(t *testing.T) {
+	t.Parallel()
 	five := []marotte.SessionEffortLevel{{ID: "low"}, {ID: "medium"}, {ID: "high"}, {ID: "xhigh"}, {ID: "max"}}
 	tests := []struct {
 		name       string
@@ -366,6 +376,7 @@ func TestSessionEffort_CapsAHighTierOnADefaultOffModel(t *testing.T) {
 
 // A chat holding no level resolves against its model: the seed, else the catalog default.
 func TestLevelRanOrFirst_SeedThenModelDefault(t *testing.T) {
+	t.Parallel()
 	tiers := []string{"low", "medium", "high", "max"}
 	catalog := []marotte.SessionModel{
 		{ID: "m1", DefaultEffortLevel: "high", EffortTiers: tiers},
@@ -400,6 +411,7 @@ func TestLevelRanOrFirst_SeedThenModelDefault(t *testing.T) {
 
 // An open session is held to the record's level only: the seed is another chat's last pick.
 func TestSessionEffort_NeverReadsTheSeed(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeEffortSeed(t, dir, map[string]string{"m1": "max"})
 	h, _, _ := newTestHub(WithConfigDir(dir))
@@ -412,6 +424,7 @@ func TestSessionEffort_NeverReadsTheSeed(t *testing.T) {
 
 // A non-cancelled turn fires the "Agent finished" push.
 func TestSettleTurnOnResponse_NonCancelledFiresPush(t *testing.T) {
+	t.Parallel()
 	cs := newTestChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
 	h := newRuntimeOn(t.Context(), "/tmp/push", fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs, WithPush(fp))
@@ -436,6 +449,7 @@ func TestSettleTurnOnResponse_NonCancelledFiresPush(t *testing.T) {
 // A notification is titled by the tab its click opens: the chat's name from its record, the
 // tab strip's default for a chat with none, and the run's label for a run.
 func TestNoticeTarget_TitlesTheTabTheClickOpens(t *testing.T) {
+	t.Parallel()
 	cs := newTestChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
 	h := newRuntimeOn(t.Context(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs, WithPush(fp))
@@ -502,6 +516,7 @@ func TestPersistModelSwitch_NoErrorLogOnSuccess(t *testing.T) {
 // A landed switch is one model_switched entry plus a header taking the pick: pending_model
 // cleared, the old tier replaced by the switch's, usage reset to the new context size.
 func TestPersistModelSwitch_RecordsTheSwitchAndClearsThePendingPick(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	finishedTurn(t, h, "c1")
@@ -542,6 +557,7 @@ func TestPersistModelSwitch_RecordsTheSwitchAndClearsThePendingPick(t *testing.T
 // A switch resets the figures but not a compaction's wait for a live reading: KAS's figure is still the context
 // before the compaction, and the switched session publishes it again.
 func TestPersistModelSwitch_KeepsACompactionsWaitForALiveReading(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	finishedTurn(t, h, "c1")
@@ -560,6 +576,7 @@ func TestPersistModelSwitch_KeepsACompactionsWaitForALiveReading(t *testing.T) {
 
 // Picked between turns, the effort change is appended alone; From == To marks it as not a model switch.
 func TestPersistEffortChange_AppendsTheTierBetweenTurns(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "model-a-5"; return true })
@@ -577,6 +594,7 @@ func TestPersistEffortChange_AppendsTheTierBetweenTurns(t *testing.T) {
 // When a started chat's log holds no turn to append after, the event turn minted to carry the change is closed on
 // disk and on the wire: a client reads a turn with no turn_close as running, so the dot would pulse.
 func TestPersistEffortChange_OnAnEmptyLogAnnouncesAClosedCarrier(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
@@ -609,6 +627,7 @@ func TestPersistEffortChange_OnAnEmptyLogAnnouncesAClosedCarrier(t *testing.T) {
 
 // Picked during a turn, it folds into that turn.
 func TestPersistEffortChange_FoldsTheTierIntoAnOpenTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "model-a-5"; return true })
@@ -631,6 +650,7 @@ func TestPersistEffortChange_FoldsTheTierIntoAnOpenTurn(t *testing.T) {
 
 // A chat with no model writes nothing: a model_switched with an empty To names no model.
 func TestPersistEffortChange_AChatWithNoModelWritesNothing(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
@@ -655,6 +675,7 @@ func finishedTurn(t *testing.T, h *Runtime, chatID marotte.ChatID) {
 }
 
 func TestPersistSwitches_RecordNothingBeforeTheFirstPrompt(t *testing.T) {
+	t.Parallel()
 	tests := map[string]func(h *Runtime){
 		"effort": func(h *Runtime) {
 			h.coord.PersistEffortChange(t.Context(), "c1", "model-a-5", "high")
@@ -685,6 +706,7 @@ func TestPersistSwitches_RecordNothingBeforeTheFirstPrompt(t *testing.T) {
 }
 
 func TestPersistModelSwitch_UnstartedChatTakesThePickOnTheHeader(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
@@ -704,6 +726,7 @@ func TestPersistModelSwitch_UnstartedChatTakesThePickOnTheHeader(t *testing.T) {
 
 // TestAdoptKASTitle pins all four arms: adopting "New Session" or overwriting an existing name both compile cleanly.
 func TestAdoptKASTitle(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		start string
@@ -756,6 +779,7 @@ func TestAdoptKASTitle(t *testing.T) {
 // A stored KAS title gets the same door treatment as the live focus channel, one case per part:
 // it was never sanitized, and a resume names a default-named chat.
 func TestAdoptKASTitle_AppliesTheWholeDoorTreatment(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		title string
@@ -846,6 +870,7 @@ func writeSessionRecord(t *testing.T, sessionDir, workspaceRoot string) {
 // The 10-minute guard is a create-race cushion, not a liveness test: the on-disk sweep spares every resident
 // session, a run's host session included, which no chat file names.
 func TestHeldSessions_CoversEveryResidentSession(t *testing.T) {
+	t.Parallel()
 	cs := newTestChatStore()
 	h := newRuntimeOn(t.Context(), testReaperWorkDir, fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs)
 	cs.wire(h)
@@ -879,6 +904,7 @@ func TestHeldSessions_CoversEveryResidentSession(t *testing.T) {
 // TestApplyLoadedSessionFacts_KeepsWhatTheResultOmitted pins that a fact the load omitted is
 // not written: a fresh bridge answers zero values. catalog owns the catalogs' rule.
 func TestApplyLoadedSessionFacts_KeepsWhatTheResultOmitted(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		mode     string
 		wantMode string
@@ -904,6 +930,7 @@ func TestApplyLoadedSessionFacts_KeepsWhatTheResultOmitted(t *testing.T) {
 // TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied pins the report: the record
 // takes the actual mode, so an unreported refusal silently converts a pinned chat.
 func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name       string
 		requested  string
@@ -955,6 +982,7 @@ func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
 // TestOpenGeneration_ReportsSupervisedThatWasNotApplied pins that a refused `autopilot: off`
 // reaches the user. The third case is why the report cannot key on the session's flag alone.
 func TestOpenGeneration_ReportsSupervisedThatWasNotApplied(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name        string
 		supervised  bool
@@ -1009,6 +1037,7 @@ func TestOpenGeneration_ReportsSupervisedThatWasNotApplied(t *testing.T) {
 // TestChatTeardown_CloseKeepsSessionDeleteReapsIt pins that close keeps the KAS session and
 // delete reaps it; the delete arm proves the reaper is wired.
 func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name        string
 		teardown    func(h *Runtime, ctx context.Context, id marotte.ChatID)
@@ -1065,6 +1094,7 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 // TestChatTeardown_DeleteByChainReapsWithoutTheRecord pins a reap driven from the chain
 // captured before the record went.
 func TestChatTeardown_DeleteByChainReapsWithoutTheRecord(t *testing.T) {
+	t.Parallel()
 	sessionsDir := t.TempDir()
 	sessDir := filepath.Join(sessionsDir, "hash01", "sess_owned")
 	if err := os.MkdirAll(sessDir, 0o700); err != nil {
@@ -1089,6 +1119,7 @@ func TestChatTeardown_DeleteByChainReapsWithoutTheRecord(t *testing.T) {
 // TestSessionLoad_HealsTheChatsRestartPausedRuns pins that a resumed chat heals the runs KAS
 // paused when its bridge died. The sweep is off the session-open path, so it is awaited.
 func TestSessionLoad_HealsTheChatsRestartPausedRuns(t *testing.T) {
+	t.Parallel()
 	h, cs, br := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	br.callResults = map[string]json.RawMessage{
@@ -1123,6 +1154,7 @@ func TestSessionLoad_HealsTheChatsRestartPausedRuns(t *testing.T) {
 // TurnFoldTarget reads the chat store only to open a turn: a fold runs per delta on a
 // 256-slot channel's only consumer. No benchmark sees it.
 func TestTurnFoldTarget_ReadsTheChatOnlyWhenItOpensATurn(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID marotte.ChatID = "c1"
@@ -1149,6 +1181,7 @@ func TestTurnFoldTarget_ReadsTheChatOnlyWhenItOpensATurn(t *testing.T) {
 
 // OwnTurn on an idle chat answers, opens and reads nothing.
 func TestOwnTurn_DoesNotOpenATurn(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	before := cs.Gets.Load()
 
@@ -1164,6 +1197,7 @@ func TestOwnTurn_DoesNotOpenATurn(t *testing.T) {
 }
 
 func TestApplyLoadedSessionFacts_RefreshesTheEntitlementSet(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		catalog []marotte.SessionModel
 		want    []string
@@ -1187,6 +1221,7 @@ func TestApplyLoadedSessionFacts_RefreshesTheEntitlementSet(t *testing.T) {
 
 // A saved model is judged at load: absent from the catalogue it is neither sent nor kept; an empty catalogue decides nothing.
 func TestLoad_ASavedModelIsJudgedAgainstTheServedCatalogue(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		served    []string
 		catalog   []marotte.SessionModel
@@ -1225,6 +1260,7 @@ func TestLoad_ASavedModelIsJudgedAgainstTheServedCatalogue(t *testing.T) {
 }
 
 func TestOpenBridge_RecordsAWithheldModelAsAnUnavailableSwitch(t *testing.T) {
+	t.Parallel()
 	h, cs, rb := newRecordingStartHub(t)
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
@@ -1250,6 +1286,7 @@ func TestOpenBridge_RecordsAWithheldModelAsAnUnavailableSwitch(t *testing.T) {
 }
 
 func TestOpenBridge_RecordsAModelTheLoadDropped(t *testing.T) {
+	t.Parallel()
 	h, cs, rb := newRecordingStartHub(t)
 	rb.catalog = []marotte.SessionModel{{ID: "fake-model"}}
 	ctx := t.Context()
@@ -1275,6 +1312,7 @@ func TestOpenBridge_RecordsAModelTheLoadDropped(t *testing.T) {
 
 // A loaded session the door moved off a model the catalog does not list moves the record with it, auto included.
 func TestLoadUnservedAutoMovesRecord(t *testing.T) {
+	t.Parallel()
 	for _, saved := range []string{marotte.ModelAuto, "m-gone"} {
 		t.Run(saved, func(t *testing.T) {
 			h, cs, rb := newRecordingStartHub(t)
@@ -1303,6 +1341,7 @@ func TestLoadUnservedAutoMovesRecord(t *testing.T) {
 }
 
 func TestOpenBridge_ServedOrFailedOpenRecordsNoUnavailableSwitch(t *testing.T) {
+	t.Parallel()
 	t.Run("served", func(t *testing.T) {
 		h, cs, _ := newRecordingStartHub(t)
 		ctx := t.Context()
@@ -1339,6 +1378,7 @@ func TestOpenBridge_ServedOrFailedOpenRecordsNoUnavailableSwitch(t *testing.T) {
 }
 
 func TestOpenBridge_AnUnservedModelTheSessionRunsKeepsItsSelection(t *testing.T) {
+	t.Parallel()
 	cases := map[string]func(c *marotte.Chat){
 		"withheld at the door": func(c *marotte.Chat) { c.ServedModelIDs = []string{"m-other"} },
 		"dropped by the load":  func(c *marotte.Chat) { c.RecordSession("sess_saved") },
@@ -1370,6 +1410,7 @@ func TestOpenBridge_AnUnservedModelTheSessionRunsKeepsItsSelection(t *testing.T)
 }
 
 func TestReconcileUserName(t *testing.T) {
+	t.Parallel()
 	long := strings.Repeat("n", 100)
 	cases := []struct {
 		name       string
@@ -1402,6 +1443,7 @@ func TestReconcileUserName(t *testing.T) {
 
 // A successor session of a user-named chat starts unlatched, so the door renames it; an agent-named chat's is left alone.
 func TestPersistNewSessionMetadata_RenamesASuccessorOfAUserNamedChat(t *testing.T) {
+	t.Parallel()
 	for _, userNamed := range []bool{true, false} {
 		h, cs, br := newTestHub()
 		br.mu.Lock()
@@ -1432,6 +1474,7 @@ func TestPersistNewSessionMetadata_RenamesASuccessorOfAUserNamedChat(t *testing.
 
 // KAS names the session holding its agent slot by ACP session id; the lookup answers the chat resident on it.
 func TestChatForACPSession_NamesTheResidentChat(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	defer shutdownHub(t, h)
 	var n atomic.Int32

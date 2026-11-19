@@ -35,6 +35,7 @@ func closedStops(t *testing.T, h *Runtime) []marotte.StopReason {
 // A settle taken on the response alone ends the turn with the response's outcome while turn_end and trailing content
 // are unread. The wire says refusal, the response end_turn, and the chunk arrives behind the response.
 func TestSettle_WaitsForQueuedFramesAndTakesTheWireOutcome(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, _ := newTestHub()
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -93,6 +94,7 @@ func TestSettle_WaitsForQueuedFramesAndTakesTheWireOutcome(t *testing.T) {
 // A settle whose last frame folds nothing still closes. On a caught publishTerminalEvent failure turn_completion is
 // sent before the turn-end broadcast, so a fold-bound position parked here and thinking never cleared.
 func TestSettle_ClosesWhenTheLastDeliveredFrameFoldsNothing(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, _ := newTestHub()
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -141,6 +143,7 @@ func TestSettle_ClosesWhenTheLastDeliveredFrameFoldsNothing(t *testing.T) {
 // A closer armed for turn N, firing after N+1 opened, closes nothing; epoch-scoped claiming keeps a late settle off
 // the next turn.
 func TestSettle_ArmedForAnEarlierTurnClosesNothing(t *testing.T) {
+	t.Parallel()
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID marotte.ChatID = "c1"
@@ -169,6 +172,7 @@ func TestSettle_ArmedForAnEarlierTurnClosesNothing(t *testing.T) {
 // A bridge dying mid-prompt closes the turn once and the parked settle defers: the death closer names the cause, and
 // Forward seals the position first.
 func TestBridgeDeath_ClosesTheTurnOnceAndTheParkedSettleDefers(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, br := newTestHub()
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -255,6 +259,7 @@ func TestAwaitPosition_DoesNotStopAtTheAwaitedTurnsOwnClose(t *testing.T) {
 // before the response's position, only the later-turn clause keeps the retry from aborting it, once that turn_start
 // has folded.
 func TestSettle_ReturnsOnlyAfterTheFolderHasCaughtUp(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, _ := newTestHub()
 		t.Cleanup(func() { shutdownHub(t, h) })
@@ -302,6 +307,7 @@ func TestSettle_ReturnsOnlyAfterTheFolderHasCaughtUp(t *testing.T) {
 // goroutine: the exit its teardown captured must still close when the goroutine ends, or the delete waits out
 // its whole drain budget.
 func TestAttachForward_ExitClosesAfterTheLifecycleWasForgotten(t *testing.T) {
+	t.Parallel()
 	r := newTurnRegistry(nopTurnRecords{})
 	const chatID marotte.ChatID = "c1"
 	att := r.attachForwardNow(chatID)

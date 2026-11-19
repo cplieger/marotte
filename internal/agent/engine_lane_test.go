@@ -43,6 +43,7 @@ func awaitAnswers(t *testing.T, src *fakeEngineSource, before int, ids ...int64)
 }
 
 func TestEngineLane_AnswersEveryRequestOnce(t *testing.T) {
+	t.Parallel()
 	h, src := declRuntime(t, &declBackend{callback: "_test/auth/token"})
 	e := src.current()
 	rows := []*marotte.RPCResponse{
@@ -74,6 +75,7 @@ func TestEngineLane_AnswersEveryRequestOnce(t *testing.T) {
 }
 
 func TestEngineLane_AHeldRequestDoesNotBlockLaterFrames(t *testing.T) {
+	t.Parallel()
 	held := make(chan struct{})
 	h, src := declRuntime(t, &declBackend{callback: "_test/auth/token", held: held})
 	e := src.current()
@@ -90,6 +92,7 @@ func TestEngineLane_AHeldRequestDoesNotBlockLaterFrames(t *testing.T) {
 }
 
 func TestEngineLane_HostCallbackRoutedByTheDeclaration(t *testing.T) {
+	t.Parallel()
 	h, src := declRuntime(t, &declBackend{callback: "_test/auth/token"})
 	e := src.current()
 	before := len(src.lane.answeredIDs())
@@ -105,6 +108,7 @@ func TestEngineLane_HostCallbackRoutedByTheDeclaration(t *testing.T) {
 }
 
 func TestRestartRoute_ClientDisconnectAfterThe202StillCompletes(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	src := fakeSourceOf(t, h)
@@ -123,6 +127,7 @@ func TestRestartRoute_ClientDisconnectAfterThe202StillCompletes(t *testing.T) {
 }
 
 func TestRestartRoute_SecondRequestWhileRunningIs409(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	src := fakeSourceOf(t, h)

@@ -15,6 +15,7 @@ import (
 // TestRoleKeeper_FollowsItsTransitionTable pins every cell of the role keeper's table: a missing or wrong cell lets a
 // prompt out off the role, sends a set_mode beside running work, or never lets a prompt go again.
 func TestRoleKeeper_FollowsItsTransitionTable(t *testing.T) {
+	t.Parallel()
 	const (
 		u = roleUnkept
 		n = roleOn
@@ -88,6 +89,7 @@ func keeperLife(t *testing.T, state roleState, sb *sharedBridge) (lc *chatLifecy
 // keeper's session, a refusal marks that session for reload, a cut detaches it so no idle edge sends on it again and
 // marks it for reload, and an input naming another session is dropped.
 func TestRoleKeeper_CarriesOutItsRowsEffects(t *testing.T) {
+	t.Parallel()
 	t.Run("off at an idle edge sends once on its session", func(t *testing.T) {
 		sb := &sharedBridge{}
 		lc, sent := keeperLife(t, roleOff, sb)

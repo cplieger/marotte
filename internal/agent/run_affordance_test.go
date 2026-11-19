@@ -15,6 +15,7 @@ var allRunStatuses = []string{"running", "paused", "completed", "failed", "abort
 
 // TestAffordance_VerbsByStatus pins each status's verbs, mirroring KAS; every live run can be cancelled.
 func TestAffordance_VerbsByStatus(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		status string
 		want   []string
@@ -40,6 +41,7 @@ func TestAffordance_VerbsByStatus(t *testing.T) {
 
 // TestAffordance_ARetryableRunOffersRetryWhoeverLaunchedIt pins that kiro-cli's restore pass skips aborted runs.
 func TestAffordance_ARetryableRunOffersRetryWhoeverLaunchedIt(t *testing.T) {
+	t.Parallel()
 	for _, status := range []string{"failed", "aborted"} {
 		t.Run(status, func(t *testing.T) {
 			{
@@ -59,6 +61,7 @@ func TestAffordance_ARetryableRunOffersRetryWhoeverLaunchedIt(t *testing.T) {
 // TestAffordance_ResumeIsOfferedOnAPausedNonResidentRun pins that resume makes the launching session resident first,
 // so its affordance depends on nothing resident.
 func TestAffordance_ResumeIsOfferedOnAPausedNonResidentRun(t *testing.T) {
+	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: parentlessRunList("wf_1")}
@@ -76,6 +79,7 @@ func TestAffordance_ResumeIsOfferedOnAPausedNonResidentRun(t *testing.T) {
 
 // TestAffordance_AnUnknownStatusDegradesToReadOnly pins that no control and no refusal for an uninterpretable state.
 func TestAffordance_AnUnknownStatusDegradesToReadOnly(t *testing.T) {
+	t.Parallel()
 	for _, status := range []string{"", "cancelled", "some_future_status"} {
 		t.Run("status="+status, func(t *testing.T) {
 			got := affordanceOf(&runFacts{status: status})
@@ -88,6 +92,7 @@ func TestAffordance_AnUnknownStatusDegradesToReadOnly(t *testing.T) {
 
 // TestAffordance_PauseAndResumeAreNeverOfferedTogether pins that they contradict each other.
 func TestAffordance_PauseAndResumeAreNeverOfferedTogether(t *testing.T) {
+	t.Parallel()
 	for _, status := range allRunStatuses {
 		for _, pending := range []bool{true, false} {
 			got := affordanceOf(&runFacts{status: status, pausePending: pending})
@@ -101,6 +106,7 @@ func TestAffordance_PauseAndResumeAreNeverOfferedTogether(t *testing.T) {
 // TestAffordance_EveryOfferedVerbHasARoute pins that an offered verb with no route answers 200 and does
 // nothing. Retry has its own handler (its reply carries the outcome); cancel is ungated because it doubles as tab close.
 func TestAffordance_EveryOfferedVerbHasARoute(t *testing.T) {
+	t.Parallel()
 	routes := map[string]runVerb{
 		runVerbCancel.name: runVerbCancel,
 		runVerbPause.name:  runVerbPause,
@@ -144,6 +150,7 @@ func refusableVerb(verb string) bool {
 // TestChatForSession_ResolvesARunsParentFromTheStoreAlone pins that a run's parent chat is found with no session
 // resident.
 func TestChatForSession_ResolvesARunsParentFromTheStoreAlone(t *testing.T) {
+	t.Parallel()
 	seed := func(t *testing.T, sessions ...string) *Runtime {
 		t.Helper()
 		h, cs, _ := newTestHub()
@@ -188,6 +195,7 @@ func TestChatForSession_ResolvesARunsParentFromTheStoreAlone(t *testing.T) {
 // TestAffordance_AskingWithholdsResume pins the paused row while every paused step asks, or while that is unknown:
 // a known ask re-parks on resume and an unreadable tree cannot prove otherwise, so Cancel alone is offered.
 func TestAffordance_AskingWithholdsResume(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		facts runFacts
 		want  []string
@@ -216,6 +224,7 @@ func TestAffordance_AskingWithholdsResume(t *testing.T) {
 
 // TestHandleControls_ReadsTheAskCell pins that the controls route takes `asking` from the run's ask cell.
 func TestHandleControls_ReadsTheAskCell(t *testing.T) {
+	t.Parallel()
 	controls := func(t *testing.T, h *Runtime) marotte.RunControlsResponse {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/api/runs/wf_1/controls", nil)

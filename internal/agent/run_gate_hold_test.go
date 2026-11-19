@@ -10,7 +10,6 @@ import (
 	"go/token"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
@@ -21,7 +20,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/marotte/internal/filemode/filemodetest"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/signin"
@@ -855,7 +854,7 @@ func (s *holdSim) engineEnd() {
 }
 
 // roundAfterEntry is round(ev, text, r), first held at the chat's rehydrate's failed list when entryFails; its sweep
-// after orphanResumeDelay (resumeInterruptedRuns) is then the round.
+// after Runs.orphanResumeDelay (resumeInterruptedRuns) is then the round.
 func (s *holdSim) roundAfterEntry(ev holdEvent, text string, r releasers, entryFails bool) {
 	if entryFails {
 		s.entryRead(ev, text)
@@ -1367,6 +1366,7 @@ func wrapDoc(b *strings.Builder, text, first, rest string) {
 // runGate's doc comment ends with holdSummary. With GATE_HOLD_TABLE set it writes the summary there, and every cell
 // to the same name with ".cells" added.
 func TestGateHold_TheTableIsRunGatesDoc(t *testing.T) {
+	t.Parallel()
 	want := holdSummary()
 	if out := os.Getenv("GATE_HOLD_TABLE"); out != "" {
 		if err := os.WriteFile(out, []byte(want), 0o600); err != nil {
@@ -1440,7 +1440,37 @@ type kasRun struct {
 	chainListedPaused bool
 	// sweepListedPaused: the last list of a chat's sweep listed the run paused.
 	sweepListedPaused bool
+	listReply         kasAnswerCache[kasListKey]
+	inspectReply      kasAnswerCache[kasInspectKey]
 }
+
+// kasAnswerCache keeps one encoded answer by the state it encodes: the runtime reads the run far more often than the
+// run changes, and encoding the answer costs more than the rest of the call.
+type kasAnswerCache[K comparable] struct {
+	key K
+	raw json.RawMessage
+}
+
+func (r *kasAnswerCache[K]) get(key K, encode func() json.RawMessage) json.RawMessage {
+	if r.raw == nil || r.key != key {
+		r.key, r.raw = key, encode()
+	}
+	return slices.Clone(r.raw)
+}
+
+// kasListKey and kasInspectKey are the state a list and an inspect of the run encode.
+type (
+	kasListKey struct {
+		status        marotte.RunStatus
+		parent        string
+		gone, pending bool
+	}
+	kasInspectKey struct {
+		status                  marotte.RunStatus
+		pauseReason, stopReason string
+		pending                 bool
+	}
+)
 
 func (k *kasRun) runningState() {
 	k.status, k.pauseReason, k.stopReason = marotte.RunStatusRunning, "", ""
@@ -1538,18 +1568,19 @@ func (k *kasRun) reads() kasHold {
 
 func (k *kasRun) answer(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool, error) {
 	k.lastCall.Store(time.Now().UnixNano())
-	if k.failsEntryRead(method) {
+	stack := sync.OnceValue(callStack)
+	if k.failsEntryRead(method, stack) {
 		return nil, nil, true, errHoldReadFault
 	}
 	if method == methodKiroWorkflowResume {
 		k.resumeWrites.Add(1)
-		if b := k.takeWriteHold(); b != nil {
+		if b := k.takeWriteHold(stack); b != nil {
 			close(b.reached)
 			<-b.retried
 		}
 	}
 	if method == methodKiroWorkflowList {
-		if b := k.takeListHold(lister()); b != nil {
+		if b := k.takeListHold(listerIn(stack())); b != nil {
 			close(b.reached)
 			<-b.retried
 		}
@@ -1558,13 +1589,13 @@ func (k *kasRun) answer(method string, params map[string]any) (json.RawMessage, 
 	defer k.mu.Unlock()
 	switch method {
 	case methodKiroWorkflowList:
-		switch lister() {
+		switch listerIn(stack()) {
 		case "pausedRuns":
 			k.finderLists.Add(1)
 		case "resumeChainRuns":
 			k.sweepLists.Add(1)
 			k.sweepListedPaused = !k.gone && k.status == marotte.RunStatusPaused
-			if retryOf() == retryChat {
+			if retryIn(stack()) == retryChat {
 				k.chainListedPaused = !k.gone && k.status == marotte.RunStatusPaused
 				k.chainLists.Add(1)
 			}
@@ -1583,7 +1614,7 @@ func (k *kasRun) answer(method string, params map[string]any) (json.RawMessage, 
 		}
 		return json.RawMessage(`{"paused":true}`), nil, true, nil
 	case methodKiroWorkflowResume:
-		if k.flapWrite && innermostOf(".(*Runs).resumeHeld") != "" {
+		if k.flapWrite && innermostIn(stack(), ".(*Runs).resumeHeld") != "" {
 			k.flapWrite = false
 			k.onFlapWrite()
 			return nil, nil, true, errHoldFault
@@ -1604,14 +1635,14 @@ func (k *kasRun) answer(method string, params map[string]any) (json.RawMessage, 
 	return nil, nil, false, nil
 }
 
-// takeWriteHold is the armed write hold when this call is a held release's resume write (resumeHeld), which then
-// disarms it.
-func (k *kasRun) takeWriteHold() *holdBlock {
-	if innermostOf(".(*Runs).resumeHeld") == "" {
-		return nil
-	}
+// takeWriteHold is the armed write hold when this call, on stack, is a held release's resume write (resumeHeld),
+// which then disarms it.
+func (k *kasRun) takeWriteHold(stack func() []string) *holdBlock {
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	if k.writeHold == nil || innermostIn(stack(), ".(*Runs).resumeHeld") == "" {
+		return nil
+	}
 	b := k.writeHold
 	k.writeHold = nil
 	return b
@@ -1652,51 +1683,69 @@ func (k *kasRun) releaseFaultLocked() (takes bool, err error) {
 // failsEntryRead is whether this call is a heal entry's read that its armed fault fails, once: a chat's rehydrate's
 // first list, or resumeParentless's read after the resume it skipped while KAS listed the run running for an ended
 // engine, after which KAS lists the run paused for the restart, as it does once the run's owner is stale.
-func (k *kasRun) failsEntryRead(method string) bool {
-	var fails bool
+func (k *kasRun) failsEntryRead(method string, stack func() []string) bool {
+	if !k.entryReadArmed(method, stack) {
+		return false
+	}
+	k.onEntryRead()
+	return true
+}
+
+// entryReadArmed is failsEntryRead's decision, which disarms the fault it applies; the stack is read only while one
+// is armed.
+func (k *kasRun) entryReadArmed(method string, stack func() []string) bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
 	switch method {
 	case methodKiroWorkflowList:
-		if lister() != "resumeChainRuns" || retryOf() != retryNone {
+		if !k.failEntryList || listerIn(stack()) != "resumeChainRuns" || retryIn(stack()) != retryNone {
 			return false
 		}
-		k.mu.Lock()
-		fails, k.failEntryList = k.failEntryList, false
-		k.mu.Unlock()
+		k.failEntryList = false
 	case methodKiroWorkflowInspect:
-		if innermostOf(".(*Runtime).resumeParentless", ".(*Runtime).resumeParentless.func1") != ".(*Runtime).resumeParentless" {
+		if !k.staleOwner || innermostIn(stack(), ".(*Runtime).resumeParentless",
+			".(*Runtime).resumeParentless.func1") != ".(*Runtime).resumeParentless" {
 			return false
 		}
-		k.mu.Lock()
-		fails, k.staleOwner = k.staleOwner, false
-		if fails {
-			k.restartPausedState()
-		}
-		k.mu.Unlock()
+		k.staleOwner = false
+		k.restartPausedState()
+	default:
+		return false
 	}
-	if fails {
-		k.onEntryRead()
-	}
-	return fails
+	return true
 }
 
 // callStack is the calling goroutine's function names, innermost first.
 func callStack() []string {
 	pcs := make([]uintptr, 128)
-	frames := runtime.CallersFrames(pcs[:runtime.Callers(3, pcs)])
 	var out []string
-	for {
-		f, more := frames.Next()
-		out = append(out, f.Function)
-		if !more {
-			return out
-		}
+	for _, pc := range pcs[:runtime.Callers(3, pcs)] {
+		out = append(out, funcAt(pc))
 	}
+	return out
 }
 
-// innermostOf is the first of suffixes that ends a function name on the calling goroutine's stack, innermost frame
-// first, "" when none does.
-func innermostOf(suffixes ...string) string {
-	for _, fn := range callStack() {
+// pcFuncs caches funcAt: the fakes ask for the stack on every engine call, and resolving a PC costs more than the
+// rest of the call.
+var pcFuncs sync.Map
+
+// funcAt is the function name at pc, one of runtime.Callers' PCs, which lists a PC for each inlined frame.
+func funcAt(pc uintptr) string {
+	if v, ok := pcFuncs.Load(pc); ok {
+		return v.(string)
+	}
+	f, _ := runtime.CallersFrames([]uintptr{pc}).Next()
+	pcFuncs.Store(pc, f.Function)
+	return f.Function
+}
+
+// innermostOf is innermostIn on the calling goroutine's stack.
+func innermostOf(suffixes ...string) string { return innermostIn(callStack(), suffixes...) }
+
+// innermostIn is the first of suffixes that ends a function name on stack (callStack), innermost frame first, ""
+// when none does.
+func innermostIn(stack []string, suffixes ...string) string {
+	for _, fn := range stack {
 		for _, s := range suffixes {
 			if strings.HasSuffix(fn, s) {
 				return s
@@ -1706,16 +1755,18 @@ func innermostOf(suffixes ...string) string {
 	return ""
 }
 
-// lister names the Runs method whose run list the calling goroutine asks, "" for any other.
-func lister() string {
-	return strings.TrimPrefix(innermostOf(".(*Runs).pausedRuns", ".(*Runs).resumeChainRuns", ".(*Runs).sweepPause"),
+// listerIn names the Runs method on stack whose run list the goroutine asks, "" for any other.
+func listerIn(stack []string) string {
+	return strings.TrimPrefix(innermostIn(stack, ".(*Runs).pausedRuns", ".(*Runs).resumeChainRuns", ".(*Runs).sweepPause"),
 		".(*Runs).")
 }
 
-// retryOf is the retryResumeLater chain whose later try the calling goroutine runs: retryChat a chat's re-sweep,
+// retryOf is retryIn on the calling goroutine's stack.
+func retryOf() retryChain { return retryIn(callStack()) }
+
+// retryIn is the retryResumeLater chain whose later try the goroutine on stack runs: retryChat a chat's re-sweep,
 // retryParentless a parentless run's next try, retryNone a caller's own first try or any other reader.
-func retryOf() retryChain {
-	stack := callStack()
+func retryIn(stack []string) retryChain {
 	on := func(sub string) bool {
 		return slices.ContainsFunc(stack, func(fn string) bool { return strings.Contains(fn, sub) })
 	}
@@ -1743,6 +1794,11 @@ const (
 var retrySpentLogs = [...]string{retryChat: resweepSpentLog, retryParentless: parentlessSpentLog}
 
 func (k *kasRun) listLocked() json.RawMessage {
+	key := kasListKey{status: k.status, parent: k.parent, gone: k.gone, pending: k.pendingReason != ""}
+	return k.listReply.get(key, k.encodeListLocked)
+}
+
+func (k *kasRun) encodeListLocked() json.RawMessage {
 	runs := []map[string]any{}
 	if !k.gone {
 		runs = append(runs, map[string]any{
@@ -1754,6 +1810,13 @@ func (k *kasRun) listLocked() json.RawMessage {
 }
 
 func (k *kasRun) inspectLocked() json.RawMessage {
+	key := kasInspectKey{
+		status: k.status, pauseReason: k.pauseReason, stopReason: k.stopReason, pending: k.pendingReason != "",
+	}
+	return k.inspectReply.get(key, k.encodeInspectLocked)
+}
+
+func (k *kasRun) encodeInspectLocked() json.RawMessage {
 	st := map[string]any{"status": k.status, "pauseReason": k.pauseReason}
 	if k.pendingReason != "" {
 		st["pausePending"] = map[string]any{"initiator": initiatorUser}
@@ -1796,34 +1859,47 @@ func kasJSON(v any) json.RawMessage {
 
 var errHoldFault = errors.New("the engine did not answer")
 
-// holdLogs routes the log records that name a cell's run, chat or session to that cell, so cells run side by side.
+// holdLogs routes the log records that name a live cell's run, chat or session to that cell, so cells run side by
+// side. While any cell is live it drops every other record, the matrix's own unnamed ones being hundreds of
+// thousands; otherwise it passes them to out.
 type holdLogs struct {
 	sinks *sync.Map
+	live  *atomic.Int64
+	out   slog.Handler
 	attrs []slog.Attr
 }
+
+// holdRouter is the package's default logger, installed by TestMain before any test runs, so the matrix's cells
+// capture their records with no test swapping the process logger.
+var holdRouter = &holdLogs{sinks: &sync.Map{}, live: &atomic.Int64{}, out: slog.NewTextHandler(os.Stderr, nil)}
 
 // holdNamed finds the cell names in a record's attribute, an error's text included.
 var holdNamed = regexp.MustCompile(`\b(?:wf|chat|sess)_hold_\d+\b`)
 
-// cellRecord is one routed record: its message and its attributes, key=value.
+// cellRecord is one routed record: its level, its message and its attributes, key=value.
 type cellRecord struct {
 	msg   string
 	attrs []string
+	level slog.Level
 }
 
 // cellLog is one cell's routed records.
 type cellLog struct {
 	errors []cellRecord
 	infos  []string
-	// all is every record, with its level and attributes, for a failed cell's report.
-	all []string
+	// all is every record, formatted only for a failed cell's report.
+	all []cellRecord
 	mu  sync.Mutex
 }
 
 func (l *cellLog) String() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return strings.Join(l.all, "\n")
+	lines := make([]string, len(l.all))
+	for i, r := range l.all {
+		lines[i] = r.level.String() + " " + r.msg + " " + strings.Join(r.attrs, " ")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // infoSince is whether a record below ERROR from the from'th on holds msg in its message.
@@ -1869,27 +1945,36 @@ var _ slog.Handler = (*holdLogs)(nil)
 
 func (*holdLogs) Enabled(_ context.Context, level slog.Level) bool { return level >= slog.LevelInfo }
 
-func (h *holdLogs) Handle(_ context.Context, rec slog.Record) error {
+func (h *holdLogs) Handle(ctx context.Context, rec slog.Record) error {
+	if h.live.Load() == 0 {
+		return h.out.Handle(ctx, rec)
+	}
 	var keys, attrs []string
 	visit := func(a slog.Attr) bool {
 		text := a.String()
 		attrs = append(attrs, text)
-		keys = append(keys, holdNamed.FindAllString(text, -1)...)
+		if strings.Contains(text, "_hold_") {
+			keys = append(keys, holdNamed.FindAllString(text, -1)...)
+		}
 		return true
 	}
 	for _, a := range h.attrs {
 		visit(a)
 	}
 	rec.Attrs(visit)
+	if len(keys) == 0 {
+		return nil
+	}
 	seen := map[*cellLog]bool{}
 	for _, key := range keys {
 		if v, ok := h.sinks.Load(key); ok && !seen[v.(*cellLog)] {
 			l := v.(*cellLog)
 			seen[l] = true
+			r := cellRecord{msg: rec.Message, attrs: attrs, level: rec.Level}
 			l.mu.Lock()
-			l.all = append(l.all, rec.Level.String()+" "+rec.Message+" "+strings.Join(attrs, " "))
+			l.all = append(l.all, r)
 			if rec.Level >= slog.LevelError {
-				l.errors = append(l.errors, cellRecord{msg: rec.Message, attrs: attrs})
+				l.errors = append(l.errors, r)
 			} else {
 				l.infos = append(l.infos, rec.Message)
 			}
@@ -1900,10 +1985,12 @@ func (h *holdLogs) Handle(_ context.Context, rec slog.Record) error {
 }
 
 func (h *holdLogs) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &holdLogs{sinks: h.sinks, attrs: slices.Concat(h.attrs, attrs)}
+	return &holdLogs{sinks: h.sinks, live: h.live, out: h.out.WithAttrs(attrs), attrs: slices.Concat(h.attrs, attrs)}
 }
 
-func (h *holdLogs) WithGroup(string) slog.Handler { return h }
+func (h *holdLogs) WithGroup(name string) slog.Handler {
+	return &holdLogs{sinks: h.sinks, live: h.live, out: h.out.WithGroup(name), attrs: h.attrs}
+}
 
 // spentCounts is the try count each exhausted reader's ERROR reports, as its attribute.
 var spentCounts = map[string]string{
@@ -2375,7 +2462,7 @@ func (c *holdCell) watchMarks(vault *signin.Vault, pre bool) {
 var holdCellSeq atomic.Int64
 
 // newHoldCell boots a cell's first runtime over a fresh KAS run, signed in as the cell's boot says.
-func newHoldCell(t *testing.T, router *holdLogs, c holdCombo) *holdCell {
+func newHoldCell(t *testing.T, c holdCombo) *holdCell {
 	t.Helper()
 	n := holdCellSeq.Add(1)
 	cell := &holdCell{
@@ -2389,13 +2476,15 @@ func newHoldCell(t *testing.T, router *holdLogs, c holdCombo) *holdCell {
 	if c.holdRead() {
 		cell.f.read = c.read
 	}
+	holdRouter.live.Add(1)
 	for _, key := range []string{cell.id, string(cell.chat), cell.session} {
-		router.sinks.Store(key, cell.logs)
+		holdRouter.sinks.Store(key, cell.logs)
 	}
 	t.Cleanup(func() {
 		for _, key := range []string{cell.id, string(cell.chat), cell.session} {
-			router.sinks.Delete(key)
+			holdRouter.sinks.Delete(key)
 		}
+		holdRouter.live.Add(-1)
 	})
 	k := &kasRun{
 		id: cell.id, parent: testLaunchSession, onWriteFault: cell.f.onWriteFault, onEntryRead: cell.f.failEntryRead,
@@ -2419,26 +2508,24 @@ func newHoldCell(t *testing.T, router *holdLogs, c holdCombo) *holdCell {
 // boot starts a runtime for the cell over its KAS run, the vault answerable at boot when signedIn.
 func (c *holdCell) boot(t *testing.T, signedIn bool) {
 	t.Helper()
-	dir := t.TempDir()
+	disk := filemodetest.NewDisk()
 	if signedIn {
-		if err := os.WriteFile(filepath.Join(dir, "signin.json"), []byte(signedInAtBoot), 0o600); err != nil {
-			t.Fatalf("Setup: write signin.json: %v", err)
-		}
+		disk = signedInDisk()
 	}
 	b := newGateBackend()
-	vault := openVault(t, dir, b)
+	vault := openVault(t, disk, b)
 	c.watchMarks(vault, true)
 	var (
 		h  *Runtime
 		br *fakeBridge
 	)
 	if c.c.chat() {
-		h, br = agentRunOnChatAs(t, c.id, c.chat, c.session, c.k.door().(*fakeBridge), WithSignIn(vault, gateBackendID))
+		h, br = agentRunOnChatAs(t, c.id, c.chat, c.session, c.k.door().(*fakeBridge), holdCellOptions(vault)...)
 		h.runs.grantLease(t.Context(), c.id, "publish",
 			launchOrigin{origin: runlease.OriginAgent, chatID: string(c.chat)}, hostSec())
 		h.runs.recordParentSession(t.Context(), c.id, c.session)
 	} else {
-		h, _, br = newTestHub(WithSignIn(vault, gateBackendID))
+		h, _, br = newTestHub(holdCellOptions(vault)...)
 		origin := runlease.OriginManual
 		if c.c.kind == kindScheduled {
 			origin = runlease.OriginScheduled
@@ -2711,6 +2798,15 @@ func (c *holdCell) engineRestart(t *testing.T) {
 // armEntryList sets whether the next first list of a chat's rehydrate fails, as the step's failsEntry says.
 func (c *holdCell) armEntryList(s *gateHoldStep) {
 	c.k.set(func(k *kasRun) { k.failEntryList = s.failsEntry })
+}
+
+// holdOrphanResumeDelay is a cell runtime's resume sweep re-read delay.
+const holdOrphanResumeDelay = 20 * time.Millisecond
+
+// holdCellOptions are a cell runtime's: signed in through vault, with the gate's retry gaps and the resume sweep's
+// re-read delay short enough for a cell's quiet windows (faultQuiet).
+func holdCellOptions(vault *signin.Vault) []Option {
+	return []Option{WithSignIn(vault, gateBackendID), fastGateRetries(), withOrphanResumeDelay(holdOrphanResumeDelay)}
 }
 
 // restart ends the runtime and boots a new one over the same KAS run, the gate open at boot for evRestartOpen, and
@@ -3088,7 +3184,7 @@ func (c *holdCell) arm() {
 const stepQuiet = 50 * time.Millisecond
 
 // faultQuiet is how long a fault must go unhit, once the step's end is reached, for its readers or writers to have
-// settled: longer than any of their retries' gaps under fastGateRetries and the test's orphanResumeDelay.
+// settled: longer than any of their retries' gaps under fastGateRetries and holdOrphanResumeDelay.
 const faultQuiet = 150 * time.Millisecond
 
 // settle waits for the step's ERRORs, each reporting its reader's whole tries, for its faults to act, and for the
@@ -3287,7 +3383,8 @@ func (c *holdCell) run(t *testing.T, steps []gateHoldStep) {
 // per door: the closed generation's late exit then finds its replacement registered and leaves it, where one handle
 // shared by every door would remove the replacement (removeIfBridge) and open a further generation.
 func TestGateHold_EachDoorOpensItsOwnHandleOverTheCellsRun(t *testing.T) {
-	c := newHoldCell(t, &holdLogs{sinks: &sync.Map{}}, holdCombo{kind: kindChat, form: formGate})
+	t.Parallel()
+	c := newHoldCell(t, holdCombo{kind: kindChat, form: formGate})
 	reopen := func() *sharedBridge {
 		t.Helper()
 		c.h.markSessionsForReload("a test's reload")
@@ -3321,17 +3418,11 @@ func TestGateHold_EachDoorOpensItsOwnHandleOverTheCellsRun(t *testing.T) {
 const holdCellsAtOnce = 48
 
 // Every cell of the hold matrix, each through the real entry points, held, persisted and resumed as holdModel says.
-// The cells run side by side, each on its own runtime, its logs routed by its run's, chat's and session's names;
-// serial with every other test, since it swaps the global logger. Each cell runs in its own synctest bubble, so its
-// quiet windows and wait caps are bubble time, which moves only once all of the cell's goroutines block: a loaded
-// host cannot stretch a cell's work past them.
+// The cells run side by side, each on its own runtime, its logs routed by holdRouter. In the test's own process, not
+// an Alone child: a child's CPU would come on top of the package's share of the runner. Each cell runs in its own
+// synctest bubble, so its quiet windows and wait caps are bubble time: a loaded host cannot stretch them.
 func TestGateHold_EveryCell(t *testing.T) {
-	fastGateRetries(t)
-	prevDelay := orphanResumeDelay
-	orphanResumeDelay = 20 * time.Millisecond
-	t.Cleanup(func() { orphanResumeDelay = prevDelay })
-	router := &holdLogs{sinks: &sync.Map{}}
-	capture.SwapDefault(t, slog.New(router))
+	t.Parallel()
 	byRow := map[string][]holdCombo{}
 	var rows []string
 	for _, c := range everyCombo() {
@@ -3354,7 +3445,7 @@ func TestGateHold_EveryCell(t *testing.T) {
 					t.Run(c.name(), func(t *testing.T) {
 						synctest.Test(t, func(t *testing.T) {
 							steps, _ := holdModel(c)
-							newHoldCell(t, router, c).run(t, steps)
+							newHoldCell(t, c).run(t, steps)
 						})
 					})
 				})

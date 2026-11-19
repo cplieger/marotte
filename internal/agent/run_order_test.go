@@ -59,6 +59,7 @@ func cancelCmd(payload string) marotte.ClientCommand {
 // Sent as a queue, a saved prompt or context reference sent mid-turn waits behind the turn and goes as a
 // session/prompt of its own when the turn ends, never as a steer, so its context reference resolves.
 func TestRunOrder_APromptOnlyMessageQueuedBehindARunningTurnGoesAsItsOwnPrompt(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("remember the milk\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -98,6 +99,7 @@ func TestRunOrder_APromptOnlyMessageQueuedBehindARunningTurnGoesAsItsOwnPrompt(t
 
 // Where a send would steer, a saved prompt is refused 409 prompt_only and nothing reaches _session/steer.
 func TestRunOrder_APromptOnlyMessageThatWouldSteerIsRefused(t *testing.T) {
+	t.Parallel()
 	h, _, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	h.stagePromptTurn(t, "c1")
 
@@ -115,6 +117,7 @@ func TestRunOrder_APromptOnlyMessageThatWouldSteerIsRefused(t *testing.T) {
 
 // A prompt sent under a stop's KAS hold is answered at once as queued, and goes once kiro-cli reports idle.
 func TestRunOrder_APromptUnderAStopsHoldIsQueuedAtOnce(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 		defer shutdownHub(t, h)
@@ -150,6 +153,7 @@ func eventually(cond func() bool) bool {
 // A row's up arrow pressed after the turn it would stop has closed stops nothing: the row the close started runs on.
 // A press with no target keeps the older contract and stops the running turn.
 func TestRunOrder_ASendNowPressedAfterItsTurnClosedStopsNothing(t *testing.T) {
+	t.Parallel()
 	t.Run("named turn closed", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		open := promptGates(t, br)
@@ -207,6 +211,7 @@ func TestRunOrder_ASendNowPressedAfterItsTurnClosedStopsNothing(t *testing.T) {
 // A prompt sent while kiro-cli reports a run marotte has no turn for is answered at once as queued, and goes when
 // kiro-cli reports idle.
 func TestRunOrder_APromptBehindKiroCLIsRunAnswersQueuedAtOnce(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 		defer shutdownHub(t, h)
@@ -275,6 +280,7 @@ func emptyTurnHub(t *testing.T) (h *Runtime, cs *testChatStore, minted func() []
 // The re-send of a prompt whose turn produced nothing goes after the messages queued during that turn, never ahead of
 // them: they run first, in order, then the retry on a fresh session.
 func TestRunOrder_AnEmptyTurnsRetryNeverOvertakesQueuedRows(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, minted, answerFirst := emptyTurnHub(t)
 		if code := postPrompt(t, h, "tidy"); code != http.StatusOK {
@@ -299,6 +305,7 @@ func TestRunOrder_AnEmptyTurnsRetryNeverOvertakesQueuedRows(t *testing.T) {
 // A chat closed while a granted take's turn has not opened yet answers that POST chat_closed and leaves no entry for
 // its message, whatever stood beside or behind it.
 func TestRunOrder_AChatClosedDuringAGrantedTakeLeavesNoEntry(t *testing.T) {
+	t.Parallel()
 	for _, shape := range []string{"beside a fold-opened turn", "on an idle list"} {
 		inBubble(t, shape, func(t *testing.T) {
 			h, cs, br, tab := closeTabHub(t)
@@ -347,6 +354,7 @@ func TestRunOrder_AChatClosedDuringAGrantedTakeLeavesNoEntry(t *testing.T) {
 // A steer kiro-cli had not read when its turn closed clean is the next prompt once its end resolves, and no prompt
 // goes before: until the clear lands, kiro-cli may still hold it.
 func TestRunOrder_ASteerTheAgentDroppedAtACleanCloseIsSentNext(t *testing.T) {
+	t.Parallel()
 	s, cs, br := steerOpsHub(t)
 	at := s.h.originOf("c1")
 	id, _ := s.h.stagePromptTurn(t, "c1")
@@ -371,8 +379,8 @@ func TestRunOrder_ASteerTheAgentDroppedAtACleanCloseIsSentNext(t *testing.T) {
 
 // A rewind refused under a held close gate leaves nothing on the list, and nothing reverts once the gate lifts.
 func TestRunOrder_ARewindUnderAHeldCloseGateIsRefusedAndNeverRuns(t *testing.T) {
-	shrinkAdmissionWait(t, 60*time.Millisecond)
-	h, cs, br := newTestHub()
+	t.Parallel()
+	h, cs, br := newTestHub(withAdmissionWait(60 * time.Millisecond))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	openChat(t, h, "c1")
 	runPrompt(t, h, cs, "c1", "m-1")
@@ -429,6 +437,7 @@ func takenRowHub(t *testing.T) (h *Runtime, cs *testChatStore, br *fakeBridge, o
 // A Cancel of a taken row whose turn has not opened withdraws it: it goes back paused with the row behind it, opens
 // no turn, writes nothing, and both wait for the next clean turn end.
 func TestRunOrder_ACancelBeforeATakenRowsTurnOpensPutsItBackPaused(t *testing.T) {
+	t.Parallel()
 	h, cs, br, open, held, releaseOpen := takenRowHub(t)
 	open(0)
 	<-held
@@ -460,6 +469,7 @@ func TestRunOrder_ACancelBeforeATakenRowsTurnOpensPutsItBackPaused(t *testing.T)
 // A Cancel of a taken row whose turn opened but was not sent closes that one turn cancelled and sends nothing; the
 // row behind it waits paused for the next clean turn end.
 func TestRunOrder_ACancelAfterATakenRowsTurnOpenedLeavesOneCancelledTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	open := promptGates(t, br)
 	// The hooks are set before m-a's turn, whose send gate reads them; they arm at the next open, m-q1's.
@@ -529,6 +539,7 @@ func reopenOnFreshSession(t *testing.T, h *Runtime) {
 // A row queued when its chat closed is carried into the next life paused, and is sent after that life's first clean
 // turn end.
 func TestRunOrder_ARowCarriedIntoALaterLifeIsSentAfterItsFirstCleanTurn(t *testing.T) {
+	t.Parallel()
 	h, cs, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
@@ -561,6 +572,7 @@ func liveRunCancel(t *testing.T, cs *testChatStore) string {
 // A turn kiro-cli starts while marotte's sent prompt is not bound yet is listed ahead of it; Cancel names it and stops
 // both; the prompt's own turn_start then closes it and the prompt is the head.
 func TestRunOrder_AWireTurnBesideASentUnboundPromptIsOnTheList(t *testing.T) {
+	t.Parallel()
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	open := promptGates(t, br)
 	if got := ackAs(t, postCmd(t, h, promptCmd("m-1", "sent, not bound"))); got != "started" {
@@ -598,6 +610,7 @@ func TestRunOrder_AWireTurnBesideASentUnboundPromptIsOnTheList(t *testing.T) {
 // A Cancel naming the sent prompt beside kiro-cli's turn (a page that has not seen the wire turn's header yet) stops
 // both turns as the wire turn's id does, and the message queued behind them waits for the next turn.
 func TestRunOrder_ACancelNamingThePromptBesideAWireTurnPausesTheRows(t *testing.T) {
+	t.Parallel()
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	open := promptGates(t, br)
 	if got := ackAs(t, postCmd(t, h, promptCmd("m-1", "sent, not bound"))); got != "started" {
@@ -642,6 +655,7 @@ func TestRunOrder_ACancelNamingThePromptBesideAWireTurnPausesTheRows(t *testing.
 // Cancel with kiro-cli running a turn marotte has none for stops that run with one session/cancel and pauses the
 // message queued behind it, as any Stop pauses the queue: kiro-cli's idle sends nothing, and Resume sends it.
 func TestRunOrder_CancelStopsKiroCLIsRunWithNoTurnHere(t *testing.T) {
+	t.Parallel()
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	h.coord.WireTurnActivity("c1", true)
 	waitFor(t, func() bool { return slices.Contains(runStates(t, cs, "c1"), "run running") })
@@ -675,6 +689,7 @@ func TestRunOrder_CancelStopsKiroCLIsRunWithNoTurnHere(t *testing.T) {
 // A prompt whose intent began before a close that committed is refused as closed and leaves no row behind, in that
 // life or the next.
 func TestRunOrder_APromptRefusedByACloseCommittedAfterItsStampLeavesNoRow(t *testing.T) {
+	t.Parallel()
 	h, cs, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}

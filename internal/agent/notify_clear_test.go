@@ -46,6 +46,7 @@ func wakeInKAS(t *testing.T, users ...[2]string) (*steerHarness, *testChatStore,
 // A wake still being handed to kiro-cli cannot be discarded: the discard is refused as already sending, and the wake
 // reaches kiro-cli once, not twice and not never.
 func TestNotify_ADiscardOfAWakeBeingSentIsRefusedAndItIsSentOnce(t *testing.T) {
+	t.Parallel()
 	s, _, br := steerOpsHub(t)
 	k := kas320On(s.h, "c1", br)
 	id, _ := s.h.stagePromptTurn(t, "c1")
@@ -83,6 +84,7 @@ func TestNotify_ADiscardOfAWakeBeingSentIsRefusedAndItIsSentOnce(t *testing.T) {
 
 // Discarding a wake kiro-cli already holds clears it from kiro-cli's buffer: it leaves the list and no turn takes it.
 func TestNotify_ADiscardOfAWakeTheAgentHoldsClearsIt(t *testing.T) {
+	t.Parallel()
 	s, cs, _, k, id := wakeInKAS(t)
 
 	rec := postCmd(t, s.h, unqueueCmd("n-1"))
@@ -115,6 +117,7 @@ func TestNotify_ADiscardOfAWakeTheAgentHoldsClearsIt(t *testing.T) {
 // wake's words never join a user's steer, and the wake waits behind the user's resent steer, then goes once the
 // agent read it.
 func TestNotify_DeletingAUserSteerBesideAWakeResendsOnlyTheUsersKeptSteers(t *testing.T) {
+	t.Parallel()
 	s, _, _, k, _ := wakeInKAS(t, [2]string{"m-u1", "first"}, [2]string{"m-u2", "second"}, [2]string{"m-u3", "third"})
 
 	rec := postCmd(t, s.h, removeCmd("steer-m-u1"))
@@ -145,6 +148,7 @@ func TestNotify_DeletingAUserSteerBesideAWakeResendsOnlyTheUsersKeptSteers(t *te
 
 // Deleting the wake beside the user's steer resends the user's steer alone.
 func TestNotify_DeletingAWakeResendsTheUsersSteerAlone(t *testing.T) {
+	t.Parallel()
 	s, _, _, k, _ := wakeInKAS(t, [2]string{"m-u1", "first"})
 
 	rec := postCmd(t, s.h, removeCmd("steer-n-1"))
@@ -164,6 +168,7 @@ func TestNotify_DeletingAWakeResendsTheUsersSteerAlone(t *testing.T) {
 // "Queue this message instead" on the user's steer beside a wake kiro-cli holds takes both out of kiro-cli's buffer
 // and resends neither: the user's message waits as a queued row ahead of the wake, and opens the next turn.
 func TestNotify_QueueInsteadPutsTheUsersSteerAheadOfTheWake(t *testing.T) {
+	t.Parallel()
 	s, cs, br, k, id := wakeInKAS(t, [2]string{"m-u1", "first"})
 
 	rec := postCmd(t, s.h, queueInsteadCmd("steer-m-u1"))
@@ -199,6 +204,7 @@ func TestNotify_QueueInsteadPutsTheUsersSteerAheadOfTheWake(t *testing.T) {
 
 // "Queue this message instead" is the user's own: a wake's steer cannot be moved to the queue, and stays where it is.
 func TestNotify_QueueInsteadOfAWakeIsRefused(t *testing.T) {
+	t.Parallel()
 	s, _, _, k, _ := wakeInKAS(t)
 
 	rec := postCmd(t, s.h, queueInsteadCmd("steer-n-1"))

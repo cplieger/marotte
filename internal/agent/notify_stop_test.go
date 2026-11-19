@@ -53,6 +53,7 @@ func plainStop(t *testing.T, h *Runtime) {
 // A plain Stop pauses the row the user queued and the wake behind it: nothing opens on its own, and the user's next
 // action decides what goes: the row sent now opens the next turn, and discarding it leaves the wake paused.
 func TestNotify_AWakeBehindTheUsersRowPausedByAStopWaitsForThatRow(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		act  marotte.ClientCommand
@@ -115,6 +116,7 @@ func TestNotify_AWakeBehindTheUsersRowPausedByAStopWaitsForThatRow(t *testing.T)
 // A wake arriving while a Stop winds the turn down joins the queue paused: it is never steered into the stopping turn,
 // and the stopped turn's close opens nothing.
 func TestNotify_AWakeDuringAStopJoinsTheQueuePaused(t *testing.T) {
+	t.Parallel()
 	s, cs, br := steerOpsHub(t)
 	k := kas320On(s.h, "c1", br)
 	id, _ := s.h.stagePromptTurn(t, "c1")
@@ -162,6 +164,7 @@ func (rt *Runtime) stageUnpromptedTurn(t *testing.T, chatID marotte.ChatID) (tur
 // when the user's send-now returns that steer unread, the user's words open the next turn and the wake, though placed
 // first, waits behind them; a plain Stop pauses both, the user's words ahead.
 func TestNotify_TheUsersSteerBackFromAStopGoesAheadOfAWakePlacedBeforeIt(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		payload string
@@ -239,6 +242,7 @@ func turnOfPromptText(t *testing.T, cs *testChatStore, chatID marotte.ChatID, te
 // kiro-cli continues the send-now turn's session/prompt for a steer the user sent into it: that continuation is
 // still the turn the user asked for, so the wake is not steered into it, and goes once the session/prompt returned.
 func TestNotify_AContinuationOfTheSendNowTurnTakesNoWake(t *testing.T) {
+	t.Parallel()
 	s, cs, br := steerOpsHub(t)
 	s.recs.note = s.h.coord.recordSteer
 	k := kas320On(s.h, "c1", br)

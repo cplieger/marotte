@@ -122,7 +122,7 @@ func admitMerge(ctx context.Context, tangents TangentAccess, merges *tangentMerg
 	}
 	// Like the TUI, a busy tangent is refused rather than queued: the summary must be the
 	// next answer.
-	out, res, entryID := roles.runq.TakeIdle(ctx, key.tangent, IdleSummary, stamp, AdmissionWait)
+	out, res, entryID := roles.runq.TakeIdle(ctx, key.tangent, IdleSummary, stamp)
 	if out != IdleAcquired {
 		return "", "", StatusErrorReason(http.StatusConflict, reasonBusy, errMergeTangentBusy)
 	}

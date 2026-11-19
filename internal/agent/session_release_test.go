@@ -65,6 +65,7 @@ func released(t *testing.T, h *Runtime, sb *sharedBridge) bool {
 }
 
 func TestReleaseIfUnheld_ClosesOnlyChatsWithNoTabTurnOrLiveRun(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		hold func(t *testing.T, h *Runtime, st *tabs.Store)
 		name string
@@ -107,6 +108,7 @@ func TestReleaseIfUnheld_ClosesOnlyChatsWithNoTabTurnOrLiveRun(t *testing.T) {
 
 // The release check runs where a hold ends: the chat's last turn or admission, and a run it launched ending.
 func TestReleaseIfUnheld_RunsWhenTheTurnEndsAndWhenTheRunEnds(t *testing.T) {
+	t.Parallel()
 	t.Run("the admission is released", func(t *testing.T) {
 		h, _, sb := releaseFixture(t)
 		if !h.coord.turns.tryReserveIdleNow("c1", marotte.TurnSourcePrompt) {
@@ -186,6 +188,7 @@ func TestReleaseIfUnheld_AnOpenDuringTheClaimWaitsAndTakesAFreshGeneration(t *te
 
 // A chat-parented run's step sessions are KAS's: the release check closes only the chat's own session.
 func TestReleaseIfUnheld_NeverClosesAStepSession(t *testing.T) {
+	t.Parallel()
 	h, _, sb := releaseFixture(t)
 	h.runs.grantLease(t.Context(), "wf_1", "fix", launchOrigin{origin: runlease.OriginAgent, chatID: "c1"}, hostSec())
 	h.runs.recordParentSession(t.Context(), "wf_1", string(sb.SessionID()))

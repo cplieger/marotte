@@ -37,6 +37,7 @@ func waitForTermExit(t *testing.T, h *Runtime, msg *marotte.RPCResponse) string 
 
 // KAS leaves args unset and puts the whole line in command, so an absent args runs through a shell.
 func TestTermCreate_AbsentArgsRunsTheCommandLineThroughAShell(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		command string
@@ -68,6 +69,7 @@ func TestTermCreate_AbsentArgsRunsTheCommandLineThroughAShell(t *testing.T) {
 
 // The gate is presence, not length: `"args":[]` execs prog with no arguments.
 func TestTermCreate_PresentArgsExecsDirectly(t *testing.T) {
+	t.Parallel()
 	t.Run("EmptyArgsIsStillDirectExec", func(t *testing.T) {
 		h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 		// A shell would print an empty line; a direct exec finds no such program and prints nothing.
@@ -152,6 +154,7 @@ func TestTermCreate_EveryFailurePathLogsAndAnswers(t *testing.T) {
 
 // terminal_exited must follow its output; Wait runs first and the drain is bounded from exit.
 func TestTerminalExited_IsOrderedAfterEveryOutputEvent(t *testing.T) {
+	t.Parallel()
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	// A write immediately before exit is the shape that raced.
 	got := waitForTermExit(t, h, termCreateMsgArgs(t, 1, `printf 'root\n'`, nil))
@@ -192,6 +195,7 @@ func TestTerminalExited_IsOrderedAfterEveryOutputEvent(t *testing.T) {
 // The live stream carries plain text plus spans: sanitize.Output strips ANSI before the
 // parser, so only SanitizeUnicode may run here.
 func TestTerminalEmitter_ParsesStylingAndStillStripsHiddenUnicode(t *testing.T) {
+	t.Parallel()
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	term := newAgentTerminal(nil, "c1", 4096)
 	emit := h.agentTerms.emitter(t.Context(), term, "t1", "c1")
@@ -249,6 +253,7 @@ func terminalOutputPayloads(t *testing.T, h *Runtime) []marotte.TerminalOutputPa
 
 // The wire Offset must be the parser's UTF-16 count, or non-ASCII output rebases spans onto the wrong character.
 func TestTerminalEmitter_OffsetIsTheUTF16BaseOfEachChunk(t *testing.T) {
+	t.Parallel()
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	term := newAgentTerminal(nil, "c1", 4096)
 	emit := h.agentTerms.emitter(t.Context(), term, "t1", "c1")
@@ -280,6 +285,7 @@ func TestTerminalEmitter_OffsetIsTheUTF16BaseOfEachChunk(t *testing.T) {
 // KAS releases the terminal ~3ms after creating it and puts no output on the completion,
 // so only the retired record, evicted at the turn boundary, makes adoption possible.
 func TestTerminalOutput_SurvivesReleaseAndIsEvictedAtTheTurnBoundary(t *testing.T) {
+	t.Parallel()
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	h.translateACPEvent("c1", h.originOf("c1"), termCreateMsgArgs(t, 1, `printf '\033[31mfail\033[0m\n'`, nil))
 	term := singleTerm(t, h)
@@ -316,6 +322,7 @@ func TestTerminalOutput_SurvivesReleaseAndIsEvictedAtTheTurnBoundary(t *testing.
 
 // A silent command is known, not missing; the translate diagnostic keys on this boolean.
 func TestTerminalOutput_KnownButSilentIsNotMissing(t *testing.T) {
+	t.Parallel()
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	h.translateACPEvent("c1", h.originOf("c1"), termCreateMsgArgs(t, 1, "true", nil))
 	term := singleTerm(t, h)
@@ -348,6 +355,7 @@ func TestTerminalOutput_KnownButSilentIsNotMissing(t *testing.T) {
 
 // Deleting a chat must not retire: nothing is left to adopt into, and no boundary would evict it.
 func TestKillForChat_DropsRetiredOutput(t *testing.T) {
+	t.Parallel()
 	at := bareTerminals()
 	term := newAgentTerminal(&exec.Cmd{}, "c1", 64)
 	term.output.write([]byte("secret\n"))
@@ -383,6 +391,7 @@ func onlyTermID(t *testing.T, h *Runtime) string {
 
 // Retire and adoption read the ring while the pump writes it; both must take the terminal's lock (-race).
 func TestTerminalOutput_ReleaseAndAdoptWhileTheProcessIsStillWriting(t *testing.T) {
+	t.Parallel()
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	// A steady writer, so the pump is mid-flight when the release lands.
 	h.translateACPEvent("c1", h.originOf("c1"), termCreateMsgArgs(t, 1,
@@ -568,6 +577,7 @@ func terminalExitedPayloads(t *testing.T, h *Runtime) []marotte.TerminalExitedPa
 
 // TestTerminalExited_CleanExitCarriesTheExitCode pins exactly one of exit_code and signal; neither reads as still running.
 func TestTerminalExited_CleanExitCarriesTheExitCode(t *testing.T) {
+	t.Parallel()
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	h.translateACPEvent("c1", h.originOf("c1"), termCreateMsgArgs(t, 1, "true", nil))
 	term := singleTerm(t, h)
@@ -599,6 +609,7 @@ func TestTerminalExited_CleanExitCarriesTheExitCode(t *testing.T) {
 
 // TestTerminalOutput_AnAgentLimitCannotRaiseTheAppsCap pins that outputByteLimit may only shrink the ring.
 func TestTerminalOutput_AnAgentLimitCannotRaiseTheAppsCap(t *testing.T) {
+	t.Parallel()
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	id := int64(1)
 	// Twice the app's cap, printing more than the cap.
@@ -651,6 +662,7 @@ func TestCloseTurn_EvictsOnlyTheClosingTurnsRecords(t *testing.T) {
 // A background process stopped in a later turn leaves its record to that turn's close: its own
 // turn already closed, so tagging it with the spawning turn would keep it until the chat is deleted.
 func TestCloseTurn_EvictsARecordReleasedInALaterTurn(t *testing.T) {
+	t.Parallel()
 	br := newRecordingTermBridge()
 	h := hubWithBridge(t, t.TempDir(), br)
 	turns := &turnStub{cur: map[marotte.ChatID]string{"c1": "t1"}}
@@ -674,6 +686,7 @@ func TestCloseTurn_EvictsARecordReleasedInALaterTurn(t *testing.T) {
 // A turn read before the release takes at.mu can close in between; output tagged with that turn
 // would wait on a close that already ran, so the next close must take it instead.
 func TestTerminalRelease_ACloseBeforeTheRetireLeavesTheOutputToTheNextClose(t *testing.T) {
+	t.Parallel()
 	br := newRecordingTermBridge()
 	h := hubWithBridge(t, t.TempDir(), br)
 	turns := &closingTurnStub{turn: "t2"}
@@ -696,6 +709,7 @@ func TestTerminalRelease_ACloseBeforeTheRetireLeavesTheOutputToTheNextClose(t *t
 
 // The same race through a bridge's end, whose release reads the turn on the forward loop.
 func TestBridgeEnd_ACloseBeforeTheRetireLeavesTheOutputToTheNextClose(t *testing.T) {
+	t.Parallel()
 	ending := newRecordingTermBridge()
 	h := hubWithBridge(t, t.TempDir(), ending)
 	turns := &closingTurnStub{turn: "t2"}
@@ -743,6 +757,7 @@ func TestReleaseForBridge_DropsARunChatsRecords(t *testing.T) {
 
 // A chunk that renders to nothing (only bidi or zero-width controls) must not become an event.
 func TestTerminalEmitter_AChunkThatRendersToNothingIsNotBroadcast(t *testing.T) {
+	t.Parallel()
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	term := newAgentTerminal(nil, "c1", 4096)
 	emit := h.agentTerms.emitter(t.Context(), term, "t1", "c1")
@@ -896,6 +911,7 @@ func awaitDead(t *testing.T, pid int, what string) {
 // TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals pins that cancelling a prompt
 // never kills a background process a wire-started turn spawned.
 func TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals(t *testing.T) {
+	t.Parallel()
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	ctx := t.Context()
 
@@ -922,6 +938,7 @@ func TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals(t *testing.T) {
 // TestKillForTurn_ScopedToTheNamedTurn pins that a cancel kills only the named turn's terminals, whichever turn the
 // chat holds by then.
 func TestKillForTurn_ScopedToTheNamedTurn(t *testing.T) {
+	t.Parallel()
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	turns := &turnStub{cur: map[marotte.ChatID]string{"c1": "t7", "c2": "t3"}}
 	h.agentTerms.currentTurn = turns.read
@@ -956,6 +973,7 @@ func TestKillForTurn_ScopedToTheNamedTurn(t *testing.T) {
 // TestKillForTurn_KeepsTheTerminalAnsweringUntilReleased pins that a cancelled turn's terminal
 // stays registered: KAS reads its output and exit and stops it after the cancel.
 func TestKillForTurn_KeepsTheTerminalAnsweringUntilReleased(t *testing.T) {
+	t.Parallel()
 	br := newRecordingTermBridge()
 	h := hubWithBridge(t, t.TempDir(), br)
 	id, _ := h.stagePromptTurn(t, "c1")
@@ -990,6 +1008,7 @@ func TestKillForTurn_KeepsTheTerminalAnsweringUntilReleased(t *testing.T) {
 }
 
 func TestKillForTurn_NothingOpenIsANoOp(t *testing.T) {
+	t.Parallel()
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	_, idle := spawnSleeper(t, h, "c1", h.originOf("c1"), 1) // created while the chat is idle
 

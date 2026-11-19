@@ -80,6 +80,7 @@ func getGlance(t *testing.T, h *Runtime) (glanceReply, int) {
 // The glance is what a run bar and a run card read: each repeat through its latest pass, with
 // the passes before it counted, so its size follows the plan's width and not the run's history.
 func TestHandleRun_TheGlanceViewKeepsEachRepeatsLatestPass(t *testing.T) {
+	t.Parallel()
 	glance := func(passes int) (glanceReply, int) {
 		h, _ := hostedLeasedRun(t, repeatInspect(t, passes))
 		h.runs.log = newRunLog(t.TempDir())
@@ -124,6 +125,7 @@ func TestHandleRun_TheGlanceViewKeepsEachRepeatsLatestPass(t *testing.T) {
 // A glance of a run whose read is held answers from that read, as the header view does: a
 // revision's glance costs no engine read, and it is the glance a fresh read gives.
 func TestHandleRun_AWarmGlanceAnswersFromTheHeldRead(t *testing.T) {
+	t.Parallel()
 	h, br := hostedLeasedRun(t, repeatInspect(t, 20))
 	h.runs.log = newRunLog(t.TempDir())
 	cold := httptest.NewRecorder()

@@ -24,6 +24,7 @@ func sampleGovernance() marotte.GovernanceStatePayload {
 }
 
 func TestGovernanceCache_SetGetWarm(t *testing.T) {
+	t.Parallel()
 	c := newGovernanceCache()
 	if _, ok := c.get(); ok {
 		t.Fatal("cold cache should report !ok")
@@ -55,6 +56,7 @@ func TestGovernanceCache_SetGetWarm(t *testing.T) {
 }
 
 func TestGovernanceCache_AdminRulesResolveOnce(t *testing.T) {
+	t.Parallel()
 	c := newGovernanceCache()
 	if c.adminPolicyKnown() {
 		t.Fatal("cold cache reports the administrator rules known")
@@ -76,6 +78,7 @@ func TestGovernanceCache_AdminRulesResolveOnce(t *testing.T) {
 }
 
 func TestHandleGovernance_ServesWarmCache(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	// Pre-seeded, so no bridge warm-up.
 	reportAccount(t, h, sampleGovernance())
@@ -99,6 +102,7 @@ func TestHandleGovernance_ServesWarmCache(t *testing.T) {
 
 // Every session door carries the governance profile; whichever lane it lands on, it is the server's copy.
 func TestApplyGovernance_CachesTheProfileFromAnySession(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	raw := json.RawMessage(`{"sessionId":"s","isEnterprise":false,"disabledReason":"org policy",` +

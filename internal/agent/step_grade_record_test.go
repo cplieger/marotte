@@ -111,6 +111,7 @@ func gradedAppends(t *testing.T, h *Runtime, before uint64) int {
 // KAS completed kiro-cli 2.32.0's create-workflow step on a success signal, so a refusal its turn sealed is graded
 // completed, once, and every reader reads that one grade.
 func TestStepGrade_ARefusedStepKASCompletedOnASuccessSignalIsRecordedCompletedOnce(t *testing.T) {
+	t.Parallel()
 	const (
 		id     = "wf_04b7a7ba1affa505"
 		chatID = marotte.ChatID("c1")
@@ -155,6 +156,7 @@ func TestStepGrade_ARefusedStepKASCompletedOnASuccessSignalIsRecordedCompletedOn
 }
 
 func TestStepGrade_TheModelCallLimitIsRecordedOnTheStepsTurn(t *testing.T) {
+	t.Parallel()
 	const id = "wf_42066808f4c28538"
 	path := []string{id, "p2-loop", "iter-0", "p2-build"}
 	nodePath := workflow.PathKey(path)
@@ -191,6 +193,7 @@ func TestStepGrade_TheModelCallLimitIsRecordedOnTheStepsTurn(t *testing.T) {
 }
 
 func TestStepGrade_ARecordedGradeOutlivesARestartAndAnUnreadableRecord(t *testing.T) {
+	t.Parallel()
 	const id = "wf_42066808f4c28538"
 	path := []string{id, "p2-loop", "iter-0", "p2-build"}
 	nodePath := workflow.PathKey(path)
@@ -217,6 +220,7 @@ func TestStepGrade_ARecordedGradeOutlivesARestartAndAnUnreadableRecord(t *testin
 }
 
 func TestStepTranscript_AGradedStepReadsNoRecordAgain(t *testing.T) {
+	t.Parallel()
 	const id = "wf_42066808f4c28538"
 	path := []string{id, "p2-loop", "iter-0", "p2-build"}
 	nodePath := workflow.PathKey(path)
@@ -236,6 +240,7 @@ func TestStepTranscript_AGradedStepReadsNoRecordAgain(t *testing.T) {
 // KAS's record was unreadable at node_complete, so a later read records the grade, and the launching chat's note
 // follows that grade rather than the seal.
 func TestStepGrade_TheRunReadRecordsAGradeTheNodeCompleteMissed(t *testing.T) {
+	t.Parallel()
 	const chatID = marotte.ChatID("c1")
 	down := errors.New("the engine is gone")
 
@@ -319,6 +324,7 @@ func TestStepGrade_TheRunReadRecordsAGradeTheNodeCompleteMissed(t *testing.T) {
 // A grade node_complete's KAS read missed is recorded at the run's next lifecycle frame, with no reader: another
 // step's node_complete or the run's run_complete. It is recorded and noted once, and a run read after adds neither.
 func TestStepGrade_TheRunsNextFrameRecordsAGradeTheNodeCompleteMissed(t *testing.T) {
+	t.Parallel()
 	const (
 		id     = "wf_42066808f4c28538"
 		chatID = marotte.ChatID("c1")
@@ -375,6 +381,7 @@ func TestStepGrade_TheRunsNextFrameRecordsAGradeTheNodeCompleteMissed(t *testing
 }
 
 func TestHandleTurnRange_ServesTheStepsRecordedGrade(t *testing.T) {
+	t.Parallel()
 	const id = "wf_04b7a7ba1affa505"
 	path := []string{id, "create-workflow"}
 	h, _, br := runLoggingHub(t)
@@ -411,6 +418,7 @@ func TestHandleTurnRange_ServesTheStepsRecordedGrade(t *testing.T) {
 
 // On resume KAS completes a step the death closer closed interrupted, with a node_complete that closes nothing.
 func TestStepGrade_AResumedStepKASCompletedIsGradedWithoutANewClose(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	path := []string{id, "build"}
 	nodePath := workflow.PathKey(path)
@@ -442,6 +450,7 @@ func TestStepGrade_AResumedStepKASCompletedIsGradedWithoutANewClose(t *testing.T
 
 // KAS's record describes the path's newest execution, so while a retry is open it is not the earlier attempt's.
 func TestStepGrade_AnEarlierAttemptIsNotGradedWhileTheNextIsOpen(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	path := []string{id, "build"}
 	nodePath := workflow.PathKey(path)
@@ -498,6 +507,7 @@ func TestStepGrade_AnEarlierAttemptIsNotGradedWhileTheNextIsOpen(t *testing.T) {
 
 // A step KAS did not complete keeps its sealed close, so its note needs no read of KAS's record.
 func TestRunNodeComplete_ARefusedStepKASDidNotCompleteIsNotedWithoutReadingItsRecord(t *testing.T) {
+	t.Parallel()
 	const (
 		id     = "wf_1"
 		chatID = marotte.ChatID("c1")
@@ -525,6 +535,7 @@ func TestRunNodeComplete_ARefusedStepKASDidNotCompleteIsNotedWithoutReadingItsRe
 // run_complete's forgetBounds releases the lease first (run_bounds.go), so a run's last step's grade can finish
 // after the lease is gone; the note still reaches the chat the lease named at node_complete.
 func TestRunNodeComplete_ALastStepIsNotedThoughTheRunEndsDuringItsGrade(t *testing.T) {
+	t.Parallel()
 	const (
 		id     = "wf_1"
 		chatID = marotte.ChatID("c1")
@@ -568,6 +579,7 @@ func TestRunNodeComplete_ALastStepIsNotedThoughTheRunEndsDuringItsGrade(t *testi
 // A run read whose own inspect answered first can record the grade while node_complete's read is still out and after
 // run_complete released the lease; the note still reaches the chat the lease named at node_complete, once.
 func TestRunNodeComplete_ALastStepIsNotedThoughARunReadRecordsItsGradeAfterTheRunEnds(t *testing.T) {
+	t.Parallel()
 	const (
 		id     = "wf_1"
 		chatID = marotte.ChatID("c1")
@@ -623,6 +635,7 @@ func (b *turnClosedHook) Broadcast(ctx context.Context, evt marotte.ServerEvent)
 // goroutine takes the lock, after run_complete released the lease; the note still reaches the chat the lease named
 // at node_complete, once. The test holds runLog.mu from the close's publish to stand in for that read.
 func TestRunNodeComplete_ALastStepIsNotedThoughARunReadRecordsItsGradeBeforeTheStepEndDoes(t *testing.T) {
+	t.Parallel()
 	const (
 		id     = "wf_1"
 		chatID = marotte.ChatID("c1")
@@ -676,6 +689,7 @@ func TestRunNodeComplete_ALastStepIsNotedThoughARunReadRecordsItsGradeBeforeTheS
 // node_complete's own grade notes the close; a run read before and after run_complete finds it graded and leaves no
 // second note.
 func TestRunNodeComplete_AStepEndThatRecordsTheGradeNotesItOnce(t *testing.T) {
+	t.Parallel()
 	const (
 		id     = "wf_1"
 		chatID = marotte.ChatID("c1")
@@ -715,6 +729,7 @@ func TestRunNodeComplete_AStepEndThatRecordsTheGradeNotesItOnce(t *testing.T) {
 // Only the lease node_complete captured, in process memory, decides a close's note: a grade a run read records after
 // a restart leaves none, though the run's lease is still held.
 func TestStepGrade_AGradeRecordedAfterARestartLeavesNoNote(t *testing.T) {
+	t.Parallel()
 	const (
 		id     = "wf_1"
 		chatID = marotte.ChatID("c1")
@@ -790,6 +805,7 @@ func completeStep(t *testing.T, h *Runtime, workflowID string, path []string) {
 // A close KAS's record ended without completing can never be graded, so the read that finds it so is its last: no
 // later step end, run_complete or transcript open asks KAS about it again.
 func TestStepGrade_ACloseKASEndedWithoutCompletingIsReadOnce(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	build, review, ship := []string{id, "build"}, []string{id, "review"}, []string{id, "ship"}
 	h, _, br := runLoggingHub(t)
@@ -823,6 +839,7 @@ func TestStepGrade_ACloseKASEndedWithoutCompletingIsReadOnce(t *testing.T) {
 // The run's terminal run_complete closes an open turn failed under a failed record: its own read settles the close,
 // and opening the step's transcript after asks KAS nothing.
 func TestStepGrade_ATurnTheRunsEndFailedIsReadOnce(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	build := []string{id, "build"}
 	h, _, br := runLoggingHub(t)
@@ -845,6 +862,7 @@ func TestStepGrade_ATurnTheRunsEndFailedIsReadOnce(t *testing.T) {
 
 // KAS's record holds no node at the close's path, so nothing can grade it: the first read settles it.
 func TestStepGrade_ACloseKASHoldsNoRecordOfIsReadOnce(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	build := []string{id, "build"}
 	h, _, br := runLoggingHub(t)
@@ -865,6 +883,7 @@ func TestStepGrade_ACloseKASHoldsNoRecordOfIsReadOnce(t *testing.T) {
 // A read that fails is retried at the run's next triggers up to gradeReadAttempts reads in all; then the close is
 // settled ungraded, and the step's transcript still opens.
 func TestStepGrade_AnUnreadableRecordIsAskedAtMostTheBound(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	build, review := []string{id, "build"}, []string{id, "review"}
 	h, _, br := runLoggingHub(t)
@@ -895,6 +914,7 @@ func TestStepGrade_AnUnreadableRecordIsAskedAtMostTheBound(t *testing.T) {
 
 // Whatever the bound has left, the run's terminal run_complete is the last read: a close it cannot grade is settled.
 func TestStepGrade_TheRunsEndSettlesACloseItCannotRead(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	build := []string{id, "build"}
 	h, _, br := runLoggingHub(t)
@@ -916,6 +936,7 @@ func TestStepGrade_TheRunsEndSettlesACloseItCannotRead(t *testing.T) {
 // A completed node_complete for a settled close's path is KAS saying the node moved, so the close is graded again:
 // on resume KAS completes a step the death closer closed interrupted, with a node_complete that closes nothing.
 func TestStepGrade_ASettledCloseIsGradedWhenKASCompletesItsNode(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	path := []string{id, "build"}
 	nodePath := workflow.PathKey(path)
@@ -947,6 +968,7 @@ func TestStepGrade_ASettledCloseIsGradedWhenKASCompletesItsNode(t *testing.T) {
 // A grade the run log refuses to write counts against the same bound as a failed read: a log that refuses every
 // write is not asked KAS about forever.
 func TestStepGrade_ARefusedGradeWriteIsRetriedAtMostTheBound(t *testing.T) {
+	t.Parallel()
 	const id = "wf_1"
 	build := []string{id, "build"}
 	h, _, br := runLoggingHub(t)

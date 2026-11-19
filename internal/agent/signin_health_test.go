@@ -10,6 +10,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/marotte/internal/filemode/filemodetest"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/signin"
 	"github.com/cplieger/marotte/internal/testsupport"
@@ -56,7 +57,7 @@ type healthHub struct {
 func newHealthHub(t *testing.T, opts ...Option) *healthHub {
 	t.Helper()
 	b := newGateBackend()
-	vault := openVault(t, t.TempDir(), b)
+	vault := openVault(t, filemodetest.NewDisk(), b)
 	p := &healthPush{}
 	h, cs, _ := newTestHub(append([]Option{WithSignIn(vault, gateBackendID), WithPush(p)}, opts...)...)
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -122,6 +123,7 @@ func (s *healthHub) failPastTheGrace(t *testing.T) {
 // Renewals failing for longer than the grace, with no usable lease left, read failing from the episode's first
 // failure, and the state reaches every client once.
 func TestSignInHealth_RenewalsFailingPastTheGraceTurnFailing(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s := newHealthHub(t)
 		s.signIn(t)
@@ -191,6 +193,7 @@ func TestSignInHealth_ASuccessfulRenewalClearsIt(t *testing.T) {
 // A blip shorter than the grace shows nothing: neither failures the cached token still covers, nor a lease too short
 // to use that a usable one replaces in time.
 func TestSignInHealth_ABlipUnderTheGraceShowsNothing(t *testing.T) {
+	t.Parallel()
 	cases := map[string]func(t *testing.T, s *healthHub){
 		"failures while the token is still served": func(t *testing.T, s *healthHub) {
 			s.b.set(false, true, func() error { return errProviderDown })
@@ -245,6 +248,7 @@ func TestSignInHealth_ABlipUnderTheGraceShowsNothing(t *testing.T) {
 // A definite refusal reads signed_out at once, with no grace; a sign-out the person asked for reads none, and a turn
 // the engine failed for the outage is the outage.
 func TestSignInHealth_ADefiniteRefusalGivesSignedOut(t *testing.T) {
+	t.Parallel()
 	t.Run("the identity provider rejects the renewal", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			s := newHealthHub(t)
@@ -332,6 +336,7 @@ func TestSignInHealth_ADefiniteRefusalGivesSignedOut(t *testing.T) {
 // One push per episode: entering failing sends one, nothing more while it lasts or when it turns into a sign-out,
 // and only a recovery re-arms it.
 func TestSignInHealth_OnePushPerEpisode(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s := newHealthHub(t)
 		s.signIn(t)
@@ -381,6 +386,7 @@ func TestSignInHealth_OnePushPerEpisode(t *testing.T) {
 
 // With an API key the vault answers nothing the engine uses, so only the engine's own refusals move the state.
 func TestSignInHealth_APIKeyReadsOnlyEngineRefusals(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s := newHealthHub(t, WithAPIKey(true))
 		if got := s.h.SignInHealth().State; got != marotte.SignInOK {
@@ -417,6 +423,9 @@ func TestSignInHealth_APIKeyReadsOnlyEngineRefusals(t *testing.T) {
 
 // However the moves interleave, the gauge reads the state the last move left.
 func TestSignInHealth_TheGaugeFollowsTheLastMove_Concurrent(t *testing.T) {
+	if !testsupport.Alone(t) {
+		return
+	}
 	s := newHealthHub(t, WithAPIKey(true))
 	for round := range 200 {
 		var wg sync.WaitGroup

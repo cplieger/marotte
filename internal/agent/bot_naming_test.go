@@ -9,6 +9,7 @@ import (
 // TestReconcileUserName_ABotKeepsItsNameOverEveryKASTitle pins that a door never takes KAS's stored title for a Bot,
 // latched by the user or not: the record's name is re-asserted on KAS instead.
 func TestReconcileUserName_ABotKeepsItsNameOverEveryKASTitle(t *testing.T) {
+	t.Parallel()
 	for _, bot := range []struct {
 		name string
 		b    *marotte.Bot

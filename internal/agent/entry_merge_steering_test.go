@@ -17,6 +17,7 @@ func steeringRow(id, doc string) entryRow {
 // Neither side's frame carries an id, so the n-th steering box of a paired turn is the n-th on
 // the other side, and a reload draws each once.
 func TestMergeEntries_SteeringBoxesPairByOrdinalWithinTheTurn(t *testing.T) {
+	t.Parallel()
 	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, nil),
 		steeringRow("steering-T1:e1", "go.md"),
@@ -45,6 +46,7 @@ func TestMergeEntries_SteeringBoxesPairByOrdinalWithinTheTurn(t *testing.T) {
 }
 
 func TestMergeEntries_AReplayOnlySteeringBoxIsInserted(t *testing.T) {
+	t.Parallel()
 	record := []recordTurn{recTurn(t, "T1",
 		openRow("T1", 1, nil),
 		textRow("S", "", "first"),
