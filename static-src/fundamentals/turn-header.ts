@@ -20,7 +20,7 @@ import { buildQuoteBand, drawParts } from "../quote-band.js";
 import { OUTCOME_LABEL, OUTCOME_TOOLTIP, severityOf } from "../turn-severity.js";
 import type { TurnOutcome } from "../turns.js";
 import { WAKE_FALLBACK_LINE, type WakeLine, type WakeRow, type WakeRun } from "../turn-wake.js";
-import { senderWords, type Sender } from "../sent-by.js";
+import { senderWords } from "../sent-by.js";
 import type { Caller } from "../types.js";
 import { formatClock } from "../locale-time.js";
 
@@ -98,20 +98,18 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
 
 const FOLD_LABEL = "Expand or collapse this turn";
 
-/** The request band alone, for a turn drawn without card chrome: a run step's turn that a message resumed,
- *  headed by its Sent-by line when the reader did not send it. */
-export function buildRequestHeader(request: string, from?: Sender): HTMLElement {
-  const words = senderWords(from);
+/** The request band alone, for a turn drawn without card chrome: a run step's turn its workflow's instruction
+ *  opened. */
+export function buildRequestHeader(request: string): HTMLElement {
   const { lead, rest } = leadQuote(request);
   const text = el("div", { className: "turn-req-text" });
   setRequestParts(text, rest);
   const header = el(
     "div",
-    { className: "turn-header", "data-trigger": words === undefined ? "user" : "caller" },
+    { className: "turn-header", "data-trigger": "user" },
     el("div", { className: "turn-req", "data-find-unit": "header" }, text),
   );
   syncQuote(header, lead ?? undefined);
-  syncSentBy(header, words);
   return header;
 }
 

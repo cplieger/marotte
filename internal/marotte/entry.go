@@ -120,6 +120,9 @@ type EntryPrompt struct {
 	Label       string       `json:"label,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
 	Resends     []string     `json:"resends,omitempty"`
+	// Instruction is set on a replayed step session's first prompt: the workflow's own
+	// instruction to the step, which nobody sent as a message.
+	Instruction bool `json:"instruction,omitempty"`
 }
 
 // EntryTurnOpen is the turn_open payload. Prompt is present for a prompt or
