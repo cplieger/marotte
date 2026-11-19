@@ -118,8 +118,14 @@ async function open(row: Row): Promise<void> {
   const tabID = tabIdFor("run", row.id);
   const focus = document.activeElement;
   const ours = focus === document.body || focus === row.link;
-  // A refused open painted nothing, so the row and its focus are still there.
-  if (!ours || tabID === "" || getActiveTabId() !== tabID) {
+  if (tabID === "" || getActiveTabId() !== tabID) {
+    // A refused open painted nothing, so the row is still there; a re-seat meanwhile can have blurred it.
+    if (ours && focus === document.body && row.link.isConnected) {
+      row.link.focus();
+    }
+    return;
+  }
+  if (!ours) {
     return;
   }
   // The phone's open dismissed the drawer, so the tab row is out of sight there.

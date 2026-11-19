@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } 
 import { page, userEvent } from "vitest/browser";
 
 import indexHtml from "../static/index.html?raw";
+import { inkBand } from "./__test-helpers__/alignment.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { maybeEl, unpark } from "./dom.js";
 import type * as Router from "./router.js";
@@ -85,6 +86,7 @@ const shell = document.createElement("div");
   document.body.appendChild(shell);
 }
 const { initRunsSection } = await import("./runs-section.js");
+const { initHistorySection } = await import("./history-section.js");
 const { installRunDotSubscriber } = await import("./run-dots.js");
 
 let style: HTMLStyleElement;
@@ -92,6 +94,7 @@ let style: HTMLStyleElement;
 beforeAll(() => {
   style = mountAppCSS();
   initRunsSection();
+  initHistorySection();
   installRunDotSubscriber();
 });
 
@@ -761,6 +764,23 @@ describe("where focus goes", () => {
     expect(names()).toEqual(["capped-run"]);
     expect(document.activeElement).toBe(link("capped-run"));
   });
+
+  it("puts focus back on the row when its state moves it while the open is refused", async () => {
+    launched("wf_seat_a", "seat-a", { started: 2 });
+    launched("wf_seat_b", "seat-b", { started: 1 });
+    await settle();
+    link("seat-b").focus();
+    tabServer.failNext("open_tab", 409, "too many tabs", "tabs_full");
+
+    link("seat-b").click();
+    reviseRun("wf_seat_b", 2, "paused");
+    await settleTabs();
+    await settle();
+
+    expect(tabIdFor("run", "wf_seat_b")).toBe("");
+    expect(names()).toEqual(["seat-b", "seat-a"]);
+    expect(document.activeElement).toBe(link("seat-b"));
+  });
 });
 
 describe("where the section sits", () => {
@@ -825,8 +845,19 @@ describe("where the section sits", () => {
         const r = e.getBoundingClientRect();
         return r.left + r.width / 2;
       };
+      /** How far a row's name sits below its dot: its cap band's middle less the dot's. */
+      const drop = (r: HTMLElement, name: string): number => {
+        const n = r.querySelector(name);
+        if (n === null) {
+          throw new Error(`no ${name}`);
+        }
+        const band = inkBand(n);
+        const d = dotOf(r).getBoundingClientRect();
+        return (band.top + band.baseline) / 2 - (d.top + d.height / 2);
+      };
       const rowDot = centre(dotOf(row));
       const rowName = row.querySelector("bdi")?.getBoundingClientRect().left ?? Number.NaN;
+      const rowDrop = drop(row, "bdi");
 
       row.click();
       await settleTabs();
@@ -841,6 +872,10 @@ describe("where the section sits", () => {
       expect(Math.abs(centre(dotOf(tab)) - rowDot)).toBeLessThan(0.5);
       const tabName = tab.querySelector(".tab-name")?.getBoundingClientRect().left ?? Number.NaN;
       expect(Math.abs(tabName - rowName)).toBeLessThan(0.5);
+      expect(
+        Math.abs(drop(tab, ".tab-name") - rowDrop),
+        "the name's height against the dot",
+      ).toBeLessThan(0.25);
     } finally {
       release();
     }
@@ -1025,7 +1060,7 @@ describe("on a short screen", () => {
     for (const t of tabServer.subjects()) {
       await setTabPinned(t.id, true);
     }
-    // Each pin is a round trip through the tab server, so under load any frame after the first can land late.
+    // Each pin is a round trip through the tab server, so under load any pin's frame can land after its await returns.
     const want = tabServer.subjects().length;
     await expect
       .poll(
@@ -1114,60 +1149,61 @@ describe("on a short screen", () => {
     expect(Math.abs(got.runs - 150), `Runs ${String(got.runs)}px`).toBeLessThanOrEqual(1);
   });
 
-  // The History section's markup, painted as section-header.ts paints a fold: the list marked, its rows hidden.
-  function foldHistory(folded: boolean): void {
-    const list = el("history-list");
-    list.toggleAttribute("data-folded", folded);
-    for (const li of list.querySelectorAll<HTMLElement>(":scope > li")) {
-      li.hidden = folded;
-    }
+  /** `count` closed chats in History, as the server's frame lists them. */
+  function closedChats(count: number): void {
+    tabServer.emitRecent(
+      Array.from({ length: count }, (_, i) => ({
+        ref: `c-gone-${String(i)}`,
+        name: `Gone chat ${String(i)}`,
+        closed_at: Date.now() - 60_000 * (i + 1),
+      })),
+    );
+  }
+
+  /** Empty History again, which hides it. */
+  async function noClosedChats(): Promise<void> {
+    tabServer.emitRecent([]);
+    await settle();
+    await rest();
   }
 
   it("counts History's header and its list's inset while it is folded", async () => {
     await crowd(844, 390, "fine", "history-folded", 1);
-    const history = el("history-section");
-    history.hidden = false;
-    foldHistory(true);
+    closedChats(1);
     try {
+      await settle();
       await rest();
+      expect(el("history-list").hasAttribute("data-folded"), "History starts folded").toBe(true);
       // One tab's 82, and History's gap 4, header 32 and inset 4.
       const got = heights();
       expect(Math.abs(got.tabs - 122), `tab sections ${String(got.tabs)}px`).toBeLessThanOrEqual(1);
       expect(Math.abs(got.runs - 106), `Runs ${String(got.runs)}px`).toBeLessThanOrEqual(1);
     } finally {
-      foldHistory(false);
-      history.hidden = true;
+      await noClosedChats();
     }
   });
 
   // No tab open: Open is its list's inset and the scroller's end padding, 8. Unfolded, History adds its gap 4,
-  // header 32, inset 4 and its rows, More the last of them; three need 178.
+  // header 32, inset 4 and its rows, its closed chats and More; three need 178.
   for (const [count, tabs, runs] of [
-    [1, 90, 138],
-    [2, 134, 94],
-    [3, 141, 87],
+    [1, 134, 94],
+    [2, 141, 87],
   ] as const) {
-    it(`counts ${String(count)} History row(s) once it unfolds`, async () => {
+    it(`counts ${String(count)} closed chat(s) and More once History unfolds`, async () => {
+      setSectionFolded("history", false);
       await crowd(844, 390, "fine", `history-${String(count)}`, 0);
-      const history = el("history-section");
-      const list = el("history-list");
-      const closed = Array.from({ length: count - 1 }, () =>
-        Object.assign(document.createElement("li"), { className: "history-item" }),
-      );
-      list.prepend(...closed);
-      history.hidden = false;
+      closedChats(count);
       try {
+        await settle();
         await rest();
+        expect(el("history-list").querySelectorAll(":scope > li")).toHaveLength(count + 1);
         const got = heights();
         expect(Math.abs(got.tabs - tabs), `tab sections ${String(got.tabs)}px`).toBeLessThanOrEqual(
           1,
         );
         expect(Math.abs(got.runs - runs), `Runs ${String(got.runs)}px`).toBeLessThanOrEqual(1);
       } finally {
-        for (const li of closed) {
-          li.remove();
-        }
-        history.hidden = true;
+        await noClosedChats();
       }
     });
   }
@@ -1204,10 +1240,10 @@ describe("on a short screen", () => {
     };
   }
 
-  // Unfolded at 844x390 fine, Runs rests at its 87px floor over a 62px cap (228 - 166), its padding 8, hairline 1 and
-  // header 32 leaving the list 46 over 21; folded the list is its inset 4.
+  // Unfolded at 844x390 fine, Runs rests at its 87px floor, its padding 8, hairline 1 and header 32 leaving the list
+  // 46, its cap held there too; folded the list is its inset 4.
   for (const fold of [true, false]) {
-    it(`slides ${fold ? "shut" : "open"} on a phone held sideways at the slide's own height, never the cap's`, async () => {
+    it(`slides ${fold ? "shut" : "open"} on a phone held sideways at the slide's own height, never its floor's or cap's`, async () => {
       await crowd(844, 390, "fine", `slide-${String(fold)}`);
       if (!fold) {
         toggle().click();
@@ -1228,8 +1264,6 @@ describe("on a short screen", () => {
             `${String(t)} of the way`,
           ).toBeLessThanOrEqual(1);
         }
-        const nearUnfolded = slide.at(fold ? 0.1 : 0.9).h;
-        expect(nearUnfolded, "above the cap where the slide is near the floor").toBeGreaterThan(21);
       } finally {
         await slide.done();
       }
@@ -1237,8 +1271,64 @@ describe("on a short screen", () => {
     });
   }
 
-  // Two tabs keep 126 and leave Runs 102; Open folded to the active tab keeps 82 and leaves Runs 146. Runs' cap
-  // moves over the fold's tween, so in no frame does Runs move more than the tween's share of the 44px that frame.
+  /** Press a neighbour's header and step its list's slide frame by frame, with Runs' own transitions on the
+   *  same clock: Runs' cap moves over the fold's tween, so in no frame does Runs move more than the tween's
+   *  share of `before` to `after` that frame. */
+  async function inStep(
+    press: HTMLButtonElement,
+    list: HTMLElement,
+    [before, after]: readonly [number, number],
+  ): Promise<void> {
+    expect(
+      Math.abs(heights().runs - before),
+      `Runs ${String(heights().runs)}px`,
+    ).toBeLessThanOrEqual(1);
+    press.click();
+    const [slide] = slides(list);
+    const effect = slide?.effect;
+    if (slide === undefined || !(effect instanceof KeyframeEffect)) {
+      throw new Error(`#${list.id} does not slide`);
+    }
+    const moving = [
+      slide,
+      ...el("runs-list")
+        .getAnimations()
+        .filter((a) => a instanceof CSSTransition),
+    ];
+    for (const a of moving) {
+      a.pause();
+    }
+    const duration = Number(effect.getComputedTiming().duration);
+    const frame = 1000 / 60;
+    let h = before;
+    let eased = 0;
+    try {
+      for (let t = 0; t < duration + frame; t += frame) {
+        for (const a of moving) {
+          a.currentTime = Math.min(t, duration);
+        }
+        const nh = heights().runs;
+        const ne = effect.getComputedTiming().progress ?? 1;
+        expect(
+          Math.abs(nh - h),
+          `Runs moves ${String(nh - h)}px at ${t.toFixed(1)}ms`,
+        ).toBeLessThanOrEqual(Math.abs(after - before) * (ne - eased) + 1);
+        h = nh;
+        eased = ne;
+      }
+    } finally {
+      for (const a of moving) {
+        a.play();
+      }
+      await rest();
+    }
+    expect(
+      Math.abs(heights().runs - after),
+      `Runs ${String(heights().runs)}px`,
+    ).toBeLessThanOrEqual(1);
+  }
+
+  // Two tabs keep 126 and leave Runs 102; Open folded to the active tab keeps 82 and leaves Runs 146.
   for (const fold of [true, false]) {
     it(`moves Runs in step with Open's ${fold ? "fold" : "unfold"} on a phone held sideways`, async () => {
       await crowd(844, 390, "fine", `neighbour-${String(fold)}`, 2);
@@ -1252,56 +1342,35 @@ describe("on a short screen", () => {
         open.click();
         await rest();
       }
-      const [before, after] = fold ? [102, 146] : [146, 102];
-      expect(
-        Math.abs(heights().runs - before),
-        `Runs ${String(heights().runs)}px`,
-      ).toBeLessThanOrEqual(1);
+      await inStep(open, el("tab-list"), fold ? [102, 146] : [146, 102]);
+    });
+  }
 
-      open.click();
-      // Every frame is timed by Open's slide, and Runs' own transitions run on the same clock.
-      const [slide] = slides(el("tab-list"));
-      const effect = slide?.effect;
-      if (slide === undefined || !(effect instanceof KeyframeEffect)) {
-        throw new Error("Open's list does not slide");
-      }
-      const moving = [
-        slide,
-        ...el("runs-list")
-          .getAnimations()
-          .filter((a) => a instanceof CSSTransition),
-      ];
-      for (const a of moving) {
-        a.pause();
-      }
-      const duration = Number(effect.getComputedTiming().duration);
-      const frame = 1000 / 60;
-      let h = before;
-      let eased = 0;
+  // One tab keeps 82; History folded adds its gap 4, header 32 and inset 4 and leaves Runs 106, and unfolded on a
+  // closed chat and More it takes the tab sections to their 141 and leaves Runs its 87.
+  for (const fold of [true, false]) {
+    it(`moves Runs in step with History's ${fold ? "fold" : "unfold"} on a phone held sideways`, async () => {
+      await crowd(844, 390, "fine", `history-step-${String(fold)}`, 1);
+      closedChats(1);
       try {
-        for (let t = 0; t < duration + frame; t += frame) {
-          for (const a of moving) {
-            a.currentTime = Math.min(t, duration);
-          }
-          const nh = heights().runs;
-          const ne = effect.getComputedTiming().progress ?? 1;
-          expect(
-            Math.abs(nh - h),
-            `Runs moves ${String(nh - h)}px at ${t.toFixed(1)}ms`,
-          ).toBeLessThanOrEqual(Math.abs(after - before) * (ne - eased) + 1);
-          h = nh;
-          eased = ne;
-        }
-      } finally {
-        for (const a of moving) {
-          a.play();
-        }
+        await settle();
         await rest();
+        const history = shell.querySelector<HTMLButtonElement>(
+          "#history-section > h2 > button.side-section-toggle",
+        );
+        if (history === null || el("history-section").hidden) {
+          throw new Error("no History header");
+        }
+        expect(el("history-list").querySelectorAll(":scope > li")).toHaveLength(2);
+        // History starts folded.
+        if (fold) {
+          history.click();
+          await rest();
+        }
+        await inStep(history, el("history-list"), fold ? [87, 106] : [106, 87]);
+      } finally {
+        await noClosedChats();
       }
-      expect(
-        Math.abs(heights().runs - after),
-        `Runs ${String(heights().runs)}px`,
-      ).toBeLessThanOrEqual(1);
     });
   }
 

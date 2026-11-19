@@ -62,7 +62,7 @@ vi.mock("./api-client.js", async (importOriginal) => {
   return {
     ...(await importOriginal<typeof ApiClient>()),
     apiGetTyped: vi.fn((path: string) => tabs(path)),
-    // No run header: a run's row then draws with no state, which no fold reads.
+    // No run header: a run's row then draws with no state, which no case here asserts.
     apiGetOrError: vi.fn(() =>
       Promise.resolve({ ok: false, status: 404, data: null, error: "not found" }),
     ),
