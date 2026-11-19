@@ -20,7 +20,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/filemode/filemodetest"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
@@ -1860,12 +1859,19 @@ func kasJSON(v any) json.RawMessage {
 
 var errHoldFault = errors.New("the engine did not answer")
 
-// holdLogs routes the log records that name a cell's run, chat or session to that cell, so cells run side by side,
-// and drops every other record.
+// holdLogs routes the log records that name a live cell's run, chat or session to that cell, so cells run side by
+// side. While any cell is live it drops every other record, the matrix's own unnamed ones being hundreds of
+// thousands; otherwise it passes them to out.
 type holdLogs struct {
 	sinks *sync.Map
+	live  *atomic.Int64
+	out   slog.Handler
 	attrs []slog.Attr
 }
+
+// holdRouter is the package's default logger, installed by TestMain before any test runs, so the matrix's cells
+// capture their records with no test swapping the process logger.
+var holdRouter = &holdLogs{sinks: &sync.Map{}, live: &atomic.Int64{}, out: slog.NewTextHandler(os.Stderr, nil)}
 
 // holdNamed finds the cell names in a record's attribute, an error's text included.
 var holdNamed = regexp.MustCompile(`\b(?:wf|chat|sess)_hold_\d+\b`)
@@ -1939,7 +1945,10 @@ var _ slog.Handler = (*holdLogs)(nil)
 
 func (h *holdLogs) Enabled(_ context.Context, level slog.Level) bool { return level >= slog.LevelInfo }
 
-func (h *holdLogs) Handle(_ context.Context, rec slog.Record) error {
+func (h *holdLogs) Handle(ctx context.Context, rec slog.Record) error {
+	if h.live.Load() == 0 {
+		return h.out.Handle(ctx, rec)
+	}
 	var keys, attrs []string
 	visit := func(a slog.Attr) bool {
 		text := a.String()
@@ -1976,11 +1985,11 @@ func (h *holdLogs) Handle(_ context.Context, rec slog.Record) error {
 }
 
 func (h *holdLogs) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &holdLogs{sinks: h.sinks, attrs: slices.Concat(h.attrs, attrs)}
+	return &holdLogs{sinks: h.sinks, live: h.live, out: h.out.WithAttrs(attrs), attrs: slices.Concat(h.attrs, attrs)}
 }
 
 func (h *holdLogs) WithGroup(name string) slog.Handler {
-	return &holdLogs{sinks: h.sinks, attrs: h.attrs}
+	return &holdLogs{sinks: h.sinks, live: h.live, out: h.out.WithGroup(name), attrs: h.attrs}
 }
 
 // spentCounts is the try count each exhausted reader's ERROR reports, as its attribute.
@@ -2453,7 +2462,7 @@ func (c *holdCell) watchMarks(vault *signin.Vault, pre bool) {
 var holdCellSeq atomic.Int64
 
 // newHoldCell boots a cell's first runtime over a fresh KAS run, signed in as the cell's boot says.
-func newHoldCell(t *testing.T, router *holdLogs, c holdCombo) *holdCell {
+func newHoldCell(t *testing.T, c holdCombo) *holdCell {
 	t.Helper()
 	n := holdCellSeq.Add(1)
 	cell := &holdCell{
@@ -2467,13 +2476,15 @@ func newHoldCell(t *testing.T, router *holdLogs, c holdCombo) *holdCell {
 	if c.holdRead() {
 		cell.f.read = c.read
 	}
+	holdRouter.live.Add(1)
 	for _, key := range []string{cell.id, string(cell.chat), cell.session} {
-		router.sinks.Store(key, cell.logs)
+		holdRouter.sinks.Store(key, cell.logs)
 	}
 	t.Cleanup(func() {
 		for _, key := range []string{cell.id, string(cell.chat), cell.session} {
-			router.sinks.Delete(key)
+			holdRouter.sinks.Delete(key)
 		}
+		holdRouter.live.Add(-1)
 	})
 	k := &kasRun{
 		id: cell.id, parent: testLaunchSession, onWriteFault: cell.f.onWriteFault, onEntryRead: cell.f.failEntryRead,
@@ -3373,7 +3384,7 @@ func (c *holdCell) run(t *testing.T, steps []gateHoldStep) {
 // shared by every door would remove the replacement (removeIfBridge) and open a further generation.
 func TestGateHold_EachDoorOpensItsOwnHandleOverTheCellsRun(t *testing.T) {
 	t.Parallel()
-	c := newHoldCell(t, &holdLogs{sinks: &sync.Map{}}, holdCombo{kind: kindChat, form: formGate})
+	c := newHoldCell(t, holdCombo{kind: kindChat, form: formGate})
 	reopen := func() *sharedBridge {
 		t.Helper()
 		c.h.markSessionsForReload("a test's reload")
@@ -3407,15 +3418,11 @@ func TestGateHold_EachDoorOpensItsOwnHandleOverTheCellsRun(t *testing.T) {
 const holdCellsAtOnce = 48
 
 // Every cell of the hold matrix, each through the real entry points, held, persisted and resumed as holdModel says.
-// The cells run side by side, each on its own runtime, its logs routed by its run's, chat's and session's names.
-// Parallel though it swaps the global logger: the parallel phase starts once every serial test, every log capture
-// among them, has returned, and the router drops the records that name no cell. In the test's own process, not
+// The cells run side by side, each on its own runtime, its logs routed by holdRouter. In the test's own process, not
 // an Alone child: a child's CPU would come on top of the package's share of the runner. Each cell runs in its own
 // synctest bubble, so its quiet windows and wait caps are bubble time: a loaded host cannot stretch them.
 func TestGateHold_EveryCell(t *testing.T) {
 	t.Parallel()
-	router := &holdLogs{sinks: &sync.Map{}}
-	capture.SwapDefault(t, slog.New(router))
 	byRow := map[string][]holdCombo{}
 	var rows []string
 	for _, c := range everyCombo() {
@@ -3438,7 +3445,7 @@ func TestGateHold_EveryCell(t *testing.T) {
 					t.Run(c.name(), func(t *testing.T) {
 						synctest.Test(t, func(t *testing.T) {
 							steps, _ := holdModel(c)
-							newHoldCell(t, router, c).run(t, steps)
+							newHoldCell(t, c).run(t, steps)
 						})
 					})
 				})
