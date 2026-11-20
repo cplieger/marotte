@@ -142,7 +142,7 @@ func (rt *Runtime) resumeInterrupted(ctx context.Context, set interruptSet) {
 // does: once while KAS may still list it running, an unreadable run included, and while its resume fails.
 func (rt *Runtime) resumeParentless(ctx context.Context, workflowID string) {
 	resume := func(ctx context.Context) (failed bool) {
-		return rt.runs.resumeIfInterrupted(ctx, marotte.RunHostChatID(workflowID), workflowID) == resumeFailed
+		return rt.runs.healResume(ctx, marotte.RunHostChatID(workflowID), workflowID) == resumeFailed
 	}
 	if !resume(ctx) {
 		if st, ok := rt.runs.inspect(ctx, workflowID); ok && st.State.Status != marotte.RunStatusRunning {

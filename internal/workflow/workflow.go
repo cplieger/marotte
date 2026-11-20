@@ -33,32 +33,37 @@ type node struct {
 	EndedAt          string           `json:"endedAt"`
 	Children         []node           `json:"children"`
 	Attention        []attentionEntry `json:"attention"`
-	// The lenient fields (decodeLenient): absent when KAS sends none or a value that does not parse.
-	CompletionSignalSource string `json:"-"`
-	unreadable             []string
-	ContinuationAttempts   int  `json:"-"`
-	AwaitingUserInput      bool `json:"-"`
+	// The lenient fields, kept raw so a drifted type never fails the reply: the ask core keeps its last asks on a
+	// failed decode. Read through signalSource and continuations; Unreadable reports one that does not parse.
+	RawSignalSource  json.RawMessage `json:"completionSignalSource"`
+	RawContinuations json.RawMessage `json:"continuationAttempts"`
+	RawAwaiting      json.RawMessage `json:"awaitingUserInput"`
 }
 
-// UnmarshalJSON decodes the node and its lenient fields: a drifted type in one of them must not fail the reply,
-// since the ask core keeps its last asks on a failed decode.
-func (n *node) UnmarshalJSON(b []byte) error {
-	type plain node
-	var w struct {
-		CompletionSignalSource json.RawMessage `json:"completionSignalSource"`
-		ContinuationAttempts   json.RawMessage `json:"continuationAttempts"`
-		AwaitingUserInput      json.RawMessage `json:"awaitingUserInput"`
-		plain
+// signalSource is the node's completionSignalSource, "" when absent or unparsed.
+func (n *node) signalSource() string {
+	v, _ := rawAs[string](n.RawSignalSource)
+	return v
+}
+
+// continuations is the node's continuationAttempts, 0 when absent or unparsed.
+func (n *node) continuations() int {
+	v, _ := rawAs[int](n.RawContinuations)
+	return v
+}
+
+// rawAs parses raw as T; ok is false when raw is absent, null, or does not parse.
+func rawAs[T any](raw json.RawMessage) (v T, ok bool) {
+	if len(raw) == 0 || string(raw) == jsonNull {
+		return v, false
 	}
-	if err := json.Unmarshal(b, &w); err != nil {
-		return err
-	}
-	*n = node(w.plain)
-	n.unreadable = nil
-	lenient(w.CompletionSignalSource, &n.CompletionSignalSource, "node "+n.NodeID+" completionSignalSource", &n.unreadable)
-	lenient(w.ContinuationAttempts, &n.ContinuationAttempts, "node "+n.NodeID+" continuationAttempts", &n.unreadable)
-	lenient(w.AwaitingUserInput, &n.AwaitingUserInput, "node "+n.NodeID+" awaitingUserInput", &n.unreadable)
-	return nil
+	return v, json.Unmarshal(raw, &v) == nil
+}
+
+// unparsed reports raw present and not parsing as T.
+func unparsed[T any](raw json.RawMessage) bool {
+	_, ok := rawAs[T](raw)
+	return !ok && len(raw) > 0 && string(raw) != jsonNull
 }
 
 // jsonNull is JSON's null literal, which KAS sends for an absent value.
@@ -118,7 +123,7 @@ type State struct {
 	unreadable  []string
 }
 
-// UnmarshalJSON decodes the state and its run-level pause record leniently (node.UnmarshalJSON says why).
+// UnmarshalJSON decodes the state and its run-level pause record leniently (node's raw fields say why).
 func (s *State) UnmarshalJSON(b []byte) error {
 	type plain State
 	var w struct {
@@ -168,8 +173,23 @@ func Unreadable(s *State) []string {
 		return nil
 	}
 	out := slices.Clone(s.unreadable)
-	for _, v := range nodes(s) {
-		out = append(out, v.n.unreadable...)
+	var walk func(n *node)
+	walk = func(n *node) {
+		if unparsed[string](n.RawSignalSource) {
+			out = append(out, "node "+n.NodeID+" completionSignalSource="+string(n.RawSignalSource))
+		}
+		if unparsed[int](n.RawContinuations) {
+			out = append(out, "node "+n.NodeID+" continuationAttempts="+string(n.RawContinuations))
+		}
+		if unparsed[bool](n.RawAwaiting) {
+			out = append(out, "node "+n.NodeID+" awaitingUserInput="+string(n.RawAwaiting))
+		}
+		for i := range n.Children {
+			walk(&n.Children[i])
+		}
+	}
+	if s.Root != nil {
+		walk(s.Root)
 	}
 	return out
 }

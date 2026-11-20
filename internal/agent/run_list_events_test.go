@@ -158,7 +158,7 @@ func TestRunList_Events(t *testing.T) {
 				w.queued("u")
 				w.door("d", "1 new")
 				w.wantOrder(t, "while the user's steer is unread", "m-a:running u:in_kas d:pending")
-				w.l.steerRead("u")
+				w.l.steerRead("u", false)
 				w.advance()
 			},
 			wantOrder: "m-a:running d:offered", wantSteer: "u d",
@@ -632,7 +632,7 @@ func TestRunList_AJoinedPromptNotOpenedKeepsEveryRow(t *testing.T) {
 		w.unreadUser("u2")
 		w.advance()
 		var ids []string
-		next, _ := w.l.endLife()
+		next, _, _ := w.l.endLife()
 		for _, e := range next {
 			ids = append(ids, e.ID)
 		}
@@ -802,7 +802,7 @@ func TestRunList_AnEntryWhoseLaunchFailsIsPausedNotTakenAgain(t *testing.T) {
 		w.door("d", "1 new")
 		w.l.takeEffects()
 		w.failLaunch(t, "d")
-		next, _ := w.l.endLife()
+		next, _, _ := w.l.endLife()
 		w = newTableWorld()
 		w.l.load(next, nil, 0)
 		w.wantOrder(t, "the next life", "d:paused")
@@ -827,7 +827,7 @@ func TestRunList_AnEntryWhoseLaunchFailsIsPausedNotTakenAgain(t *testing.T) {
 		w.closed("u", listClose{})
 		w.user("v", marotte.RunWantPrompt)
 		w.wantOrder(t, "the reader's send", "v:starting d:paused")
-		next, _ := w.l.endLife()
+		next, _, _ := w.l.endLife()
 		w = newTableWorld()
 		w.l.load(next, nil, 0)
 		w.door("d2", "2 new")

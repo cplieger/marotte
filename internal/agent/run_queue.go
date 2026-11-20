@@ -36,6 +36,10 @@ type runEffectsHost interface {
 	steerEntry(lc *chatLifecycle, e *runEntry)
 	// spawnRun runs fn on the process's in-flight count, refused once shutdown began.
 	spawnRun(fn func())
+	// attentionClosed hands the run-attention ledger the ends of a chat's attention entries. Called with no lock held.
+	attentionClosed(chatID marotte.ChatID, closes []attentionClose)
+	// afterRun runs fn after d on the process's in-flight count, refused once shutdown began.
+	afterRun(d time.Duration, fn func())
 }
 
 var errRunRecordGone = errors.New("agent: the chat has no record for its run list")
@@ -67,6 +71,30 @@ func (lc *chatLifecycle) flushRunLocked() {
 	for _, e := range fx.steer {
 		host.steerEntry(lc, e)
 	}
+	if len(fx.closed) > 0 {
+		chatID, closes := lc.chatID, fx.closed
+		host.spawnRun(func() { host.attentionClosed(chatID, closes) })
+	}
+	if !fx.gateAt.IsZero() {
+		lc.armGateLocked(fx.gateAt)
+	}
+}
+
+// armGateLocked runs the taker again once the model gate opens at at, unless a run is already due no later. Caller
+// holds mu.
+func (lc *chatLifecycle) armGateLocked(at time.Time) {
+	if (!lc.gateAt.IsZero() && !lc.gateAt.After(at)) || lc.reg.runHost == nil {
+		return
+	}
+	lc.gateAt = at
+	lc.reg.runHost.afterRun(max(at.Sub(lc.reg.gate.clock()), 0), func() {
+		lc.mu.Lock()
+		defer lc.mu.Unlock()
+		if lc.gateAt.Equal(at) {
+			lc.gateAt = time.Time{}
+		}
+		lc.wakeLocked()
+	})
 }
 
 // writeRunLocked stores the list's projection by the version rule: the stored version and the list's, plus one. A
@@ -121,10 +149,16 @@ func (lc *chatLifecycle) orderFactsLocked() orderFacts {
 			return a.res, takeGranted
 		},
 		newOffer: func() uint64 { return r.offerTokens.Add(1) },
-		stamp:    lc.stamp,
-		nextSeq:  lc.nextSeq,
-		stopSeq:  lc.stopSeq,
-		admit:    may.admit,
+		gate: func(e *runEntry) (bool, time.Time) {
+			if r.gate == nil {
+				return true, time.Time{}
+			}
+			return r.gate.admit(e.id)
+		},
+		stamp:   lc.stamp,
+		nextSeq: lc.nextSeq,
+		stopSeq: lc.stopSeq,
+		admit:   may.admit,
 	}
 }
 
@@ -180,8 +214,9 @@ func (r *turnRegistry) loadRunLocked(lc *chatLifecycle) {
 // endRunLocked is the run list's part of the life's end: every waiter is answered, and the list the next life
 // starts from is recorded for writeFinalRun. Caller holds mu.
 func (lc *chatLifecycle) endRunLocked() {
-	final, steers := lc.run.endLife()
+	final, steers, lost := lc.run.endLife()
 	lc.runSteers = steers
+	lc.attentionLost = append(lc.attentionLost, lost...)
 	// Per entry, so an empty list matches whether it is stored as nil or as an empty slice.
 	same := slices.EqualFunc(final, lc.run.stored, func(a, b marotte.RunEntry) bool { return reflect.DeepEqual(a, b) })
 	if same && !lc.run.dirty {
@@ -205,7 +240,16 @@ func (lc *chatLifecycle) writeFinalRun() {
 	lc.mu.Lock()
 	final, owed, written := lc.runFinal, lc.runFinalOwed, lc.runWritten
 	lc.runFinal, lc.runFinalOwed = nil, false
+	lost := lc.attentionLost
+	lc.attentionLost = nil
 	lc.mu.Unlock()
+	if len(lost) > 0 && lc.reg != nil && lc.reg.runHost != nil {
+		closes := make([]attentionClose, len(lost))
+		for i, id := range lost {
+			closes[i] = attentionClose{entryID: id, outcome: attnLost}
+		}
+		lc.reg.runHost.attentionClosed(lc.chatID, closes)
+	}
 	if !owed || lc.reg == nil || lc.reg.runHost == nil || marotte.IsRunHostChat(lc.chatID) {
 		return
 	}
@@ -986,6 +1030,22 @@ func (lc *chatLifecycle) closeRunEntryLocked(t *activeTurn) {
 		c = *t.closeFacts
 	}
 	c.turnID, c.seq = t.ID, t.Seq
+	if c.throttled && lc.reg != nil && lc.reg.gate != nil {
+		lc.reg.gate.sawThrottle()
+	}
 	f := lc.orderFactsLocked()
 	lc.run.turnClosed(c, &f)
+}
+
+func (bc *bridgeCoordinator) attentionClosed(chatID marotte.ChatID, closes []attentionClose) {
+	if bc.onAttentionClosed == nil {
+		return
+	}
+	for _, c := range closes {
+		bc.onAttentionClosed(chatID, c.entryID, c.outcome)
+	}
+}
+
+func (bc *bridgeCoordinator) afterRun(d time.Duration, fn func()) {
+	bc.lifecycle.afterUnlessDraining(d, fn)
 }

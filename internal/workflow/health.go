@@ -96,8 +96,9 @@ type HealthFacts struct {
 	// HungAfter is the silence a counted step may keep before it reads hung; zero means DefaultHungAfter.
 	HungAfter time.Duration
 	HealTry   int
-	// Reachable is false while the ask cell's newest read failed.
-	Reachable bool
+	// Reachable is false while the ask cell's newest read failed or it holds none; ReadFailed tells the first.
+	Reachable  bool
+	ReadFailed bool
 	// Launched: the run has a launching chat.
 	Launched bool
 	// InterruptedPause: the run's pause reason is one a restart writes (marotte's resumablePause).
@@ -164,7 +165,11 @@ const (
 // Precedence; then, for a paused run, engine_paused, so no paused run reads healthy. Pure: no clock, no I/O.
 func Health(in Inspect, f *HealthFacts, now time.Time) RunHealth {
 	if !in.OK || in.State == nil {
-		return RunHealth{State: HealthUnknown, Lead: -1, Why: "marotte has not read this run since it started"}
+		why := "marotte has not read this run since it started"
+		if f.ReadFailed {
+			why = "marotte cannot read this run"
+		}
+		return RunHealth{State: HealthUnknown, Lead: -1, Why: why}
 	}
 	s := in.State
 	h := RunHealth{Status: s.Status, Lead: -1, Steps: stepsHealth(in, f, now)}
@@ -220,8 +225,8 @@ func ownerState(s *State, f *HealthFacts, h *RunHealth) bool {
 	return true
 }
 
-// pauseRecordState sets h to engine_paused for a paused run whose own record explains the pause, reporting whether
-// one does.
+// pauseRecordState sets h to engine_paused for a paused run whose own record, or marotte's stop of its automatic
+// resumes, explains the pause, reporting whether one does.
 func pauseRecordState(s *State, f *HealthFacts, h *RunHealth) bool {
 	p := &s.Pause
 	switch {
@@ -230,6 +235,8 @@ func pauseRecordState(s *State, f *HealthFacts, h *RunHealth) bool {
 	case p.HasDetail:
 		h.Why, h.Key = detailWhy(p, f), p.DetailAt
 		h.Since = parseTime(p.DetailAt)
+	case !f.AutoResumeStoppedAt.IsZero():
+		h.Why = "marotte stopped resuming it: it kept pausing with no progress between resumes"
 	case f.InterruptedPause:
 		h.Why = "a restart paused it and marotte's resume did not take it"
 	default:
@@ -351,7 +358,7 @@ func (c *stepClassifier) parkedStep(st *StepHealth, n *node, ask *Ask, runPaused
 		}
 		st.Key = ""
 		return
-	case n.CompletionSignal == signalNeedInput && n.CompletionSignalSource == sourceStatusUpdate:
+	case n.CompletionSignal == signalNeedInput && n.signalSource() == sourceStatusUpdate:
 		st.State, st.Why = HealthPaused, "was paused by its parent or a person"
 	case n.CompletionSignal == signalNeedInput || (n.CompletionSignal == "" && c.sole && c.s.PauseReason == questionPauseReason):
 		st.State, st.Why = HealthWaitingOnPerson, "asked a question"
@@ -374,7 +381,7 @@ func enginePausedWhy(n *node, facts *StepFacts) string {
 	switch {
 	case facts.TransientFailure != "":
 		cause = "its turn failed on " + facts.TransientFailure + " after kiro-cli's own retries"
-	case n.ContinuationAttempts >= continuationCap:
+	case n.continuations() >= continuationCap:
 		cause = "kiro-cli stopped continuing it after three turns with no signal"
 	}
 	return cause + "; kiro-cli holds the branch until its siblings finish"

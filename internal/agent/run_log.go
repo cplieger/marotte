@@ -903,6 +903,14 @@ func (r *runLog) liveSteps(workflowID string) map[string]stepLive {
 	return out
 }
 
+// throttledStop reports a step whose current KAS turn ended `error` on a model throttle.
+func (r *runLog) throttledStop(workflowID, nodePath string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t := r.openLocked(workflowID, nodePath)
+	return t != nil && t.errStop && rpcerr.Mapped{ErrorType: t.lastError.ErrorType, RetryErrorType: t.lastError.RetryErrorType}.Throttle()
+}
+
 // stepFailure is an open step turn whose current KAS turn ended `error`: its path, its error class, and whether that
 // class is transient (runTurn.transientFailure).
 type stepFailure struct {

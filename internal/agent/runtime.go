@@ -506,7 +506,9 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		resumes:               keylock.New(cmp.Compare[string]),
 		launchLocks:           keylock.New(cmp.Compare[string]),
 		sweep:                 gateSweep{turns: keylock.New(cmp.Compare[string])},
+		attention:             newRunAttention(),
 	}
+	runs.attention.host = runs
 
 	h := &Runtime{
 		lifecycle:      lc,
@@ -596,6 +598,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		runs.useLog(newRunLog(lc.configDir))
 	}
 	h.coord = newBridgeCoordinator(h)
+	h.coord.onAttentionClosed = runs.attention.closed
 	if runs.log != nil {
 		runs.log.steps = h.coord.turns
 	}
@@ -658,6 +661,9 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	h.translator = translate.New(h.translateRoles())
 	runs.translate = h.translator
 	h.dispatcher = command.New()
+	runs.notifyChat = func(ctx context.Context, chat marotte.ChatID, text string) (command.NotifyReceipt, error) {
+		return h.dispatcher.Notify(ctx, chat, text, &marotte.Caller{Kind: marotte.CallerKindMarotte, Label: "marotte"}, command.NotifyOptions{})
+	}
 	h.registerCommandHandlers()
 	runs.runEnded = h.membership.WakeRetention
 	h.initDispatch()
@@ -673,6 +679,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	requireCollaborators(h)
 	h.sessionSeen.chat, _ = h.sessionFingerprint(lc.shutdownCtx)
 	lc.loops.Go(func() { h.powers.syncLoop(lc.shutdownCtx, lc.done) })
+	lc.loops.Go(func() { runs.attention.loop(lc.done) })
 	h.engine.start()
 	return h
 }

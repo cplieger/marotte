@@ -1,11 +1,14 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/workflow"
 )
 
 // stopNotices are the steers marotte wrote that KAS files as a warning notification: the parent agent's copy of the
@@ -35,26 +38,72 @@ func runOutcomePushes(fp *runOutcomePush) []runPushSent {
 	}
 }
 
-// When marotte stops resuming a throttled run, the agent that launched it is told in its own session, as a warning
-// notification its next turn reads, naming the run so it can resume or end it.
-func TestHealStop_TellsTheParentSession(t *testing.T) {
+// onClock puts the rig's ledger, model gate and run log on a test clock, and has every turn on the launching chat's
+// session answer with words, as the engine's read loop would fold them, so a wake's turn completes.
+func (g *throttleRig) onClock() *attnClock {
+	clk := &attnClock{t: time.Now()}
+	g.h.runs.attention.setClock(clk.now)
+	g.h.coord.turns.gate.setClock(clk.now)
+	g.h.runs.log.setClock(clk.now)
+	g.br.mu.Lock()
+	prev := g.br.onCall
+	g.br.mu.Unlock()
+	g.br.setOnCall(func(method string, p map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if method == marotte.MethodPrompt && fmt.Sprint(p[marotte.KeySessionID]) == parkSession {
+			g.h.translateACPEvent(parkChat, g.h.originOf(parkChat), newSessionChunkMsg(parkSession, "On it."))
+			return json.RawMessage(`{"stopReason":"end_turn"}`), nil, true
+		}
+		return prev(method, p)
+	})
+	return clk
+}
+
+// stopRead waits until the ledger reads the run as marotte's stopped resumes, answering its facts.
+func (g *throttleRig) stopRead(t *testing.T) runAttentionFacts {
+	t.Helper()
+	var f runAttentionFacts
+	waitUntil(t, "the ledger's read of the stop", func() bool {
+		var ok bool
+		f, ok = g.h.runs.attention.facts(gateRunID)
+		return ok && f.health.State == workflow.HealthEnginePaused && strings.Contains(f.next[""], "stopped resuming")
+	})
+	return f
+}
+
+// deliver runs the ledger past its coalescing window and answers the wake turns c1 then holds.
+func (g *throttleRig) deliver(t *testing.T, clk *attnClock) int {
+	t.Helper()
+	clk.advance(attentionCoalesce + time.Second)
+	g.h.runs.attention.tick()
+	time.Sleep(20 * time.Millisecond)
+	joinInflight(g.h)
+	return wakesOf(t, g.h.chatStore.(*testChatStore), parkChat)
+}
+
+// When marotte stops resuming a throttled run, the chat that launched it is woken with a turn naming the run, and
+// the next move it reads names the cause and the resume; no notice is steered into its session.
+func TestHealStop_WakesTheLaunchingChat(t *testing.T) {
 	t.Parallel()
 	g := newThrottleRig(t, nil)
+	clk := g.onClock()
 	g.spend(t)
-	waitUntil(t, "the parent's notice", func() bool { return len(g.stopNotices()) > 0 })
-
-	notices := g.stopNotices()
-	if len(notices) != 1 {
-		t.Fatalf("the stop wrote %d notices to the parent, want one: %v", len(notices), notices)
+	f := g.stopRead(t)
+	if n := g.deliver(t, clk); n != 1 {
+		t.Fatalf("the stop woke the launching chat %d times, want once", n)
 	}
-	if got := fmt.Sprint(notices[0][marotte.KeySessionID]); got != parkSession {
-		t.Errorf("the notice went to session %q, want the launching session %q", got, parkSession)
-	}
-	msg, _ := notices[0]["message"].(string)
-	for _, want := range []string{gateRunID, "publish", "throttling"} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("the parent's notice %q does not name %q", msg, want)
+	wake := nextPrompt(t, g.h.chatStore.(*testChatStore), parkChat, 0)
+	for _, want := range []string{gateRunID, "publish", "stopped resuming"} {
+		if !strings.Contains(wake.Text, want) {
+			t.Errorf("the wake %q does not name %q", wake.Text, want)
 		}
+	}
+	for _, want := range []string{"for model throttling", "update_workflow resume"} {
+		if !strings.Contains(f.next[""], want) {
+			t.Errorf("the run's next move %q does not name %q", f.next[""], want)
+		}
+	}
+	if n := g.stopNotices(); len(n) != 0 {
+		t.Errorf("the stop steered %d warning notices into the launching session, want none: %v", len(n), n)
 	}
 }
 
@@ -81,19 +130,23 @@ func TestHealStop_PushesUnderWorkflowRuns(t *testing.T) {
 }
 
 // A run resumed after the stop (its parent's resume reaches marotte only as KAS's run_start) is healed again, and
-// when its next throttles spend the budget again, that stop is told too. A pause read while the stop stands tells
-// nobody twice.
+// when its next throttles spend the budget again, that stop wakes the chat too. A pause read while the stop stands
+// wakes nobody twice.
 func TestHealStop_AThrottleAfterAResumedStopIsToldAgain(t *testing.T) {
 	t.Parallel()
 	fp := newRunOutcomePush()
 	g := newThrottleRig(t, nil, WithPush(fp))
+	clk := g.onClock()
 	g.spend(t)
-	waitUntil(t, "the first notice", func() bool { return len(g.stopNotices()) == 1 })
+	g.stopRead(t)
+	if n := g.deliver(t, clk); n != 1 {
+		t.Fatalf("the first stop woke the chat %d times, want once", n)
+	}
 
 	g.throttled(t)
 	joinInflight(g.h)
-	if n := len(g.stopNotices()); n != 1 {
-		t.Fatalf("a pause read while the stop stands wrote %d notices, want the first alone", n)
+	if n := g.deliver(t, clk); n != 1 {
+		t.Fatalf("a pause read while the stop stands woke the chat %d times in all, want the first alone", n)
 	}
 
 	g.br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, gateRunID, marotte.RunStatusRunning, ""))
@@ -101,14 +154,18 @@ func TestHealStop_AThrottleAfterAResumedStopIsToldAgain(t *testing.T) {
 	if got := autoResumeStoppedAt(t, g.h); got != "" {
 		t.Fatalf("a resume KAS ran left auto_resume_stopped_at = %q", got)
 	}
+	readNow(t, g.h, gateRunID)
 	base := g.resumes.Load()
 	for i := range int32(maxAutoHeals) {
 		g.throttled(t)
 		waitUntil(t, "the automatic resume", func() bool { return g.resumes.Load() == base+i+1 })
 	}
 	g.throttled(t)
-	waitUntil(t, "the second notice", func() bool { return len(g.stopNotices()) == 2 })
-	joinInflight(g.h)
+	waitUntil(t, "the second stop recorded", func() bool { return autoResumeStoppedAt(t, g.h) != "" })
+	g.stopRead(t)
+	if n := g.deliver(t, clk); n != 2 {
+		t.Errorf("two stops woke the chat %d times, want twice", n)
+	}
 	if n := len(runOutcomePushes(fp)); n != 2 {
 		t.Errorf("two stops pushed %d run notifications, want two", n)
 	}

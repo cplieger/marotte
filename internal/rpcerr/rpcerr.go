@@ -100,6 +100,9 @@ type Mapped struct {
 
 // The KAS class names and retry types marotte keys a remedy on.
 const (
+	clientThrottleError            = "ClientThrottleError"
+	modelThrottleError             = "ModelThrottleError"
+	serviceThrottleError           = "ServiceThrottleError"
 	RetryThrottling                = "THROTTLING"
 	contextWindowExceededError     = "ContextWindowExceededError"
 	genericValidationError         = "GenericValidationError"
@@ -130,9 +133,9 @@ var knownClasses = map[string]struct{}{
 	modelRegistryUnavailableError:       {},
 	"ModelRegistryUnauthenticatedError": {},
 	"ModelRegistryAccessDeniedError":    {},
-	"ClientThrottleError":               {},
-	"ModelThrottleError":                {},
-	"ServiceThrottleError":              {},
+	clientThrottleError:                 {},
+	modelThrottleError:                  {},
+	serviceThrottleError:                {},
 	"OverageLimitReachedError":          {},
 	"InternalServerException":           {},
 	"ServerConnectionResetError":        {},
@@ -175,9 +178,9 @@ var knownClasses = map[string]struct{}{
 // throttle, a stalled stream, a network or service fault), not the ones it fails a step on (acp-server.js Elr,
 // @kiro/agent 0.66.91).
 var transientClasses = map[string]struct{}{
-	"ClientThrottleError":        {},
-	"ModelThrottleError":         {},
-	"ServiceThrottleError":       {},
+	clientThrottleError:          {},
+	modelThrottleError:           {},
+	serviceThrottleError:         {},
 	"StreamIdleTimeoutError":     {},
 	"InternalServerException":    {},
 	"ServerConnectionResetError": {},
@@ -189,6 +192,15 @@ var transientClasses = map[string]struct{}{
 func (m Mapped) Transient() bool {
 	_, ok := transientClasses[m.ErrorType]
 	return ok || m.RetryErrorType == RetryThrottling
+}
+
+// Throttle reports whether the envelope names the account's model rate limit.
+func (m Mapped) Throttle() bool {
+	switch m.ErrorType {
+	case clientThrottleError, modelThrottleError, serviceThrottleError:
+		return true
+	}
+	return m.RetryErrorType == RetryThrottling
 }
 
 // authErrorNames are the backend's own names for a request refused because

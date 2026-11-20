@@ -358,11 +358,10 @@ func TestHealBudget_ThrottledAsksWithNoProgressStopWithTheThrottleRecord(t *test
 			}
 			g.throttledAsk(t, tc.last)
 			waitUntil(t, "the run's stop recorded", func() bool { return autoResumeStoppedAt(t, g.h) != "" })
-			waitUntil(t, "the parent's notice", func() bool { return len(g.stopNotices()) > 0 })
+			f := g.stopRead(t)
 			awaitStepAnswers(t, g, maxAutoHeals)
-			msg, _ := g.stopNotices()[0]["message"].(string)
-			if !strings.Contains(msg, "for model throttling") {
-				t.Errorf("the parent's notice %q does not say the run kept pausing for model throttling", msg)
+			if !strings.Contains(f.next[""], "for model throttling") {
+				t.Errorf("the run's next move %q does not say the run kept pausing for model throttling", f.next[""])
 			}
 			if p := g.pauseParams(); len(p) != 0 {
 				t.Errorf("stopping the automatic answers wrote pauses %v", p)

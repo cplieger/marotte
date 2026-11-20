@@ -316,6 +316,11 @@ func TestHealth_RunOrder(t *testing.T) {
 			want:  HealthEnginePaused, wantWhy: "marotte stopped resuming it",
 		},
 		{
+			name: "a question pause marotte stopped resuming reads the stop, not the question", fixture: "parked",
+			facts: HealthFacts{Launched: true, AutoResumeStoppedAt: healthNow.Add(-time.Minute)},
+			want:  HealthEnginePaused, wantWhy: "marotte stopped resuming it",
+		},
+		{
 			name: "a spent continuation budget is engine paused", fixture: "at-cap",
 			edit: func(doc map[string]any) {
 				delete(stateOf(doc), "pause")
@@ -398,6 +403,10 @@ func TestHealth_NoReadYetIsUnknown(t *testing.T) {
 	h := Health(Inspect{}, &HealthFacts{}, healthNow)
 	if h.State != HealthUnknown || !strings.Contains(h.Why, "has not read") {
 		t.Errorf("Health of no read = %q (%s), want unknown, not read", h.State, h.Why)
+	}
+	h = Health(Inspect{}, &HealthFacts{ReadFailed: true}, healthNow)
+	if h.State != HealthUnknown || !strings.Contains(h.Why, "cannot read") {
+		t.Errorf("Health of a failed first read = %q (%s), want unknown, cannot read", h.State, h.Why)
 	}
 }
 

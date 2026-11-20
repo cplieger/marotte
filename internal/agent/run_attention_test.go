@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
@@ -107,7 +109,7 @@ func (g *attnRig) call(method string, p map[string]any) (json.RawMessage, []*mar
 		g.mu.Unlock()
 		return raw, nil, ok
 	case marotte.MethodPrompt:
-		if p[marotte.KeySessionID] != parkSession {
+		if fmt.Sprint(p[marotte.KeySessionID]) != parkSession {
 			return nil, nil, false
 		}
 		g.mu.Lock()
@@ -117,7 +119,12 @@ func (g *attnRig) call(method string, p map[string]any) (json.RawMessage, []*mar
 		}
 		g.prompts++
 		g.mu.Unlock()
-		return promptReply(stop)
+		res, frames, _ := promptReply(stop)
+		// This hub reads no bridge's frames, so the turn's own are folded as the engine's read loop would.
+		for _, f := range frames {
+			g.h.translateACPEvent(parkChat, g.h.originOf(parkChat), f)
+		}
+		return res, nil, true
 	}
 	return nil, nil, false
 }
@@ -182,9 +189,10 @@ func (g *attnRig) read(t *testing.T, id string, raw json.RawMessage) {
 	readNow(t, g.h, id)
 }
 
-// deliver moves the clock past the coalescing window and runs the ledger's tick.
+// deliver moves the clock past the coalescing window, and past the model gate's spacing since the last wake started,
+// and runs the ledger's tick.
 func (g *attnRig) deliver() {
-	g.clk.advance(attentionCoalesce + time.Second)
+	g.clk.advance(max(attentionCoalesce, modelGateSpacing) + time.Second)
 	g.h.runs.attention.tick()
 }
 
@@ -387,7 +395,7 @@ func TestRunAttention_ARepark(t *testing.T) {
 			if len(wakes) != 1 {
 				t.Fatalf("c1 got %d wakes, want one: %q", len(wakes), wakes)
 			}
-			wantWakeNames(t, wakes[0], id, "perf", stateWords(workflow.HealthParkedSilently))
+			wantWakeNames(t, wakes[0], id, stateWords(workflow.HealthParkedSilently))
 		})
 	}
 }
@@ -416,6 +424,8 @@ func TestRunAttention_AnEnginePausedBranch(t *testing.T) {
 	}
 	g.h.runs.RunNodePaused(t.Context(), branchRun, step.Path)
 	readNow(t, g.h, branchRun)
+	// The step's throttled turn holds every marotte-started turn for the gate's quiet.
+	g.clk.advance(modelGateQuiet)
 	g.deliver()
 
 	wakes := g.awaitWakes(t, 1)
@@ -525,6 +535,12 @@ func TestRunAttention_UnfinishedSteps(t *testing.T) {
 			const id = "wf_00000000000000b1"
 			g.launch(t, id, "review")
 			nodePath := g.gradeStep(t, id, "seat-b", tc.kind)
+			if tc.kind == workflow.UnfinishedEmptyAnswer {
+				want := stepEmptyAnswerNoteText(id, "review", nodePath, "step-session-1", false)
+				if got := g.facts(t, id).next[nodePath]; got != want {
+					t.Errorf("next = %q, want the empty-answer advice %q", got, want)
+				}
+			}
 			g.deliver()
 			wakes := g.awaitWakes(t, 1)
 			if len(wakes) != 1 {
@@ -534,12 +550,6 @@ func TestRunAttention_UnfinishedSteps(t *testing.T) {
 			for _, line := range runLines(wakes[0]) {
 				if len(line) > 300 {
 					t.Errorf("line of %d bytes, want at most 300: %q", len(line), line)
-				}
-			}
-			if tc.kind == workflow.UnfinishedEmptyAnswer {
-				want := stepEmptyAnswerNoteText(id, "review", nodePath, "step-session-1", false)
-				if got := g.facts(t, id).next[nodePath]; got != want {
-					t.Errorf("next = %q, want the empty-answer advice %q", got, want)
 				}
 			}
 		})
@@ -864,9 +874,10 @@ func (g *attnRig) userTurnRuns(t *testing.T) (string, *kas320Steering) {
 	return id, k
 }
 
-// userTurnEnds ends c1's running user turn with stop.
+// userTurnEnds ends c1's running user turn with stop, after it said something.
 func (g *attnRig) userTurnEnds(t *testing.T, id, stop string) {
 	t.Helper()
+	g.h.translateACPEvent(parkChat, g.h.originOf(parkChat), newSessionChunkMsg(parkSession, "Done."))
 	g.h.translateACPEvent(parkChat, g.h.originOf(parkChat), newTurnEndMsg(stop))
 	g.h.coord.releaseTurn(parkChat, id)
 	idleAfter(t, g.h, parkChat, id)
@@ -1004,8 +1015,11 @@ func TestRunAttention_Redelivery(t *testing.T) {
 		g.read(t, id, retarget(t, reparkFixture, id))
 		g.deliver()
 		g.awaitWakes(t, 1)
-		for i, wait := range []time.Duration{60, 120, 240, 480, 960, 960} {
-			g.after(wait*time.Second - time.Second)
+		for i, wait := range []time.Duration{
+			60 * time.Second, 120 * time.Second, 240 * time.Second, 480 * time.Second,
+			960 * time.Second, 960 * time.Second,
+		} {
+			g.after(wait - time.Second)
 			g.noWake(t, i+1, "a re-delivery early")
 			g.after(2 * time.Second)
 			g.awaitWakes(t, i+2)
@@ -1047,7 +1061,13 @@ func (g *attnRig) secondChat(t *testing.T, chatID marotte.ChatID, session string
 	t.Helper()
 	br := newFakeBridge()
 	br.sessionID = session
-	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"On it."}}
+	br.setOnCall(func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if method != marotte.MethodPrompt {
+			return nil, nil, false
+		}
+		g.h.translateACPEvent(chatID, g.h.originOf(chatID), newSessionChunkMsg(session, "On it."))
+		return json.RawMessage(`{"stopReason":"end_turn"}`), nil, true
+	})
 	g.h.insertBridgeNow(chatID, testBridge(br, bridgeReady))
 	if _, err := g.cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
 		c.Name = string(chatID)
@@ -1109,25 +1129,26 @@ func TestRunAttention_TheModelGate(t *testing.T) {
 		g := newAttnRig(t, nil)
 		const id = "wf_0000000000000303"
 		g.launch(t, id, "perf")
-		turn, _ := g.userTurnRuns(t)
-		g.read(t, id, retarget(t, reparkFixture, id))
-		queueTextDuring(t, g.h, "m-user", "then run the tests")
-		g.deliver()
+		turn, k := g.userTurnRuns(t)
 		g.h.translateACPEvent(parkChat, g.h.originOf(parkChat), throttleDisplayError())
 		g.userTurnEnds(t, turn, "error")
+		g.read(t, id, retarget(t, reparkFixture, id))
+		g.deliver()
+		waitUntil(t, "the held wake", func() bool { return len(marotteEntries(g.h)) == 1 })
+		g.noWake(t, 0, "a wake 11 s after a throttled close")
+		if code := postPrompt(t, g.h, "tests"); code != http.StatusOK {
+			t.Fatalf("Setup: the user's prompt = %d", code)
+		}
 		g.settle(t)
-		if w := g.wakeTurns(t); len(w) != 0 {
-			t.Fatalf("a wake started right after a throttled close: %q", w)
-		}
 		opens := opensOf(t, logOf(t, g.cs, parkChat))
-		if p := opens[len(opens)-1].Prompt; p == nil || p.Text != "then run the tests" {
-			t.Errorf("the turn after the throttled close = %+v, want the user's waiting row", p)
+		if p := opens[len(opens)-1].Prompt; p == nil || p.Text != "tests" {
+			t.Errorf("the turn after the throttled close = %+v, want the user's prompt taken before the held wake", p)
 		}
+		g.noWake(t, 0, "a wake inside the gate's quiet")
+		// The user's turn may take the held wake as a steer, which starts no turn and passes no gate.
 		g.clk.advance(modelGateQuiet)
 		retake(g.h, parkChat)
-		if wakes := g.awaitWakes(t, 1); len(wakes) != 1 {
-			t.Errorf("c1 got %d wakes once the gate opened, want one", len(wakes))
-		}
+		waitUntil(t, "the wake, as a turn or a steer", func() bool { return len(g.wakeTurns(t))+len(steeredWakes(k)) == 1 })
 	})
 	t.Run("an in-turn retry notice does not hold a start", func(t *testing.T) {
 		g := newAttnRig(t, nil)
@@ -1285,8 +1306,10 @@ func TestRunAttention_AStoredWakeIsDroppedOnLoad(t *testing.T) {
 	const chatID marotte.ChatID = "c2"
 	wake := marotte.RunEntry{
 		ID: "w-1", Kind: marotte.RunKindRow, State: marotte.RunPending, Origin: marotte.RunFromNotify, Want: marotte.RunWantEither,
-		Row: &marotte.QueuedPrompt{ID: "w-1", Text: wakeOpening + "1 of your workflow runs needs attention.",
-			Caller: &marotte.Caller{Kind: marotte.CallerKindMarotte, Label: "marotte"}},
+		Row: &marotte.QueuedPrompt{
+			ID: "w-1", Text: wakeOpening + "1 of your workflow runs needs attention.",
+			Caller: &marotte.Caller{Kind: marotte.CallerKindMarotte, Label: "marotte"},
+		},
 	}
 	if _, err := g.cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
 		c.Name = "B"
@@ -1308,5 +1331,58 @@ func TestRunAttention_EveryRuntimeHasALedger(t *testing.T) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	if h.runs.attention == nil || h.coord.turns.gate == nil {
 		t.Fatalf("attention = %v, gate = %v, want both wired", h.runs.attention, h.coord.turns.gate)
+	}
+}
+
+// A step's activity, which the ledger reads on every tick, mints no run revision: a revision per step frame would
+// flood every page holding the run.
+func TestRunAttention_StepActivityMintsNoRunRevision(t *testing.T) {
+	t.Parallel()
+	g := newAttnRig(t, nil)
+	const id = "wf_0000000000000801"
+	g.launch(t, id, "perf")
+	path := g.openStep(t, id, "seat-a")
+	g.read(t, id, runningTree(t, id, "seat-a"))
+	waitUntil(t, "the read's own revision", func() bool { return len(eventsOfType(g.h, marotte.EventRunRev)) > 0 })
+	joinInflight(g.h)
+	before := len(eventsOfType(g.h, marotte.EventRunRev))
+	for range 100 {
+		g.stepSays(t, id, path, "still working")
+		g.clk.advance(time.Second)
+		g.h.runs.attention.tick()
+	}
+	joinInflight(g.h)
+	if after := len(eventsOfType(g.h, marotte.EventRunRev)); after != before {
+		t.Errorf("100 step entries minted %d run revisions, want none", after-before)
+	}
+	if f := g.facts(t, id); f.health.State != workflow.HealthHealthy {
+		t.Errorf("the working run reads %q, want healthy", f.health.State)
+	}
+}
+
+// A chat that has not taken a wake for 31 minutes, five re-deliveries on, is logged at Warn once, naming the chat.
+// Swaps the slog default, so it is not parallel.
+func TestRunAttention_AStuckChatIsLoggedOnceAt31Minutes(t *testing.T) {
+	logs := captureLogs(t)
+	g := newAttnRig(t, nil)
+	const id = "wf_0000000000000901"
+	g.launch(t, id, "perf")
+	g.failNext(promptThrottled, promptThrottled, promptThrottled, promptThrottled, promptThrottled, promptThrottled, promptThrottled)
+	g.read(t, id, retarget(t, reparkFixture, id))
+	g.deliver()
+	g.awaitWakes(t, 1)
+	const warn = "a launching chat has not taken a run-attention wake for 31 minutes"
+	for i, wait := range []time.Duration{60 * time.Second, 120 * time.Second, 240 * time.Second, 480 * time.Second, 960 * time.Second} {
+		if n := strings.Count(logs.String(), warn); n != 0 && i < 4 {
+			t.Fatalf("Warn logged after %d failed deliveries, want it at the fifth", i+1)
+		}
+		g.after(wait + time.Second)
+		g.awaitWakes(t, i+2)
+	}
+	if n := strings.Count(logs.String(), warn); n != 1 {
+		t.Errorf("the Warn was logged %d times after six failed deliveries, want once", n)
+	}
+	if !strings.Contains(logs.String(), `"chat_id":"c1"`) {
+		t.Error("the Warn does not name the chat")
 	}
 }

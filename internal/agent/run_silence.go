@@ -1,7 +1,8 @@
 package agent
 
-// A step whose turn stays open and sends no frame (runSilenceBound). marotte has no KAS signal to relay, so it only
-// shows what it observes: the run read's `silent_since`, a run_progress `silence` frame and one push per silence.
+// A step whose turn stays open and sends no frame (runSilenceBound). marotte has no KAS signal to relay, so it shows
+// the user what it observes: the run read's `silent_since`, a run_progress `silence` frame and one push per silence.
+// The launching agent's wake for a hung step is the run-attention ledger's, per step and sooner.
 
 import (
 	"context"

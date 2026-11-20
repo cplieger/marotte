@@ -1449,7 +1449,7 @@ func (rs *Runs) resumeChainRuns(ctx context.Context, chatID marotte.ChatID, ende
 			if ended() {
 				return s
 			}
-			if rs.resumeIfInterrupted(ctx, chatID, r.WorkflowID) == resumeFailed {
+			if rs.healResume(ctx, chatID, r.WorkflowID) == resumeFailed {
 				s.failed = true
 			}
 		case marotte.RunStatusRunning:
@@ -1528,11 +1528,13 @@ func (rs *Runs) scheduleHeal(ctx context.Context, chatID marotte.ChatID, f *paus
 	// The resume claims the heal (resumeIfInterrupted); the count here spaces the attempts and stops them at the
 	// budget.
 	spent := rs.healsSpent(workflowID)
+	// Before the frame's cell read is kicked, so a run the heal takes never reads engine_paused first.
+	rs.attention.healing(workflowID, spent+1)
 	if spent >= maxAutoHeals {
 		rs.lifecycle.goUnlessDraining(func() {
 			hctx, cancel := rs.lifecycle.derivedContext()
 			defer cancel()
-			rs.resumeIfInterrupted(hctx, chatID, workflowID)
+			rs.healResumeMarked(hctx, chatID, workflowID)
 		})
 		return
 	}
@@ -1546,8 +1548,24 @@ func (rs *Runs) scheduleHeal(ctx context.Context, chatID marotte.ChatID, f *paus
 	rs.lifecycle.afterUnlessDraining(delay, func() {
 		hctx, cancel := rs.lifecycle.derivedContext()
 		defer cancel()
-		rs.resumeIfInterrupted(hctx, chatID, workflowID)
+		rs.healResumeMarked(hctx, chatID, workflowID)
 	})
+}
+
+// healResume is resumeIfInterrupted under the run's healing mark (runAttention.healing), which a resume that did not
+// take the run clears, so the run reads engine_paused rather than healthy.
+func (rs *Runs) healResume(ctx context.Context, chatID marotte.ChatID, workflowID string) resumeOutcome {
+	rs.attention.healing(workflowID, rs.healsSpent(workflowID)+1)
+	return rs.healResumeMarked(ctx, chatID, workflowID)
+}
+
+// healResumeMarked is healResume once the mark is set.
+func (rs *Runs) healResumeMarked(ctx context.Context, chatID marotte.ChatID, workflowID string) resumeOutcome {
+	out := rs.resumeIfInterrupted(ctx, chatID, workflowID)
+	if out != resumeWritten && out != resumeHeld {
+		rs.attention.healed(workflowID)
+	}
+	return out
 }
 
 // awaitAskTurnEnds waits until every open step turn of the run that asked has ended (runLog.askTurnEnd), or

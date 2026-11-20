@@ -97,6 +97,8 @@ type bridgeCoordinator struct {
 	resolveEnds func(context.Context, marotte.ChatID, command.TurnFence) `wiring:"optional"`
 	// launchEntry opens the turn of a run list entry the list's taker took (command.Dispatcher.LaunchEntry).
 	launchEntry func(context.Context, marotte.ChatID, *command.EntryLaunch) (string, error) `wiring:"optional"`
+	// onAttentionClosed is the run-attention ledger's end of an attention entry (runAttention.closed).
+	onAttentionClosed func(chatID marotte.ChatID, entryID string, outcome marotte.TurnOutcome)
 	// sendEntrySteer routes and sends a row the run list offered as a steer, answering the refusal and kiro-cli's
 	// acceptance (command.Dispatcher.SteerEntry).
 	sendEntrySteer func(context.Context, marotte.ChatID, *command.EntrySteer) (string, bool) `wiring:"optional"`

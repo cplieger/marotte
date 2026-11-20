@@ -133,13 +133,13 @@ func (w *tableWorld) restart() (next, cut string) {
 
 // closeChat is the list the chat's next life starts from and the steers its close notes as not read.
 func (w *tableWorld) closeChat() (next, cut string) {
-	n, s := w.l.endLife()
+	n, s, _ := w.l.endLife()
 	return entryWords(n), entryWords(s)
 }
 
 // reopen ends the chat's life and starts its next life in the same process from the list the close left.
 func (w *tableWorld) reopen() {
-	next, _ := w.l.endLife()
+	next, _, _ := w.l.endLife()
 	w.l = &runList{}
 	w.l.load(next, next, 0)
 }
@@ -588,7 +588,7 @@ func TestRunList_RowStatesWithASecondRow(t *testing.T) {
 				w.door("x2", "2 new")
 				w.l.takeEffects()
 				w.l.readerStop("x", 7)
-				next, _ := w.l.endLife()
+				next, _, _ := w.l.endLife()
 				w.l = &runList{}
 				w.l.load(next, next, 1)
 				w.advance()
@@ -602,7 +602,7 @@ func TestRunList_RowStatesWithASecondRow(t *testing.T) {
 				w.openedUnsent("x")
 				w.l.takeEffects()
 				w.l.readerStop("x", 7)
-				next, _ := w.l.endLife()
+				next, _, _ := w.l.endLife()
 				w.l = &runList{}
 				w.l.load(next, next, 1)
 				w.advance()

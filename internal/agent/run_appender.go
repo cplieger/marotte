@@ -92,8 +92,8 @@ func (rs *Runs) noteLease(workflowID string) *runlease.Lease {
 // the step's end (stepClose.graded is the identity there), so its note, under note, needs no read of KAS's record.
 // Under completed the run's due grades are recorded (goGradeRun): this close's, and any an earlier step end's failed
 // read left. Each is noted only from the grade recorded, under the lease closeNode held for it (stepGrade.note).
-// A refusal's or a limit's note reaches the human reading the chat, not the agent (recordSteer never calls
-// _session/steer); an empty answer wakes the agent (notifyEmptyAnswer).
+// The notes are the user's (a line in the chat's log, or a push); the launching agent is woken by the run-attention
+// ledger (gradeAttention).
 func (rs *Runs) gradeStepEnd(workflowID, nodePath string, sealed []turnlog.Sealed, status string, note *runlease.Lease) {
 	if rs.lifecycle == nil {
 		return
@@ -107,10 +107,11 @@ func (rs *Runs) gradeStepEnd(workflowID, nodePath string, sealed []turnlog.Seale
 		if !c.mayNote() || note == nil || rs.coord == nil {
 			return
 		}
+		rs.gradeAttention(note, nodePath, &c, "", false)
 		rs.lifecycle.goUnlessDraining(func() {
 			ctx, cancel := rs.lifecycle.derivedContext()
 			defer cancel()
-			rs.noteGradedStepEnd(ctx, note, nodePath, &c, "", false)
+			rs.noteGradedStepEnd(ctx, note, nodePath, &c)
 		})
 		return
 	}
@@ -152,21 +153,22 @@ func (rs *Runs) gradeRun(ctx context.Context, workflowID string, at gradeTrigger
 	}
 }
 
-// recordGrade announces a step's grade and leaves the launching chat the note it calls for. Every trigger of a grade
-// calls it, so a close is noted once, by the trigger that recorded its grade, under the lease node_complete held for
-// the close (stepGrade.note) and never the run's lease now: a close graded after a restart, which forgets that
-// lease, is not noted. runEnded says the run is known to be terminal.
+// recordGrade announces a step's grade, hands the run-attention ledger an unfinished one and leaves the user the note
+// it calls for. Every trigger of a grade calls it, so a close is noted once, by the trigger that recorded its grade,
+// under the lease node_complete held for the close (stepGrade.note) and never the run's lease now: a close graded
+// after a restart, which forgets that lease, is not noted. runEnded says the run is known to be terminal.
 func (rs *Runs) recordGrade(ctx context.Context, workflowID string, g *stepGrade, runEnded bool) {
 	translate.PublishAppended(ctx, rs.bus, "", workflowID, g.entry)
 	l := g.note
 	if l == nil || rs.coord == nil || rs.lifecycle == nil {
 		return
 	}
+	rs.gradeAttention(l, g.nodePath, &g.grade, g.sessionID, runEnded)
 	// Off the caller's context: a run read's request ending must not cut the note's write.
 	rs.lifecycle.goUnlessDraining(func() {
 		nctx, cancel := rs.lifecycle.derivedContext()
 		defer cancel()
-		rs.noteGradedStepEnd(nctx, l, g.nodePath, &g.grade, g.sessionID, runEnded)
+		rs.noteGradedStepEnd(nctx, l, g.nodePath, &g.grade)
 	})
 }
 
@@ -179,11 +181,33 @@ func (rs *Runs) stepEnds(ctx context.Context, workflowID string, kas map[string]
 	return ends, err
 }
 
-// noteGradedStepEnd leaves the note a graded step end calls for, if any. sessionID is the step's session, "" when
-// KAS's record was not read. runEnded says the run is known to be terminal.
-func (rs *Runs) noteGradedStepEnd(ctx context.Context, l *runlease.Lease, nodePath string, c *stepClose, sessionID string,
-	runEnded bool,
-) {
+// gradeAttention hands the run-attention ledger an unfinished step end, synchronously, so the wake that names it is
+// owed before the grade's caller returns. l is the lease node_complete held for the close; runEnded says the run is
+// known to be terminal, as a run whose lease is gone is.
+func (rs *Runs) gradeAttention(l *runlease.Lease, nodePath string, c *stepClose, sessionID string, runEnded bool) {
+	var kind workflow.UnfinishedKind
+	switch {
+	case c.outcome == marotte.TurnOutcomeRefused:
+		kind = workflow.UnfinishedRefused
+	case c.kind == marotte.FailureKindModelCallLimit:
+		kind = workflow.UnfinishedModelCallLimit
+	case c.kind == marotte.FailureKindEmptyAnswer:
+		kind = workflow.UnfinishedEmptyAnswer
+	default:
+		return
+	}
+	var chat marotte.ChatID
+	if c := marotte.ChatID(l.ChatID); c != "" && !marotte.IsRunHostChat(c) {
+		chat = c
+	}
+	_, held := rs.lease(l.WorkflowID)
+	rs.attention.grade(l.WorkflowID, nodePath, &attnGrade{kind: kind, turnID: c.turn, sessionID: sessionID, refusal: c.refusal},
+		chat, rs.leasedRunName(l), runEnded || !held)
+}
+
+// noteGradedStepEnd leaves the user the note a graded step end calls for, if any: a push for an empty answer, else a
+// line in the launching chat's log.
+func (rs *Runs) noteGradedStepEnd(ctx context.Context, l *runlease.Lease, nodePath string, c *stepClose) {
 	name := cmp.Or(rs.leasedRunName(l), "Workflow run")
 	var cause, text string
 	switch {
@@ -192,7 +216,7 @@ func (rs *Runs) noteGradedStepEnd(ctx context.Context, l *runlease.Lease, nodePa
 	case c.kind == marotte.FailureKindModelCallLimit:
 		cause, text = stepNoteModelCallLimit, stepModelCallLimitNoteText(name, nodePath)
 	case c.kind == marotte.FailureKindEmptyAnswer:
-		rs.notifyEmptyAnswer(ctx, l, nodePath, sessionID, runEnded)
+		rs.notifyEmptyAnswer(ctx, l, nodePath)
 		return
 	default:
 		return
@@ -228,23 +252,17 @@ func stepModelCallLimitNoteText(run, nodePath string) string {
 	return run + " step " + nodePath + " stopped early. " + marotte.ModelCallLimitStepReason
 }
 
-// notifyEmptyAnswer tells the user and the launching agent of a step graded FailureKindEmptyAnswer. KAS has already
-// moved the run past the step and has no verb that re-runs a completed one, so marotte resumes and pauses nothing:
-// the retry is the launching agent's (stepEmptyAnswerNoteText).
-func (rs *Runs) notifyEmptyAnswer(ctx context.Context, l *runlease.Lease, nodePath, sessionID string, runEnded bool) {
-	name := rs.leasedRunName(l)
-	n := notice.StepEmptyAnswer(notice.RunTarget(l.WorkflowID, name), nodePath)
-	chat := marotte.ChatID(l.ChatID)
-	rs.coord.Notify(ctx, chat, &n)
-	if chat == "" || marotte.IsRunHostChat(chat) {
-		return
-	}
-	rs.tellLaunchingAgent(ctx, l.WorkflowID, chat, "a step ended on an empty model turn",
-		stepEmptyAnswerNoteText(l.WorkflowID, name, nodePath, sessionID, runEnded))
+// notifyEmptyAnswer pushes the user a step graded FailureKindEmptyAnswer; the launching agent's wake is the
+// run-attention ledger's (gradeAttention). KAS has already moved the run past the step and has no verb that re-runs a
+// completed one, so marotte resumes and pauses nothing.
+func (rs *Runs) notifyEmptyAnswer(ctx context.Context, l *runlease.Lease, nodePath string) {
+	n := notice.StepEmptyAnswer(notice.RunTarget(l.WorkflowID, rs.leasedRunName(l)), nodePath)
+	rs.coord.Notify(ctx, marotte.ChatID(l.ChatID), &n)
 }
 
-// stepEmptyAnswerNoteText is the launching agent's wake for an empty-answer step: the run by id for its workflow tools,
-// the step by its workflow.PathKey, the session that holds the empty answer, and the retry it can call. KAS refuses
+// stepEmptyAnswerNoteText is an empty-answer step's next move, as the health read serves it: the run by id for its
+// workflow tools, the step by its workflow.PathKey, the session that holds the empty answer, and the retry it can
+// call. KAS refuses
 // update_workflow replace_remaining on a finished run, and a step in the run's last node is graded while its
 // run_complete is still on the way, so a run not known to have ended is offered both retries.
 func stepEmptyAnswerNoteText(workflowID, name, nodePath, sessionID string, runEnded bool) string {
@@ -341,9 +359,16 @@ func (rs *Runs) RunMeter(runID, nodePath string, credits, elapsedMs float64) boo
 	return rs.log != nil && rs.log.meter(runID, nodePath, credits, elapsedMs)
 }
 
-// RunStopReason records a step's last turn_end stop reason on its open turn.
+// RunStopReason records a step's last turn_end stop reason on its open turn; a turn that ended on a model throttle
+// holds the model gate's starts.
 func (rs *Runs) RunStopReason(runID, nodePath string, raw marotte.StopReason) bool {
-	return rs.log != nil && rs.log.stopReason(runID, nodePath, raw)
+	if rs.log == nil || !rs.log.stopReason(runID, nodePath, raw) {
+		return false
+	}
+	if rs.coord != nil && rs.log.throttledStop(runID, nodePath) {
+		rs.coord.turns.gate.sawThrottle()
+	}
+	return true
 }
 
 // RunStepError records a model error KAS displayed for a step on its open turn.

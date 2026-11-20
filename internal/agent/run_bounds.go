@@ -28,7 +28,8 @@ import (
 const runIdleWindow = 15 * time.Minute
 
 // runSilenceBound is how long an open step turn may send no frame at all before the idle window's expiry acts on
-// it: a chat-launched run is flagged and keeps running, a parentless one is stopped as stalled.
+// it: a chat-launched run is flagged for the browser and keeps running, a parentless one is stopped as stalled. The
+// launching agent is told sooner, at workflow.DefaultHungAfter, by the run-attention ledger.
 // runTurn.countsTowardSilence owns which turn counts. A hung compaction leaves the turn open with nothing to say
 // (docs/known-upstream-issues.md).
 const runSilenceBound = time.Hour

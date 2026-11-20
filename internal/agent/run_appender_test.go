@@ -3,12 +3,13 @@ package agent
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
@@ -356,12 +357,15 @@ func TestRunOpenTurn_AnswersOnlyAnOpenTurnAndOpensNone(t *testing.T) {
 	}
 }
 
-// wakeRig is a chat-parented run whose launching chat's session is open, so a note to the launching agent reaches
-// the fake bridge, which records each `_session/steer` and each run_outcome notification the run's chat gets.
+// wakeRig is a chat-parented run whose launching chat's session is open, so the run-attention wake reaches the chat as
+// a turn; the fake bridge records each `_session/steer` and each run_outcome notification the run's chat gets.
 type wakeRig struct {
+	t      *testing.T
 	h      *Runtime
 	br     *fakeBridge
+	cs     *testChatStore
 	push   *runOutcomePush
+	clk    *attnClock
 	steers []map[string]any
 	mu     sync.Mutex
 }
@@ -378,10 +382,13 @@ func newWakeRig(t *testing.T, id string, inspect json.RawMessage) *wakeRig {
 	push := newRunOutcomePush()
 	h, cs, br := newTestHub(WithPush(push))
 	t.Cleanup(func() { shutdownHub(t, h) })
-	g := &wakeRig{h: h, br: br, push: push}
+	g := &wakeRig{t: t, h: h, br: br, cs: cs, push: push, clk: &attnClock{t: time.Now()}}
+	h.runs.attention.setClock(g.clk.now)
+	h.coord.turns.gate.setClock(g.clk.now)
 	br.sessionID = parkSession
 	h.insertBridgeNow(parkChat, testBridge(br, bridgeReady))
 	h.runs.useLog(newRunLog(t.TempDir()))
+	h.runs.log.setClock(g.clk.now)
 	h.coord.runs = h.runs.log
 	if _, err := cs.Mutate(t.Context(), parkChat, func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
@@ -405,14 +412,39 @@ func newWakeRig(t *testing.T, id string, inspect json.RawMessage) *wakeRig {
 	return g
 }
 
-// wakes are the warning notifications marotte steered into the launching agent's session.
+// wakes delivers what the run-attention ledger owes the launching chat, then answers each wake turn it started there,
+// each followed by the next moves the ledger holds for its runs: a line carries the short move, and the full
+// advice is the health read's. A warning notice steered into the launching session fails the test: no launching
+// agent is told that way.
 func (g *wakeRig) wakes() []string {
+	t := g.t
+	t.Helper()
+	g.clk.advance(attentionCoalesce + time.Second)
+	g.h.runs.attention.tick()
+	joinInflight(g.h)
 	g.mu.Lock()
-	defer g.mu.Unlock()
-	var out []string
 	for _, p := range g.steers {
-		if msg, _ := p["message"].(string); strings.HasPrefix(msg, "[notification/warning] ") && fmt.Sprint(p[marotte.KeySessionID]) == parkSession {
-			out = append(out, msg)
+		if msg, _ := p["message"].(string); strings.HasPrefix(msg, "[notification/") {
+			t.Errorf("a notice was steered into session %v: %q", p[marotte.KeySessionID], msg)
+		}
+	}
+	g.mu.Unlock()
+	next := ""
+	a := g.h.runs.attention
+	a.mu.Lock()
+	ids := slices.Sorted(maps.Keys(a.runs))
+	a.mu.Unlock()
+	for _, id := range ids {
+		if f, ok := a.facts(id); ok {
+			for _, k := range slices.Sorted(maps.Keys(f.next)) {
+				next += "\n" + f.next[k]
+			}
+		}
+	}
+	var out []string
+	for _, o := range opensOf(t, logOf(t, g.cs, parkChat)) {
+		if p := o.Prompt; p != nil && p.Caller != nil && p.Caller.Kind == marotte.CallerKindMarotte {
+			out = append(out, p.Text+next)
 		}
 	}
 	return out
@@ -514,8 +546,9 @@ func TestRunNodeComplete_AnEmptyAnswerWakesTheLaunchingAgent(t *testing.T) {
 				!strings.Contains(pushes[0].body, "empty model turn") {
 				t.Errorf("the run's chat got notifications %+v, want one run_outcome naming the empty model turn", pushes)
 			}
-			if got := stateWrites(g.br.callLog()); len(got) != 0 {
-				t.Errorf("writes = %v, want no resume, pause or answer of the run", got)
+			// The one prompt is the wake's turn in the launching chat.
+			if got := stateWrites(g.br.callLog()); !slices.Equal(got, []string{marotte.MethodPrompt}) {
+				t.Errorf("writes = %v, want the wake's prompt alone: no resume, pause or answer of the run", got)
 			}
 		})
 	}
