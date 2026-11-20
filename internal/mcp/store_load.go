@@ -55,7 +55,11 @@ func (s *Store) load() error {
 		return nil
 	}
 	s.servers = servers
+	s.loadIdentityProvider(f.IdentityProvider)
 	if len(unreadable) == 0 {
+		if s.heldIdentityProvider != nil {
+			s.copyAside(raw)
+		}
 		return nil
 	}
 	s.unreadable = unreadable
@@ -85,13 +89,37 @@ func (s *Store) serverKeys() map[string]bool {
 	return keys
 }
 
+// jsonNull is JSON's null literal, which is also the name of its type.
+const jsonNull = "null"
+
+// loadIdentityProvider reads the record's provider member. One that does not decode or validate is held: written
+// back as it is, and its KAS key left as the file has it, so a hand-corrupted record keeps the user's provider in
+// force until a save replaces it.
+func (s *Store) loadIdentityProvider(raw json.RawMessage) {
+	if len(raw) == 0 || string(raw) == jsonNull {
+		return
+	}
+	var idp IdentityProvider
+	err := json.Unmarshal(raw, &idp)
+	if err == nil {
+		err = validateIdentityProvider(&idp)
+	}
+	if err != nil {
+		slog.Warn("mcp: the mcp.json organization identity provider is unreadable; it stays in the file and in force until it is saved again",
+			"path", s.path, "error", err)
+		s.heldIdentityProvider = raw
+		return
+	}
+	s.identityProvider = &idp
+}
+
 // decodeEntries decodes each record entry on its own; unreadable and errs are index-aligned.
 func decodeEntries(entries []json.RawMessage) (servers []*Server, unreadable []json.RawMessage, errs []entryError) {
 	servers = make([]*Server, 0, len(entries))
 	for i, entry := range entries {
 		var sv Server
 		err := json.Unmarshal(entry, &sv)
-		if err == nil && string(entry) == "null" {
+		if err == nil && string(entry) == jsonNull {
 			err = errors.New("the entry is null")
 		}
 		if err != nil {
@@ -165,12 +193,13 @@ func (s *Store) moveAside(cause error) {
 		"from", s.path, "to", aside, "parse_error", cause)
 }
 
-// copyAside keeps the record as read before a persist re-indents its unreadable entries, once:
+// copyAside keeps the record as read before a persist re-indents its unreadable entries or held provider, once:
 // every copy holds the API keys, so a boot over an unchanged record makes no new one.
 func (s *Store) copyAside(raw []byte) {
 	if existing, ok := s.identicalAside(raw); ok {
-		slog.Warn("mcp: mcp.json has unreadable entries; a copy of it is already aside",
-			"path", s.path, "copy", existing, "unreadable", len(s.unreadable))
+		slog.Warn("mcp: mcp.json has unreadable parts; a copy of it is already aside",
+			"path", s.path, "copy", existing, "unreadable", len(s.unreadable),
+			"identity_provider_unreadable", s.heldIdentityProvider != nil)
 		return
 	}
 	aside := s.asidePath()
@@ -185,12 +214,13 @@ func (s *Store) copyAside(raw []byte) {
 		}
 	}
 	if err != nil {
-		slog.Error("mcp: copying mcp.json with unreadable entries aside failed",
+		slog.Error("mcp: copying mcp.json with unreadable parts aside failed",
 			"path", s.path, "to", aside, "error", err)
 		return
 	}
-	slog.Warn("mcp: mcp.json has unreadable entries; copied it aside",
-		"from", s.path, "to", aside, "unreadable", len(s.unreadable))
+	slog.Warn("mcp: mcp.json has unreadable parts; copied it aside",
+		"from", s.path, "to", aside, "unreadable", len(s.unreadable),
+		"identity_provider_unreadable", s.heldIdentityProvider != nil)
 }
 
 // identicalAside returns a regular mcp.json.corrupt.* sibling whose bytes equal raw.

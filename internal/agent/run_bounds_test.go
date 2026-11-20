@@ -112,7 +112,7 @@ func TestArmRunDeadline_ConcurrentArmsLeaveALiveTimerForTheStoredDeadline(t *tes
 		h, _, br := newTestHub()
 		id := "wf_" + strconv.Itoa(round)
 		br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-		h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
+		h.insertBridgeNow(marotte.RunHostChatID(id), testBridge(br, bridgeReady))
 		st, err := runlease.NewStore(t.TempDir())
 		if err != nil {
 			t.Fatalf("round %d: NewStore: %v", round, err)
@@ -197,7 +197,7 @@ func TestArmRunDeadline_KeepsBoundingWhenOnlyDurabilityFails(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
+	h.insertBridgeNow(marotte.RunHostChatID(id), testBridge(br, bridgeReady))
 
 	h.runs.leases = undurableLeaseStore(t)
 
@@ -271,7 +271,7 @@ func TestCancelExpiredRun_LogsAScheduleDeletedDuringItsRunAtInfo(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
+	h.insertBridgeNow(marotte.RunHostChatID(id), testBridge(br, bridgeReady))
 
 	// An EMPTY schedule store: the lease names a schedule that is no longer there.
 	st, _, err := launchrule.NewStore(t.TempDir())
@@ -462,7 +462,7 @@ func TestRunDeadline_FiresAndCancelsAtTheDeadline(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
+	h.insertBridgeNow(marotte.RunHostChatID(id), testBridge(br, bridgeReady))
 	leased(t, h.runs, id)
 
 	deadline := time.Now().Add(20 * time.Millisecond)
@@ -497,7 +497,7 @@ func TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound(t *testing.
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
+	h.insertBridgeNow(marotte.RunHostChatID(id), testBridge(br, bridgeReady))
 
 	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
@@ -549,7 +549,7 @@ func TestCancelExpiredRun_ARefusedSlotCancelLeavesTheScheduleRowUntouched(t *tes
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner pid 979344 is live")}
-	h.bridge.mgr.insert(runChatID(id), testBridge(br, bridgeReady))
+	h.bridge.mgr.insert(marotte.RunHostChatID(id), testBridge(br, bridgeReady))
 
 	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
@@ -596,7 +596,7 @@ func TestCancelExpiredRun_AManualRunYieldingToASlotIsNotAScheduleFailure(t *test
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
+	h.insertBridgeNow(marotte.RunHostChatID(id), testBridge(br, bridgeReady))
 
 	// A manual lease carrying a slot, and no schedule id: no row asked for this run.
 	h.runs.grantLease(t.Context(), id, "publish",
@@ -897,7 +897,7 @@ func TestRunStartLaunch_ClassifiesByTheLane(t *testing.T) {
 		wantChatID string
 	}{
 		"a host session's frame, dispatched with no chat id": {"", runlease.OriginManual, ""},
-		"the synthetic run chat id":                          {runChatID("wf_1"), runlease.OriginManual, ""},
+		"the synthetic run chat id":                          {marotte.RunHostChatID("wf_1"), runlease.OriginManual, ""},
 		"a real chat id, so the chat's agent asked":          {"c-abc123", runlease.OriginAgent, "c-abc123"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1101,7 +1101,7 @@ func TestObserveComplete_ClearsAStepsPendingDecisionOnlyWhenTheRunEnds(t *testin
 			const runID = "wf_1"
 			const launching marotte.ChatID = "c-parent"
 			// Filed as translate files a step's question: under the launching chat, run stamped on the payload.
-			h.bus.pendingPerms.add(7, marotte.NewEvent(marotte.EventUserInputNeeded, launching,
+			h.bus.pendingPerms.add(7, "", marotte.NewEvent(marotte.EventUserInputNeeded, launching,
 				marotte.UserInputNeededPayload{RequestID: 7, RunID: runID, NodeID: "review"}), nil)
 
 			h.runs.observeComplete(t.Context(), launching, runNotif(methodWFRunComplete, map[string]any{
@@ -1222,7 +1222,7 @@ func TestObserveComplete_ClosesTheStepTurnOnlyOnATerminalStatus(t *testing.T) {
 func TestObserveComplete_ClosesAParentlessRunsStepTurns(t *testing.T) {
 	t.Parallel()
 	h := newBudgetRuntime(t)
-	host := runChatID("wf_1")
+	host := marotte.RunHostChatID("wf_1")
 	if _, _, err := h.runs.log.open(t.Context(), &translate.RunStep{RunID: "wf_1", NodePath: "seq/coder", SessionID: "sess-step"}, host); err != nil {
 		t.Fatalf("Open(step turn): %v", err)
 	}

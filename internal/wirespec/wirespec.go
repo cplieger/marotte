@@ -183,8 +183,11 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.MCPPromptInfo](),
 	wiregen.TypeRef[marotte.MCPResourceInfo](),
 	wiregen.TypeRef[marotte.MCPResourceTemplateInfo](),
+	wiregen.TypeRef[marotte.MCPEnterpriseAuth](),
 	wiregen.TypeRef[marotte.MCPServerStatus](),
 	wiregen.TypeRef[marotte.MCPStatusPayload](),
+	wiregen.TypeRef[marotte.MCPIdentityProviderStatus](),
+	wiregen.TypeRef[marotte.MCPIdentityProviderPayload](),
 	wiregen.TypeRef[marotte.MCPStatusResponse](),
 	wiregen.TypeRef[marotte.MCPSignInClosedPayload](),
 	wiregen.TypeRef[marotte.MCPPrewarmPayload](),
@@ -390,6 +393,8 @@ var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[mcp.RegistryEntry](),
 	wiregen.TypeRef[mcp.RegistrySearchResult](),
 	wiregen.TypeRef[mcp.RegistrySearchFailure](),
+	wiregen.TypeRef[mcp.IdentityProvider](),
+	wiregen.TypeRef[mcp.IdentityProviderResponse](),
 	// GET /api/workspace/kiro-docs.
 	wiregen.TypeRef[server.KiroDoc](),
 	wiregen.TypeRef[server.KiroDocsResponse](),
@@ -475,6 +480,8 @@ var wireEnums = []wiregen.EnumRef{
 	wiregen.StringEnum[marotte.SettledBy](),
 	wiregen.StringEnum[marotte.AlwaysAllowBlock](),
 	wiregen.StringEnum[marotte.RejectionNote](),
+	// The permission card labels each reach, so its label table must be total.
+	wiregen.StringEnum[marotte.AlwaysReach](),
 	// One definition of the tab kinds; TabSubject.kind fails the decoder on an unknown one.
 	wiregen.StringEnum[marotte.TabKind](),
 	// BotSummary.state fails the decoder on an unknown one; the Bot row's meta branches on it.
@@ -577,6 +584,7 @@ var wireEvents = []wiregen.Event{
 	{Name: "mcp_status", Data: wiregen.TypeRef[marotte.MCPStatusPayload]()},
 	{Name: "mcp_prewarm", Data: wiregen.TypeRef[marotte.MCPPrewarmPayload]()},
 	{Name: "mcp_sign_in_closed", Data: wiregen.TypeRef[marotte.MCPSignInClosedPayload]()},
+	{Name: "mcp_identity_provider", Data: wiregen.TypeRef[marotte.MCPIdentityProviderPayload]()},
 	{Name: "open_external_url", Data: wiregen.TypeRef[marotte.OpenExternalURLPayload]()},
 	{Name: "notification", Data: wiregen.TypeRef[marotte.NotificationPayload]()},
 	{Name: "permission_needed", Data: wiregen.TypeRef[marotte.PermissionNeededPayload]()},

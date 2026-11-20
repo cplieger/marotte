@@ -23,6 +23,9 @@ const realKey = "kiro.mcp.2a0a3d1d4672ffaff77fcbe95f21be210e2e444f1b152fb537773d
 // keyOf is realKey's server configuration's key for kind.
 func keyOf(kind string) string { return strings.TrimSuffix(realKey, "client") + kind }
 
+// idpKey has the shape KAS gives the organization session (sha256 of "<issuer>|<client id>").
+var idpKey = "kiro.mcp.idp." + strings.Repeat("ab", 32) + ".session"
+
 // grantKey is the client key of the i-th distinct server configuration.
 func grantKey(i int) string { return fmt.Sprintf("kiro.mcp.%064x.client", i) }
 
@@ -537,7 +540,10 @@ func TestOnlyTheGrantPersists(t *testing.T) {
 	ctx := t.Context()
 	keys := []string{
 		keyOf("client"), keyOf("kiro-path-client"), keyOf("tokens"), keyOf("verifier"), keyOf("discovery"),
-		"kiro.mcp.deadbeef.tokens",
+		"kiro.mcp.deadbeef.tokens", idpKey,
+		strings.TrimSuffix(idpKey, "session") + "verifier",
+		"kiro.mcp.idp." + strings.Repeat("a", 63) + ".session",
+		"kiro.mcp.idp." + strings.TrimPrefix(keyOf("tokens"), "kiro.mcp."),
 	}
 	for _, k := range keys {
 		if err := s.Set(ctx, k, "v-"+k); err != nil {
@@ -545,7 +551,8 @@ func TestOnlyTheGrantPersists(t *testing.T) {
 		}
 	}
 
-	grant := []string{keyOf("client"), keyOf("kiro-path-client"), keyOf("tokens")}
+	grant := []string{keyOf("client"), keyOf("kiro-path-client"), keyOf("tokens"), idpKey}
+	slices.Sort(grant)
 	if got := storedKeys(t, dir); !slices.Equal(got, grant) {
 		t.Errorf("file keys = %v, want only %v", got, grant)
 	}
@@ -606,6 +613,36 @@ func TestForgetSignInStateKeepsTheGrant(t *testing.T) {
 	}
 	var none *Store
 	none.ForgetSignInState()
+}
+
+// TestIdentityProviderSessionSurvivesAnEngineGeneration pins that the organization session outlives its engine as a
+// server's grant does: kiro-cli's own TUI keeps it on disk, so losing it would force a browser sign-in every restart.
+func TestIdentityProviderSessionSurvivesAnEngineGeneration(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New(dir)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if err := s.Set(t.Context(), idpKey, "session"); err != nil {
+		t.Fatalf("Set(idp session) error = %v", err)
+	}
+	s.ForgetSignInState()
+	if v, ok := s.Get(idpKey); !ok || v != "session" {
+		t.Errorf("Get(idp session) after ForgetSignInState = (%q, %v), want (\"session\", true)", v, ok)
+	}
+	reopened, err := New(dir)
+	if err != nil {
+		t.Fatalf("New() (reopen) error = %v", err)
+	}
+	if v, ok := reopened.Get(idpKey); !ok || v != "session" {
+		t.Errorf("Get(idp session) after a reopen = (%q, %v), want (\"session\", true)", v, ok)
+	}
+	if err := reopened.Delete(t.Context(), idpKey); err != nil {
+		t.Fatalf("Delete(idp session) error = %v", err)
+	}
+	if got := storedKeys(t, dir); len(got) != 0 {
+		t.Errorf("file keys after the sign-out's Delete = %v, want none", got)
+	}
 }
 
 // TestLoadDropsNonDurableEntries pins the file boundary: an entry Set would not have written is not served, and the
@@ -671,4 +708,46 @@ func TestMemoryHalfIsBounded(t *testing.T) {
 			t.Error("a rejected Set left the key present")
 		}
 	})
+}
+
+// A provider whose issuer or client id changed leaves a session KAS can never read: every organization key goes,
+// on disk and in memory, and every server's grant stays.
+func TestForgetIdentityProviderSessionsDeletesOnlyThem(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New(dir)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	otherIDP := "kiro.mcp.idp." + strings.Repeat("cd", 32) + ".session"
+	idpVerifier := strings.TrimSuffix(idpKey, "session") + "verifier"
+	kept := []string{keyOf("client"), keyOf("kiro-path-client"), keyOf("tokens")}
+	for _, k := range append(slices.Clone(kept), idpKey, otherIDP, idpVerifier, keyOf("verifier")) {
+		if err := s.Set(t.Context(), k, "v-"+k); err != nil {
+			t.Fatalf("Set(%q) error = %v", k, err)
+		}
+	}
+
+	if err := s.ForgetIdentityProviderSessions(t.Context()); err != nil {
+		t.Fatalf("ForgetIdentityProviderSessions() error = %v", err)
+	}
+
+	slices.Sort(kept)
+	if got := storedKeys(t, dir); !slices.Equal(got, kept) {
+		t.Errorf("file keys = %v, want only the server grants %v", got, kept)
+	}
+	for _, k := range []string{idpKey, otherIDP, idpVerifier} {
+		if _, ok := s.Get(k); ok {
+			t.Errorf("Get(%q) found it, want every organization key gone", k)
+		}
+	}
+	if _, ok := s.Get(keyOf("verifier")); !ok {
+		t.Error("a server's in-memory verifier was dropped, want only organization keys deleted")
+	}
+	reopened, err := New(dir)
+	if err != nil {
+		t.Fatalf("New() reopen error = %v", err)
+	}
+	if _, ok := reopened.Get(idpKey); ok {
+		t.Error("the organization session came back from disk")
+	}
 }

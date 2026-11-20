@@ -14,7 +14,7 @@ import {
   type Collection,
 } from "@cplieger/reactive";
 import { createMirror, type MirrorChange } from "./mirror.js";
-import { decodeMCPStatusResponse } from "./wire/decoders.gen.js";
+import { decodeIdentityProviderResponse, decodeMCPStatusResponse } from "./wire/decoders.gen.js";
 import {
   asObject,
   decodeArray,
@@ -63,6 +63,10 @@ const decodeServer: Decoder<Server> = (v) => {
   if (oauthRedirectURI !== undefined) {
     out.oauth_redirect_uri = oauthRedirectURI;
   }
+  const oauthMode = optStr(o, "oauth_mode", p);
+  if (oauthMode !== undefined) {
+    out.oauth_mode = oauthMode as OAuthMode;
+  }
   const prewarm = optBool(o, "prewarm", p);
   if (prewarm !== undefined) {
     out.prewarm = prewarm;
@@ -108,6 +112,9 @@ const decodeMCPServersResponseLocal: Decoder<{ servers: Server[]; unreadable: nu
 // SSE is the legacy HTTP+SSE remote transport, a first-class stored value sharing the url/headers form with http.
 export type { Transport } from "./wire/types.gen.js";
 import type {
+  IdentityProvider,
+  MCPEnterpriseAuth,
+  MCPIdentityProviderPayload,
   MCPOrigin,
   MCPPrewarmState,
   MCPPromptInfo,
@@ -120,6 +127,9 @@ import type {
 
 /** KAS's per-server `versionNegotiation` enum. */
 type VersionNegotiation = "auto" | "legacy";
+
+/** KAS's per-server `oauth.mode` enum. */
+type OAuthMode = "browser" | "enterprise" | "auto";
 
 export interface KeyPair {
   name: string;
@@ -157,6 +167,8 @@ export interface Server {
   oauth_client_metadata_url?: string;
   /** KAS `oauth.redirectUri`: the pinned loopback callback ("localhost:7778"). */
   oauth_redirect_uri?: string;
+  /** KAS `oauth.mode`: absent is kiro-cli's browser sign-in; enterprise and auto use the organization provider. */
+  oauth_mode?: OAuthMode;
   /** KAS `oauthScopes`, from a paste or the raw edit; no form control edits it. */
   oauth_scopes?: string[];
   created_at: number;
@@ -175,7 +187,7 @@ export interface ServerDiscovery {
 }
 
 export type RuntimeState =
-  "connected" | "needs_auth" | "signing_in" | "idle" | "failed" | "disabled";
+  "connected" | "needs_auth" | "needs_org_sign_in" | "signing_in" | "idle" | "failed" | "disabled";
 
 /**
  * `origin` picks the row a live status belongs to, never editability. `shadows`: marotte's config holds the name, so
@@ -190,11 +202,19 @@ interface Provenance {
   ignoredFields?: readonly string[];
 }
 
+/** kiro-cli's organization sign-in report for a server that uses it; absent for every other server. */
+interface EnterpriseReport {
+  enterprise?: MCPEnterpriseAuth;
+}
+
 export type RuntimeStatus = Provenance &
+  EnterpriseReport &
   (
     | { name: string; state: "connected" }
     /** `error` is why kiro-cli refused the last Sign in, absent when none was refused. */
     | { name: string; state: "needs_auth"; error?: string }
+    /** Waits on the organization sign-in; `enterprise` carries kiro-cli's reason, which the row words. */
+    | { name: string; state: "needs_org_sign_in" }
     /** `oauth_url` is the consent page of the sign-in the user started. `relayed` rides the status wire, so a reload
      *  or second device does not offer the paste box for a spent code. */
     | { name: string; state: "signing_in"; oauth_url: string; relayed: boolean }
@@ -236,7 +256,10 @@ function adaptProvenance(w: MCPServerStatus): Provenance {
 
 /** Exported for testing: adapt a wire status to the domain type. */
 export function adaptStatus(w: MCPServerStatus): RuntimeStatus {
-  const prov = adaptProvenance(w);
+  const prov: Provenance & EnterpriseReport =
+    w.enterprise === undefined
+      ? adaptProvenance(w)
+      : { ...adaptProvenance(w), enterprise: w.enterprise };
   switch (w.state) {
     case "needs_auth":
       return w.error === undefined || w.error === ""
@@ -250,6 +273,8 @@ export function adaptStatus(w: MCPServerStatus): RuntimeStatus {
         oauth_url: w.oauth_url ?? "",
         relayed: w.relayed ?? false,
       };
+    case "needs_org_sign_in":
+      return { name: w.name, ...prov, state: "needs_org_sign_in" };
     case "failed":
       return { name: w.name, ...prov, state: "failed", error: w.error ?? "" };
     case "connected":
@@ -277,6 +302,74 @@ const mcpStatus = createMirror<string, MCPServerStatus>({
 function idleStatus(name: string): RuntimeStatus {
   return { name, origin: "user", state: "idle" };
 }
+
+/** marotte's organization provider as GET /api/mcp/identity-provider last answered; `unreadable` means the record
+ *  holds one marotte could not read, which kiro-cli still uses. */
+export interface IdentityProviderConfig {
+  readonly config: IdentityProvider | null;
+  readonly unreadable: boolean;
+}
+
+export const identityProviderConfig: Signal<IdentityProviderConfig> =
+  signal<IdentityProviderConfig>({
+    config: null,
+    unreadable: false,
+  });
+
+/** Whether a provider is in force, so the remote form offers organization sign-in. Untracked. */
+export function identityProviderConfigured(): boolean {
+  const c = identityProviderConfig.peek();
+  return c.config !== null || c.unreadable;
+}
+
+// One key: kiro-cli keeps one organization sign-in per engine.
+const IDP_KEY = "";
+
+/** The organization sign-in's status, ordered by the `mcp_identity_provider` version like `mcpStatus`. */
+const identityProviderMirror = createMirror<string, MCPIdentityProviderPayload>({
+  kind: "mcp_identity_provider",
+  async fetch(signal) {
+    const d = await apiGetTyped(
+      "/api/mcp/identity-provider",
+      decodeIdentityProviderResponse,
+      signal,
+    );
+    if (d === null) {
+      return null;
+    }
+    identityProviderConfig.value = { config: d.config, unreadable: d.unreadable ?? false };
+    if (d.subject === undefined) {
+      return null;
+    }
+    return { rows: new Map([[IDP_KEY, d.status]]), stamp: d.subject };
+  },
+});
+
+/** Reactive organization sign-in status; undefined until the first read or frame. */
+export const identityProviderStatus: ReadonlySignal<MCPIdentityProviderPayload | undefined> =
+  identityProviderMirror.watch(IDP_KEY);
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "";
+  }
+}
+
+/** The provider's name as kiro-cli shows it (its display name, which defaults to the issuer's host), "" with none.
+ *  Reactive. */
+export const identityProviderName: ReadonlySignal<string> = computed(() => {
+  const st = identityProviderStatus.value?.status;
+  if (st !== undefined && st.state !== "invalid-config" && (st.display_name ?? "") !== "") {
+    return st.display_name ?? "";
+  }
+  const cfg = identityProviderConfig.value.config;
+  if (cfg === null) {
+    return "";
+  }
+  return (cfg.name ?? "") !== "" ? (cfg.name ?? "") : hostOf(cfg.issuer);
+});
 
 /** kiro-cli's standing for a server it loaded but another layer replaced or switched off, undefined while the server
  *  is in use. Distinct from marotte's own Enabled toggle. Reactive inside an effect. */
@@ -436,6 +529,16 @@ class MCPStateController {
   /** Read the status inventory again (`Mirror.refetch`). */
   refetchStatus(signal?: AbortSignal): Promise<void> {
     return mcpStatus.refetch(signal);
+  }
+
+  /** Apply one `mcp_identity_provider` frame; a frame older than the status held changes nothing. */
+  applyIdentityProviderFrame(p: MCPIdentityProviderPayload, stamp: SubjectStamp | undefined): void {
+    identityProviderMirror.applyFrame(IDP_KEY, p, stamp);
+  }
+
+  /** Read the organization provider and its status again. */
+  refetchIdentityProvider(signal?: AbortSignal): Promise<void> {
+    return identityProviderMirror.refetch(signal);
   }
 }
 

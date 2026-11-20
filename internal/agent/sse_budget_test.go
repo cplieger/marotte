@@ -119,7 +119,7 @@ func seedPendingDecisions(tb testing.TB, rt *Runtime, ids []marotte.ChatID) {
 	}
 	for i := range fixturePendingPerms {
 		requestID := int64(i + 1)
-		rt.bus.pendingPerms.add(requestID, marotte.NewEvent(
+		rt.bus.pendingPerms.add(requestID, "", marotte.NewEvent(
 			marotte.EventPermissionNeeded, ids[i%len(ids)], marotte.PermissionNeededPayload{
 				RequestID:  requestID,
 				ToolCallID: fmt.Sprintf("perm-%d", requestID),

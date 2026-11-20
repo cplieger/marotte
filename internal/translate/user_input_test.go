@@ -3,6 +3,7 @@ package translate
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -15,13 +16,15 @@ import (
 type pendingCaptureDeps struct {
 	*baseDeps
 	pendingAdds    []int64
+	pendingKASIDs  []string
 	pendingOrigins []AskOrigin
 }
 
 const capturedAskBase = 9000
 
-func (d *pendingCaptureDeps) PendingPermsAdd(_ context.Context, id int64, evt marotte.ServerEvent, origin AskOrigin) (marotte.ServerEvent, bool) {
+func (d *pendingCaptureDeps) PendingPermsAdd(_ context.Context, id int64, kasAskID string, evt marotte.ServerEvent, origin AskOrigin) (marotte.ServerEvent, bool) {
 	d.pendingAdds = append(d.pendingAdds, id)
+	d.pendingKASIDs = append(d.pendingKASIDs, kasAskID)
 	d.pendingOrigins = append(d.pendingOrigins, origin)
 	askID := int64(capturedAskBase + len(d.pendingAdds))
 	switch p := evt.Payload.(type) {
@@ -127,6 +130,42 @@ func TestHandleUserInput(t *testing.T) {
 			t.Errorf("un-answerable request must be dropped: events=%d pending=%v", len(*events), deps.pendingAdds)
 		}
 	})
+}
+
+// A step's question names its run and node through its requester, so it is attributed with the
+// step registry cold, and the tracker files it under KAS's askId.
+func TestHandleUserInput_AttributesAStepQuestionByItsRequester(t *testing.T) {
+	base, events := newEventCaptureDeps()
+	deps := &pendingCaptureDeps{baseDeps: base}
+	reqID := int64(7)
+	New(rolesOf(deps)).HandleUserInput(t.Context(), "c1", nopOrigin{}, userInputMsg(t, &reqID, map[string]any{
+		"sessionId":  "sess_step",
+		"toolCallId": "tc-9",
+		"question":   "Which approach?",
+		"_meta": map[string]any{"kiro": map[string]any{
+			"askId": "pr-9", "askKind": "question",
+			"requester": map[string]any{
+				"sessionId": "sess_step",
+				"workflow":  map[string]any{"workflowId": "wf_1", "nodeId": "n1", "nodePath": []string{"seq", "n1"}},
+			},
+		}},
+	}))
+	var got *marotte.UserInputNeededPayload
+	for _, e := range *events {
+		if e.Type == marotte.EventUserInputNeeded {
+			p := e.Payload.(marotte.UserInputNeededPayload)
+			got = &p
+		}
+	}
+	if got == nil {
+		t.Fatal("no user_input_needed event broadcast")
+	}
+	if got.RunID != "wf_1" || got.NodeID != "n1" {
+		t.Errorf("RunID/NodeID = %q/%q, want wf_1/n1 from the requester", got.RunID, got.NodeID)
+	}
+	if !slices.Equal(deps.pendingKASIDs, []string{"pr-9"}) {
+		t.Errorf("filed under KAS ask ids %v, want [pr-9]", deps.pendingKASIDs)
+	}
 }
 
 // The three ways forwarding agent-composed options unchecked goes wrong, each silently.

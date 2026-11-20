@@ -49,7 +49,7 @@ func launchFailedParentless(t *testing.T, h *Runtime, br *fakeBridge) string {
 	if !held || l.ParentSessionID == "" {
 		t.Fatalf("Setup: the launch left lease %+v (held %v), want one naming its host session", l, held)
 	}
-	h.runs.observeComplete(t.Context(), runChatID("wf_1"), runCompleteFrame(t, "wf_1", "failed"))
+	h.runs.observeComplete(t.Context(), marotte.RunHostChatID("wf_1"), runCompleteFrame(t, "wf_1", "failed"))
 	if _, held := h.runs.lease("wf_1"); held {
 		t.Fatal("Setup: the failed run still holds its lease")
 	}
@@ -140,7 +140,7 @@ func TestObserveStart_AParentlessRunKeepsNoUnreadChat(t *testing.T) {
 	l, _ := h.runs.lease("wf_1")
 	unreadableChat(t, cs, "c9")
 
-	h.runs.observeStart(t.Context(), runChatID("wf_1"), runNotif(methodWFRunStart, map[string]any{
+	h.runs.observeStart(t.Context(), marotte.RunHostChatID("wf_1"), runNotif(methodWFRunStart, map[string]any{
 		"workflowId": "wf_1", "workflowName": "publish", "parentSessionId": l.ParentSessionID,
 	}))
 
@@ -187,7 +187,7 @@ func TestRetry_ARetriedChatLaunchedRunIsStillRefusedWhileAChatFileIsUnreadable(t
 	if _, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", launchedHead("failed", "sess_c9", "publish"))); err != nil {
 		t.Fatalf("Setup: Retry with the launcher deleted = %v", err)
 	}
-	h.runs.observeComplete(t.Context(), runChatID("wf_1"), runCompleteFrame(t, "wf_1", "failed"))
+	h.runs.observeComplete(t.Context(), marotte.RunHostChatID("wf_1"), runCompleteFrame(t, "wf_1", "failed"))
 	if _, held := h.runs.lease("wf_1"); held {
 		t.Fatal("Setup: the failed retry still holds its lease")
 	}
@@ -239,7 +239,7 @@ func TestObserveStart_AParentlessRunIsAttributedWhenTheChatsDirectoryIsUnlistabl
 	l, _ := h.runs.lease("wf_1")
 	cs.ownerScan = func(context.Context, chat.OwnerScan) chat.OwnerScan { return chat.OwnerScan{} }
 
-	h.runs.observeStart(t.Context(), runChatID("wf_1"), runNotif(methodWFRunStart, map[string]any{
+	h.runs.observeStart(t.Context(), marotte.RunHostChatID("wf_1"), runNotif(methodWFRunStart, map[string]any{
 		"workflowId": "wf_1", "workflowName": "publish", "parentSessionId": l.ParentSessionID,
 	}))
 

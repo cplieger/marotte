@@ -3,6 +3,7 @@
 // 409's `reason` names its class; what each class means for a prompt is `actions/chat.ts`'s.
 
 import type { TabKind } from "./types.js";
+import type { AlwaysReach } from "./wire/types.gen.js";
 import { BUS_COMMAND_FAILED, emitBus } from "./bus.js";
 import { flushFrames } from "./frame-dispatch.js";
 import { get } from "./store.js";
@@ -19,6 +20,7 @@ type CommandType =
   | "delete_chat"
   | "switch_model"
   | "set_supervised_mode"
+  | "set_chat_messaging"
   | "permission_response"
   | "elicitation_response"
   | "set_effort"
@@ -55,6 +57,7 @@ type TypedCommand =
   | { type: "merge_tangent"; chat_id: string; payload: { op_id: string } }
   | { type: "switch_model"; chat_id: string; payload: { model: string; effort?: string } }
   | { type: "set_supervised_mode"; chat_id: string; payload: { enabled: boolean } }
+  | { type: "set_chat_messaging"; chat_id: string; payload: { enabled: boolean } }
   | {
       type: "permission_response";
       chat_id: string;
@@ -66,7 +69,7 @@ type TypedCommand =
         file_decisions?: Record<string, boolean>;
         rejection_reason?: string;
         always_resource?: string;
-        always_scope?: "user" | "session";
+        always_reach?: AlwaysReach;
       };
     }
   | {

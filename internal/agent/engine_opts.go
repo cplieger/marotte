@@ -157,7 +157,7 @@ func (rt *Runtime) terminalTimeout(ctx context.Context) int {
 }
 
 // sessionSettings are a chat session door's inputs; a move reloads resident chat sessions (markSessionsForReload).
-// Live settings (ignore files, the shell timeout, content collection) are pushed instead. Presets is the Settings
+// Live settings (ignore files, the shell timeout, content collection, messages between chats) are pushed instead. Presets is the Settings
 // profile's, which a chat takes only at its first door (pinSecurityProfile), so it is outside the fingerprint, as is
 // RunPresets, which a run's host records on its lease.
 type sessionSettings struct {
@@ -220,6 +220,7 @@ func (rt *Runtime) chatSessionOpts(ctx context.Context, rec *marotte.Chat, ask *
 		DisableAutoCompaction:   !s.AutoCompaction,
 		AutoCompactionThreshold: s.AutoCompactPct,
 	}
+	opts.Features.Messaging = chatMessagingOn(s.Features.Messaging, rec)
 	if rec.IsStartedBot() {
 		opts.CustomAgents = []marotte.ClientCustomAgent{bot.Role(rec, botPaths())}
 		if doc, ok := bot.SteeringDoc(rec); ok {

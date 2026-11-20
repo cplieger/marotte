@@ -699,7 +699,7 @@ func (r *runLog) takeStaged(workflowID string) map[string]*marotte.EntryPrompt {
 // hostFor is the host a frame's chat id names: itself, or the parentless bridge's key for an empty id.
 func hostFor(workflowID string, chatID marotte.ChatID) marotte.ChatID {
 	if chatID == "" {
-		return runChatID(workflowID)
+		return marotte.RunHostChatID(workflowID)
 	}
 	return chatID
 }

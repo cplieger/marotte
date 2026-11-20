@@ -38,10 +38,10 @@ func TestInboundRequest_AnswersOnTheBridgeItArrivedOn(t *testing.T) {
 		{name: "unexpected_request_refusal", chat: "c1", msg: func(_ *testing.T, id int64) *marotte.RPCResponse {
 			return &marotte.RPCResponse{ID: &id, Method: "_kiro/not/a/method"}
 		}},
-		{name: "host_session_fs_read", chat: runChatID("wf_1"), msg: func(t *testing.T, id int64) *marotte.RPCResponse {
+		{name: "host_session_fs_read", chat: marotte.RunHostChatID("wf_1"), msg: func(t *testing.T, id int64) *marotte.RPCResponse {
 			return &marotte.RPCResponse{ID: &id, Method: marotte.MethodFSRead, Params: mustJSON(t, map[string]any{"path": "f.txt"})}
 		}},
-		{name: "host_session_refusal", chat: runChatID("wf_1"), msg: func(_ *testing.T, id int64) *marotte.RPCResponse {
+		{name: "host_session_refusal", chat: marotte.RunHostChatID("wf_1"), msg: func(_ *testing.T, id int64) *marotte.RPCResponse {
 			return &marotte.RPCResponse{ID: &id, Method: "_kiro/not/a/method"}
 		}},
 	}
@@ -53,7 +53,7 @@ func TestInboundRequest_AnswersOnTheBridgeItArrivedOn(t *testing.T) {
 			}
 			successor := newRecordingTermBridge()
 			h := hubWithBridge(t, work, successor)
-			if isRunChat(tc.chat) {
+			if marotte.IsRunHostChat(tc.chat) {
 				h.insertBridgeNow(tc.chat, testBridge(successor, bridgeReady))
 			}
 			origin := newRecordingTermBridge()

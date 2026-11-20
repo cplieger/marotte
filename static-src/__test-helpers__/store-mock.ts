@@ -119,6 +119,7 @@ export const storeMock = {
 
   setCurrentMode: vi.fn(),
   setSupervisedMode: vi.fn(),
+  setMessagingOff: vi.fn(),
   setSecurityProfile: vi.fn(),
   setEffort: vi.fn(),
   setThinkingChoice: vi.fn(),

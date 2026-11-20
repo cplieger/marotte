@@ -36,24 +36,6 @@ const (
 	keyWorkspacePaths = "workspacePaths"
 )
 
-// Real ids are `c-*` uuids.
-const runChatPrefix = "run:"
-
-func runChatID(workflowID string) marotte.ChatID {
-	return marotte.ChatID(runChatPrefix + workflowID)
-}
-
-func isRunChat(chatID marotte.ChatID) bool {
-	return strings.HasPrefix(string(chatID), runChatPrefix)
-}
-
-func workflowIDOf(chatID marotte.ChatID) string {
-	if !isRunChat(chatID) {
-		return ""
-	}
-	return strings.TrimPrefix(string(chatID), runChatPrefix)
-}
-
 // unanswered wraps a launch's err with errEngineSlow when the engine ran out of time or was not ready. Only for an
 // error returned before workflow/new is sent: after it, a run may exist and a retry could double it. ctx is the
 // caller's, so a launch its caller abandoned is not the engine's fault.
@@ -215,7 +197,7 @@ func (rs *Runs) launchAs(
 		return "", "", nil, err
 	}
 	rs.launchHosts.name(string(parent), wfID)
-	if !rs.bridges.insert(runChatID(wfID), sb) {
+	if !rs.bridges.insert(marotte.RunHostChatID(wfID), sb) {
 		sb.closeOwned(rs.bridges.closeSession)
 		return "", "", nil, fmt.Errorf("workflow %s %w", wfID, errHostSessionTaken)
 	}
@@ -227,7 +209,7 @@ func (rs *Runs) launchAs(
 	sb.setReady()
 	sb.settled.settle(nil)
 	_ = sb.useRun(cctx, func(_ context.Context, s engineSession) error {
-		rs.coord.goRunForward(runChatID(wfID), s)
+		rs.coord.goRunForward(marotte.RunHostChatID(wfID), s)
 		return nil
 	})
 	relay.begin()
@@ -266,7 +248,7 @@ func (rs *Runs) startLaunched(
 	err := rs.leaseLaunched(ctx, wfID, recipe, o, host)
 	unlock()
 	if err != nil {
-		rs.coord.closeBridge(ctx, runChatID(wfID), marotte.TurnOutcomeInterrupted)
+		rs.coord.closeBridge(ctx, marotte.RunHostChatID(wfID), marotte.TurnOutcomeInterrupted)
 		return err
 	}
 	parent := sb.SessionID()
@@ -334,7 +316,7 @@ func (rs *Runs) invokeFailed(ctx context.Context, wfID, recipe string, o *launch
 	rs.recordScheduleOutcome(ctx, launchrule.Run{ScheduleID: o.scheduleRow().ID, WorkflowID: wfID},
 		launchrule.Outcome{Status: launchrule.StatusFailed, Reason: launchrule.ReasonText(err.Error())})
 	rs.releaseLease(ctx, wfID)
-	rs.coord.closeBridge(ctx, runChatID(wfID), marotte.TurnOutcomeInterrupted)
+	rs.coord.closeBridge(ctx, marotte.RunHostChatID(wfID), marotte.TurnOutcomeInterrupted)
 	return err
 }
 
@@ -596,7 +578,7 @@ func (rs *Runs) teardownDeleted(ctx context.Context, workflowID string) {
 	rs.translate.ForgetRunSteps(workflowID)
 	rs.retries.clear(workflowID)
 	rs.deleteRunLog(ctx, workflowID)
-	rs.coord.closeBridge(ctx, runChatID(workflowID), marotte.TurnOutcomeInterrupted)
+	rs.coord.closeBridge(ctx, marotte.RunHostChatID(workflowID), marotte.TurnOutcomeInterrupted)
 	rs.forgetBounds(ctx, workflowID)
 	rs.clearEnd(workflowID)
 	if rs.log != nil {
@@ -1635,7 +1617,7 @@ func (rs *Runs) healsPause(ctx context.Context, chatID marotte.ChatID, f *pauseF
 // an agent's run, whose frames name its chat, and for a run marotte holds no lease for.
 func (rs *Runs) parentlessRunChat(workflowID string) marotte.ChatID {
 	if l, held := rs.lease(workflowID); held && l.Origin != runlease.OriginAgent {
-		return runChatID(workflowID)
+		return marotte.RunHostChatID(workflowID)
 	}
 	return ""
 }

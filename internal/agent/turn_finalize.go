@@ -267,10 +267,10 @@ type closeFacts struct {
 }
 
 // afterTurnClose runs the between-turns follow-ups in order: the wait for KAS to go idle (every later step is a
-// session call), the steer ends and stale run notices, a model switch, then the tail's end, after which the run
-// list takes what runs next. Nothing once shutdown began. A turn_end is not KAS's boundary: KAS 2.37.1 continues the
-// session/prompt while unread steering remains, and a clear before its idle report empties the buffer under that
-// continuation. So the steer settle waits for idle and is skipped when a turn opens first, whose close resolves the
+// session call), the steer ends and stale run notices, a model switch and the messaging choice, then the tail's end,
+// after which the run list takes what runs next. Nothing once shutdown began. A turn_end is not KAS's boundary: KAS
+// 2.37.1 continues the session/prompt while unread steering remains, and a clear before its idle report empties the
+// buffer under that continuation. So the steer settle waits for idle and is skipped when a turn opens first, whose close resolves the
 // end; a death settles at once. ctx is lc's life context, and each step first checks the life still stands, so no
 // step begins once it ended.
 func (bc *bridgeCoordinator) afterTurnClose(ctx context.Context, lc *chatLifecycle, cf *closeFacts) {
@@ -310,8 +310,8 @@ func (bc *bridgeCoordinator) resolveCloseEnds(ctx context.Context, lc *chatLifec
 	bc.endsApplied(lc)
 }
 
-// betweenTurns waits for KAS to go idle, then for an abandoned prompt's answer, runs atIdle once and applies a parked
-// model, then ends the tail (endTail): the close's KAS hold is released and its run entry learns the tail ended, so
+// betweenTurns waits for KAS to go idle, then for an abandoned prompt's answer, runs atIdle once, applies a parked
+// model and the chat's messaging choice, then ends the tail (endTail): the close's KAS hold is released and its run entry learns the tail ended, so
 // a waiting take cannot reach the session before them. A release refused because KAS reported a run meanwhile
 // repeats the wait. A wait that stood down (a turn opened, a teardown, shutdown) ends the hold and the entry with no
 // take and skips atIdle.
@@ -329,6 +329,9 @@ func (bc *bridgeCoordinator) betweenTurns(ctx context.Context, lc *chatLifecycle
 		}
 		if bc.applyPendingModel != nil && !lc.endedNow() {
 			bc.applyPendingModel(ctx, chatID)
+		}
+		if bc.ensureMessaging != nil && !lc.endedNow() {
+			bc.ensureMessaging(ctx, chatID)
 		}
 		if bc.releaseTail(lc, cf) {
 			return

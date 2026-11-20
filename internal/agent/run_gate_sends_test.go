@@ -145,10 +145,10 @@ var knownUnguarded = map[string][]string{
 		"Stop",
 	},
 	"guardedSession": {
-		"AwaitAbandonedPrompt", "Catalog", "Close", "CurrentMode", "EnsureEffort", "EnsureThinking", "HealWorkflowLaunch",
-		"ModelID", "Models", "Modes", "NotifCh", "ObserveEffort", "ObserveThinking", "Open", "PolicyErrors", "Release",
-		"Released", "Respond", "SessionID", "SessionLoadSeq", "SessionTitle", "SessionTitleSetByUser", "SetModel",
-		"SupervisedApplied",
+		"AwaitAbandonedPrompt", "Catalog", "Close", "CurrentMode", "EnsureEffort", "EnsureMessaging", "EnsureThinking",
+		"HealWorkflowLaunch", "ModelID", "Models", "Modes", "NotifCh", "ObserveEffort", "ObserveMessaging",
+		"ObserveThinking", "Open", "PolicyErrors", "Release", "Released", "Respond", "SessionID", "SessionLoadSeq",
+		"SessionTitle", "SessionTitleSetByUser", "SetModel", "SupervisedApplied",
 	},
 }
 

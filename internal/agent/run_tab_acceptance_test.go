@@ -365,7 +365,7 @@ func TestAcceptance_AParentlessRunKeepsItsLeaseWithNoChat(t *testing.T) {
 		"workflowId": "wf_scheduled", "workflowName": "nightly",
 	}))
 	// And one on the run's own synthetic-id bridge.
-	h.translateACPEvent(runChatID("wf_scheduled"), h.originOf(runChatID("wf_scheduled")), runNotif(methodWFNodeStart, map[string]any{
+	h.translateACPEvent(marotte.RunHostChatID("wf_scheduled"), h.originOf(marotte.RunHostChatID("wf_scheduled")), runNotif(methodWFNodeStart, map[string]any{
 		"workflowId": "wf_scheduled", "nodeId": "coder",
 	}))
 

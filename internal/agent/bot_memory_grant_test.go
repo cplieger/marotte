@@ -252,7 +252,7 @@ func TestBotMemoryGrant_ARoutingIdNamingNoChatIsRefusedQuietly(t *testing.T) {
 		name   string
 		chatID marotte.ChatID
 	}{
-		{"a parentless run", runChatPrefix + "wf_bot"},
+		{"a parentless run", marotte.RunHostChatID("wf_bot")},
 		{"the observer pass", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

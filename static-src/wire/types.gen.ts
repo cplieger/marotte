@@ -2,6 +2,8 @@
 
 export type AlwaysAllowBlock = "unparseable";
 
+export type AlwaysReach = "chat" | "step" | "run" | "launching_chat" | "user";
+
 export type AtDays = "daily" | "weekdays" | "monthly";
 
 export type BackgroundJobState = "running" | "completed" | "failed" | "cancelled" | "timed_out" | "outcome_unknown";
@@ -608,6 +610,8 @@ export interface ChatHeader {
   read_position?: number;
   turn_count: number;
   supervised_mode?: boolean;
+  /** MessagingOff mirrors Chat's for the Chat options switch. */
+  messaging_off?: boolean;
   /** Tangent mirrors Chat's for the merge controls. */
   tangent?: boolean;
   /**
@@ -2233,6 +2237,31 @@ export interface Hit {
 }
 
 /**
+ * IdentityProvider is the organization identity provider KAS signs a remote server in through when the server's
+ * oauth_mode is enterprise or auto. One per user; KAS reads it from the user mcp.json only.
+ */
+export interface IdentityProvider {
+  issuer: string;
+  client_id: string;
+  /** Name is the display name; empty leaves KAS's own, the issuer's host. */
+  name?: string;
+  /** AuthorizationEndpoint and TokenEndpoint override the issuer's OpenID discovery document. */
+  authorization_endpoint?: string;
+  token_endpoint?: string;
+}
+
+/**
+ * IdentityProviderResponse is GET /api/mcp/identity-provider's reply. Config is nil when no provider is configured;
+ * Unreadable says the record holds one marotte could not read, still in force. Subject stamps Status.
+ */
+export interface IdentityProviderResponse {
+  config: IdentityProvider | null;
+  subject?: SubjectStamp;
+  status: MCPIdentityProviderPayload;
+  unreadable?: boolean;
+}
+
+/**
  * Inventory is the full read-side snapshot: every manifest entry joined
  * with state, the system group, and the active job.
  */
@@ -2591,6 +2620,44 @@ export interface LoginResult {
 }
 
 /**
+ * MCPEnterpriseAuth is kiro-cli's enterpriseAuthorization on one server's status. Reason is empty on a connected
+ * server; on a failed one it is kiro-cli's open vocabulary (idp-not-configured, idp-sign-in-required,
+ * idp-session-expired, denied, unsupported, failed), kept verbatim.
+ */
+export interface MCPEnterpriseAuth {
+  reason?: string;
+  server_description?: string;
+}
+
+/**
+ * MCPIdentityProviderPayload is the organization sign-in's status, the payload for type="mcp_identity_provider"
+ * and GET /api/mcp/identity-provider's status. Known is false until kiro-cli reports after the engine started;
+ * a nil Status while Known means kiro-cli has no provider. SigningIn is a Sign in the user started, its consent
+ * page OAuthURL once kiro-cli opened it and Relayed once its callback was pasted; SignInError is why kiro-cli
+ * ended the last one without signing in.
+ */
+export interface MCPIdentityProviderPayload {
+  status?: MCPIdentityProviderStatus;
+  oauth_url?: string;
+  sign_in_error?: string;
+  known: boolean;
+  signing_in?: boolean;
+  relayed?: boolean;
+}
+
+/**
+ * MCPIdentityProviderStatus is kiro-cli's organization sign-in as its _kiro/mcp/status frames report it. Error is
+ * set for invalid-config only, which carries no issuer; Account only when signed in and the ID token names one.
+ */
+export interface MCPIdentityProviderStatus {
+  state: string;
+  issuer?: string;
+  display_name?: string;
+  account?: string;
+  error?: string;
+}
+
+/**
  * MCPPrewarmPayload is the payload for type="mcp_prewarm", emitted when a prewarm install starts,
  * succeeds or fails, and when a server joins or leaves one in flight. State applies to exactly the
  * servers ServerIDs names.
@@ -2634,6 +2701,11 @@ export interface MCPResourceTemplateInfo {
 
 /** MCPServerStatus is one server's row of GET /api/mcp/status and of an mcp_status frame. */
 export interface MCPServerStatus {
+  /**
+   * Enterprise is set when the server signs in through the organization identity provider: empty on a
+   * connected row, its reason on a failed one.
+   */
+  enterprise?: MCPEnterpriseAuth;
   name: string;
   state: string;
   /** Origin is never omitted: the client attributes a status to marotte's row only on "user". */
@@ -2813,13 +2885,17 @@ export interface OpenEntry {
  * than auto-opening. Only http/https URLs are broadcast. ExpiresAt is when KAS stops waiting for
  * the callback; a replayed event carries the original time, so the client shows only what is left.
  * Server is the MCP server KAS named, and FlowID the mid-session re-auth that mcp_sign_in_closed
- * ends; either is absent when KAS named none.
+ * ends; either is absent when KAS named none. IdentityProvider marks the organization's own sign-in
+ * page, named IdentityProviderName when kiro-cli has reported the provider; it ends when
+ * mcp_identity_provider leaves signing-in.
  */
 export interface OpenExternalURLPayload {
   expires_at: string;
   url: string;
   server?: string;
   flow_id?: string;
+  identity_provider_name?: string;
+  identity_provider?: boolean;
 }
 
 /**
@@ -2999,6 +3075,11 @@ export interface PermissionConsent {
   subject: string;
   /** Folder is the `<dir>/**` pattern over a path subject's parent, empty when there is none. */
   folder?: string;
+  /**
+   * Reaches are the rules an always answer to this ask can save, widest last; empty when
+   * KAS offers to save none.
+   */
+  reaches?: AlwaysReach[];
 }
 
 /** PermissionNeededPayload is the payload for type="permission_needed". */

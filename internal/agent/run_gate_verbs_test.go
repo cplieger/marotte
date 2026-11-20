@@ -92,11 +92,11 @@ func steeredStepHub(t *testing.T) (*Runtime, *fakeBridge) {
 		t.Fatalf("Setup: MessageStep = %v", err)
 	}
 	br.setCallResult(marotte.MethodSessionSteerClear, json.RawMessage(`{"messageIds":["steer-m-7"]}`))
-	gen := h.coord.turns.attachForwardNow(runChatID("wf_1")).gen
+	gen := h.coord.turns.attachForwardNow(marotte.RunHostChatID("wf_1")).gen
 	br.mu.Lock()
 	br.deliveredSeq = 3
 	br.mu.Unlock()
-	h.coord.turns.observe(runChatID("wf_1"), gen, 3)
+	h.coord.turns.observe(marotte.RunHostChatID("wf_1"), gen, 3)
 	br.mu.Lock()
 	br.calls = nil
 	br.mu.Unlock()

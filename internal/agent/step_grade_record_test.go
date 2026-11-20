@@ -424,7 +424,7 @@ func TestStepGrade_AResumedStepKASCompletedIsGradedWithoutANewClose(t *testing.T
 	nodePath := workflow.PathKey(path)
 	h, _, br := runLoggingHub(t)
 	h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: id, NodePath: nodePath, SessionID: "step-session-1"}, "")
-	if _, err := h.runs.log.closeHost(t.Context(), runChatID(id), marotte.ConcludeStopReason(marotte.StopReasonInterrupted)); err != nil {
+	if _, err := h.runs.log.closeHost(t.Context(), marotte.RunHostChatID(id), marotte.ConcludeStopReason(marotte.StopReasonInterrupted)); err != nil {
 		t.Fatalf("closeHost: %v", err)
 	}
 	interrupted := closeTurnOf(t, h, id)
@@ -942,7 +942,7 @@ func TestStepGrade_ASettledCloseIsGradedWhenKASCompletesItsNode(t *testing.T) {
 	nodePath := workflow.PathKey(path)
 	h, _, br := runLoggingHub(t)
 	h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: id, NodePath: nodePath, SessionID: "step-session-1"}, "")
-	if _, err := h.runs.log.closeHost(t.Context(), runChatID(id), marotte.ConcludeStopReason(marotte.StopReasonInterrupted)); err != nil {
+	if _, err := h.runs.log.closeHost(t.Context(), marotte.RunHostChatID(id), marotte.ConcludeStopReason(marotte.StopReasonInterrupted)); err != nil {
 		t.Fatalf("closeHost: %v", err)
 	}
 	interrupted := closeTurnOf(t, h, id)

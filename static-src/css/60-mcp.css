@@ -838,6 +838,82 @@
   color: var(--c-green);
 }
 
+/* The Organization sign-in card under the server lists: one box on the rows'
+   rung, its own block like `.mcp-foreign-list`. */
+.mcp-idp {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-block-start: var(--sp-4);
+  padding: var(--sp-3);
+  border-radius: var(--r);
+  background: var(--c-bg-secondary);
+
+  & > .section-hint {
+    margin: 0 0 var(--sp-1);
+  }
+}
+
+.mcp-idp-title {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--c-text-primary);
+}
+
+.mcp-idp-identity {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.mcp-idp-state {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--c-text-primary);
+}
+
+.mcp-idp-detail {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  line-height: 1.55;
+}
+
+.mcp-idp[data-state="invalid-config"] .mcp-idp-detail {
+  color: var(--c-red);
+}
+
+.mcp-idp-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+}
+
+.mcp-idp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-block-start: var(--sp-2);
+}
+
+.mcp-idp-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin-block-start: var(--sp-2);
+}
+
+/* REQUIRED: each of these sets `display`, which beats the UA `[hidden]` rule,
+   and `.btn-small` does too. */
+.mcp-idp-slot[hidden],
+.mcp-idp-form[hidden],
+.mcp-idp-actions > [hidden] {
+  display: none;
+}
+
 /* ---------- Add / edit modal ---------- */
 
 .mcp-modal-card {

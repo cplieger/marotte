@@ -179,6 +179,16 @@ const (
 	// offers it only in a delegation-suppressing mode, and never on a session recorded before the
 	// option existed, which it runs as WorkflowLaunchDelegateAll.
 	ConfigOptionWorkflowLaunch = "workflowLaunch"
+	// ConfigOptionSessionMessaging is the session's messages-between-chats switch, the live writer of what
+	// _meta.kiro.settings.sessionTools.messaging sets at the door. Its value is the STRING SessionMessagingOn or
+	// SessionMessagingOff, and KAS refuses it with -32000 while a turn runs.
+	ConfigOptionSessionMessaging = "sessionToolsMessaging"
+)
+
+// The sessionToolsMessaging option's two values.
+const (
+	SessionMessagingOn  = "on"
+	SessionMessagingOff = "off"
 )
 
 // The three values KAS's workflowLaunch option accepts.

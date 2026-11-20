@@ -20,7 +20,12 @@ func (t *Translator) HandleUserInput(ctx context.Context, chatID marotte.ChatID,
 		return
 	}
 	type userInputParams struct {
-		SessionID  string                `json:"sessionId"`
+		Meta struct {
+			Kiro struct {
+				Requester *acpAskRequester `json:"requester"`
+				AskID     string           `json:"askId"`
+			} `json:"kiro"`
+		} `json:"_meta"`
 		ToolCallID string                `json:"toolCallId"`
 		Question   string                `json:"question"`
 		Options    []wireUserInputOption `json:"options"`
@@ -35,7 +40,7 @@ func (t *Translator) HandleUserInput(ctx context.Context, chatID marotte.ChatID,
 
 	options := sanitizeUserInputOptions(p.Options)
 
-	step := t.steps.refFor(p.SessionID)
+	step := p.Meta.Kiro.Requester.step()
 	question := displayText(p.Question)
 	evt := marotte.NewEvent(marotte.EventUserInputNeeded, chatID, marotte.UserInputNeededPayload{
 		// The question is model-composed and unbounded on the wire; same rule as a permission title.
@@ -45,7 +50,7 @@ func (t *Translator) HandleUserInput(ctx context.Context, chatID marotte.ChatID,
 		RunID:      step.WorkflowID,
 		NodeID:     step.NodeID,
 	})
-	evt, filed := t.pendingPerms.PendingPermsAdd(ctx, reqID, evt, origin)
+	evt, filed := t.pendingPerms.PendingPermsAdd(ctx, reqID, p.Meta.Kiro.AskID, evt, origin)
 	if !filed {
 		return
 	}

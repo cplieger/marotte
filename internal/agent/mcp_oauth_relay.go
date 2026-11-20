@@ -1,13 +1,13 @@
 package agent
 
-// The MCP OAuth loopback relay. KAS runs the flow and binds its redirect listener on an ephemeral localhost port in
-// the container (`/kiro-mcp/oauth/callback` when the server config names none of clientId, clientMetadataUrl and
-// redirectUri, a declared redirectUri's own path, else `/oauth/callback`), which a remote browser cannot reach.
-// The user pastes the dead page's address and marotte replays the GET from inside, which completes only while that
-// listener waits: a Sign in (resetServer startOAuth) keeps one waiting, and so does a mid-session re-auth for 300 s;
-// KAS sends either consent URL over _kiro/openExternalUrl. The pasted address is untrusted; that URL is the anchor:
-// the dial target comes from its `redirect_uri` and `state` must match, or this unauthenticated route injects
-// authorization codes. Rewriting redirect_uri fails RFC 6749 §4.1.3.
+// The MCP OAuth loopback relay. KAS runs the flow and binds its redirect listener on a localhost port in the container,
+// which a remote browser cannot reach: a server's on an ephemeral port (`/kiro-mcp/oauth/callback` when its config names
+// none of clientId, clientMetadataUrl and redirectUri, a declared redirectUri's own path, else `/oauth/callback`), the
+// organization sign-in's on the first free port of kiro-cli's fixed list, at `/oauth/callback`. The user pastes the dead
+// page's address and marotte replays the GET from inside, which completes only while that listener waits; KAS sends the
+// consent URL over _kiro/openExternalUrl. The pasted address is untrusted and that URL is the anchor: the dial target
+// comes from its `redirect_uri` and `state` must match, or this unauthenticated route injects authorization codes.
+// Rewriting redirect_uri fails RFC 6749 §4.1.3.
 
 import (
 	"context"
@@ -41,13 +41,17 @@ const (
 )
 
 // relayQueryKeys allowlists the forwarded query keys: `code`/`state`, `scope` (RFC 6749
-// §4.1.2), `iss` (RFC 9207) and OIDC `session_state`. An error redirect carries no code, so it is absent.
+// §4.1.2), `iss` (RFC 9207), OIDC `session_state`, and the `authuser`, `hd` and `prompt` Google
+// appends to its redirect. An error redirect carries no code, so it is absent.
 var relayQueryKeys = map[string]struct{}{
 	"code":          {},
 	"state":         {},
 	"scope":         {},
 	"iss":           {},
 	"session_state": {},
+	"authuser":      {},
+	"hd":            {},
+	"prompt":        {},
 }
 
 // Refusal reasons, one value each so the handler maps a status and tests assert the reason.

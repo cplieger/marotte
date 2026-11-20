@@ -1094,6 +1094,20 @@ describe("settings_updated re-seeds the General panel", () => {
     });
   });
 
+  it("adopts the refetched Messages between chats switch, both ways", async () => {
+    const { syncSettings } = await import("../settings.js");
+    const { chatMessagingOn } = await import("../chat-messaging.js");
+    for (const enabled of [true, false]) {
+      vi.mocked(syncSettings).mockResolvedValueOnce(
+        settingsPayload({ chat_messaging_enabled: enabled }),
+      );
+      fireSSE("settings_updated", "", { settings_epoch: 0, settings_revision: 0 });
+      await vi.waitFor(() => {
+        expect(chatMessagingOn.value).toBe(enabled);
+      });
+    }
+  });
+
   it("seeds nothing when the refetch failed, and refuses rather than throwing", async () => {
     const { syncSettings, applyGeneralPanel } = await import("../settings.js");
     // Null is a failed fetch: seeding from it would clear every control. Every route past the guard

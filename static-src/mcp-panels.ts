@@ -9,6 +9,7 @@ import {
   SECRET_MASK,
   mcpState,
   discoverySignalFor,
+  identityProviderConfigured,
 } from "./mcp-state.js";
 import {
   type EditablePair,
@@ -168,6 +169,8 @@ function setMode(mode: AddMode, existing: Server | null): void {
 
 // One response can name several bad fields, so the fields are marked and the messages listed under them.
 
+const OAUTH_MODE_ID = "mcp-remote-oauth-mode";
+
 /** Wire field name -> input id; the wire names are the server's own. A field with no input still prints its message. */
 const FIELD_INPUT_IDS: Readonly<Record<string, readonly string[]>> = {
   name: ["mcp-remote-name", "mcp-npm-name"],
@@ -178,12 +181,18 @@ const FIELD_INPUT_IDS: Readonly<Record<string, readonly string[]>> = {
   headers: ["mcp-remote-headers", "mcp-registry-headers"],
   env: ["mcp-npm-env", "mcp-registry-env"],
   oauth_client_id: ["mcp-remote-oauth-client-id"],
+  oauth_mode: [OAUTH_MODE_ID],
+  "identity_provider.issuer": ["mcp-idp-issuer"],
+  "identity_provider.client_id": ["mcp-idp-client-id"],
+  "identity_provider.name": ["mcp-idp-name"],
+  "identity_provider.authorization_endpoint": ["mcp-idp-authorization-endpoint"],
+  "identity_provider.token_endpoint": ["mcp-idp-token-endpoint"],
 };
 
 const CLS_FIELD_INVALID = "field-invalid";
 
 /** Runs at the top of each submit, so a fixed field stops claiming to be wrong. */
-function clearFieldMarks(): void {
+export function clearFieldMarks(): void {
   for (const node of queryAll<HTMLElement>("." + CLS_FIELD_INVALID)) {
     node.classList.remove(CLS_FIELD_INVALID);
     node.removeAttribute("aria-invalid");
@@ -207,7 +216,7 @@ function markInvalidFields(fields: readonly ValidationField[]): string[] {
 }
 
 /** A validation failure lists every named field; any other failure keeps one message, so the list is absent there. */
-function showSubmitError(
+export function showSubmitError(
   errEl: HTMLElement,
   err: { message: string; cause?: unknown } | undefined,
   fallback: string,
@@ -251,6 +260,9 @@ function formCarry(existing: Server | null): Partial<Server> {
   }
   if (existing?.oauth_redirect_uri !== undefined) {
     out.oauth_redirect_uri = existing.oauth_redirect_uri;
+  }
+  if (existing?.oauth_mode !== undefined) {
+    out.oauth_mode = existing.oauth_mode;
   }
   if (existing?.oauth_scopes !== undefined) {
     out.oauth_scopes = existing.oauth_scopes;
@@ -534,6 +546,12 @@ function initRemotePanel(existing: Server | null): void {
   }
   // A stdio server never reaches this panel, so the stored transport is http or sse.
   transportSel.value = remoteTransport(existing?.transport);
+  const signIn = signInChoice();
+  signIn.select.value = oauthModeOf(existing?.oauth_mode ?? "") ?? "";
+  signIn.row.classList.toggle(
+    "hidden",
+    !signInChoiceShown(identityProviderConfigured(), existing?.oauth_mode),
+  );
 
   byId<HTMLButtonElement>("mcp-remote-add-header").onclick = (): void => {
     appendKeyPair(headers, { name: "", value: "" }, "header");
@@ -555,8 +573,65 @@ function initRemotePanel(existing: Server | null): void {
     if (oauthID !== "") {
       body.oauth_client_id = oauthID;
     }
+    if (!signIn.row.classList.contains("hidden")) {
+      delete body.oauth_mode;
+      const mode = oauthModeOf(signIn.select.value);
+      if (mode !== undefined) {
+        body.oauth_mode = mode;
+      }
+    }
     void submitServer(body, errEl, byId<HTMLButtonElement>("mcp-remote-save"));
   };
+}
+
+/** Values the Sign-in choice offers; KAS's `browser` is its default, so it is the empty option. */
+function oauthModeOf(v: string): Server["oauth_mode"] {
+  return v === "enterprise" || v === "auto" ? v : undefined;
+}
+
+/**
+ * Whether the remote form offers the Sign-in choice. With no provider, enterprise only fails and auto behaves as the
+ * browser, so the control would do nothing; a stored choice stays visible so it can be changed.
+ */
+export function signInChoiceShown(providerSet: boolean, stored: Server["oauth_mode"]): boolean {
+  return providerSet || oauthModeOf(stored ?? "") !== undefined;
+}
+
+interface SignInChoice {
+  readonly row: HTMLLabelElement;
+  readonly select: HTMLSelectElement;
+}
+
+/** The Sign-in choice, built once under the OAuth client ID field. */
+function signInChoice(): SignInChoice {
+  const known = maybeEl(OAUTH_MODE_ID);
+  if (known instanceof HTMLSelectElement) {
+    const row = known.closest("label");
+    if (row === null) {
+      throw new Error("mcp: Sign-in choice outside its label");
+    }
+    return { row, select: known };
+  }
+  const select = el(
+    "select",
+    { id: OAUTH_MODE_ID, className: "tool-form-input" },
+    el("option", { value: "" }, "In the browser, the default"),
+    el("option", { value: "enterprise" }, "Organization sign-in only"),
+    el("option", { value: "auto" }, "Organization sign-in when the server supports it"),
+  ) as HTMLSelectElement;
+  const row = el(
+    "label",
+    { className: "tool-form-label" },
+    "Sign-in",
+    select,
+    el(
+      "span",
+      { className: "tool-form-hint" },
+      "How kiro-cli gets this server's access token. Organization sign-in uses the provider set up under Organization sign-in on the MCP page.",
+    ),
+  ) as HTMLLabelElement;
+  byId<HTMLInputElement>("mcp-remote-oauth-client-id").closest("label")?.after(row);
+  return { row, select };
 }
 
 /** Resolved by the same attribute the panel loop uses. */

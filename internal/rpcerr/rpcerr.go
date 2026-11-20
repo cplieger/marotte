@@ -260,34 +260,36 @@ var kasRequestIDRe = regexp.MustCompile(`\(Request ID: ([^()\s]+)\)\s*$`)
 // Account is what a typed KAS error says on a turn card, and whether it is a context
 // overflow (the Compact remedy): KAS's message plus marotte's remedy for its class,
 // keyed on exact class names only, so a minified errorType gets the message alone.
-// Each half has its own budget, so a long message cannot cut off the remedy or the
-// request id.
+// The request id is named once, last: KAS's own "(Request ID: …)" tail is lifted off the
+// message, so a live failure and its replay read the same. Each half has its own budget,
+// so a long message cannot cut off the remedy or the request id.
 func Account(m Mapped, message string) (text string, contextLimit bool) {
+	id := requestIDOf(m, message)
 	switch {
 	case m.ErrorType == contextWindowExceededError:
 		// KAS's own sentence names a setting the reader cannot reach.
-		return withRequestID(contextLimitSentence, requestIDOf(m, message)), true
+		return withRequestID(contextLimitSentence, id), true
 	case m.ErrorType == genericValidationError && requestSizeRe.MatchString(strings.TrimSpace(message)):
-		return withRequestID(requestSizeSentence, requestIDOf(m, message)), true
+		return withRequestID(requestSizeSentence, id), true
 	}
-	msg := strings.TrimSpace(sanitize(message, mappedProseCap))
-	if m.ErrorType == modelRegistryUnavailableError {
-		return msg + modelRegistryUnavailableRemedy, false
-	}
+	msg := strings.TrimSpace(sanitize(kasRequestIDRe.ReplaceAllString(message, ""), mappedProseCap))
 	if msg == "" {
 		msg = strings.TrimSpace(sanitize(m.ErrorType, mappedProseCap))
 		if msg == "" {
 			msg = mappedFallbackProse
 		}
 	}
-	if m.RetryErrorType == RetryThrottling {
+	switch {
+	case m.ErrorType == modelRegistryUnavailableError:
+		msg += modelRegistryUnavailableRemedy
+	case m.RetryErrorType == RetryThrottling:
 		msg += throttledRemedy
 	}
-	return withRequestID(msg, m.RequestID), false
+	return withRequestID(msg, id), false
 }
 
-// requestIDOf is the envelope's request id, else the one KAS wrote into a message that
-// Account replaces (a display_error carries no requestId of its own).
+// requestIDOf is the envelope's request id, else the one KAS wrote into the message (a
+// display_error carries no requestId of its own).
 func requestIDOf(m Mapped, message string) string {
 	if m.RequestID != "" {
 		return m.RequestID

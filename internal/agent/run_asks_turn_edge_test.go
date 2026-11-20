@@ -34,7 +34,7 @@ func TestRunAsks_TurnBracketsArriveThroughEitherDoor(t *testing.T) {
 	doors := map[string]func(*testing.T) (h *Runtime, door marotte.ChatID, workflowID, session string){
 		"a parentless run's host session": func(t *testing.T) (*Runtime, marotte.ChatID, string, string) {
 			h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
-			return h, runChatID("wf_1"), "wf_1", "sess_step"
+			return h, marotte.RunHostChatID("wf_1"), "wf_1", "sess_step"
 		},
 		"the launching chat's bridge": func(t *testing.T) (*Runtime, marotte.ChatID, string, string) {
 			h, _ := chatParentedHub(t, runlease.Lease{WorkflowID: recordedRun, ChatID: "c1", ParentSessionID: "sess_parent"})

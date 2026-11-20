@@ -68,7 +68,7 @@ func TranslateRolesContractTest(t *testing.T, newRoles func(t *testing.T) *trans
 
 	t.Run("PendingPermsAdd_does_not_panic", func(t *testing.T) {
 		r := newRoles(t)
-		r.PendingPerms.PendingPermsAdd(t.Context(), 42, marotte.ServerEvent{Type: "permission_needed", ChatID: "c1"}, nil)
+		r.PendingPerms.PendingPermsAdd(t.Context(), 42, "pr-42", marotte.ServerEvent{Type: "permission_needed", ChatID: "c1"}, nil)
 	})
 
 	t.Run("Notify_does_not_panic", func(t *testing.T) {

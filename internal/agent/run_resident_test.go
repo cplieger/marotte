@@ -75,10 +75,10 @@ func TestRunComplete_ATerminalRunReleasesItsHostSessionAndAPauseKeepsIt(t *testi
 		t.Run(name, func(t *testing.T) {
 			h, _, br := newTestHub()
 			t.Cleanup(func() { shutdownHub(t, h) })
-			h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
+			h.insertBridgeNow(marotte.RunHostChatID("wf_1"), testBridge(br, bridgeReady))
 			h.runs.grantLease(t.Context(), "wf_1", "nightly", manualLaunch(), hostSec())
 
-			h.dispatch(t.Context(), runChatID("wf_1"), h.originOf(runChatID("wf_1")), runCompleteFrame(t, "wf_1", tc.status))
+			h.dispatch(t.Context(), marotte.RunHostChatID("wf_1"), h.originOf(marotte.RunHostChatID("wf_1")), runCompleteFrame(t, "wf_1", tc.status))
 
 			deadline := time.Now().Add(3 * time.Second)
 			for br.Open() != tc.wantOpen && time.Now().Before(deadline) {
@@ -99,12 +99,12 @@ func TestRunStopped_APausedRunKeepsTheFieldsItsLeaseIsFor(t *testing.T) {
 	t.Parallel()
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
-	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
+	h.insertBridgeNow(marotte.RunHostChatID("wf_1"), testBridge(br, bridgeReady))
 	// A scheduled launch carries the unattended mark.
 	h.runs.grantLease(t.Context(), "wf_1", "nightly",
 		scheduledLaunch(launchrule.Row{ID: "sched_1"}, time.Now().Add(time.Hour)), hostSec())
 
-	h.dispatch(t.Context(), runChatID("wf_1"), h.originOf(runChatID("wf_1")), runCompleteFrame(t, "wf_1", string(marotte.RunStatusPaused)))
+	h.dispatch(t.Context(), marotte.RunHostChatID("wf_1"), h.originOf(marotte.RunHostChatID("wf_1")), runCompleteFrame(t, "wf_1", string(marotte.RunStatusPaused)))
 
 	l, held := h.runs.lease("wf_1")
 	if !held {
@@ -129,7 +129,7 @@ func TestEnsureResident_AResidentRunIsHandedBackWithNoLoad(t *testing.T) {
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	incumbent := newFakeBridge()
-	h.insertBridgeNow(runChatID("wf_1"), testBridge(incumbent, bridgeReady))
+	h.insertBridgeNow(marotte.RunHostChatID("wf_1"), testBridge(incumbent, bridgeReady))
 	leaseParentless(t, h, "wf_1")
 	second := newFakeBridge()
 	fakeSourceOf(t, h).setFactory(func() engineSession { return second })
@@ -364,7 +364,7 @@ func TestCancel_MakesNoSessionResident(t *testing.T) {
 	if got := br.startCount() - before; got != 0 {
 		t.Errorf("session doors during a cancel = %d, want 0", got)
 	}
-	if h.bridge.mgr.get(runChatID("wf_1")) != nil {
+	if h.bridge.mgr.get(marotte.RunHostChatID("wf_1")) != nil {
 		t.Error("cancel registered a host session")
 	}
 	if !slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
@@ -416,7 +416,7 @@ func TestHandleRun_AParkedRunsPageRendersWithNoLeaseAndNoHostSession(t *testing.
 			t.Errorf("the reply carries no %q, so the tab has no tree to render", key)
 		}
 	}
-	if h.bridge.mgr.get(runChatID("wf_1")) != nil {
+	if h.bridge.mgr.get(marotte.RunHostChatID("wf_1")) != nil {
 		t.Error("the read made a host session resident")
 	}
 }
@@ -440,7 +440,7 @@ func TestEnsureResident_LoadsAParentlessRunsLaunchingSession(t *testing.T) {
 	if !slices.Equal(opts.Presets, []string{"preset-at-launch"}) {
 		t.Errorf("the load carried presets %v, want the lease's [preset-at-launch]", opts.Presets)
 	}
-	if h.bridge.mgr.get(runChatID("wf_1")) == nil {
+	if h.bridge.mgr.get(marotte.RunHostChatID("wf_1")) == nil {
 		t.Error("the loaded host session is not registered under the run's synthetic chat id")
 	}
 	if !slices.Contains(br.callLog(), methodKiroWorkflowResume) {
@@ -474,7 +474,7 @@ func TestEnsureResident_AChatParentedRunIsMadeResidentThroughItsChat(t *testing.
 	if sb := h.bridge.mgr.get("c1"); sb == nil || !sb.session().Open() {
 		t.Fatal("a refused verb closed the chat's session, which belongs to the conversation")
 	}
-	if h.bridge.mgr.get(runChatID("wf_1")) != nil {
+	if h.bridge.mgr.get(marotte.RunHostChatID("wf_1")) != nil {
 		t.Error("a host lane was registered for a chat-parented run")
 	}
 }
@@ -557,7 +557,7 @@ func TestEnsureResident_ALaunchingSessionNoLoadCanHoldRefusesTheVerb(t *testing.
 			if slices.Contains(calls, marotte.MethodPrompt) {
 				t.Errorf("the answer was sent although no session holds the launching session; calls were %v", calls)
 			}
-			if h.bridge.mgr.get(runChatID("wf_1")) != nil {
+			if h.bridge.mgr.get(marotte.RunHostChatID("wf_1")) != nil {
 				t.Error("a host lane was left registered for a run nothing can drive")
 			}
 			if len(tc.chain) > 0 && h.bridge.mgr.get("c1") == nil {
@@ -630,7 +630,7 @@ func TestEnsureResident_AFailedLoadIsAFaultOnThisServer(t *testing.T) {
 			if got := br.startCount() - starts; got != 0 {
 				t.Errorf("%d sessions opened, want 0: no fresh session may stand in", got)
 			}
-			if h.bridge.mgr.get(runChatID("wf_1")) != nil {
+			if h.bridge.mgr.get(marotte.RunHostChatID("wf_1")) != nil {
 				t.Error("a host lane was left registered for a run nothing loaded")
 			}
 			if slices.Contains(br.callLog(), methodKiroWorkflowResume) {
@@ -664,7 +664,7 @@ func TestEnsureResident_AGoneLaunchingSessionIsUnavailable(t *testing.T) {
 	if got := br.startCount() - starts; got != 0 {
 		t.Errorf("%d sessions opened, want 0: no fresh session may stand in", got)
 	}
-	if h.bridge.mgr.get(runChatID("wf_1")) != nil {
+	if h.bridge.mgr.get(marotte.RunHostChatID("wf_1")) != nil {
 		t.Error("a host lane was left registered for a run nothing loaded")
 	}
 	if slices.Contains(br.callLog(), methodKiroWorkflowResume) {
@@ -824,7 +824,7 @@ func TestEnsureResident_AnIncompleteChatScanRefusesToLoadAsAHost(t *testing.T) {
 	if got := br.startCount() - starts; got != 0 {
 		t.Errorf("%d sessions opened, want 0: the session may belong to the unreadable chat", got)
 	}
-	if h.bridge.mgr.get(runChatID("wf_1")) != nil {
+	if h.bridge.mgr.get(marotte.RunHostChatID("wf_1")) != nil {
 		t.Error("a host lane was registered on a session no complete scan proved parentless")
 	}
 }

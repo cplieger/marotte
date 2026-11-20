@@ -31,7 +31,7 @@ func TestMessageStep_AReaderLeavingAfterTheWriteKeepsTheWordsKASTook(t *testing.
 			h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 			if turn == "closed_turn" {
 				h.coord.runs = h.runs.log
-				h.coord.closeHostedRuns(t.Context(), runChatID("wf_1"), marotte.StopReasonInterrupted)
+				h.coord.closeHostedRuns(t.Context(), marotte.RunHostChatID("wf_1"), marotte.StopReasonInterrupted)
 			}
 			reply := make(chan struct{})
 			br.mu.Lock()

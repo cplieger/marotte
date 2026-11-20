@@ -420,7 +420,7 @@ func TestTranslateSystemNotify_AHostSessionLaneNamesItsRun(t *testing.T) {
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	before := h.bus.fanout.Position().Head
-	if !h.dispatchWorkspace(t.Context(), runChatID("wf_1"), systemNotifyMsg(t)) {
+	if !h.dispatchWorkspace(t.Context(), marotte.RunHostChatID("wf_1"), systemNotifyMsg(t)) {
 		t.Fatal("the workspace table did not claim _kiro/system/notify")
 	}
 	var got []marotte.ChatID
@@ -433,7 +433,7 @@ func TestTranslateSystemNotify_AHostSessionLaneNamesItsRun(t *testing.T) {
 			got = append(got, msg.ChatID)
 		}
 	}
-	if len(got) != 1 || got[0] != runChatID("wf_1") {
-		t.Errorf("system_notice chat ids = %v, want one on %q", got, runChatID("wf_1"))
+	if len(got) != 1 || got[0] != marotte.RunHostChatID("wf_1") {
+		t.Errorf("system_notice chat ids = %v, want one on %q", got, marotte.RunHostChatID("wf_1"))
 	}
 }

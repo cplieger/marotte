@@ -419,7 +419,7 @@ func (rt *Runtime) engineSessionUpdate(ctx context.Context, msg *marotte.RPCResp
 		return
 	}
 	if wf, ok := rt.router.StepRun(marotte.SessionID(env.SessionID)); ok {
-		rt.handleRunStepFrame(ctx, runChatID(wf), msg)
+		rt.handleRunStepFrame(ctx, marotte.RunHostChatID(wf), msg)
 	}
 }
 
@@ -441,8 +441,8 @@ func (rt *Runtime) answerDetached(h engineHandle, d bridge.DetachedSession) {
 }
 
 // observerForward consumes an observer pass's frames: its requests as the engine lane answers an unknown session's
-// (it runs no tools), its workspace notifications through the one table, and its own command list as the slash
-// menu's seed. The loop is on inflight until the pass's stream ends, past the pass's return, so a drain of inflight
+// (it runs no tools), its workspace notifications through the one table, its MCP status's organization sign-in
+// (never a view: the pass's session is no chat's), and its own command list as the slash menu's seed. The loop is on inflight until the pass's stream ends, past the pass's return, so a drain of inflight
 // covers every frame the pass's session delivered; once Shutdown has begun the pass is refused.
 func (rt *Runtime) observerForward(s engineSession) error {
 	started := rt.lifecycle.goUnlessDraining(func() {
@@ -457,6 +457,8 @@ func (rt *Runtime) observerForward(s engineSession) error {
 					rt.answerUnknownSession(s, msg)
 				}
 			case rt.dispatchWorkspace(ctx, "", msg):
+			case msg.Method == methodV3MCPStatus:
+				rt.mcpRegistry.observeIdentityProvider(msg)
 			case msg.Method == marotte.MethodSessionUpdate:
 				rt.observerUpdate(msg)
 			}

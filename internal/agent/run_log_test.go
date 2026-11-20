@@ -115,8 +115,8 @@ func TestRunLog_AnEmptyChatIDRecordsTheParentlessHostSessionAsHost(t *testing.T)
 	if _, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: "root/step"}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if hostOf(r, "wf1") != runChatID("wf1") {
-		t.Fatalf("an empty chat id did not record %q as the host", runChatID("wf1"))
+	if hostOf(r, "wf1") != marotte.RunHostChatID("wf1") {
+		t.Fatalf("an empty chat id did not record %q as the host", marotte.RunHostChatID("wf1"))
 	}
 }
 
@@ -1052,7 +1052,7 @@ func TestRunLog_RecordsAStepsHook(t *testing.T) {
 		}},
 	})
 	params, _ := json.Marshal(map[string]any{"sessionId": "sess_step", "update": json.RawMessage(update)})
-	h.handleRunStepFrame(t.Context(), runChatID("wf_1"), &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params})
+	h.handleRunStepFrame(t.Context(), marotte.RunHostChatID("wf_1"), &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params})
 	h.runs.RunNodeComplete(t.Context(), "wf_1", reviewSegments, "completed", "")
 
 	var hooks []marotte.EntryToolCall

@@ -82,6 +82,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	supervisedLocks := keylock.New(cmp.Compare[marotte.ChatID])
 	d.RegisterBotWriteChange(marotte.CmdSetSupervisedMode, bind3(r.Bridges, chats, supervisedLocks, cmdSetSupervisedMode))
 	d.register(marotte.CmdSetSecurityProfile, bind1(r.ProfileMoves, cmdSetSecurityProfile))
+	d.register(marotte.CmdSetChatMessaging, bind2(chats, r.Messaging, cmdSetChatMessaging))
 
 	d.register(marotte.CmdCancel, bind6(r.Run, r.Bridges, r.Perms, r.Terminals, r.Stops, r.SteerQueue, cmdCancel))
 	d.registerChange(marotte.CmdForkChat, bind4(r.Bridges, chats, r.Workspace, mem, cmdForkChat))

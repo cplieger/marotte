@@ -18,7 +18,7 @@ import (
 func openStep(t *testing.T, h *Runtime, workflowID string, path []string, sessionID string) {
 	t.Helper()
 	step := &translate.RunStep{RunID: workflowID, NodePath: workflow.PathKey(path), SessionID: sessionID}
-	if _, _, err := h.runs.log.open(t.Context(), step, runChatID(workflowID)); err != nil {
+	if _, _, err := h.runs.log.open(t.Context(), step, marotte.RunHostChatID(workflowID)); err != nil {
 		t.Fatalf("open step %q on %s: %v", path, sessionID, err)
 	}
 }
@@ -28,7 +28,7 @@ func stepFixture(t *testing.T, id string) (*Runtime, *fakeBridge) {
 	t.Helper()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
+	h.insertBridgeNow(marotte.RunHostChatID(id), testBridge(br, bridgeReady))
 	h.runs.log = newRunLog(t.TempDir())
 	return h, br
 }
@@ -66,7 +66,7 @@ func TestCancelExpired_AStepInsideALongKASToolIsNotStopped(t *testing.T) {
 	t.Parallel()
 	const id = "wf_1"
 	h, br := stepFixture(t, id)
-	host := runChatID(id)
+	host := marotte.RunHostChatID(id)
 	start := map[string]any{"workflowId": id, "nodeId": "review", "nodePath": []string{id, "review"}, "type": stepNodeType}
 	h.dispatch(t.Context(), host, h.originOf(host), runNotif(methodWFNodeStart, start))
 	start["sessionId"] = "step-session-a"
@@ -87,7 +87,7 @@ func TestCancelExpired_ACommandWatchPollingIdleIsNotStopped(t *testing.T) {
 	t.Parallel()
 	const id = "wf_1"
 	h, br := stepFixture(t, id)
-	host := runChatID(id)
+	host := marotte.RunHostChatID(id)
 	watch := []string{id, "watching", "iter-0", "mail"}
 	h.dispatch(t.Context(), host, h.originOf(host), runNotif(methodWFNodeStart, map[string]any{
 		"workflowId": id, "nodeId": "watching", "nodePath": []string{id, "watching"}, "type": "repeat",
@@ -116,7 +116,7 @@ func TestCancelExpired_AStepWithAHashedPathKeyHoldsTheWindow(t *testing.T) {
 	const id = "wf_1"
 	h, br := stepFixture(t, id)
 	long := strings.Repeat("x", 9<<10)
-	h.dispatch(t.Context(), runChatID(id), h.originOf(runChatID(id)), runNotif(methodWFNodeStart, map[string]any{
+	h.dispatch(t.Context(), marotte.RunHostChatID(id), h.originOf(marotte.RunHostChatID(id)), runNotif(methodWFNodeStart, map[string]any{
 		"workflowId": id, "nodeId": long, "nodePath": []string{id, long}, "type": stepNodeType, "sessionId": "step-session-a",
 	}))
 	if h.runs.log.turn(id, workflow.PathKey([]string{id, long})) == nil {
@@ -135,7 +135,7 @@ func TestCancelExpired_AStepOpenedByItsMetaHoldsTheWindow(t *testing.T) {
 	t.Parallel()
 	const id = "wf_1"
 	h, br := stepFixture(t, id)
-	h.dispatch(t.Context(), runChatID(id), h.originOf(runChatID(id)), stepMetaChunk(t, "step-session-a", map[string]any{
+	h.dispatch(t.Context(), marotte.RunHostChatID(id), h.originOf(marotte.RunHostChatID(id)), stepMetaChunk(t, "step-session-a", map[string]any{
 		"workflowId": id, "nodeId": "a", "nodePath": []string{id, "a"},
 	}))
 	if h.runs.log.turn(id, workflow.PathKey([]string{id, "a"})) == nil {

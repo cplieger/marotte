@@ -2,7 +2,7 @@
 // prompt-row slot by changing per MESSAGE, which none of them do. Every row is built
 // here; static/index.html carries an empty card. The chat strip comes first, then the
 // pills the prompt row has no room for (pill-row-fit.ts), then the actions, then the
-// Supervised mode switch.
+// Supervised mode and Messages between chats switches.
 
 import { el, effect } from "@cplieger/reactive";
 import { $ } from "./dom.js";
@@ -14,6 +14,7 @@ import {
   downloadKiroSession,
   MAX_CHAT_NAME_UNITS,
   renameChat,
+  setChatMessaging,
   setSupervised,
 } from "./actions/chat.js";
 import { copyClipboard } from "./actions/messages.js";
@@ -27,7 +28,8 @@ import { NO_CONVERSATION_TANGENT, tangentRefusal } from "./tangent-refusal.js";
 import { mergeTangentChat } from "./tangent-merge.js";
 import { movedPills, type MovablePill } from "./pill-row-fit.js";
 import { modeSelect } from "./role-picker.js";
-import { profileNote, profileSelect } from "./profile-pill.js";
+import { BUSY_NOTE, profileNote, profileSelect } from "./profile-pill.js";
+import { chatMessagingOn } from "./chat-messaging.js";
 import { submitPrompt } from "./submit.js";
 import { compactRefusal } from "./typed-commands.js";
 import * as toast from "./toast.js";
@@ -83,6 +85,7 @@ export function initChatOptions(): void {
     compactRow(),
     renameRow(),
     supervisedRow(),
+    messagingRow(),
   );
 
   makeExpandable(pill, card, { haspopup: "dialog" });
@@ -540,7 +543,8 @@ function renameForm(): HTMLElement {
 /**
  * A row that SWITCHES a per-chat setting: a label wrapping a checkbox, which mirrors the ACTIVE
  * chat's recorded value (the menu is a projection, so switching tabs re-reads rather than
- * remembers). With no chat there is nothing to record on, so the visual resets.
+ * remembers). With no chat there is nothing to record on, so the visual resets. `shown` hides the row while it is
+ * false; `busyHint` replaces the hint while the active chat's turn runs.
  */
 function switchRow(opts: {
   id: string;
@@ -548,6 +552,8 @@ function switchRow(opts: {
   hint: string;
   read: (s: Session) => boolean;
   write: (chatID: string, on: boolean) => void;
+  shown?: () => boolean;
+  busyHint?: string;
 }): HTMLElement {
   const box = el("input", { type: "checkbox", id: opts.id }) as HTMLInputElement;
   box.addEventListener("change", () => {
@@ -558,11 +564,8 @@ function switchRow(opts: {
     }
     opts.write(chatID, box.checked);
   });
-  effect(() => {
-    const s = activeSession.value;
-    box.checked = s !== undefined && opts.read(s);
-  });
-  return el(
+  const hint = el("span", { className: "chat-opt-hint" }, opts.hint);
+  const row = el(
     "label",
     { className: "chat-opt-row", for: opts.id },
     box,
@@ -570,9 +573,24 @@ function switchRow(opts: {
       "span",
       { className: "chat-opt-text" },
       el("span", { className: "chat-opt-name" }, opts.name),
-      el("span", { className: "chat-opt-hint" }, opts.hint),
+      hint,
     ),
   );
+  // Guarded on the values because `activeSession` re-derives on every streaming chunk.
+  effect(() => {
+    const s = activeSession.value;
+    box.checked = s !== undefined && opts.read(s);
+    const hidden = opts.shown?.() === false;
+    if (row.classList.contains("hidden") !== hidden) {
+      row.classList.toggle("hidden", hidden);
+    }
+    const nextHint =
+      opts.busyHint !== undefined && s !== undefined && watchBusy(s.id) ? opts.busyHint : opts.hint;
+    if (hint.textContent !== nextHint) {
+      hint.textContent = nextHint;
+    }
+  });
+  return row;
 }
 
 /** Supervised mode. The default for new chats lives in Settings → Permissions. */
@@ -585,5 +603,21 @@ function supervisedRow(): HTMLElement {
     write: (chatID, enabled) => {
       void setSupervised.dispatch({ chatID, enabled });
     },
+  });
+}
+
+/** The chat's own Messages between chats, shown only while Settings turns the feature on. A flip during a turn reaches
+ *  the session when the turn ends. */
+function messagingRow(): HTMLElement {
+  return switchRow({
+    id: "chat-opt-messaging",
+    name: "Messages between chats",
+    hint: "Let other chats message this one, and let its agent message them",
+    read: (s) => s.messaging_off !== true,
+    write: (chatID, enabled) => {
+      void setChatMessaging.dispatch({ chatID, enabled });
+    },
+    shown: () => chatMessagingOn.value,
+    busyHint: BUSY_NOTE,
   });
 }

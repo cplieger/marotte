@@ -181,7 +181,7 @@ func (sb *sharedBridge) awaitAbandonedPrompt(ctx context.Context) (uint64, bool)
 	return s.AwaitAbandonedPrompt(ctx)
 }
 
-// observeEffort and observeThinking record a level the session reported.
+// observeEffort, observeThinking and observeMessaging record a value the session reported.
 func (sb *sharedBridge) observeEffort(level string) {
 	sb.mu.Lock()
 	s := sb.leased
@@ -197,6 +197,15 @@ func (sb *sharedBridge) observeThinking(value string) {
 	sb.mu.Unlock()
 	if s != nil {
 		s.ObserveThinking(value)
+	}
+}
+
+func (sb *sharedBridge) observeMessaging(value string) {
+	sb.mu.Lock()
+	s := sb.leased
+	sb.mu.Unlock()
+	if s != nil {
+		s.ObserveMessaging(value)
 	}
 }
 

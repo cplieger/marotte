@@ -2,6 +2,15 @@
 // length, so presence is knowable. Mock shape as mcp-origin.test.ts.
 import { describe, expect, it, vi } from "vitest";
 
+import type * as McpActions from "./actions/mcp.js";
+
+// vi.hoisted: a vi.mock factory is hoisted above top-level consts.
+const { orgSignIn } = vi.hoisted(() => ({ orgSignIn: vi.fn(() => Promise.resolve(null)) }));
+vi.mock("./actions/mcp.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof McpActions>();
+  return { ...actual, signInOrganization: { dispatch: orgSignIn } as never };
+});
+
 vi.mock(import("./actions/index.js"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -15,9 +24,10 @@ vi.mock(import("./actions/index.js"), async (importOriginal) => {
   };
 });
 
-import { credentialSummary, ignoredText, renderMeta } from "./mcp-ui.js";
+import { credentialSummary, ignoredText, mountRow, renderMeta } from "./mcp-ui.js";
 import type { KeyPair, RuntimeStatus, Server } from "./mcp-state.js";
-import { SECRET_MASK } from "./mcp-state.js";
+import { SECRET_MASK, mcpState } from "./mcp-state.js";
+import type { MCPIdentityProviderStatus, MCPServerStatus } from "./wire/types.gen.js";
 
 function server(over: Partial<Server> = {}): Server {
   return {
@@ -161,6 +171,124 @@ describe("the row's meta line", () => {
     };
     expect(renderMeta(stdio, status())).toBe("no credentials · npx");
   });
+});
+
+describe("a server that signs in through the organization", () => {
+  // kiro-cli's two reasons the organization sign-in remedies arrive as needs_org_sign_in; any other stays failed.
+  const needs = { name: "s", origin: "user", state: "needs_org_sign_in" } as const;
+  const failed = { name: "s", origin: "user", state: "failed", error: "sign in first" } as const;
+
+  it("names the provider it waits on, in kiro-cli's words", () => {
+    expect(
+      renderMeta(
+        server(),
+        status({ ...needs, enterprise: { reason: "idp-sign-in-required" } }),
+        false,
+        "Acme",
+      ),
+    ).toBe("Needs organization sign-in (Acme) · no credentials · https://ex/mcp");
+    expect(
+      renderMeta(
+        server(),
+        status({ ...needs, enterprise: { reason: "idp-session-expired" } }),
+        false,
+        "Acme",
+      ),
+    ).toBe("Organization sign-in expired (Acme) · no credentials · https://ex/mcp");
+  });
+
+  it("says what the organization refused, and that Reconnect checks again", () => {
+    expect(
+      renderMeta(
+        server(),
+        status({
+          ...failed,
+          enterprise: { reason: "denied", server_description: "Ask IT for access" },
+        }),
+        false,
+        "Acme",
+      ),
+    ).toBe(
+      "Not granted by your organization: Ask IT for access. Reconnect to check again · no credentials · https://ex/mcp",
+    );
+  });
+
+  it("notes a connected server signed in through the provider", () => {
+    expect(renderMeta(server(), status({ enterprise: {} }), false, "Acme")).toBe(
+      "Signed in through Acme · no credentials · https://ex/mcp",
+    );
+  });
+
+  it("keeps its own failure text for a reason kiro-cli added later", () => {
+    expect(
+      renderMeta(server(), status({ ...failed, enterprise: { reason: "quota" } }), false, "Acme"),
+    ).toBe("Failed to start. sign in first · no credentials · https://ex/mcp");
+  });
+});
+
+describe("the organization Sign in on a row", () => {
+  let statusVersion = 0;
+  let idpVersion = 0;
+
+  function report(row: MCPServerStatus): void {
+    statusVersion++;
+    mcpState.applyStatusFrame(row.name, row, {
+      kind: "mcp_status",
+      ref: "",
+      version: String(statusVersion),
+    });
+  }
+
+  function organization(st: MCPIdentityProviderStatus, signingIn = false): void {
+    idpVersion++;
+    mcpState.applyIdentityProviderFrame(
+      { known: true, status: st, signing_in: signingIn },
+      { kind: "mcp_identity_provider", ref: "", version: String(idpVersion) },
+    );
+  }
+
+  const orgButton = (row: HTMLElement): HTMLButtonElement | null =>
+    row.querySelector<HTMLButtonElement>(".mcp-org-sign-in-btn");
+
+  it("shows 'Needs organization sign-in (Acme)' with a Sign in that starts the organization sign-in", () => {
+    organization({ state: "signed-out", issuer: "https://acme.okta.com", display_name: "Acme" });
+    const s = server({ name: "org-a" });
+    report({
+      ...needsRow("org-a", "needs_org_sign_in"),
+      enterprise: { reason: "idp-sign-in-required" },
+    });
+    const row = mountRow(s, s.id);
+
+    expect(row.querySelector(".mcp-row-meta-text")?.textContent).toBe(
+      "Needs organization sign-in (Acme) · no credentials · https://ex/mcp",
+    );
+    expect(row.querySelector<HTMLElement>(".mcp-dot")?.dataset["tooltip"]).toBe(
+      "Needs organization sign-in",
+    );
+    const btn = orgButton(row);
+    expect(btn?.textContent).toBe("Sign in");
+    btn?.click();
+    expect(orgSignIn).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers none while the organization sign-in runs, or for a server it refused", () => {
+    organization({ state: "signing-in", display_name: "Acme" }, true);
+    const waiting = server({ id: "id-org-b", name: "org-b" });
+    report({
+      ...needsRow("org-b", "needs_org_sign_in"),
+      enterprise: { reason: "idp-sign-in-required" },
+    });
+    expect(orgButton(mountRow(waiting, waiting.id))).toBeNull();
+
+    organization({ state: "signed-in", display_name: "Acme" });
+    const denied = server({ id: "id-org-c", name: "org-c" });
+    report({ ...needsRow("org-c", "failed"), enterprise: { reason: "denied" } });
+    expect(orgButton(mountRow(denied, denied.id))).toBeNull();
+  });
+
+  function needsRow(name: string, state: "needs_org_sign_in" | "failed"): MCPServerStatus {
+    return { name, origin: "user", state, error: "sign in first" };
+  }
 });
 
 describe("the ignored-keys line", () => {

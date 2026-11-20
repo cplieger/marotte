@@ -71,7 +71,7 @@ describe("the server list decoder", () => {
     expect(servers.get("srv-vn")?.version_negotiation).toBe("legacy");
   });
 
-  it("keeps a record's oauth metadata URL and redirect", async () => {
+  it("keeps a record's oauth metadata URL, redirect and mode", async () => {
     // The raw-JSON box shows the decoded record, so a dropped field would also be cleared by a raw-edit save.
     wire.body = {
       servers: [
@@ -85,6 +85,7 @@ describe("the server list decoder", () => {
           url: "https://mcp.example/mcp",
           oauth_client_metadata_url: "https://example.com/c.json",
           oauth_redirect_uri: ":7778",
+          oauth_mode: "auto",
         },
       ],
     };
@@ -94,6 +95,7 @@ describe("the server list decoder", () => {
     });
     expect(servers.get("srv-o")?.oauth_client_metadata_url).toBe("https://example.com/c.json");
     expect(servers.get("srv-o")?.oauth_redirect_uri).toBe(":7778");
+    expect(servers.get("srv-o")?.oauth_mode).toBe("auto");
   });
 
   it("keeps a record's oauth scopes", async () => {
@@ -256,6 +258,22 @@ describe("adaptStatus", () => {
       name: "a power origin carries the Power's name",
       input: { name: "aws", state: "connected", origin: "power", origin_power: "aws-infra" },
       expected: { name: "aws", origin: "power", originPower: "aws-infra", state: "connected" },
+    },
+    {
+      name: "a server waiting on the organization sign-in keeps its state and kiro-cli's reason",
+      input: {
+        name: "corp",
+        state: "needs_org_sign_in",
+        origin: "user",
+        error: "Sign in to your organization to use this server.",
+        enterprise: { reason: "idp-sign-in-required" },
+      },
+      expected: {
+        name: "corp",
+        origin: "user",
+        enterprise: { reason: "idp-sign-in-required" },
+        state: "needs_org_sign_in",
+      },
     },
     {
       name: "the keys kiro-cli ignores ride every state",

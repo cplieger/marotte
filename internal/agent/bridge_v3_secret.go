@@ -30,6 +30,14 @@ func openSecretStore(configDir string) *secretstore.Store {
 	return s
 }
 
+// IdentityProviderSessionReset is what deletes every stored organization session, nil without a secret store.
+func (rt *Runtime) IdentityProviderSessionReset() func(context.Context) error {
+	if rt.inbound.secrets == nil {
+		return nil
+	}
+	return rt.inbound.secrets.ForgetIdentityProviderSessions
+}
+
 // secretKeyParams is the shape of a get/delete request: `{key}`.
 type secretKeyParams struct {
 	Key string `json:"key"`

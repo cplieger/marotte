@@ -141,12 +141,12 @@ func TestUnattendedFloor_DelegatedLeaseRefusesAnUnclearedAsk(t *testing.T) {
 				t.Fatal(err)
 			}
 			h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir), withUnattendedAskBudget(10*time.Millisecond))
-			chatID := runChatID("wf_floor")
+			chatID := marotte.RunHostChatID("wf_floor")
 			h.insertBridgeNow(chatID, testBridge(br, bridgeReady))
 			h.runs.grantLease(t.Context(), "wf_floor", "nightly", scheduledLaunch(launchrule.Row{ID: "sched-1"}, time.Time{}), tc.host)
 
 			id := int64(4244)
-			h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+			h.bus.pendingPerms.add(id, "", marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 				marotte.PermissionNeededPayload{RequestID: id}), br)
 			wrapped := h.runs.permissionWithUnattendedFloor(func(context.Context, marotte.ChatID, translate.AskOrigin, *marotte.RPCResponse) {})
 			wrapped(t.Context(), chatID, br, &marotte.RPCResponse{
@@ -191,7 +191,7 @@ func TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk(t *testing.T) {
 	wrapped := rs.permissionWithUnattendedFloor(noteAsk)
 
 	// A permission frame with no id.
-	wrapped(t.Context(), runChatID("wf_1"), nil, &marotte.RPCResponse{
+	wrapped(t.Context(), marotte.RunHostChatID("wf_1"), nil, &marotte.RPCResponse{
 		Method: marotte.MethodRequestPermission,
 		ID:     nil,
 	})
@@ -221,7 +221,7 @@ func TestPermissionAskName_PrefersTheMachineAuthoredName(t *testing.T) {
 		},
 		"turn approval gets marotte's own name": {
 			// KAS's literal "Review changes" tells an operator nothing.
-			params: `{"toolCall":{"title":"Review changes"},"_meta":{"kiro":{"type":"turn_approval","executionId":"e1"}}}`,
+			params: `{"toolCall":{"title":"Review changes"},"_meta":{"kiro":{"askKind":"turn_approval","executionId":"e1"}}}`,
 			want:   turnApprovalName,
 		},
 		"no _meta at all falls back to the title": {
@@ -450,11 +450,11 @@ func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			h, br := hubForFSTest(t, t.TempDir())
-			chatID := runChatID("wf_deny")
+			chatID := marotte.RunHostChatID("wf_deny")
 			h.insertBridgeNow(chatID, testBridge(br, bridgeReady))
 
 			id := int64(90210)
-			h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+			h.bus.pendingPerms.add(id, "", marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 				marotte.PermissionNeededPayload{RequestID: id}), br)
 
 			h.runs.answerUnattended(chatID, br, id, scheduledLease("sched-1", "wf_1"), false, askName{tool: "execute_bash"},
@@ -507,11 +507,11 @@ func TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove(t *testing
 		t.Fatal(err)
 	}
 	h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir))
-	chatID := runChatID("wf_admin")
+	chatID := marotte.RunHostChatID("wf_admin")
 	h.insertBridgeNow(chatID, testBridge(br, bridgeReady))
 
 	id := int64(4242)
-	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+	h.bus.pendingPerms.add(id, "", marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 		marotte.PermissionNeededPayload{RequestID: id}), br)
 
 	h.runs.answerUnattended(chatID, br, id, scheduledLease("sched-1", "wf_1"), false, askName{tool: "execute_bash"}, []byte(`{
@@ -554,7 +554,7 @@ func TestAnswerUnattended_RefusesClassifierHandedAsk(t *testing.T) {
 		{name: "delegated_explicit_ask_rule", meta: `,"_meta":{"kiro":{"toolId":"fs_write","consent":{"askType":"explicit","capability":"fs_write"}}}`, delegated: true, wantOption: "accept"},
 		// KAS never sends a workflow ask to the safety check, so a plan approval stays approvable.
 		{name: "delegated_workflow_capability", meta: `,"_meta":{"kiro":{"toolId":"update_workflow","consent":{"askType":"implicit","capability":"workflow"}}}`, delegated: true, wantOption: "accept"},
-		{name: "delegated_turn_approval", meta: `,"_meta":{"kiro":{"type":"turn_approval"}}`, delegated: true, wantOption: "accept"},
+		{name: "delegated_turn_approval", meta: `,"_meta":{"kiro":{"askKind":"turn_approval"}}`, delegated: true, wantOption: "accept"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -566,7 +566,7 @@ func TestAnswerUnattended_RefusesClassifierHandedAsk(t *testing.T) {
 				t.Fatal(err)
 			}
 			h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir))
-			chatID := runChatID("wf_classifier")
+			chatID := marotte.RunHostChatID("wf_classifier")
 			h.bridge.mgr.insert(chatID, testBridge(br, bridgeReady))
 			st, _, err := launchrule.NewStore(t.TempDir())
 			if err != nil {
@@ -579,7 +579,7 @@ func TestAnswerUnattended_RefusesClassifierHandedAsk(t *testing.T) {
 				t.Fatalf("RecordStart: %v", rErr)
 			}
 			id := int64(4243)
-			h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+			h.bus.pendingPerms.add(id, "", marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 				marotte.PermissionNeededPayload{RequestID: id}), br)
 
 			h.runs.answerUnattended(chatID, br, id, l, tc.delegated, askName{tool: "fs_write"}, []byte(
@@ -616,65 +616,75 @@ func TestAnswerUnattended_RefusesClassifierHandedAsk(t *testing.T) {
 
 // With the switch on, the CloudFormation check's enforce ask is still refused: it holds a change that breaks one of
 // the account's safety rules, and "Allow anyway" with nobody watching would undo the block. The params are KAS's
-// requestSafetyOverridePermission shape (toolCall {toolCallId "safety-override-<uuid>", status, title}, no _meta).
+// requestSafetyOverridePermission shape (toolCall {toolCallId "safety-override-<uuid>", status, title}) with the
+// _meta.kiro stamp its ask record adds; the floor knows the ask by its askKind, whatever its tool call id.
 func TestAnswerUnattended_RefusesTheCloudFormationBlock(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	body, err := json.Marshal(map[string]any{settings.KeyScheduledAutoApprove: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), body, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir))
-	chatID := runChatID("wf_infra")
-	h.bridge.mgr.insert(chatID, testBridge(br, bridgeReady))
-	st, _, err := launchrule.NewStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("launchrule.NewStore: %v", err)
-	}
-	entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
-	h.runs.launchRules = st
-	l := scheduledLease(entry.ID, "wf_infra")
-	if rErr := st.RecordStart(t.Context(), ruleRun(l)); rErr != nil {
-		t.Fatalf("RecordStart: %v", rErr)
-	}
-	id := int64(4244)
-	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
-		marotte.PermissionNeededPayload{RequestID: id}), br)
+	const stamp = `"_meta":{"kiro":{"askId":"pr-1","askKind":"safety_override","requester":{"sessionId":"sess_1"}}}`
+	for name, toolCallID := range map[string]string{
+		"kas_override_ask":            "safety-override-7b0f2c1e-9a4d-4c55-8f1e-2d6b3a9c0e11",
+		"a_tool_call_id_of_any_shape": "tc-7",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			body, err := json.Marshal(map[string]any{settings.KeyScheduledAutoApprove: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), body, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir))
+			chatID := marotte.RunHostChatID("wf_infra")
+			h.bridge.mgr.insert(chatID, testBridge(br, bridgeReady))
+			st, _, err := launchrule.NewStore(t.TempDir())
+			if err != nil {
+				t.Fatalf("launchrule.NewStore: %v", err)
+			}
+			entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
+			h.runs.launchRules = st
+			l := scheduledLease(entry.ID, "wf_infra")
+			if rErr := st.RecordStart(t.Context(), ruleRun(l)); rErr != nil {
+				t.Fatalf("RecordStart: %v", rErr)
+			}
+			id := int64(4244)
+			h.bus.pendingPerms.add(id, "pr-1", marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+				marotte.PermissionNeededPayload{RequestID: id}), br)
 
-	h.runs.answerUnattended(chatID, br, id, l, false, askName{}, []byte(`{"sessionId":"sess_1",
-		"toolCall":{"toolCallId":"safety-override-7b0f2c1e-9a4d-4c55-8f1e-2d6b3a9c0e11","status":"pending","title":"Deleting a stateful resource"},
-		"options":[{"optionId":"reject","name":"Keep blocked","kind":"reject_once"},{"optionId":"accept","name":"Allow anyway","kind":"allow_once"}]}`))
+			h.runs.answerUnattended(chatID, br, id, l, false, askName{}, []byte(`{"sessionId":"sess_1",
+				"toolCall":{"toolCallId":"`+toolCallID+`","status":"pending","title":"Deleting a stateful resource"},
+				"options":[{"optionId":"reject","name":"Keep blocked","kind":"reject_once"},{"optionId":"accept","name":"Allow anyway","kind":"allow_once"}],
+				`+stamp+`}`))
 
-	select {
-	case <-br.done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("the floor answered nothing")
-	}
-	br.respMu.Lock()
-	got := br.response
-	br.respMu.Unlock()
-	outcome, ok := got.result.(*marotte.PermissionOutcome)
-	if !ok {
-		t.Fatalf("answered with %T (%v), want a permission outcome", got.result, got.result)
-	}
-	if outcome.Outcome.OptionID != "reject" {
-		t.Errorf("optionId = %q, want %q: a CloudFormation block was allowed with nobody watching",
-			outcome.Outcome.OptionID, "reject")
-	}
-	const wantReason = "Kiro's CloudFormation check blocked a change that breaks one of your account's safety rules, " +
-		"and nobody was watching. Make the change in a chat to decide"
-	if rows := st.Clocks(); len(rows) != 1 || rows[0].LastStatus != launchrule.StatusFailed || rows[0].LastReason != wantReason {
-		t.Errorf("schedule rows = %+v, want one failed row reading %q", rows, wantReason)
+			select {
+			case <-br.done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("the floor answered nothing")
+			}
+			br.respMu.Lock()
+			got := br.response
+			br.respMu.Unlock()
+			outcome, ok := got.result.(*marotte.PermissionOutcome)
+			if !ok {
+				t.Fatalf("answered with %T (%v), want a permission outcome", got.result, got.result)
+			}
+			if outcome.Outcome.OptionID != "reject" {
+				t.Errorf("optionId = %q, want %q: a CloudFormation block was allowed with nobody watching",
+					outcome.Outcome.OptionID, "reject")
+			}
+			const wantReason = "Kiro's CloudFormation check blocked a change that breaks one of your account's safety rules, " +
+				"and nobody was watching. Make the change in a chat to decide"
+			if rows := st.Clocks(); len(rows) != 1 || rows[0].LastStatus != launchrule.StatusFailed || rows[0].LastReason != wantReason {
+				t.Errorf("schedule rows = %+v, want one failed row reading %q", rows, wantReason)
+			}
+		})
 	}
 }
 
 // TestAnswerUnattended_ADenialFailsTheScheduleRow pins that the row reads as a failure naming the tool.
 func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
-	chatID := runChatID("wf_deny")
+	chatID := marotte.RunHostChatID("wf_deny")
 	h.insertBridgeNow(chatID, testBridge(br, bridgeReady))
 
 	st, _, err := launchrule.NewStore(t.TempDir())
@@ -690,7 +700,7 @@ func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 	}
 
 	id := int64(90211)
-	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+	h.bus.pendingPerms.add(id, "", marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 		marotte.PermissionNeededPayload{RequestID: id}), br)
 	logs := captureLogs(t)
 	before, approved := failureCounts(t), unattendedApprovals(t, runlease.OriginScheduled)
@@ -723,7 +733,7 @@ func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 // kiro_powers, so a row naming only the tool cannot say which rule to add.
 func TestAnswerUnattended_APowerDenialNamesItsSubjectOnTheScheduleRow(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
-	chatID := runChatID("wf_deny")
+	chatID := marotte.RunHostChatID("wf_deny")
 	h.insertBridgeNow(chatID, testBridge(br, bridgeReady))
 
 	st, _, err := launchrule.NewStore(t.TempDir())
@@ -739,7 +749,7 @@ func TestAnswerUnattended_APowerDenialNamesItsSubjectOnTheScheduleRow(t *testing
 	}
 
 	id := int64(90213)
-	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+	h.bus.pendingPerms.add(id, "", marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 		marotte.PermissionNeededPayload{RequestID: id}), br)
 	logs := captureLogs(t)
 
@@ -766,7 +776,7 @@ func TestAnswerUnattended_APowerDenialNamesItsSubjectOnTheScheduleRow(t *testing
 // schedule row is not failed with a "nobody watching" reason that never reached the run.
 func TestAnswerUnattended_ADenialTheAskWasWithdrawnUnderLeavesTheScheduleRow(t *testing.T) {
 	h, _ := hubForFSTest(t, t.TempDir())
-	chatID := runChatID("wf_deny")
+	chatID := marotte.RunHostChatID("wf_deny")
 	br := &duringWriteBridge{fakeBridge: newFakeBridge()}
 	br.during = func() { h.bus.endAsksOf(br) }
 	h.insertBridgeNow(chatID, testBridge(br, bridgeReady))
@@ -784,7 +794,7 @@ func TestAnswerUnattended_ADenialTheAskWasWithdrawnUnderLeavesTheScheduleRow(t *
 	}
 
 	id := int64(90212)
-	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+	h.bus.pendingPerms.add(id, "", marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 		marotte.PermissionNeededPayload{RequestID: id}), br)
 	logs := captureLogs(t)
 	before := failureCounts(t)
@@ -832,7 +842,7 @@ func answerTriggered(t *testing.T, autoApprove bool, params string) (*marotte.Pe
 	h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir))
 	fc := &fakeConfirmer{}
 	h.runs.confirmer = fc
-	chatID := runChatID("wf_trig")
+	chatID := marotte.RunHostChatID("wf_trig")
 	h.insertBridgeNow(chatID, testBridge(br, bridgeReady))
 	h.runs.grantLease(t.Context(), "wf_trig", "triage", eventLaunch(), hostSec())
 	l, held := h.runs.lease("wf_trig")
@@ -841,7 +851,7 @@ func answerTriggered(t *testing.T, autoApprove bool, params string) (*marotte.Pe
 	}
 
 	id := int64(5150)
-	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+	h.bus.pendingPerms.add(id, "", marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 		marotte.PermissionNeededPayload{RequestID: id}), br)
 	h.runs.answerUnattended(chatID, br, id, &l, false, askName{tool: "execute_bash"}, []byte(params))
 
@@ -955,7 +965,7 @@ func TestTriggeredPauseEndsUnattended(t *testing.T) {
 	}
 	fc := &fakeConfirmer{}
 	h.runs.confirmer = fc
-	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
+	h.insertBridgeNow(marotte.RunHostChatID("wf_1"), testBridge(br, bridgeReady))
 	h.runs.grantLease(t.Context(), "wf_1", "triage", eventLaunch(), hostSec())
 	h.runs.armDeadline(t.Context(), "wf_1")
 

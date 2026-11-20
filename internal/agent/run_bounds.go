@@ -880,7 +880,7 @@ func (rs *Runs) cancelBounded(workflowID, reason string, armedFor time.Time) err
 // agent-launched (the resume sweep owns it, not the orphan cancel); anything else is parentless and
 // sweepable. Lease absence cannot decide: a retry's first frame can beat its lease grant.
 func runStartLaunch(chatID marotte.ChatID) launchOrigin {
-	if chatID == "" || isRunChat(chatID) {
+	if chatID == "" || marotte.IsRunHostChat(chatID) {
 		return launchOrigin{origin: runlease.OriginManual}
 	}
 	return launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}
@@ -975,7 +975,7 @@ func (rs *Runs) parentChat(chatID marotte.ChatID, workflowID string) marotte.Cha
 	if l, held := rs.lease(workflowID); held {
 		return marotte.ChatID(l.ChatID)
 	}
-	if chatID == "" || isRunChat(chatID) {
+	if chatID == "" || marotte.IsRunHostChat(chatID) {
 		return ""
 	}
 	return chatID

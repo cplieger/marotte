@@ -69,7 +69,7 @@ func TestTakePendingPerm_AnnouncesTheDeliveredDecision(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _, _ := newTestHub()
 			head := h.bus.fanout.Position().Head
-			askID := requestIDOf(t, h.bus.pendingPerms.add(9, marotte.NewEvent(tc.event, "c1", marotte.PermissionNeededPayload{}), newFakeBridge()))
+			askID := requestIDOf(t, h.bus.pendingPerms.add(9, "", marotte.NewEvent(tc.event, "c1", marotte.PermissionNeededPayload{}), newFakeBridge()))
 
 			reply, ok := h.bus.TakePendingPerm("c1", askID, tc.wantKind, tc.settledBy)
 			if !ok {
@@ -98,7 +98,7 @@ func TestTakePendingPerm_AnnouncesTheDeliveredDecision(t *testing.T) {
 func TestTakePendingPerm_LosingClaimAnnouncesNothing(t *testing.T) {
 	t.Parallel()
 	h, _, _ := newTestHub()
-	askID := requestIDOf(t, h.bus.pendingPerms.add(9, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+	askID := requestIDOf(t, h.bus.pendingPerms.add(9, "", marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 		marotte.PermissionNeededPayload{}), newFakeBridge()))
 	reply, ok := h.bus.TakePendingPerm("c1", askID, marotte.DecisionKindPermission, marotte.SettledByUser)
 	if !ok {
@@ -117,35 +117,55 @@ func TestTakePendingPerm_LosingClaimAnnouncesNothing(t *testing.T) {
 	}
 }
 
-// A withdrawn ask retires as moot, newest round only, in its own chat.
+// A withdrawn ask retires as moot by the askId KAS named, in its own chat.
 func TestPendingPermsWithdraw_RetiresTheChatsAskAsMoot(t *testing.T) {
 	t.Parallel()
 	h, _, _ := newTestHub()
 	head := h.bus.fanout.Position().Head
-	h.bus.pendingPerms.add(3, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
-		marotte.PermissionNeededPayload{ToolCallID: "tc"}), nil)
-	newest := requestIDOf(t, h.bus.pendingPerms.add(5, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+	named := requestIDOf(t, h.bus.pendingPerms.add(3, "pr-1", marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 		marotte.PermissionNeededPayload{ToolCallID: "tc"}), nil))
-	h.bus.pendingPerms.add(5, marotte.NewEvent(marotte.EventPermissionNeeded, "c2",
+	h.bus.pendingPerms.add(5, "pr-1", marotte.NewEvent(marotte.EventPermissionNeeded, "c2",
 		marotte.PermissionNeededPayload{ToolCallID: "tc"}), nil)
 
-	if !h.bus.PendingPermsWithdraw("c1", "tc") {
-		t.Fatal("PendingPermsWithdraw(c1, tc) = false, want true")
+	if h.bus.PendingPermsWithdraw("c1", "pr-unknown") {
+		t.Error("PendingPermsWithdraw(c1, pr-unknown) = true for an ask id nothing filed")
+	}
+	if h.bus.PendingPermsWithdraw("c1", "") {
+		t.Error(`PendingPermsWithdraw(c1, "") = true, want an empty ask id to withdraw nothing`)
+	}
+	if !h.bus.PendingPermsWithdraw("c1", "pr-1") {
+		t.Fatal("PendingPermsWithdraw(c1, pr-1) = false, want true")
 	}
 	got := settledEvents(t, bufferedSince(h, head))
-	if len(got) != 1 || got[0].RequestID != newest || got[0].SettledBy != marotte.SettledByMoot ||
+	if len(got) != 1 || got[0].RequestID != named || got[0].SettledBy != marotte.SettledByMoot ||
 		got[0].Kind != marotte.DecisionKindPermission {
-		t.Fatalf("decision_settled = %+v, want one {permission, ask %d, moot}", got, newest)
+		t.Fatalf("decision_settled = %+v, want one {permission, ask %d, moot}", got, named)
 	}
-	var left []int64
-	for _, e := range h.bus.pendingPerms.list("") {
-		left = append(left, e.Payload.(marotte.PermissionNeededPayload).RequestID)
+	if left := h.bus.pendingPerms.list(""); len(left) != 1 || left[0].ChatID != "c2" {
+		t.Errorf("pending after withdraw = %+v, want c2's ask alone", left)
 	}
-	if len(left) != 2 {
-		t.Errorf("pending after withdraw = %v, want c1's older round and c2's ask", left)
+}
+
+// Two consent rounds of one tool call are two asks: KAS's close of the dead round retires that
+// round's card and leaves the live round's, whichever arrived last.
+func TestPendingPermsWithdraw_RetiresTheAskKASNamed(t *testing.T) {
+	h, _, _ := newTestHub()
+	head := h.bus.fanout.Position().Head
+	round1 := requestIDOf(t, h.bus.pendingPerms.add(3, "pr-1", marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+		marotte.PermissionNeededPayload{ToolCallID: "tc", ConsentRound: 1}), nil))
+	round2 := requestIDOf(t, h.bus.pendingPerms.add(5, "pr-2", marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+		marotte.PermissionNeededPayload{ToolCallID: "tc", ConsentRound: 2}), nil))
+
+	if !h.bus.PendingPermsWithdraw("c1", "pr-1") {
+		t.Fatal("PendingPermsWithdraw(c1, pr-1) = false, want true")
 	}
-	if h.bus.PendingPermsWithdraw("c1", "other") {
-		t.Error("PendingPermsWithdraw(c1, other) = true for a tool call nothing asked about")
+	got := settledEvents(t, bufferedSince(h, head))
+	if len(got) != 1 || got[0].RequestID != round1 || got[0].SettledBy != marotte.SettledByMoot {
+		t.Errorf("decision_settled = %+v, want round 1's ask %d moot", got, round1)
+	}
+	left := h.bus.pendingPerms.list("c1")
+	if len(left) != 1 || left[0].Payload.(marotte.PermissionNeededPayload).RequestID != round2 {
+		t.Errorf("pending after withdraw = %+v, want round 2's ask %d still listed", left, round2)
 	}
 }
 
@@ -168,7 +188,7 @@ func TestTakePendingPerm_RetractsTheAsksOwnSubject(t *testing.T) {
 			fp := &recordingPush{sends: make(chan string, 4)}
 			h := newRuntimeOn(t.Context(), t.TempDir(), fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs, WithPush(fp))
 			cs.wire(h)
-			askID := requestIDOf(t, h.bus.pendingPerms.add(9, marotte.ServerEvent{Type: marotte.EventPermissionNeeded, ChatID: tc.chatID, Payload: tc.payload}, newFakeBridge()))
+			askID := requestIDOf(t, h.bus.pendingPerms.add(9, "", marotte.ServerEvent{Type: marotte.EventPermissionNeeded, ChatID: tc.chatID, Payload: tc.payload}, newFakeBridge()))
 			reply, ok := h.bus.TakePendingPerm(tc.chatID, askID, marotte.DecisionKindPermission, marotte.SettledByUser)
 			if !ok {
 				t.Fatal("TakePendingPerm refused a pending request")

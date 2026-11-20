@@ -38,8 +38,11 @@ const unattendedRejectionReason = "This run started with no one watching it, " +
 	"so the permission was refused automatically. Finish the task without it, " +
 	"or stop and name the permission the task needs."
 
-// approvalTypeTurn is the `_meta.kiro.type` marking a TURN APPROVAL.
-const approvalTypeTurn = "turn_approval"
+// KAS's `_meta.kiro.askKind` values the floor names or refuses an ask by.
+const (
+	askKindTurnApproval   = "turn_approval"
+	askKindSafetyOverride = "safety_override"
+)
 
 // turnApprovalName names a turn approval, which carries no tool name and titles itself "Review changes".
 const turnApprovalName = "this turn's file changes"
@@ -107,7 +110,7 @@ func (rs *Runs) permissionWithUnattendedFloor(inner askHandler) askHandler {
 		inner(ctx, chatID, origin, msg)
 
 		// The lease's mark, so the floor survives a restart. The key yields "" for anything but a `run:` chat id.
-		l, held := rs.lease(workflowIDOf(chatID))
+		l, held := rs.lease(marotte.RunHostWorkflowID(chatID))
 		if !held || !l.Unattended || msg.ID == nil {
 			return
 		}
@@ -337,7 +340,7 @@ func permissionAskName(params json.RawMessage) askName {
 				ToolID string `json:"toolId"`
 				// HookName comes from a hook file on disk.
 				HookName string `json:"hookName"`
-				Type     string `json:"type"`
+				AskKind  string `json:"askKind"`
 				Consent  struct {
 					Capability         string `json:"capability"`
 					Resource           string `json:"resource"`
@@ -359,7 +362,7 @@ func permissionAskName(params json.RawMessage) askName {
 		name.tool = safeToolName(kiro.ToolID)
 	case kiro.HookName != "":
 		name.tool = safeToolName(kiro.HookName)
-	case kiro.Type == approvalTypeTurn:
+	case kiro.AskKind == askKindTurnApproval:
 		name.tool = turnApprovalName
 	case p.ToolCall.Title != "":
 		name.tool = safeToolName(p.ToolCall.Title)
@@ -446,18 +449,16 @@ func safetyCheckUncleared(params json.RawMessage, delegated bool) bool {
 		k.Consent.AskType != consentAskTypeExplicit && k.Consent.Capability != consentCapabilityWorkflow
 }
 
-// infraSafetyOverrideCallPrefix starts the tool call id of KAS's CloudFormation enforce ask
-// (requestSafetyOverridePermission), which carries no _meta to name it by.
-const infraSafetyOverrideCallPrefix = "safety-override-"
-
 // infraSafetyBlockAsk reports whether params is the CloudFormation check's enforce ask.
 func infraSafetyBlockAsk(params json.RawMessage) bool {
 	var p struct {
-		ToolCall struct {
-			ToolCallID string `json:"toolCallId"`
-		} `json:"toolCall"`
+		Meta struct {
+			Kiro struct {
+				AskKind string `json:"askKind"`
+			} `json:"kiro"`
+		} `json:"_meta"`
 	}
-	return json.Unmarshal(params, &p) == nil && strings.HasPrefix(p.ToolCall.ToolCallID, infraSafetyOverrideCallPrefix)
+	return json.Unmarshal(params, &p) == nil && p.Meta.Kiro.AskKind == askKindSafetyOverride
 }
 
 func planApprovalAsk(params json.RawMessage) bool {

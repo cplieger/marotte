@@ -35,9 +35,12 @@ import {
   discoverySignalFor,
   setPrewarm,
   configuredServers,
+  identityProviderName,
+  identityProviderStatus,
 } from "./mcp-state.js";
+import { mountIdentityProviderCard } from "./mcp-identity-provider.js";
 import { setEditing, initModal, cleanupModal } from "./mcp-panels.js";
-import type { MCPOrigin } from "./wire/types.gen.js";
+import type { MCPEnterpriseAuth, MCPOrigin } from "./wire/types.gen.js";
 import { editModeFor } from "./mcp-panels.js";
 import {
   toggleServer,
@@ -46,6 +49,7 @@ import {
   saveServer,
   reconnectServer,
   relayOAuthCallback,
+  signInOrganization,
   signInServer,
 } from "./actions/mcp.js";
 import { bindLoadingState, isPending, registerCleanup } from "./actions/index.js";
@@ -116,6 +120,14 @@ function buildSectionScaffold(): void {
   // A separate container: these servers have no persisted id, and every mutation path on the configured collection
   // addresses a record that does not exist for them.
   foreignBody = el("div", { className: "mcp-server-list mcp-foreign-list" }) as HTMLDivElement;
+  const idpCard = el("section", { className: "mcp-idp", "aria-label": "Organization sign-in" });
+  registerCleanup(
+    mountIdentityProviderCard(idpCard, {
+      link: renderOAuthPill,
+      // The relay picks the sign-in by the pasted callback's state; the server is only logged.
+      paste: () => renderOAuthRelay(""),
+    }),
+  );
 
   section.replaceChildren(
     title,
@@ -127,6 +139,7 @@ function buildSectionScaffold(): void {
     emptyMsg,
     sectionBody,
     foreignBody,
+    idpCard,
   );
   bindServerList();
   bindForeignList();
@@ -454,12 +467,12 @@ export function mountForeignRow(name: string): HTMLElement {
       const st = statusSignalFor(name).value;
       applyStatusDotForeign(dot, name, st);
       applyOriginChip(originChip, st);
-      metaText.textContent = renderForeignMeta(st);
+      metaText.textContent = renderForeignMeta(st, identityProviderName.value);
       ignored.paint(st);
       applyStanding(standingSlot, name);
       const live = carriesLiveReport(st, false);
       reconnectBtn.hidden = !live;
-      syncOAuth(st, live);
+      syncOAuth(st, live, offersOrgSignIn(st));
       renderDiscovery(discoveryBox, name, discoverySignalFor(name).value, true);
     }),
   );
@@ -501,8 +514,12 @@ function ignoredLine(): { readonly line: HTMLElement; paint: (st: RuntimeStatus 
   };
 }
 
-/** Meta text for a read-only row. Exported for testing. */
-export function renderForeignMeta(st: RuntimeStatus): string {
+/** Meta text for a read-only row; `org` names the organization provider. Exported for testing. */
+export function renderForeignMeta(st: RuntimeStatus, org = ""): string {
+  const enterprise = enterprisePhrase(st, org);
+  if (enterprise !== undefined) {
+    return enterprise;
+  }
   if (isFailedWithError(st)) {
     return `Failed to start. ${st.error}`;
   }
@@ -628,14 +645,14 @@ export function mountRow(s: Server, id: string): HTMLElement {
       transportBadge.className = `mcp-transport mcp-transport-${cur.transport}`;
       transportBadge.textContent = cur.transport;
       applyStatusDot(dot, cur, st, notInRegistry);
-      metaText.textContent = renderMeta(cur, st, notInRegistry);
+      metaText.textContent = renderMeta(cur, st, notInRegistry, identityProviderName.value);
       // A shadowed name's report belongs to the running server's own row.
       ignored.paint(st.origin === "user" ? st : null);
       applyStanding(standingSlot, cur.name);
 
       const live = carriesLiveReport(st, true);
       reconnectBtn.hidden = !live;
-      syncOAuth(st, live);
+      syncOAuth(st, live, offersOrgSignIn(st));
 
       prewarmBadge = applyPrewarm(prewarmBadge, nameEl, pw);
     }),
@@ -666,24 +683,31 @@ export function carriesLiveReport(st: RuntimeStatus, ownRow: boolean): boolean {
 }
 
 /**
- * Shared by both row kinds: a server awaiting sign-in may be on either. Waiting for sign-in offers Sign in; a sign-in
- * in progress offers its consent page and the paste box.
+ * Shared by both row kinds: a server awaiting sign-in may be on either. Waiting for sign-in offers Sign in, and waiting
+ * for the organization sign-in (`org`) offers that one; a sign-in in progress offers its consent page and the paste box.
  */
 function oauthControls(
   body: HTMLElement,
   nameOf: () => string,
-): (st: RuntimeStatus, live: boolean) => void {
+): (st: RuntimeStatus, live: boolean, org: boolean) => void {
   let signIn: HTMLButtonElement | null = null;
+  let orgSignIn: HTMLButtonElement | null = null;
   let pill: HTMLAnchorElement | null = null;
   let pillUrl: string | null = null;
   let hint: HTMLParagraphElement | null = null;
   let relay: HTMLDetailsElement | null = null;
-  return (st, live) => {
+  return (st, live, org) => {
     if (live && st.state === "needs_auth") {
       signIn ??= body.appendChild(renderSignInBtn(nameOf));
     } else {
       signIn?.remove();
       signIn = null;
+    }
+    if (live && org) {
+      orgSignIn ??= body.appendChild(renderOrgSignInBtn());
+    } else {
+      orgSignIn?.remove();
+      orgSignIn = null;
     }
     if (!live || st.state !== "signing_in") {
       pill?.remove();
@@ -722,6 +746,7 @@ const SIGN_IN_TIME_LIMIT =
 const STATUS_META: Readonly<Record<RuntimeState, { css: string; title: string }>> = {
   connected: { css: "connected", title: "Connected" },
   needs_auth: { css: "oauth", title: "Needs authentication" },
+  needs_org_sign_in: { css: "oauth", title: "Needs organization sign-in" },
   signing_in: { css: "oauth", title: "Signing in" },
   idle: { css: "idle", title: "Not connected because no chat is running" },
   failed: { css: "failed", title: "Failed to initialise" },
@@ -863,7 +888,11 @@ function signInWaitPhrase(st: RuntimeStatus & { state: "needs_auth" }): string {
 }
 
 /** `connected` and `idle` get none: the dot says so, and a phrase would push the rest out of the track. */
-function statePhrase(st: RuntimeStatus): string {
+function statePhrase(st: RuntimeStatus, org: string): string {
+  const enterprise = enterprisePhrase(st, org);
+  if (enterprise !== undefined) {
+    return enterprise;
+  }
   if (st.state === "failed") {
     return st.error === "" ? "Failed to start" : `Failed to start. ${st.error}`;
   }
@@ -878,9 +907,9 @@ function statePhrase(st: RuntimeStatus): string {
 
 /**
  * The row's meta line: state phrase, credentials, then the source, because the line ellipsises and the source is the
- * long segment. Exported for its order test.
+ * long segment; `org` names the organization provider. Exported for its order test.
  */
-export function renderMeta(s: Server, st: RuntimeStatus, notInRegistry = false): string {
+export function renderMeta(s: Server, st: RuntimeStatus, notInRegistry = false, org = ""): string {
   if (st.origin !== "user") {
     return `Not in use: ${shadowSource(st)} defines a server with this name`;
   }
@@ -891,7 +920,56 @@ export function renderMeta(s: Server, st: RuntimeStatus, notInRegistry = false):
     return "Disabled";
   }
   const source = s.transport === "stdio" ? (s.command ?? "") : (s.url ?? "");
-  return [statePhrase(st), credentialSummary(s), source].filter((p) => p !== "").join(" · ");
+  return [statePhrase(st, org), credentialSummary(s), source].filter((p) => p !== "").join(" · ");
+}
+
+/** kiro-cli's reasons a server waits on the organization sign-in, which its row's Sign in starts. */
+const ORG_SIGN_IN_REASONS: ReadonlySet<string> = new Set([
+  "idp-sign-in-required",
+  "idp-session-expired",
+]);
+
+/** Whether a row offers the organization Sign in: the server waits on it and no organization sign-in runs. Reactive. */
+function offersOrgSignIn(st: RuntimeStatus): boolean {
+  if (!ORG_SIGN_IN_REASONS.has(st.enterprise?.reason ?? "")) {
+    return false;
+  }
+  const org = identityProviderStatus.value;
+  return org?.signing_in !== true && org?.status?.state !== "signing-in";
+}
+
+/**
+ * A server's organization sign-in in kiro-cli's own words (its TUI's MCP list), undefined for a server that does not
+ * use it or a reason kiro-cli added later. `org` is the provider's name, "" when unknown.
+ */
+function enterprisePhrase(st: RuntimeStatus, org: string): string | undefined {
+  const e: MCPEnterpriseAuth | undefined = st.enterprise;
+  if (e === undefined) {
+    return undefined;
+  }
+  const named = org === "" ? "" : ` (${org})`;
+  const desc = e.server_description ?? "";
+  switch (e.reason ?? "") {
+    case "":
+      if (st.state === "connected") {
+        return org === "" ? "Signed in through your organization" : `Signed in through ${org}`;
+      }
+      return desc === "" ? undefined : desc;
+    case "idp-sign-in-required":
+      return `Needs organization sign-in${named}`;
+    case "idp-session-expired":
+      return `Organization sign-in expired${named}`;
+    case "denied":
+      return `Not granted by your organization${desc === "" ? "" : `: ${desc}`}. Reconnect to check again`;
+    case "idp-not-configured":
+      return "Needs an organization sign-in. Set one up under Organization sign-in below";
+    case "unsupported":
+      return "Does not accept organization sign-in";
+    case "failed":
+      return `Organization sign-in failed${desc === "" ? "" : `: ${desc}`}`;
+    default:
+      return undefined;
+  }
 }
 
 /** Returns the badge, or null when cleared, so the caller tracks it. */
@@ -930,6 +1008,25 @@ function renderOAuthPill(url: string): HTMLAnchorElement {
     },
     safe ? "Open sign-in page" : "Invalid OAuth URL",
   ) as HTMLAnchorElement;
+}
+
+/** Starts the organization sign-in, which the Organization sign-in card follows. */
+function renderOrgSignInBtn(): HTMLButtonElement {
+  const btn = el(
+    "button",
+    { type: "button", className: "btn-small mcp-sign-in-btn mcp-org-sign-in-btn" },
+    "Sign in",
+  ) as HTMLButtonElement;
+  btn.addEventListener("click", () => {
+    if (btn.disabled) {
+      return;
+    }
+    setControlBusy(btn, true);
+    void signInOrganization.dispatch(undefined).finally(() => {
+      setControlBusy(btn, false);
+    });
+  });
+  return btn;
 }
 
 function renderSignInBtn(serverName: () => string): HTMLButtonElement {
@@ -1204,6 +1301,10 @@ export function initMCP(): void {
   onSSE("mcp_config_changed", () => {
     mcpState.refetchServers();
     void mcpState.refetchStatus();
+    void mcpState.refetchIdentityProvider();
+  });
+  onSSE("mcp_identity_provider", (_chat, p, subject) => {
+    mcpState.applyIdentityProviderFrame(p, subject);
   });
   onSSE("mcp_status", (_chat, p, subject) => {
     // Toasts fire from the change the mirror applied, so a frame older than the row held raises none.
@@ -1235,6 +1336,7 @@ export function initMCP(): void {
 
   mcpState.refetchServers();
   void mcpState.refetchStatus();
+  void mcpState.refetchIdentityProvider();
   refreshConfigStanding();
 }
 

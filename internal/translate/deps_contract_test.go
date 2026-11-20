@@ -74,7 +74,7 @@ func TestBaseDeps_FullContract(t *testing.T) {
 	})
 
 	t.Run("PendingPermsAdd_does_not_panic", func(t *testing.T) {
-		d.PendingPermsAdd(ctx, 42, marotte.ServerEvent{Type: "permission_needed", ChatID: "c1"}, nopOrigin{})
+		d.PendingPermsAdd(ctx, 42, "pr-42", marotte.ServerEvent{Type: "permission_needed", ChatID: "c1"}, nopOrigin{})
 	})
 
 	t.Run("Notify_does_not_panic", func(t *testing.T) {

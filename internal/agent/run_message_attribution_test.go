@@ -56,7 +56,7 @@ func TestStepMessage_AColdRegistryStillAttributesTheStepsSteeringFrames(t *testi
 			h.runs.log = newRunLog(t.TempDir())
 			br.setCallResult(methodKiroWorkflowInspect, stepWorkflowInspect(t))
 			br.setCallResult(marotte.MethodSessionSteer, json.RawMessage(`{"queued":true}`))
-			frameChat := runChatID("wf_1")
+			frameChat := marotte.RunHostChatID("wf_1")
 			if door == "host_session" {
 				h.insertBridgeNow(frameChat, testBridge(br, bridgeReady))
 			} else {

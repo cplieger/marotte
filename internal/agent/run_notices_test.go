@@ -27,7 +27,7 @@ func TestObserveComplete_QueuesANoticeForABusyLaunchingChatOnly(t *testing.T) {
 	h.runs.observeComplete(t.Context(), "c1", runComplete("wf_2", "failed"))
 	h.runs.observeComplete(t.Context(), "c1", runComplete("wf_p", "paused"))
 	h.runs.observeComplete(t.Context(), "c2", runComplete("wf_3", "completed"))
-	h.runs.observeComplete(t.Context(), runChatID("wf_4"), runComplete("wf_4", "completed"))
+	h.runs.observeComplete(t.Context(), marotte.RunHostChatID("wf_4"), runComplete("wf_4", "completed"))
 
 	notice := func(label string) string { return `A workflow you launched ("` + label + `") completed.` }
 	if wf, _, ok := h.runs.RunNotice("c1", notice("wf_2")); !ok || wf != "wf_2" {
@@ -43,7 +43,7 @@ func TestObserveComplete_QueuesANoticeForABusyLaunchingChatOnly(t *testing.T) {
 	if wf, _, ok = h.runs.RunNotice("c2", notice("wf_3")); ok {
 		t.Errorf("RunNotice(c2) = %q, want none: KAS prompts an idle parent instead of queueing", wf)
 	}
-	if wf, _, ok = h.runs.RunNotice(runChatID("wf_4"), notice("wf_4")); ok {
+	if wf, _, ok = h.runs.RunNotice(marotte.RunHostChatID("wf_4"), notice("wf_4")); ok {
 		t.Errorf("RunNotice(run chat) = %q, want none: a parentless run has no chat buffer", wf)
 	}
 }

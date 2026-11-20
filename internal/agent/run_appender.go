@@ -236,7 +236,7 @@ func (rs *Runs) notifyEmptyAnswer(ctx context.Context, l *runlease.Lease, nodePa
 	n := notice.StepEmptyAnswer(notice.RunTarget(l.WorkflowID, name), nodePath)
 	chat := marotte.ChatID(l.ChatID)
 	rs.coord.Notify(ctx, chat, &n)
-	if chat == "" || isRunChat(chat) {
+	if chat == "" || marotte.IsRunHostChat(chat) {
 		return
 	}
 	rs.tellLaunchingAgent(ctx, l.WorkflowID, chat, "a step ended on an empty model turn",

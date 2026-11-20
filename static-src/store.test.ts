@@ -25,6 +25,7 @@ import {
   setModel,
   setCurrentMode,
   setSupervisedMode,
+  setMessagingOff,
   setEffort,
   setAgentStatus,
   setTurnOpen,
@@ -1106,6 +1107,14 @@ describe("upsertHeader re-syncs an existing row", () => {
     expect(get("a")?.supervised_mode).toBe(false);
   });
 
+  it("takes the chat's messaging switch from every header read, both ways", () => {
+    resetStore("a");
+    upsertHeader({ ...headerFor("a"), messaging_off: true });
+    expect(get("a")?.messaging_off).toBe(true);
+    upsertHeader(headerFor("a"));
+    expect(get("a")?.messaging_off).toBe(false);
+  });
+
   // A header frame and an answer race; the run order with the higher version wins either way.
   it("takes a header's run order only when its version is newer than the one held", () => {
     resetStore("a");
@@ -1138,6 +1147,12 @@ describe("upsertHeader seeds a brand-new row", () => {
     expect(s.supervised_mode).toBe(false);
     expect(s.turns.size).toBe(0);
     expect(s.turn_order).toEqual([]);
+  });
+
+  it("seeds the chat's messaging switch from the header", () => {
+    setSessions([]);
+    upsertHeader({ ...headerFor("a"), messaging_off: true });
+    expect(get("a")?.messaging_off).toBe(true);
   });
 
   it("seeds the run order from the header", () => {
@@ -1177,6 +1192,19 @@ describe("the per-chat switches", () => {
     expect(get("a")?.supervised_mode).toBe(true);
     const before = get("a");
     setSupervisedMode("a", true);
+    expect(get("a")).toBe(before);
+  });
+
+  it("setMessagingOff applies a new value and does not churn on the one it has", () => {
+    resetStore("a");
+    setMessagingOff("a", false);
+    const unset = get("a");
+    setMessagingOff("a", false);
+    expect(get("a"), "an absent value is on").toBe(unset);
+    setMessagingOff("a", true);
+    expect(get("a")?.messaging_off).toBe(true);
+    const before = get("a");
+    setMessagingOff("a", true);
     expect(get("a")).toBe(before);
   });
 

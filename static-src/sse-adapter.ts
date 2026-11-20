@@ -422,6 +422,8 @@ function runStampAction(stamp: SubjectStamp, signal?: AbortSignal): Promise<bool
       return refetchLiveRuns(signal).then(() => false);
     case "mcp_status":
       return mcpState.refetchStatus(signal).then(() => false);
+    case "mcp_identity_provider":
+      return mcpState.refetchIdentityProvider(signal).then(() => false);
     case "catalog":
       return fetchCatalog(signal === undefined ? {} : { signal }).then(() => false);
     case "forge_inventory":

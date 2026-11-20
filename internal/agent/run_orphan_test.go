@@ -283,7 +283,7 @@ func TestSweepOrphanedRuns_NeverTouchesARunItDoesNotOwn(t *testing.T) {
 				}
 			}
 			// No live bridge in any case, as after a restart.
-			if h.bridge.mgr.get(runChatID("wf_1")) != nil {
+			if h.bridge.mgr.get(marotte.RunHostChatID("wf_1")) != nil {
 				t.Fatal("the fixture registered a bridge; the sweep must be wrong-by-default without one")
 			}
 

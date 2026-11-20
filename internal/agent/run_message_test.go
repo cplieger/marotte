@@ -88,7 +88,7 @@ func messageHub(t *testing.T, run marotte.RunStatus, step marotte.RunNodeStatus)
 	t.Helper()
 	h, _, br := newTestHub()
 	h.runs.log = newRunLog(t.TempDir())
-	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
+	h.insertBridgeNow(marotte.RunHostChatID("wf_1"), testBridge(br, bridgeReady))
 	br.setCallResult(methodKiroWorkflowInspect, oneStepInspect(t, run, step, "sess_step"))
 	br.setCallResult(marotte.MethodSessionSteer, json.RawMessage(`{"queued":true}`))
 	h.runs.RunNodeStart(t.Context(), reviewStep("sess_step"), "")
@@ -484,7 +484,7 @@ func TestStepSteer_AStepsTurnEndKeepsItsSteeringOpenForTheContinuation(t *testin
 		}},
 	})
 	params, _ := json.Marshal(map[string]any{"sessionId": "sess_step", "update": json.RawMessage(update)})
-	h.handleRunStepFrame(t.Context(), runChatID("wf_1"), &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params})
+	h.handleRunStepFrame(t.Context(), marotte.RunHostChatID("wf_1"), &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params})
 
 	out, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(h.lifecycle.answerDeadline()), "wf_1", reviewPath, "check the logs", "m-tail", "", nil)
 
@@ -542,11 +542,11 @@ func TestRemoveStepSteer_DeletesARowKASHolds(t *testing.T) {
 	br.setCallResult(marotte.MethodSessionSteerClear, json.RawMessage(`{"messageIds":["steer-m-7"]}`))
 	// The clear's reply lands at seq 3, and the host session's lane has folded that far: only the
 	// host session's position can release the barrier.
-	gen := h.coord.turns.attachForwardNow(runChatID("wf_1")).gen
+	gen := h.coord.turns.attachForwardNow(marotte.RunHostChatID("wf_1")).gen
 	br.mu.Lock()
 	br.deliveredSeq = 3
 	br.mu.Unlock()
-	h.coord.turns.observe(runChatID("wf_1"), gen, 3)
+	h.coord.turns.observe(marotte.RunHostChatID("wf_1"), gen, 3)
 
 	if err := h.runs.removeStepSteer(t.Context(), "wf_1", reviewPath, "steer-m-7"); err != nil {
 		t.Fatalf("RemoveStepSteer = %v, want nil", err)
@@ -671,7 +671,7 @@ func TestStepMessage_AResumeAfterTheTurnClosedHeadsTheNextTurnAsItsPrompt(t *tes
 			t.Run(via+"_"+timing, func(t *testing.T) {
 				h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 				h.coord.runs = h.runs.log
-				h.coord.closeHostedRuns(t.Context(), runChatID("wf_1"), marotte.StopReasonInterrupted)
+				h.coord.closeHostedRuns(t.Context(), marotte.RunHostChatID("wf_1"), marotte.StopReasonInterrupted)
 				if via != "prompt_route" {
 					leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1"})
 					br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
@@ -731,7 +731,7 @@ func TestStepMessage_ARefusedResumeLeavesTheNextTurnWithoutAPrompt(t *testing.T)
 	t.Parallel()
 	h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	h.coord.runs = h.runs.log
-	h.coord.closeHostedRuns(t.Context(), runChatID("wf_1"), marotte.StopReasonInterrupted)
+	h.coord.closeHostedRuns(t.Context(), marotte.RunHostChatID("wf_1"), marotte.StopReasonInterrupted)
 	br.setCallErr(marotte.MethodPrompt, errors.New("bridge died"))
 
 	if _, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(h.lifecycle.answerDeadline()), "wf_1", reviewPath, "carry on", "m-13", "", nil); err == nil {
@@ -749,7 +749,7 @@ func TestStepMessage_ARunEndingBeforeTheResumedTurnOpensKeepsTheWords(t *testing
 	t.Parallel()
 	h, _ := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	h.coord.runs = h.runs.log
-	h.coord.closeHostedRuns(t.Context(), runChatID("wf_1"), marotte.StopReasonInterrupted)
+	h.coord.closeHostedRuns(t.Context(), marotte.RunHostChatID("wf_1"), marotte.StopReasonInterrupted)
 	if _, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(h.lifecycle.answerDeadline()), "wf_1", reviewPath, "carry on", "m-14", "", nil); err != nil {
 		t.Fatalf("MessageStep = %v, want nil", err)
 	}
@@ -767,7 +767,7 @@ func twoBranchHub(t *testing.T) (*Runtime, *fakeBridge) {
 	t.Helper()
 	h, _, br := newTestHub()
 	h.runs.log = newRunLog(t.TempDir())
-	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
+	h.insertBridgeNow(marotte.RunHostChatID("wf_1"), testBridge(br, bridgeReady))
 	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1"})
 	br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusPaused,
 		askStepNode{id: "branch_a", status: "paused", session: "sess_a"}, parkedStep("branch_b", "sess_b")))
@@ -872,7 +872,7 @@ func TestStepSteer_AnEngineExitLeavesUnreadRowsNotRead(t *testing.T) {
 	}
 
 	h.coord.runs = h.runs.log
-	h.coord.closeHostedRuns(t.Context(), runChatID("wf_1"), marotte.StopReasonInterrupted)
+	h.coord.closeHostedRuns(t.Context(), marotte.RunHostChatID("wf_1"), marotte.StopReasonInterrupted)
 
 	got := stepSteersIn(t, h)
 	if len(got) != 1 || got[0].Reason != marotte.SteerReasonBoundary {

@@ -33,10 +33,11 @@ func closeStopped(t *testing.T, h *Runtime) {
 	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonCancelled), "", nil, false)
 }
 
-// settleAsk withdraws c1's ask filed as KAS's request acpID, through the settle path a real answer takes.
+// settleAsk withdraws c1's ask filed as KAS's request acpID (askId pr-<acpID>, addAsk), through the settle
+// path a real answer takes.
 func settleAsk(t *testing.T, h *Runtime, acpID int64) {
 	t.Helper()
-	if !h.bus.PendingPermsWithdraw("c1", "tool-"+strconv.FormatInt(acpID, 10)) {
+	if !h.bus.PendingPermsWithdraw("c1", "pr-"+strconv.FormatInt(acpID, 10)) {
 		t.Fatalf("Setup: no ask filed as request %d", acpID)
 	}
 }
@@ -170,7 +171,7 @@ func TestPushTurnOutcome_ARunAskDoesNotHoldThePark(t *testing.T) {
 func TestPushTurnOutcome_AnAskOnAnotherChatDoesNotPark(t *testing.T) {
 	t.Parallel()
 	h, fp := newWithholdHub(t)
-	h.bus.pendingPerms.add(1, permNeeded("c2", 0), nil)
+	h.bus.pendingPerms.add(1, "", permNeeded("c2", 0), nil)
 
 	closeClean(t, h, "focus-A")
 

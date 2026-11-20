@@ -2,11 +2,12 @@
 // `_kiro/secret/*` requests. KAS runs MCP OAuth but keeps it only in memory, so without this
 // store every engine start re-runs Dynamic Client Registration.
 //
-// KAS keys its state `kiro.mcp.<sha256 of the server config>.<kind>`. The grant (kinds
-// client, kiro-path-client and tokens) persists; every other key (the PKCE verifier, the discovery state, any
-// kind KAS adds later) is held in memory until ForgetSignInState, the lifetime KAS gives it
-// with no client storage, so a spent verifier or a stale authorization server never outlives
-// its engine.
+// KAS keys a server's state `kiro.mcp.<sha256 of the server config>.<kind>` and the
+// organization sign-in's `kiro.mcp.idp.<sha256 of issuer|client id>.session`. The grants (a
+// server's client, kiro-path-client and tokens, and the organization session) persist; every
+// other key (the PKCE verifier, the discovery state, any kind KAS adds later) is held in memory
+// until ForgetSignInState, the lifetime KAS gives it with no client storage, so a spent verifier
+// or a stale authorization server never outlives its engine.
 //
 // The grant lives in one file, <configDir>/mcp-secrets.json, mode 0600, written atomically:
 // `{"secrets": {"<key>": "<base64 value>"}}`. Base64 round-trips values byte-exactly; it is an
@@ -21,9 +22,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -39,7 +42,8 @@ const (
 	maxValueBytes = 64 << 10
 	// maxKeyBytes caps a key. KAS's own keys are ~80 bytes.
 	maxKeyBytes = 512
-	// maxEntries caps the persisted keys: at most three per server configuration.
+	// maxEntries caps the persisted keys: at most three per server configuration and one per
+	// organization provider.
 	maxEntries = 1024
 	// maxSignInEntries caps the memory half: two per server configuration in one engine.
 	maxSignInEntries = 512
@@ -55,9 +59,10 @@ const (
 // store is full.
 var errTooLarge = errors.New("secretstore: value rejected (over limit)")
 
-// durableKey matches the keys that persist: KAS's client registration (kiro-path-client when
-// the server config names no client id, metadata URL or redirect URI) and token set.
-var durableKey = regexp.MustCompile(`^kiro\.mcp\.[0-9a-f]{64}\.(client|kiro-path-client|tokens)$`)
+// durableKey matches the keys that persist: a server's client registration (kiro-path-client
+// when the server config names no client id, metadata URL or redirect URI) and token set, and
+// the organization provider's session.
+var durableKey = regexp.MustCompile(`^kiro\.mcp\.(?:[0-9a-f]{64}\.(?:client|kiro-path-client|tokens)|idp\.[0-9a-f]{64}\.session)$`)
 
 // file is the on-disk shape: key → base64(value). A named field so an addition needs no
 // format migration.
@@ -238,6 +243,33 @@ func (s *Store) ForgetSignInState() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	clear(s.signIn)
+}
+
+// identityProviderKeyPrefix opens every key KAS derives for the organization provider.
+const identityProviderKeyPrefix = "kiro.mcp.idp."
+
+// ForgetIdentityProviderSessions deletes every organization provider key, persisted or in memory, for a provider
+// whose issuer or client id changed or that was removed: KAS can never read one again. A persist failure keeps the
+// persisted keys and is returned; the in-memory ones are dropped either way.
+func (s *Store) ForgetIdentityProviderSessions(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	maps.DeleteFunc(s.signIn, func(k, _ string) bool { return strings.HasPrefix(k, identityProviderKeyPrefix) })
+	removed := map[string]string{}
+	for k, v := range s.secrets {
+		if strings.HasPrefix(k, identityProviderKeyPrefix) {
+			removed[k] = v
+			delete(s.secrets, k)
+		}
+	}
+	if len(removed) == 0 {
+		return nil
+	}
+	if err := s.persistLocked(ctx); err != nil {
+		maps.Copy(s.secrets, removed)
+		return err
+	}
+	return nil
 }
 
 // Caller holds s.mu.

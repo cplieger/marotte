@@ -52,7 +52,7 @@ func (rs *Runs) ensureResident(ctx context.Context, workflowID string) (host *dr
 	}
 	defer unlock()
 	if sb := rs.residentRunHost(workflowID); sb != nil {
-		return &drivenHost{sb: sb, chatID: runChatID(workflowID)}, func() {}, nil
+		return &drivenHost{sb: sb, chatID: marotte.RunHostChatID(workflowID)}, func() {}, nil
 	}
 	o := rs.originFromLease(ctx, workflowID)
 	if o.err != nil {
@@ -74,7 +74,7 @@ func (rs *Runs) ensureResident(ctx context.Context, workflowID string) (host *dr
 	if err != nil {
 		return nil, func() {}, err
 	}
-	return &drivenHost{sb: sb, chatID: runChatID(workflowID)}, func() {}, nil
+	return &drivenHost{sb: sb, chatID: marotte.RunHostChatID(workflowID)}, func() {}, nil
 }
 
 // hostPresets is the presets a parentless run's host session loads with: its lease's, else, for a run whose lease is
@@ -140,7 +140,7 @@ func (rs *Runs) hostOnChat(ctx context.Context, workflowID string, parent runPar
 // router route the run's frames to it. The door runs under the runtime's lifetime, bounded by launchTimeout; ctx
 // bounds only this caller's wait, and a later caller waits on a load still under way rather than starting another.
 func (rs *Runs) loadHost(ctx context.Context, workflowID, session string, presets []string) (*sharedBridge, error) {
-	chatID := runChatID(workflowID)
+	chatID := marotte.RunHostChatID(workflowID)
 	sb, existed := rs.bridges.orInsertRun(chatID, runHostLife{ctx: rs.lifecycle.shutdownCtx})
 	// pending first: a load that settles after the caller's residency read is resident by the second test.
 	if existed && (sb.settled.pending() || rs.residentRunHost(workflowID) == sb) {
@@ -173,7 +173,7 @@ func awaitHost(ctx context.Context, sb *sharedBridge) (*sharedBridge, error) {
 }
 
 func (rs *Runs) openHost(workflowID, session string, presets []string, sb *sharedBridge) {
-	chatID := runChatID(workflowID)
+	chatID := marotte.RunHostChatID(workflowID)
 	lctx, cancel := rs.engine.stallAware(rs.lifecycle.shutdownCtx, launchTimeout)
 	defer cancel()
 	err := rs.engine.loadSession(lctx, &marotte.SessionOpts{
@@ -202,7 +202,7 @@ func (rs *Runs) openHost(workflowID, session string, presets []string, sb *share
 
 // residentRunHost is the run's own resident host session under run:<id>, or nil (also while loading).
 func (rs *Runs) residentRunHost(workflowID string) *sharedBridge {
-	if sb := rs.bridges.get(runChatID(workflowID)); sb != nil && sb.startedPastOpen() && sb.open() {
+	if sb := rs.bridges.get(marotte.RunHostChatID(workflowID)); sb != nil && sb.startedPastOpen() && sb.open() {
 		return sb
 	}
 	return nil
@@ -283,7 +283,7 @@ func (rs *Runs) stopVerb(ctx context.Context, workflowID, method string, params 
 // residentOwner is the resident session the run's frames route to, with no load.
 func (rs *Runs) residentOwner(workflowID string) (*drivenHost, bool) {
 	if sb := rs.residentRunHost(workflowID); sb != nil {
-		return &drivenHost{sb: sb, chatID: runChatID(workflowID)}, true
+		return &drivenHost{sb: sb, chatID: marotte.RunHostChatID(workflowID)}, true
 	}
 	l, held := rs.lease(workflowID)
 	if !held || l.ChatID == "" || l.ParentSessionID == "" {

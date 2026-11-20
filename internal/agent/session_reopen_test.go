@@ -125,10 +125,10 @@ func TestMarkSessionsForReload_AnIdleChatReloadsAtItsNextOpen(t *testing.T) {
 func TestMarkSessionsForReload_LeavesHostSessionsUnmarked(t *testing.T) {
 	t.Parallel()
 	h, _ := reopenFixture(t)
-	lc := h.coord.turns.lifecycleForRun(runChatID("wf-1"))
+	lc := h.coord.turns.lifecycleForRun(marotte.RunHostChatID("wf-1"))
 	sb := newSharedBridge(lc)
 	sb.attach(newFakeBridge())
-	if !h.bridge.mgr.insert(runChatID("wf-1"), sb) {
+	if !h.bridge.mgr.insert(marotte.RunHostChatID("wf-1"), sb) {
 		t.Fatal("Setup: insert host session = false")
 	}
 
@@ -178,9 +178,9 @@ func TestSpecPlanningAskFirst_ReopensOnlyWhilePlanningIsOn(t *testing.T) {
 	}
 }
 
-// KAS delivers a peer send_message only when messaging is on for both the sender's and the target's session, so
-// every chat door carries the setting: off until the user turns it on, then on at the chat's reload.
-func TestChatMessaging_ReachesEveryChatDoor(t *testing.T) {
+// KAS reads a session's messaging switch on every send, so a Settings flip reaches an open chat's session through
+// set_config_option, with no reload: off until the user turns it on, then on in place.
+func TestChatMessaging_ReachesOpenChatsLive(t *testing.T) {
 	t.Parallel()
 	h, configDir := reopenFixture(t)
 	first, err := h.coord.openReleased(t.Context(), "c1", "")
@@ -191,12 +191,12 @@ func TestChatMessaging_ReachesEveryChatDoor(t *testing.T) {
 		t.Error("a chat opened with the setting unset carried messaging on, want off")
 	}
 
-	if !reloadsAfter(t, h, func() { writeSetting(t, configDir, settings.KeyChatMessaging, true) }) {
-		t.Fatal("turning Messages between chats on did not reload the open chat")
+	if reloadsAfter(t, h, func() { writeSetting(t, configDir, settings.KeyChatMessaging, true) }) {
+		t.Fatal("turning Messages between chats on reloaded the open chat, want the switch set in place")
 	}
-	sb := h.bridge.mgr.get("c1")
-	if opts := fakeOf(sb).lastSessionOpts(); opts.SessionID != string(first.SessionID()) || !opts.Features.Messaging {
-		t.Errorf("the reload = %+v, want the chat's own session loaded with messaging on", opts)
+	asks := fakeOf(first).messagingAsks()
+	if len(asks) == 0 || !asks[len(asks)-1] {
+		t.Errorf("the open chat's session was asked EnsureMessaging %v, want a last ask of true", asks)
 	}
 }
 
@@ -268,7 +268,7 @@ var configWrites = []struct {
 	{key: settings.KeyCodeAnalysis, value: true, reach: reachEngine},
 	{key: settings.KeySecurityProfile, value: policyfile.ProfileUnrestricted, reach: reachNewChat},
 	{key: settings.KeyWorkflowsEnabled, value: false, reach: reachReopen},
-	{key: settings.KeyChatMessaging, value: true, reach: reachReopen},
+	{key: settings.KeyChatMessaging, value: true, reach: reachLive},
 	{key: settings.KeyChatAwareness, value: true, reach: reachReopen},
 	// KAS keeps a session's recorded mode on load: TestChatAwarenessMode_ReachesNewChatsOnly.
 	{key: settings.KeyChatAwarenessMode, value: "consult", reach: reachNewChat},
@@ -329,6 +329,8 @@ var configWrites = []struct {
 	{key: settings.KeyHistoryWindowHours, value: 6, reach: reachNoChat},
 	{key: settings.KeyTheme, value: "light", reach: reachNoChat},
 	{key: settings.KeyLastMergeMethod, value: "squash", reach: reachNoChat},
+	// Read only by the fallback seeder, at each configuration view.
+	{key: settings.KeyModelFallbackSeeded, value: []string{"model-a"}, reach: reachNoChat},
 	// Update writes both on every write, so a session door reading them would reopen every chat on any change.
 	{key: settings.KeySettingsEpoch, value: "e", reach: reachNoChat},
 	{key: settings.KeySettingsRevision, value: 42, reach: reachNoChat},

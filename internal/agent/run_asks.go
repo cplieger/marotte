@@ -170,7 +170,7 @@ func askChat(l *runlease.Lease) marotte.ChatID {
 	if l.ChatID != "" {
 		return marotte.ChatID(l.ChatID)
 	}
-	return runChatID(l.WorkflowID)
+	return marotte.RunHostChatID(l.WorkflowID)
 }
 
 // seed gives every lease a cell that has not read its run: such a run is named, unreachable, so a
@@ -231,7 +231,7 @@ func (rs *Runs) verbCell(workflowID string) (c *askCell, done func()) {
 	}
 	tc := a.transients[workflowID]
 	if tc == nil {
-		tc = &transientCell{c: newAskCell(workflowID, runChatID(workflowID))}
+		tc = &transientCell{c: newAskCell(workflowID, marotte.RunHostChatID(workflowID))}
 		tc.c.transient = true
 		a.transients[workflowID] = tc
 	}

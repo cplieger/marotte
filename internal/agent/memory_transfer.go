@@ -32,7 +32,7 @@ const memoryImportComingSoonClass = "MemoryImportComingSoonError"
 const maxMemoryImportTextBytes = 256
 
 // memoryImportLine is one skipped or failed import line. Reason is KAS's open vocabulary (duplicate_in_file,
-// quota, validation, secret_blocked, parse_error).
+// quota, validation, secret_blocked, unsupported_scope, needs_repo_path, parse_error).
 type memoryImportLine struct {
 	Reason string `json:"reason"`
 	Detail string `json:"detail,omitempty"`

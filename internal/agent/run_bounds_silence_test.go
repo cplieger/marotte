@@ -24,7 +24,7 @@ func silentStep(t *testing.T, launch launchOrigin, ago time.Duration, opts ...Op
 	t.Helper()
 	h, _, br := newTestHub(opts...)
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.insertBridgeNow(runChatID(silentRunID), testBridge(br, bridgeReady))
+	h.insertBridgeNow(marotte.RunHostChatID(silentRunID), testBridge(br, bridgeReady))
 	h.runs.log = newRunLog(t.TempDir())
 	runTree{t: t, h: h, id: silentRunID}.start(stepNodeType, "a")
 	deadline := stagedExpiry(t, h.runs, silentRunID, launch)
@@ -153,7 +153,7 @@ func TestSilentStep_AFrameClearsTheFlagAndANewSilencePushesAgain(t *testing.T) {
 func TestSilentStep_AWatchPollIsAFrame(t *testing.T) {
 	t.Parallel()
 	h, _, deadline := silentStep(t, manualLaunch(), time.Hour)
-	host := runChatID(silentRunID)
+	host := marotte.RunHostChatID(silentRunID)
 	h.dispatch(t.Context(), host, h.originOf(host), runNotif(methodWFWatchPoll, map[string]any{
 		"workflowId": silentRunID, "nodeId": "a", "nodePath": []string{silentRunID, "a"}, "outcome": "idle",
 	}))
@@ -259,7 +259,7 @@ func TestSilentStep_APausedStepIsNotSilence(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fp := newRunOutcomePush()
 			h, br, deadline := silentStep(t, launch, 2*time.Hour, WithPush(fp))
-			host := runChatID(silentRunID)
+			host := marotte.RunHostChatID(silentRunID)
 			h.dispatch(t.Context(), host, h.originOf(host), runNotif(methodWFNodePaused, map[string]any{
 				"workflowId": silentRunID, "nodeId": "a", "nodePath": []string{silentRunID, "a"}, "reason": "waiting for an answer",
 			}))
@@ -300,9 +300,9 @@ func TestSilentStep_AnHourlyWatchIsNeitherFlaggedNorStopped(t *testing.T) {
 			fp := newRunOutcomePush()
 			h, _, br := newTestHub(WithPush(fp))
 			br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-			h.insertBridgeNow(runChatID(silentRunID), testBridge(br, bridgeReady))
+			h.insertBridgeNow(marotte.RunHostChatID(silentRunID), testBridge(br, bridgeReady))
 			h.runs.log = newRunLog(t.TempDir())
-			host := runChatID(silentRunID)
+			host := marotte.RunHostChatID(silentRunID)
 			watch := []string{silentRunID, "watching", "iter-0", "mail"}
 			frame := func(method string, params map[string]any) {
 				params["workflowId"] = silentRunID
@@ -353,7 +353,7 @@ type runTree struct {
 func (r runTree) frame(method string, params map[string]any) {
 	r.t.Helper()
 	params["workflowId"] = r.id
-	host := runChatID(r.id)
+	host := marotte.RunHostChatID(r.id)
 	r.h.dispatch(r.t.Context(), host, r.h.originOf(host), runNotif(method, params))
 }
 
@@ -396,14 +396,14 @@ func (r runTree) ask(kind marotte.EventType, node string) marotte.ServerEvent {
 	default:
 		payload = marotte.PermissionNeededPayload{RunID: r.id, NodeID: node}
 	}
-	evt, _ := r.h.bus.PendingPermsAdd(r.t.Context(), 1, marotte.NewEvent(kind, runChatID(r.id), payload), nil)
+	evt, _ := r.h.bus.PendingPermsAdd(r.t.Context(), 1, "pr-1", marotte.NewEvent(kind, marotte.RunHostChatID(r.id), payload), nil)
 	return evt
 }
 
 // answer is a person allowing the permission ask evt.
 func (r runTree) answer(evt marotte.ServerEvent) {
 	r.t.Helper()
-	reply, ok := r.h.bus.TakePendingPerm(runChatID(r.id), requestIDOf(r.t, evt), marotte.DecisionKindPermission, marotte.SettledByUser)
+	reply, ok := r.h.bus.TakePendingPerm(marotte.RunHostChatID(r.id), requestIDOf(r.t, evt), marotte.DecisionKindPermission, marotte.SettledByUser)
 	if !ok {
 		r.t.Fatal("Setup: the ask could not be taken")
 	}
@@ -465,7 +465,7 @@ func TestSilence_OnePredicateOverTheRunTree(t *testing.T) {
 			arrange: func(r runTree) {
 				r.h.runs.RunFoldTarget(r.t.Context(), &translate.RunStep{
 					RunID: r.id, NodePath: workflow.PathKey([]string{r.id, "a"}), SessionID: "sess_a", NodeID: "a",
-				}, runChatID(r.id))
+				}, marotte.RunHostChatID(r.id))
 				r.ask(marotte.EventPermissionNeeded, "a")
 			},
 		},
@@ -557,7 +557,7 @@ func TestSilence_OnePredicateOverTheRunTree(t *testing.T) {
 					methodKiroWorkflowCancel:  json.RawMessage(`{}`),
 					methodKiroWorkflowInspect: inspectReply(t, silentRunID, marotte.RunStatusRunning, ""),
 				}
-				h.insertBridgeNow(runChatID(silentRunID), testBridge(br, bridgeReady))
+				h.insertBridgeNow(marotte.RunHostChatID(silentRunID), testBridge(br, bridgeReady))
 				h.runs.log = newRunLog(t.TempDir())
 				tree := runTree{t: t, h: h, id: silentRunID}
 				tc.arrange(tree)

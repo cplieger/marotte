@@ -8,13 +8,19 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-func interactionResolvedFrame(t *testing.T, toolCallID, outcome string) json.RawMessage {
+// interactionResolvedFrame is the session_info_update KAS sends when it closes an ask, its askId on
+// the nested block's own _meta.kiro; an empty askID sends none.
+func interactionResolvedFrame(t *testing.T, toolCallID, askID, outcome string) json.RawMessage {
 	t.Helper()
+	resolved := map[string]any{"toolCallId": toolCallID, "outcome": outcome}
+	if askID != "" {
+		resolved["_meta"] = map[string]any{"kiro": map[string]any{"askId": askID, "askKind": "tool_call_approval"}}
+	}
 	return mustJSON(t, map[string]any{"_meta": map[string]any{"kiro": map[string]any{
 		"kind":                "interaction_resolved",
 		"toolCallId":          toolCallID,
 		"outcome":             outcome,
-		"interactionResolved": map[string]any{"toolCallId": toolCallID, "outcome": outcome},
+		"interactionResolved": resolved,
 	}}})
 }
 
@@ -24,21 +30,23 @@ func TestHandleSessionInfoUpdate_InteractionResolvedCancelledWithdrawsTheAsk(t *
 	tests := []struct {
 		name    string
 		attr    FrameAttribution
+		askID   string
 		outcome string
 		want    []string
 	}{
-		{name: "the chat's own ask, cancelled", outcome: "cancelled", want: []string{"c1/tc-1"}},
-		{name: "a step's ask, cancelled", attr: FrameAttribution{Step: true, RunID: "wf"}, outcome: "cancelled", want: []string{"c1/tc-1"}},
-		{name: "the chat's own ask, rule-decided", outcome: "rule_decided", want: []string{"c1/tc-1"}},
-		{name: "a step's ask, rule-decided", attr: FrameAttribution{Step: true, RunID: "wf"}, outcome: "rule_decided", want: []string{"c1/tc-1"}},
-		{name: "an answer marotte sent", outcome: "selected", want: nil},
-		{name: "a dismissed question", outcome: "dismissed", want: nil},
+		{name: "the chat's own ask, cancelled", askID: "pr-1", outcome: "cancelled", want: []string{"c1/pr-1"}},
+		{name: "a step's ask, cancelled", attr: FrameAttribution{Step: true, RunID: "wf"}, askID: "pr-1", outcome: "cancelled", want: []string{"c1/pr-1"}},
+		{name: "the chat's own ask, rule-decided", askID: "pr-1", outcome: "rule_decided", want: []string{"c1/pr-1"}},
+		{name: "a step's ask, rule-decided", attr: FrameAttribution{Step: true, RunID: "wf"}, askID: "pr-1", outcome: "rule_decided", want: []string{"c1/pr-1"}},
+		{name: "a close naming no ask", outcome: "cancelled", want: nil},
+		{name: "an answer marotte sent", askID: "pr-1", outcome: "selected", want: nil},
+		{name: "a dismissed question", askID: "pr-1", outcome: "dismissed", want: nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			deps, _, _ := depsWithStore(t, "c1")
 			New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
-				interactionResolvedFrame(t, "tc-1", tt.outcome), tt.attr)
+				interactionResolvedFrame(t, "tc-1", tt.askID, tt.outcome), tt.attr)
 			if !slices.Equal(deps.withdrawn, tt.want) {
 				t.Errorf("HandleSessionInfoUpdate(interaction_resolved %s) withdrew %v, want %v",
 					tt.outcome, deps.withdrawn, tt.want)
@@ -52,8 +60,8 @@ func TestHandleSessionInfoUpdate_InteractionResolvedCancelledWithdrawsTheAsk(t *
 func TestHandleStepInfoUpdate_InteractionResolvedWithdrawsTheRunsAsk(t *testing.T) {
 	deps, _, _ := depsWithStore(t, "c1")
 	New(rolesOf(deps)).HandleStepInfoUpdate(t.Context(), "run:wf_1",
-		interactionResolvedFrame(t, "tc-2", "cancelled"), FrameAttribution{Step: true, RunID: "wf_1"})
-	if want := []string{"run:wf_1/tc-2"}; !slices.Equal(deps.withdrawn, want) {
+		interactionResolvedFrame(t, "tc-2", "pr-2", "cancelled"), FrameAttribution{Step: true, RunID: "wf_1"})
+	if want := []string{"run:wf_1/pr-2"}; !slices.Equal(deps.withdrawn, want) {
 		t.Errorf("HandleStepInfoUpdate withdrew %v, want %v", deps.withdrawn, want)
 	}
 }
@@ -115,5 +123,35 @@ func TestHandlePermissionRequest_NoWatchNoRoundNoLocations(t *testing.T) {
 	}
 	if got.Watch != nil || got.ConsentRound != 0 || got.Locations != nil || got.RunID != "" {
 		t.Errorf("payload = %+v, want no watch, round, locations or run", got)
+	}
+}
+
+// A step's ask names its run and node through its requester, so it is attributed with the step
+// registry cold (no node_start seen, as after a restart).
+func TestHandlePermissionRequest_AttributesAStepAskByItsRequester(t *testing.T) {
+	deps, events := newEventCaptureDeps()
+	tr := New(rolesOf(deps))
+	id := int64(9)
+	tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{ID: &id, Params: mustJSON(t, map[string]any{
+		"sessionId": "sess_step",
+		"toolCall":  map[string]any{"toolCallId": "tc", "title": "t"},
+		"options":   []map[string]any{{"optionId": "allow", "name": "Allow", "kind": "allow_once"}},
+		"_meta": map[string]any{"kiro": map[string]any{
+			"askId": "pr-1", "askKind": "tool_call_approval",
+			"requester": map[string]any{
+				"sessionId": "sess_step", "launchingSessionId": "sess_parent", "rootSessionId": "sess_parent",
+				"workflow": map[string]any{"workflowId": "wf_1", "nodeId": "n1", "nodePath": []string{"seq", "n1"}},
+			},
+		}},
+	})})
+	got, ok := findPermissionNeeded(t, events)
+	if !ok {
+		t.Fatal("no permission_needed event broadcast")
+	}
+	if got.RunID != "wf_1" || got.NodeID != "n1" {
+		t.Errorf("RunID/NodeID = %q/%q, want wf_1/n1 from the requester", got.RunID, got.NodeID)
+	}
+	if got.Watch != nil {
+		t.Errorf("Watch = %+v, want nil for an ask no watch raised", got.Watch)
 	}
 }

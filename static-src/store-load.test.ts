@@ -406,6 +406,11 @@ describe("loadList rebuilds each row from the header", () => {
     expect(row.turn_count).toBe(7);
   });
 
+  it("takes messaging_off, and false when the header carries none", async () => {
+    expect((await rebuild(header("c1", { messaging_off: true }))).messaging_off).toBe(true);
+    expect((await rebuild(header("c1"))).messaging_off).toBe(false);
+  });
+
   it("carries the resident window over as ONE value", async () => {
     // The map and the order describe the same turns, so carrying one without the other is a window
     // that renders nothing or renders it twice.

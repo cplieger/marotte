@@ -3,8 +3,9 @@ package mcp
 // marotte RENDERS KAS's own MCP config file from its store and sends nothing
 // inline: the file hot-reloads and keeps the `oauth`, `cwd` and `timeout` fields
 // the inline path drops, and KAS merges `client > file-based`, so any inline entry
-// would shadow the file. The file is shared: KAS also reads `powers.mcpServers`,
-// which WritePowersServers renders, so each writer replaces only its own key. `env`/`headers` are records on the
+// would shadow the file. marotte owns three top-level keys: `mcpServers` and
+// `identityProvider`, rendered from the store, and `powers.mcpServers`, which
+// WritePowersServers renders; each writer replaces only its own. `env`/`headers` are records on the
 // wire, so the store keeps the ordered form, and `type` is emitted only for a
 // registry entry, since KAS infers every other transport from the fields present.
 
@@ -23,6 +24,10 @@ import (
 
 // kasServerKey is the top-level key marotte owns in KAS's config file.
 const kasServerKey = "mcpServers"
+
+// kasIdentityProviderKey is the top-level key KAS reads the organization identity provider from, which marotte owns
+// like kasServerKey: a provider written by hand or by `kiro-cli mcp idp setup` is reverted.
+const kasIdentityProviderKey = "identityProvider"
 
 // kasPowersKey is the top-level key KAS READS for installed legacy Powers'
 // servers (`powers.mcpServers`); KAS never writes it. WritePowersServers owns it,
@@ -62,12 +67,22 @@ type kasServer struct {
 	Disabled bool `json:"disabled,omitempty"`
 }
 
-// kasOAuth is the part of KAS's oauth schema {clientId, redirectUri,
-// clientMetadataUrl, mode} that marotte writes; mode is not written.
+// kasOAuth is KAS's whole oauth schema {clientId, redirectUri, clientMetadataUrl, mode}.
 type kasOAuth struct {
 	ClientID          string `json:"clientId,omitempty"`
 	RedirectURI       string `json:"redirectUri,omitempty"`
 	ClientMetadataURL string `json:"clientMetadataUrl,omitempty"`
+	Mode              string `json:"mode,omitempty"`
+}
+
+// kasIdentityProvider is KAS's identityProvider schema. Each optional member is omitted when unset: KAS refuses an
+// empty name, and an empty endpoint is not a URL.
+type kasIdentityProvider struct {
+	Issuer                string `json:"issuer"`
+	ClientID              string `json:"clientId"`
+	Name                  string `json:"name,omitempty"`
+	AuthorizationEndpoint string `json:"authorizationEndpoint,omitempty"`
+	TokenEndpoint         string `json:"tokenEndpoint,omitempty"`
 }
 
 // renderKASServers maps the store's servers onto KAS's map shape. Secrets are
@@ -101,6 +116,7 @@ func renderKASServers(servers []*Server, policy kasRenderPolicy) map[string]kasS
 				ClientID:          s.OAuthClientID,
 				RedirectURI:       s.OAuthRedirectURI,
 				ClientMetadataURL: s.OAuthClientMetadataURL,
+				Mode:              string(s.OAuthMode),
 			}
 			if oauth != (kasOAuth{}) {
 				entry.OAuth = &oauth
@@ -158,7 +174,36 @@ func (s *Store) bootReconcile(ctx context.Context) error {
 	return s.writeKASConfigWith(ctx, doc, s.servers, policy)
 }
 
-// writeKASConfigWith puts the rendered servers into doc, a readKASDoc result, and writes it,
+// renderKASIdentityProvider is the identityProvider member a write puts in KAS's file: the configured provider, the
+// member as the file has it while the record's own is held unreadable, and nil (absent) otherwise.
+func (s *Store) renderKASIdentityProvider(file json.RawMessage) (json.RawMessage, error) {
+	switch {
+	case s.identityProvider != nil:
+		p := s.identityProvider
+		data, err := json.Marshal(kasIdentityProvider{
+			Issuer: p.Issuer, ClientID: p.ClientID, Name: p.Name,
+			AuthorizationEndpoint: p.AuthorizationEndpoint, TokenEndpoint: p.TokenEndpoint,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("%w kas mcp.json: %w", errPersistMarshal, err)
+		}
+		return data, nil
+	case s.heldIdentityProvider != nil:
+		return file, nil
+	}
+	return nil, nil
+}
+
+// setKASMember puts value in doc under key, or deletes the key for a nil value.
+func setKASMember(doc *kasDoc, key string, value json.RawMessage) {
+	if value == nil {
+		delete(doc.members, key)
+		return
+	}
+	doc.members[key] = value
+}
+
+// writeKASConfigWith puts the rendered servers and identity provider into doc, a readKASDoc result, and writes it,
 // keeping every top-level key it does not own. MUST be called on the write turn, or before New
 // returns: it records the wait value the file now holds.
 func (s *Store) writeKASConfigWith(ctx context.Context, doc *kasDoc, servers []*Server, policy kasRenderPolicy) error {
@@ -166,7 +211,12 @@ func (s *Store) writeKASConfigWith(ctx context.Context, doc *kasDoc, servers []*
 	if err != nil {
 		return err
 	}
+	idp, err := s.renderKASIdentityProvider(doc.members[kasIdentityProviderKey])
+	if err != nil {
+		return err
+	}
 	doc.members[kasServerKey] = rendered
+	setKASMember(doc, kasIdentityProviderKey, idp)
 	if err := s.writeKASDoc(ctx, doc); err != nil {
 		return err
 	}
@@ -204,7 +254,7 @@ func (s *Store) renderServersKey(servers []*Server, file json.RawMessage, policy
 	return data, nil
 }
 
-// writeKASDoc writes doc with only marotte's two keys changed. 0600: the file holds header values
+// writeKASDoc writes doc with only marotte's own keys changed. 0600: the file holds header values
 // and OAuth client secrets, and KAS reads it as the same user.
 func (s *Store) writeKASDoc(ctx context.Context, doc *kasDoc) error {
 	data, err := doc.render()
@@ -240,13 +290,18 @@ func (s *Store) WritePowersServers(ctx context.Context, servers map[string]json.
 	}
 	var resent *renderedWait
 	if fresh {
-		// The file held no document, so marotte's own key goes back with the block.
+		// The file held no document, so marotte's own keys go back with the block.
 		policy, _ := s.renderPolicy(ctx)
 		rendered, err := s.renderServersKey(s.servers, nil, policy)
 		if err != nil {
 			return false, err
 		}
+		idp, err := s.renderKASIdentityProvider(nil)
+		if err != nil {
+			return false, err
+		}
 		doc.members[kasServerKey] = rendered
+		setKASMember(doc, kasIdentityProviderKey, idp)
 		resent = &renderedWait{waitForReady: policy.waitAll, known: true}
 	}
 	if err := setOrDelete(block, kasServerKey, servers); err != nil {

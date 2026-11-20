@@ -42,7 +42,7 @@ func TestPendingPermsTracker_List_OrdersByAskOrder(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
 	for _, acpID := range []int64{7, 2, 9, 1, 5} {
-		tracker.add(acpID, marotte.NewEvent(marotte.EventPermissionNeeded, "chat-1",
+		tracker.add(acpID, "", marotte.NewEvent(marotte.EventPermissionNeeded, "chat-1",
 			marotte.PermissionNeededPayload{Title: "acp " + strconv.FormatInt(acpID, 10)}), nil)
 	}
 
@@ -67,7 +67,7 @@ func TestPendingPermsTracker_List_OrdersAcrossKinds(t *testing.T) {
 	tracker := newPendingPermsTracker()
 	kinds := []marotte.EventType{marotte.EventElicitationNeeded, marotte.EventUserInputNeeded, marotte.EventPermissionNeeded}
 	for i, kind := range kinds {
-		tracker.add(int64(30-i), marotte.NewEvent(kind, "chat-1", marotte.PermissionNeededPayload{}), nil)
+		tracker.add(int64(30-i), "", marotte.NewEvent(kind, "chat-1", marotte.PermissionNeededPayload{}), nil)
 	}
 
 	got := tracker.list("chat-1")
@@ -92,7 +92,7 @@ func TestPendingPermsTracker_List_FiltersByChatAndStaysOrdered(t *testing.T) {
 		chat  marotte.ChatID
 		title string
 	}{{"chat-1", "a"}, {"chat-2", "b"}, {"chat-1", "c"}, {"chat-2", "d"}, {"chat-1", "e"}} {
-		tracker.add(1, marotte.NewEvent(marotte.EventPermissionNeeded, a.chat,
+		tracker.add(1, "", marotte.NewEvent(marotte.EventPermissionNeeded, a.chat,
 			marotte.PermissionNeededPayload{Title: a.title}), nil)
 	}
 
@@ -114,7 +114,7 @@ func TestPendingPermsTracker_AskRefs_ListsTheScopesUnclaimedAsksInAskOrder(t *te
 	t.Parallel()
 	tracker := newPendingPermsTracker()
 	add := func(chatID marotte.ChatID, typ marotte.EventType, payload any) int64 {
-		return requestIDOf(t, tracker.add(0, marotte.NewEvent(typ, chatID, payload), nil))
+		return requestIDOf(t, tracker.add(0, "", marotte.NewEvent(typ, chatID, payload), nil))
 	}
 	elicitation := add("chat-1", marotte.EventElicitationNeeded, marotte.ElicitationNeededPayload{})
 	permission := add("chat-1", marotte.EventPermissionNeeded, marotte.PermissionNeededPayload{})
@@ -152,7 +152,7 @@ func TestPendingPermsTracker_AskRefs_EmptyChatIDListsNothing(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
 	for _, id := range []int64{1, 2} {
-		tracker.add(id, marotte.NewEvent(marotte.EventElicitationNeeded, "chat-1",
+		tracker.add(id, "", marotte.NewEvent(marotte.EventElicitationNeeded, "chat-1",
 			marotte.ElicitationNeededPayload{}), nil)
 	}
 
@@ -178,8 +178,8 @@ func TestPendingPermsTracker_ReusedACPIDsAreSeparateAsks(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tracker := newPendingPermsTracker()
 			old, succ := newFakeBridge(), newFakeBridge()
-			oldID := requestIDOf(t, tracker.add(reused, marotte.NewEvent(tc.oldKind, tc.oldChat, marotte.PermissionNeededPayload{}), old))
-			succID := requestIDOf(t, tracker.add(reused, marotte.NewEvent(tc.succKind, tc.succChat, marotte.PermissionNeededPayload{}), succ))
+			oldID := requestIDOf(t, tracker.add(reused, "", marotte.NewEvent(tc.oldKind, tc.oldChat, marotte.PermissionNeededPayload{}), old))
+			succID := requestIDOf(t, tracker.add(reused, "", marotte.NewEvent(tc.succKind, tc.succChat, marotte.PermissionNeededPayload{}), succ))
 			if oldID == succID {
 				t.Fatalf("two asks sent as ACP id %d share ask id %d", reused, oldID)
 			}
@@ -209,9 +209,9 @@ func TestPendingPermsTracker_TakeOnOrigin_ClaimsOnlyThatSessionsAsk(t *testing.T
 	t.Parallel()
 	tracker := newPendingPermsTracker()
 	old, succ := newFakeBridge(), newFakeBridge()
-	oldID := requestIDOf(t, tracker.add(7, marotte.NewEvent(marotte.EventPermissionNeeded, "run:wf_1",
+	oldID := requestIDOf(t, tracker.add(7, "", marotte.NewEvent(marotte.EventPermissionNeeded, "run:wf_1",
 		marotte.PermissionNeededPayload{}), old))
-	succID := requestIDOf(t, tracker.add(7, marotte.NewEvent(marotte.EventPermissionNeeded, "run:wf_1",
+	succID := requestIDOf(t, tracker.add(7, "", marotte.NewEvent(marotte.EventPermissionNeeded, "run:wf_1",
 		marotte.PermissionNeededPayload{}), succ))
 
 	id, ask, ok := tracker.takeOnOrigin(succ, 7)
@@ -230,7 +230,7 @@ func TestPendingPermsTracker_TakeOnOrigin_ClaimsOnlyThatSessionsAsk(t *testing.T
 func TestPendingPermsTracker_TakeIfPresent_RefusesAnotherChatsAsk(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
-	id := requestIDOf(t, tracker.add(7, marotte.NewEvent(marotte.EventPermissionNeeded, "chat-3",
+	id := requestIDOf(t, tracker.add(7, "", marotte.NewEvent(marotte.EventPermissionNeeded, "chat-3",
 		marotte.PermissionNeededPayload{}), nil))
 	if _, ok := tracker.takeIfPresent("chat-4", id, marotte.DecisionKindPermission); ok {
 		t.Errorf("TakeIfPresent(\"chat-4\", %d) succeeded against chat-3's ask", id)
@@ -245,7 +245,7 @@ func TestPendingPermsTracker_TakeIfPresent_RefusesAnotherChatsAsk(t *testing.T) 
 func TestPendingPermsTracker_TakeIfPresent_RefusesAnotherKindsAsk(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
-	id := requestIDOf(t, tracker.add(7, marotte.NewEvent(marotte.EventPermissionNeeded, "chat-3",
+	id := requestIDOf(t, tracker.add(7, "", marotte.NewEvent(marotte.EventPermissionNeeded, "chat-3",
 		marotte.PermissionNeededPayload{Options: []marotte.PermissionOption{{OptionID: "allow_once"}}}), nil))
 	for _, kind := range []marotte.DecisionKind{marotte.DecisionKindUserInput, marotte.DecisionKindElicitation} {
 		if _, ok := tracker.takeIfPresent("chat-3", id, kind); ok {
@@ -263,11 +263,11 @@ func TestPendingElicitation_ReadsWithoutClaiming(t *testing.T) {
 	t.Parallel()
 	b := &bus{pendingPerms: newPendingPermsTracker()}
 	schema := &marotte.ElicitationRequestSchema{Properties: map[string]marotte.ElicitationPropertySchema{"branch": {Type: "string"}}}
-	elicit := requestIDOf(t, b.pendingPerms.add(1, marotte.NewEvent(marotte.EventElicitationNeeded, "chat-1",
+	elicit := requestIDOf(t, b.pendingPerms.add(1, "", marotte.NewEvent(marotte.EventElicitationNeeded, "chat-1",
 		marotte.ElicitationNeededPayload{Mode: "form", RequestedSchema: schema}), nil))
-	perm := requestIDOf(t, b.pendingPerms.add(2, marotte.NewEvent(marotte.EventPermissionNeeded, "chat-1",
+	perm := requestIDOf(t, b.pendingPerms.add(2, "", marotte.NewEvent(marotte.EventPermissionNeeded, "chat-1",
 		marotte.PermissionNeededPayload{}), nil))
-	claimed := requestIDOf(t, b.pendingPerms.add(3, marotte.NewEvent(marotte.EventElicitationNeeded, "chat-1",
+	claimed := requestIDOf(t, b.pendingPerms.add(3, "", marotte.NewEvent(marotte.EventElicitationNeeded, "chat-1",
 		marotte.ElicitationNeededPayload{Mode: "form"}), nil))
 	if _, ok := b.pendingPerms.takeIfPresent("chat-1", claimed, marotte.DecisionKindElicitation); !ok {
 		t.Fatal("setup: could not claim the third ask")
@@ -334,7 +334,7 @@ func TestClearForRun_DropsOnlyTheNamedRunsDecisions(t *testing.T) {
 	tracker := newPendingPermsTracker()
 	askIDs := map[int64]int64{}
 	for _, e := range entries {
-		askIDs[e.id] = requestIDOf(t, tracker.add(e.id, marotte.NewEvent(kindOf[e.id], launching, e.payload), nil))
+		askIDs[e.id] = requestIDOf(t, tracker.add(e.id, "", marotte.NewEvent(kindOf[e.id], launching, e.payload), nil))
 	}
 
 	tracker.clearForRun("wf_1")
@@ -360,7 +360,7 @@ func TestClearForRun_DropsOnlyTheNamedRunsDecisions(t *testing.T) {
 func TestClearForRun_RefusesAnEmptyRunID(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
-	tracker.add(1, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+	tracker.add(1, "", marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 		marotte.PermissionNeededPayload{RequestID: 1}), nil)
 
 	tracker.clearForRun("")

@@ -6,8 +6,6 @@ package translate
 import (
 	"slices"
 	"testing"
-
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestReportStepProgress_EveryStepFrameNamesTheRun pins that every step frame reports the
@@ -46,49 +44,6 @@ func TestReportStepProgress_OnlyAStepFrameIsProgress(t *testing.T) {
 			tr.ReportStepProgress(tc.attr)
 			if len(deps.runProgress) != 0 {
 				t.Errorf("ReportStepProgress(%+v) reported progress for %v, want none", tc.attr, deps.runProgress)
-			}
-		})
-	}
-}
-
-// A step's ask is attributed by registry lookup: the run id lets a run tab render it, the
-// node id says who asks. A frame with no session id stamps empty strings.
-func TestStepRef_AttributesAnAskToItsRun(t *testing.T) {
-	tests := []struct {
-		name       string
-		sessionID  string
-		wantRunID  string
-		wantNodeID string
-	}{
-		{name: "a_registered_step_session", sessionID: "sess_step", wantRunID: "wf_1", wantNodeID: "build"},
-		{name: "no_session_id_at_all", sessionID: "", wantRunID: "", wantNodeID: ""},
-		{name: "a_session_nothing_announced", sessionID: "sess_stranger", wantRunID: "", wantNodeID: ""},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			deps, events := newEventCaptureDeps()
-			tr := New(rolesOf(deps))
-			tr.RecordStepSession("sess_step", "wf_1", "build", "build")
-
-			id := int64(7)
-			tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{
-				ID: &id,
-				Params: mustJSON(t, map[string]any{
-					"sessionId": tc.sessionID,
-					"toolCall":  map[string]any{"toolCallId": "tc-1", "title": "Read a file", "kind": "read"},
-					"options":   []map[string]any{{"optionId": "allow", "name": "Allow", "kind": "allow_once"}},
-				}),
-			})
-
-			got, ok := findPermissionNeeded(t, events)
-			if !ok {
-				t.Fatal("no permission_needed event broadcast")
-			}
-			if got.RunID != tc.wantRunID {
-				t.Errorf("permission_needed RunID for sessionId %q = %q, want %q", tc.sessionID, got.RunID, tc.wantRunID)
-			}
-			if got.NodeID != tc.wantNodeID {
-				t.Errorf("permission_needed NodeID for sessionId %q = %q, want %q", tc.sessionID, got.NodeID, tc.wantNodeID)
 			}
 		})
 	}

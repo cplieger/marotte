@@ -242,6 +242,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 			State:     state,
 		}))
 	}
+	mcpStore.SetIdentityProviderSessionReset(h.IdentityProviderSessionReset())
+	mcpStore.SetIdentityProviderStatus(h.MCPIdentityProviderStatus)
 	mcpStore.SetOnChange(func(ctx context.Context) {
 		h.Broadcast(ctx, marotte.NewEvent(marotte.EventMCPConfigChanged, "", marotte.MCPConfigChangedPayload{}))
 		mcpPrewarm.Run(ctx)

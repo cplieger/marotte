@@ -443,7 +443,7 @@ describe("text and icon alignment", () => {
 });
 
 /** The air between each model card section's edges and its ink: above the first line's cap top,
- *  and under the effort bar or the Fallback row's baseline. */
+ *  and under the effort bar, or the Fallback row's last baseline (its hint's, when it shows one). */
 function sectionGaps(): { section: string; top: number; bottom: number; pad: number }[] {
   return [...document.querySelectorAll<HTMLElement>(".model-panel-main > .effort-row")].map(
     (row) => {
@@ -452,8 +452,10 @@ function sectionGaps(): { section: string; top: number; bottom: number; pad: num
       const inner = r.top + parseFloat(cs.borderTopWidth);
       const knob = row.querySelector(".effort-knob");
       const text = row.querySelector(".effort-label, .fallback-open")!;
+      const hint = row.querySelector(".section-hint:not([hidden])");
       const band = inkBand(text);
-      const end = knob === null ? band.baseline : knob.getBoundingClientRect().bottom;
+      const end =
+        knob === null ? inkBand(hint ?? text).endBaseline : knob.getBoundingClientRect().bottom;
       return {
         section: knob === null ? "Fallback" : "effort",
         top: band.top - inner,
@@ -499,6 +501,40 @@ describe("the model card's sections", () => {
       });
     }
   }
+
+  it("wrap the Fallback hint inside the card: two lines with equal air on a phone, no wider a card on desktop", async () => {
+    const [desktop, phone] = VPS;
+    const hintLines = (): number => {
+      const r = document.createRange();
+      r.selectNodeContents(q(".model-panel-main .section-hint"));
+      return new Set([...r.getClientRects()].map((b) => Math.round(b.top))).size;
+    };
+    await page.viewport(phone.w, phone.h);
+    await mountSurface(surface("the model popup"), phone.size, phone.tier);
+    await frames();
+    expect(hintLines()).toBeGreaterThanOrEqual(2);
+    const fallback = sectionGaps().find((g) => g.section === "Fallback")!;
+    expect(
+      Math.abs(fallback.top - fallback.bottom) / 2,
+      JSON.stringify(fallback),
+    ).toBeLessThanOrEqual(CENTRE_PX);
+
+    await page.viewport(desktop.w, desktop.h);
+    await mountSurface(surface("the model popup"), desktop.size, desktop.tier);
+    await frames();
+    const card = q("#model-switch-list");
+    // At max-content too: the card's narrow anchor slot caps its laid-out width by itself.
+    for (const size of ["", "max-content"]) {
+      card.style.inlineSize = size;
+      const hint = q(".model-panel-main .section-hint");
+      hint.hidden = false;
+      await frames();
+      const shown = card.getBoundingClientRect().width;
+      hint.hidden = true;
+      await frames();
+      expect(card.getBoundingClientRect().width, `inline-size: ${size}`).toBe(shown);
+    }
+  });
 });
 
 /** The rows whose every text run the alignment rule trims (15-input.css), each on a surface that

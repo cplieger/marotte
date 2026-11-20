@@ -207,7 +207,7 @@ func TestAwarenessModeMatchesTheBundle(t *testing.T) {
 
 // TestInfraSafetyEnforceMatchesTheBundle pins the CloudFormation check's enforce value: the infraSafety registry
 // enum carries enforce, initialize reads infraSafetyEnforce, and an enforce block asks through the override shape
-// internal/agent's unattended floor refuses by its tool call id.
+// internal/agent's unattended floor refuses by its stamped askKind.
 func TestInfraSafetyEnforceMatchesTheBundle(t *testing.T) {
 	agentSrc, err := os.ReadFile("../agent/run_unattended.go")
 	if err != nil {
@@ -226,7 +226,8 @@ func TestInfraSafetyEnforceMatchesTheBundle(t *testing.T) {
 			t.Error(`initialize no longer reads ("infraSafetyEnforce"); the enforce row would send a key nothing reads`)
 		}
 		for _, lit := range []string{
-			"`safety-override-${",
+			`kind:"safety_override"`,
+			`safety_override:"safety_override"`,
 			`[{optionId:"reject",name:"Keep blocked",kind:"reject_once"},{optionId:"accept",name:"Allow anyway",kind:"allow_once"}]`,
 		} {
 			if !strings.Contains(b.src, lit) {
@@ -235,8 +236,8 @@ func TestInfraSafetyEnforceMatchesTheBundle(t *testing.T) {
 			}
 		}
 	})
-	if !strings.Contains(string(agentSrc), `"safety-override-"`) {
-		t.Error(`internal/agent/run_unattended.go no longer matches the "safety-override-" tool call id`)
+	if !strings.Contains(string(agentSrc), `"safety_override"`) {
+		t.Error(`internal/agent/run_unattended.go no longer matches the "safety_override" askKind`)
 	}
 }
 

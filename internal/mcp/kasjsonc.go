@@ -109,14 +109,14 @@ func commentLen(b []byte) int {
 	return len(b) - 1
 }
 
-// render is the file with marotte's two keys set from members (an absent one removed) and every
+// render is the file with marotte's own keys set from members (an absent one removed) and every
 // other byte as read. It edits src, so a doc renders once.
 func (d *kasDoc) render() ([]byte, error) {
 	root := &d.src
 	if _, ok := root.Value.(*hujson.Object); !ok {
 		root.Value = &hujson.Object{}
 	}
-	for _, key := range []string{kasServerKey, kasPowersKey} {
+	for _, key := range []string{kasServerKey, kasIdentityProviderKey, kasPowersKey} {
 		want, ok := d.members[key]
 		if !ok {
 			removeMembers(root, key)

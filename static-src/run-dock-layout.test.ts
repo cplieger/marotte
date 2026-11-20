@@ -528,7 +528,11 @@ describe("the permission card on a phone", () => {
           kind: "execute",
           tool_call_id: "tooluse_k3Jd9sQ2Rr6vXbT1",
           ...(note ? { rejection_note: "reason" } : {}),
-          consent: { capability: "shell", subject: "npm test -- --run" },
+          consent: {
+            capability: "shell",
+            subject: "npm test -- --run",
+            reaches: ["chat", "user"],
+          },
           options: [
             { option_id: "a", name: "Allow", kind: "allow_once" },
             { option_id: "aa", name: "Always allow", kind: "allow_always" },

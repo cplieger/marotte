@@ -83,6 +83,7 @@ func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 		OAuthClientID:          strings.TrimSpace(in.OAuthClientID),
 		OAuthClientMetadataURL: strings.TrimSpace(in.OAuthClientMetadataURL),
 		OAuthRedirectURI:       strings.TrimSpace(in.OAuthRedirectURI),
+		OAuthMode:              in.OAuthMode,
 		OAuthScopes:            trimmedScopes(in.OAuthScopes),
 		Prewarm:                in.Prewarm,
 		Enabled:                in.Enabled,
@@ -171,11 +172,13 @@ type importResult struct {
 
 // importServers creates every server of one pasted block, or none: the block is one README's worth.
 // A name configured with the SAME spec is `unchanged`; with a DIFFERENT spec the paste fails rather
-// than silently overwriting.
-func (s *Store) importServers(ctx context.Context, in []*Server) ([]importResult, error) {
+// than silently overwriting. The block's organization provider is installed in the same write when
+// none is configured; a different configured one is kept, with a note in req.notes, because
+// replacing it would sign the user out.
+func (s *Store) importServers(ctx context.Context, req *importRequest) ([]importResult, error) {
 	// Before taking the lock: the check is pure, and a block that cannot land
 	// should not have made every other caller wait.
-	if err := validateImport(in); err != nil {
+	if err := validateImport(req); err != nil {
 		return nil, err
 	}
 
@@ -185,10 +188,10 @@ func (s *Store) importServers(ctx context.Context, in []*Server) ([]importResult
 	}
 	defer s.releaseWrite()
 	s.mu.Lock()
-	before := s.servers
-	results := make([]importResult, 0, len(in))
+	before, beforeIDP, beforeHeld := s.servers, s.identityProvider, s.heldIdentityProvider
+	results := make([]importResult, 0, len(req.servers))
 	created := 0
-	for _, sv := range in {
+	for _, sv := range req.servers {
 		res, err := s.importOneLocked(sv, now)
 		if err != nil {
 			s.servers = before
@@ -200,32 +203,61 @@ func (s *Store) importServers(ctx context.Context, in []*Server) ([]importResult
 		}
 		results = append(results, res)
 	}
-	if created == 0 {
+	installed := s.importIdentityProviderLocked(req)
+	if created == 0 && !installed {
 		s.mu.Unlock()
-		slog.Info("mcp: import matched the stored set; record unchanged", "servers", len(in))
+		slog.Info("mcp: import matched the stored set; record unchanged", "servers", len(req.servers))
 		if _, err := s.healKASLocked(ctx, "import"); err != nil {
 			return nil, err
 		}
 		return results, nil
 	}
 	if err := s.persist(ctx); err != nil {
-		s.servers = before
+		s.servers, s.identityProvider, s.heldIdentityProvider = before, beforeIDP, beforeHeld
 		s.mu.Unlock()
 		return nil, err
 	}
 	s.mu.Unlock()
-	slog.Info("mcp: servers imported", "created", created, "entries", len(in))
+	slog.Info("mcp: servers imported", "created", created, "entries", len(req.servers),
+		"identity_provider", installed)
 	s.notifyChange()
 	return results, nil
 }
 
+// importIdentityProviderLocked installs the block's provider when none is configured or held and reports whether it
+// did; an equal one is left as it is, and a different one is kept with a note. Caller holds the write lock.
+func (s *Store) importIdentityProviderLocked(req *importRequest) bool {
+	p := req.identityProvider
+	switch {
+	case p == nil:
+		return false
+	case s.identityProvider == nil && s.heldIdentityProvider == nil:
+		cp := *p
+		s.identityProvider = &cp
+		return true
+	case s.identityProvider != nil && *s.identityProvider == *p:
+		return false
+	}
+	req.notes = append(req.notes, importNote{
+		Key:  kasIdentityProviderKey,
+		Text: "Not stored: it names a different provider than the organization sign-in already set up. Change that under Settings > MCP > Organization sign-in.",
+	})
+	return false
+}
+
 // validateImport validates and de-duplicates one pasted block.
-func validateImport(in []*Server) error {
-	if len(in) == 0 {
+func validateImport(req *importRequest) error {
+	in := req.servers
+	if len(in) == 0 && req.identityProvider == nil {
 		return errors.New("no servers to connect")
 	}
 	if len(in) > maxImportServers {
 		return fmt.Errorf("too many servers in one paste (%d, max %d)", len(in), maxImportServers)
+	}
+	if req.identityProvider != nil {
+		if err := validateIdentityProvider(req.identityProvider); err != nil {
+			return fmt.Errorf("%s: %w", kasIdentityProviderKey, err)
+		}
 	}
 	seen := make(map[string]struct{}, len(in))
 	for _, sv := range in {
@@ -308,6 +340,7 @@ func (s *Store) update(ctx context.Context, id serverID, in *Server) (*Server, e
 		OAuthClientID:          strings.TrimSpace(in.OAuthClientID),
 		OAuthClientMetadataURL: strings.TrimSpace(in.OAuthClientMetadataURL),
 		OAuthRedirectURI:       strings.TrimSpace(in.OAuthRedirectURI),
+		OAuthMode:              in.OAuthMode,
 		OAuthScopes:            trimmedScopes(in.OAuthScopes),
 		Prewarm:                in.Prewarm,
 		Enabled:                in.Enabled,
@@ -437,4 +470,104 @@ func (s *Store) EnabledServers(ctx context.Context) []prewarm.ServerInfo {
 		}
 	}
 	return out
+}
+
+// getIdentityProvider returns a copy of the configured provider, nil when none, and whether the record holds one it
+// could not read.
+func (s *Store) getIdentityProvider() (p *IdentityProvider, unreadable bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.identityProvider != nil {
+		cp := *s.identityProvider
+		p = &cp
+	}
+	return p, s.heldIdentityProvider != nil
+}
+
+// trimmedIdentityProvider copies in with every member trimmed, as KAS compares them untrimmed.
+func trimmedIdentityProvider(in *IdentityProvider) *IdentityProvider {
+	return &IdentityProvider{
+		Issuer:                strings.TrimSpace(in.Issuer),
+		ClientID:              strings.TrimSpace(in.ClientID),
+		Name:                  strings.TrimSpace(in.Name),
+		AuthorizationEndpoint: strings.TrimSpace(in.AuthorizationEndpoint),
+		TokenEndpoint:         strings.TrimSpace(in.TokenEndpoint),
+	}
+}
+
+// putIdentityProvider stores the organization provider, replacing any configured or held one, and returns it. An
+// unchanged provider writes no record but heals KAS's file.
+func (s *Store) putIdentityProvider(ctx context.Context, in *IdentityProvider) (*IdentityProvider, error) {
+	rec := trimmedIdentityProvider(in)
+	if err := validateIdentityProvider(rec); err != nil {
+		return nil, err
+	}
+	if err := s.acquireWrite(ctx); err != nil {
+		return nil, err
+	}
+	defer s.releaseWrite()
+	s.mu.Lock()
+	prev, prevHeld := s.identityProvider, s.heldIdentityProvider
+	if prev != nil && *prev == *rec {
+		s.mu.Unlock()
+		if _, err := s.healKASLocked(ctx, "identity_provider"); err != nil {
+			return nil, err
+		}
+		cp := *rec
+		return &cp, nil
+	}
+	s.identityProvider, s.heldIdentityProvider = rec, nil
+	if err := s.persist(ctx); err != nil {
+		s.identityProvider, s.heldIdentityProvider = prev, prevHeld
+		s.mu.Unlock()
+		return nil, err
+	}
+	s.mu.Unlock()
+	slog.Info("mcp: organization identity provider saved", "issuer", logsafe.Field(rec.Issuer))
+	if prevHeld != nil || (prev != nil && (prev.Issuer != rec.Issuer || prev.ClientID != rec.ClientID)) {
+		s.forgetSessions(ctx)
+	}
+	s.notifyChange()
+	cp := *rec
+	return &cp, nil
+}
+
+// deleteIdentityProvider removes the organization provider, configured or held. No-op when there is none.
+func (s *Store) deleteIdentityProvider(ctx context.Context) error {
+	if err := s.acquireWrite(ctx); err != nil {
+		return err
+	}
+	defer s.releaseWrite()
+	s.mu.Lock()
+	prev, prevHeld := s.identityProvider, s.heldIdentityProvider
+	if prev == nil && prevHeld == nil {
+		s.mu.Unlock()
+		return nil
+	}
+	s.identityProvider, s.heldIdentityProvider = nil, nil
+	if err := s.persist(ctx); err != nil {
+		s.identityProvider, s.heldIdentityProvider = prev, prevHeld
+		s.mu.Unlock()
+		return err
+	}
+	s.mu.Unlock()
+	slog.Info("mcp: organization identity provider removed")
+	s.forgetSessions(ctx)
+	s.notifyChange()
+	return nil
+}
+
+// forgetSessions runs the installed session reset once KAS's file no longer names the old provider, so a renewal
+// under the old config has the shortest window to store one again. A failure leaves an orphan KAS never reads.
+func (s *Store) forgetSessions(ctx context.Context) {
+	s.mu.RLock()
+	fn := s.forgetIdentityProviderSessions
+	s.mu.RUnlock()
+	if fn == nil {
+		return
+	}
+	if err := fn(context.WithoutCancel(ctx)); err != nil {
+		slog.Warn("mcp: deleting the previous provider's stored organization sign-in failed; it stays in mcp-secrets.json unused",
+			"error", err)
+	}
 }

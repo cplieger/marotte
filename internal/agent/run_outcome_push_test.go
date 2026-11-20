@@ -251,7 +251,7 @@ func TestRunAsks_NotifiesTheStepsQuestion(t *testing.T) {
 	got := awaitRunPush(t, fp)
 	want := runPushSent{
 		title: "code-review", body: "Input required · reviewer: Merge it?",
-		ask: askPosition("wf_1", &ask), chat: runChatID("wf_1"), kind: marotte.PushKindPermission,
+		ask: askPosition("wf_1", &ask), chat: marotte.RunHostChatID("wf_1"), kind: marotte.PushKindPermission,
 		subject: marotte.RunAskSubject(askPosition("wf_1", &ask)),
 	}
 	if got != want {

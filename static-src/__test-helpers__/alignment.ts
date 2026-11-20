@@ -451,8 +451,9 @@ export function measureAlignment(root: Element, opts: MeasureOptions = {}): Find
   return out;
 }
 
-/** The cap top and baseline of the first line of `el`'s first rendered text: its ink's band. */
-export function inkBand(el: Element): { top: number; baseline: number } {
+/** The cap top and baseline of the first line of `el`'s first rendered text, its ink's band, and the
+ *  baseline of that text's last line. */
+export function inkBand(el: Element): { top: number; baseline: number; endBaseline: number } {
   const t = firstText(el);
   if (t === null) {
     throw new Error(`no text in ${selectorKey(el)}`);
@@ -461,6 +462,7 @@ export function inkBand(el: Element): { top: number; baseline: number } {
   return {
     top: r2(p.baseline - fontMetrics(getComputedStyle(t.parentElement!)).cap),
     baseline: p.baseline,
+    endBaseline: p.endBaseline,
   };
 }
 

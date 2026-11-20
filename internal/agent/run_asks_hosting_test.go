@@ -81,7 +81,7 @@ func TestRunAsks_AnEngineRestartKeepsTheRunsQuestion(t *testing.T) {
 
 	fakeSourceOf(t, h).current().crash()
 	waitReady(t, h.engine, 2)
-	waitFor(t, func() bool { return h.coord.bridgeFor(runChatID("wf_1")) == nil })
+	waitFor(t, func() bool { return h.coord.bridgeFor(marotte.RunHostChatID("wf_1")) == nil })
 	br.forgetCalls()
 
 	got, body := getRun(t, h, "wf_1")
@@ -110,7 +110,7 @@ func TestRunAsks_AWedgedRunBlocksNoOtherRun(t *testing.T) {
 	h, wedged, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 	other := newFakeBridge()
 	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_2", ParentSessionID: testLaunchSession})
-	h.insertBridgeNow(runChatID("wf_2"), testBridge(other, bridgeReady))
+	h.insertBridgeNow(marotte.RunHostChatID("wf_2"), testBridge(other, bridgeReady))
 	askID := readNow(t, h, "wf_1").asks[0].ID
 	stuck := make(chan struct{})
 	wf2 := inspectAsk(t, "wf_2", marotte.RunStatusRunning, parkedStep("review", "sess_two"))

@@ -7,6 +7,8 @@ const (
 	methodV3MCPStatus            = "_kiro/mcp/status"                        // consolidated MCP server state (connected/failed/oauth)
 	methodV3MCPResetServer       = "_kiro/mcp/resetServer"                   // C→A request: reconnect a server in one session; {sessionId, serverName, startOAuth?} → {success}
 	methodKiroMCPOAuthCompleted  = "_kiro/mcp/oauthCompleted"                // A→C notification: a mid-session re-auth ended; {serverName, success, oauthFlowId}
+	methodKiroMCPIdPSignIn       = "_kiro/mcp/identityProvider/signIn"       // C→A request, no session: {} → {success} once the organization sign-in completed, or its error
+	methodKiroMCPIdPSignOut      = "_kiro/mcp/identityProvider/signOut"      // C→A request, no session: {} → {success}; also cancels a sign-in in progress
 	methodV3SessionsChanged      = "_kiro/sessions/changed"                  // session inventory diff (no client consumer on v3)
 	methodV3SpecPhaseCheckpoint  = "_kiro/spec/phaseCheckpoint"              // A→C notification: {sessionId, featureName, phase, artifactPath} per accepted in-process spec-document write (spec_checkpoint.go)
 	methodV3RateLimit            = "_kiro/error/rate_limit"                  // {sessionId, message}

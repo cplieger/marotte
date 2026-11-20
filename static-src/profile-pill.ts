@@ -25,7 +25,8 @@ import { decodeSecurityProfileView } from "./wire/decoders.gen.js";
 import type { SecurityProfileView } from "./wire/types.gen.js";
 import type { Session } from "./types.js";
 
-const BUSY_NOTE = "Applies after this turn";
+/** What a per-chat control says while its chat's turn runs: the change waits for the turn to end. */
+export const BUSY_NOTE = "Applies after this turn";
 const SAVED_RULES_NOTE = "Your saved rules still apply";
 
 const view = signal<SecurityProfileView | null>(null);

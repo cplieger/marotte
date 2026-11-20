@@ -11,8 +11,8 @@ import (
 	"github.com/cplieger/marotte/internal/notice"
 )
 
-// approvalTypeTurn is the `_meta.kiro.type` marking a turn approval.
-const approvalTypeTurn = "turn_approval"
+// askKindTurnApproval is the `_meta.kiro.askKind` of a turn approval.
+const askKindTurnApproval = "turn_approval"
 
 // ToolIDUpdateWorkflow is the `_meta.kiro.toolId` of a workflow plan approval, on the live ask
 // and on the re-ask KAS restores after a restart.
@@ -35,8 +35,7 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte
 	}
 	// Field order is fieldalignment's rather than the wire's.
 	type permReq struct {
-		SessionID string `json:"sessionId"`
-		ToolCall  struct {
+		ToolCall struct {
 			ToolCallID string           `json:"toolCallId"`
 			Title      string           `json:"title"`
 			Kind       marotte.ToolKind `json:"kind"`
@@ -45,7 +44,7 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte
 			} `json:"locations"`
 		} `json:"toolCall"`
 		Options []permOptionWire `json:"options"`
-		// Meta carries the turn-approval discriminator, its file list and the persistability
+		// Meta carries KAS's ask identity, the turn approval's file list and the persistability
 		// verdict (see acpPermissionMeta).
 		Meta acpPermissionMeta `json:"_meta"`
 	}
@@ -75,7 +74,7 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte
 	}
 
 	// A step's ask is attributed to its run whichever lane it arrived on; the node id says WHO asks.
-	step, watch := t.askStep(req.SessionID, &req.Meta.Kiro)
+	step, watch := askStep(&req.Meta.Kiro)
 	var locations []string
 	for _, l := range req.ToolCall.Locations {
 		if l.Path != "" {
@@ -88,7 +87,7 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte
 		// KAS's own title here is its fallback "remote/<name>"; the transcript row titles the call <name>.
 		title = displayText(name)
 	}
-	consent := permissionConsent(&req.Meta.Kiro.Consent)
+	consent := permissionConsent(&req.Meta.Kiro.Consent, t.askReachOrigin(chatID, &req.Meta.Kiro))
 
 	evt := marotte.NewEvent(marotte.EventPermissionNeeded, chatID, marotte.PermissionNeededPayload{
 		MCPTool:    mcpTool,
@@ -111,7 +110,7 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte
 		ClassifierNote:     classifierNote(req.Meta.Kiro.TrustClassifier),
 		RejectionNote:      rejectionNote(&req.Meta.Kiro, options),
 	})
-	evt, filed := t.pendingPerms.PendingPermsAdd(ctx, reqID, evt, origin)
+	evt, filed := t.pendingPerms.PendingPermsAdd(ctx, reqID, req.Meta.Kiro.AskID, evt, origin)
 	if !filed {
 		return
 	}
@@ -127,7 +126,7 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte
 // approval (an ask carrying toolId, never a turn approval); keying the plan kind on toolId holds
 // where KAS could not attach workflowPlan, and on the restored re-ask, which carries no consent.
 func rejectionNote(k *acpPermissionKiroBlock, options []marotte.PermissionOption) marotte.RejectionNote {
-	if k.ToolID == "" || k.Type == approvalTypeTurn ||
+	if k.ToolID == "" || k.AskKind == askKindTurnApproval ||
 		!slices.ContainsFunc(options, func(o marotte.PermissionOption) bool { return o.Kind == "reject_once" }) {
 		return ""
 	}
@@ -139,7 +138,7 @@ func rejectionNote(k *acpPermissionKiroBlock, options []marotte.PermissionOption
 
 // nil on any other ask.
 func (t *Translator) approvalFiles(k *acpPermissionKiroBlock) []marotte.ApprovalFile {
-	if k.Type != approvalTypeTurn {
+	if k.AskKind != askKindTurnApproval {
 		return nil
 	}
 	files := make([]marotte.ApprovalFile, 0, len(k.Files))
@@ -153,10 +152,10 @@ func (t *Translator) approvalFiles(k *acpPermissionKiroBlock) []marotte.Approval
 	return files
 }
 
-// askStep attributes an ask to its workflow step, falling back to the watch a
-// workflow WATCH raised when the step registry names none.
-func (t *Translator) askStep(sessionID string, k *acpPermissionKiroBlock) (stepRef, *marotte.PermissionWatch) {
-	step := t.steps.refFor(sessionID)
+// askStep attributes an ask to the workflow step its requester names, falling back to the run
+// a workflow WATCH polls for when no step asked.
+func askStep(k *acpPermissionKiroBlock) (stepRef, *marotte.PermissionWatch) {
+	step := k.Requester.step()
 	w := k.WorkflowWatch
 	if w == nil || w.WorkflowID == "" {
 		return step, nil
@@ -191,10 +190,46 @@ func mcpToolIdentity(k *acpPermissionKiroBlock) *marotte.MCPToolIdentity {
 	return &marotte.MCPToolIdentity{ServerName: serverName, ToolName: toolName}
 }
 
+// askReachOrigin is what an ask's always reaches are named from: whether a workflow step asked,
+// and whether the session at the root of its launch chain is a run host's. The root is the one
+// requester.rootSessionId names when marotte holds it, else the lane the ask arrived on.
+func (t *Translator) askReachOrigin(chatID marotte.ChatID, k *acpPermissionKiroBlock) reachOrigin {
+	root := chatID
+	if k.Requester != nil && k.Requester.RootSessionID != "" {
+		if c, ok := t.sessions.ChatForACPSession(k.Requester.RootSessionID); ok {
+			root = c
+		}
+	}
+	return reachOrigin{step: k.Requester.step().WorkflowID != "", runRoot: marotte.IsRunHostChat(root)}
+}
+
+type reachOrigin struct {
+	step, runRoot bool
+}
+
+// reach names the rule an always answer kept at KAS's scope covers for this origin, false for a
+// scope the card does not offer: workspace, since one marotte is one HOME and one workspace root,
+// so the user file already holds every rule, and any scope KAS adds later.
+func (o reachOrigin) reach(scope string) (marotte.AlwaysReach, bool) {
+	session, launching := marotte.AlwaysReachChat, marotte.AlwaysReachLaunchingChat
+	if o.step {
+		session = marotte.AlwaysReachStep
+	}
+	if o.runRoot {
+		launching = marotte.AlwaysReachRun
+	}
+	for _, r := range []marotte.AlwaysReach{session, launching, marotte.AlwaysReachUser} {
+		if r.ConsentScope() == scope {
+			return r, true
+		}
+	}
+	return "", false
+}
+
 // permissionConsent is what an ask is about, nil when KAS named no capability. The subject
 // and folder are decision surfaces like the title, so the shown copies are defused the same
 // way while the raw ones stay the rule keys; the capability is an identifier the answer echoes.
-func permissionConsent(c *acpConsentMeta) *marotte.PermissionConsent {
+func permissionConsent(c *acpConsentMeta, origin reachOrigin) *marotte.PermissionConsent {
 	if c.Capability == "" {
 		return nil
 	}
@@ -205,6 +240,11 @@ func permissionConsent(c *acpConsentMeta) *marotte.PermissionConsent {
 		// choices that save different rules.
 		if folder := subject[:i] + "/**"; displayText(folder) != out.Subject {
 			out.Folder, out.FolderResource = displayText(folder), folder
+		}
+	}
+	for _, scope := range c.Scopes {
+		if r, ok := origin.reach(scope); ok && !slices.Contains(out.Reaches, r) {
+			out.Reaches = append(out.Reaches, r)
 		}
 	}
 	return out

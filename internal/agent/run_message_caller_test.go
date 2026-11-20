@@ -81,7 +81,7 @@ func TestStepMessage_ARunEndingBeforeTheResumedTurnOpensKeepsTheCaller(t *testin
 	t.Parallel()
 	h, _ := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	h.coord.runs = h.runs.log
-	h.coord.closeHostedRuns(t.Context(), runChatID("wf_1"), marotte.StopReasonInterrupted)
+	h.coord.closeHostedRuns(t.Context(), marotte.RunHostChatID("wf_1"), marotte.StopReasonInterrupted)
 	from := &marotte.Caller{Label: "Agent Mail"}
 	if _, err := h.runs.messageStep(t.Context(), h.runs.residentUntil(h.lifecycle.answerDeadline()), "wf_1", reviewPath, "carry on", "m-14", "", from); err != nil {
 		t.Fatalf("MessageStep = %v, want nil", err)

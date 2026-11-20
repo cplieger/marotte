@@ -630,9 +630,53 @@ describe("Import and Export", () => {
     expect(prompt?.scrollTop).toBe(0);
   });
 
-  it("the import dialog says an export is not an import file", async () => {
+  it("the import dialog offers a file from Export back as input", async () => {
     await openImport();
-    expect(dialog().textContent).toContain("A file from Export cannot be imported back.");
+    const text = dialog().textContent;
+    expect(text).toContain(
+      "A file from Export imports back too; memories already stored under the same title and scope are left as they are.",
+    );
+    expect(text).not.toContain("cannot be imported back");
+  });
+
+  it("words kiro-cli's scope refusals in the import report", async () => {
+    // kiro-cli 3.5.0's refuseScope: only Global and repo:<provider>/<owner>/<name> import, and a SEMANTIC memory needs the repo form.
+    answer = () =>
+      new Response(
+        JSON.stringify({
+          added: 0,
+          duplicates: 0,
+          skipped: [
+            {
+              line: 1,
+              reason: "unsupported_scope",
+              detail: "scope must be Global or repo:<provider>/<owner>/<name>",
+            },
+            {
+              line: 2,
+              reason: "needs_repo_path",
+              detail: "a SEMANTIC memory needs a repo:<provider>/<owner>/<name> scope",
+            },
+          ],
+          failed: [],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    await openImport();
+    pasteBox().value = '{"a":1}\n{"b":2}';
+    pasteBox().dispatchEvent(new Event("input"));
+    maybeButton(dialog(), "Import")?.click();
+    await settle();
+    const rows = [...(dialog().querySelectorAll(".cp-batch-report li") ?? [])].map((li) =>
+      [...li.children].map((c) => c.textContent),
+    );
+    expect(rows).toEqual([
+      ["Line 1", "unsupported scope: scope must be Global or repo:<provider>/<owner>/<name>"],
+      [
+        "Line 2",
+        "needs a repo scope: a SEMANTIC memory needs a repo:<provider>/<owner>/<name> scope",
+      ],
+    ]);
   });
 
   it("imports pasted lines and shows the per-line report", async () => {

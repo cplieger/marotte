@@ -221,6 +221,7 @@ func forkCreate(p marotte.ForkChatCommand, chatID marotte.ChatID, parent *marott
 			// supervised chat's tangent write files without asking.
 			c.SupervisedMode = parent.SupervisedMode
 			c.SecurityProfile = parent.SecurityProfile
+			c.MessagingOff = parent.MessagingOff
 			if sessionID != "" {
 				// RecordSession, not assignment: it is the sanctioned writer
 				// of this field and keeps the reaper's keep-list chain

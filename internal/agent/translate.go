@@ -114,8 +114,11 @@ func (rt *Runtime) initDispatch() {
 		// The metadata channels.
 		marotte.ACPUpdateSessionInfo: rt.translator.HandleSessionInfoUpdate,
 		marotte.ACPUpdateUsage:       ignoreAttribution(rt.translator.HandleUsageUpdate),
-		// The only frame telling marotte that KAS moved the effort level, or offered workflowLaunch, itself.
-		marotte.ACPUpdateConfigOption: rt.coord.healWorkflowLaunch(rt.coord.healEffort(rt.translator.HandleConfigOptionUpdate)),
+		// The only frame telling marotte that KAS moved the effort level or the messaging switch, or offered
+		// workflowLaunch, itself.
+		marotte.ACPUpdateConfigOption: rt.coord.observeMessaging(
+			rt.coord.healWorkflowLaunch(rt.coord.healEffort(rt.translator.HandleConfigOptionUpdate)),
+		),
 		// The slash-menu catalog; any session's own frame feeds it.
 		marotte.ACPUpdateAvailableCommands: rt.translator.HandleAvailableCommandsUpdate,
 		translate.UserChunkKind:            rt.translator.HandleJobNotice,
@@ -138,7 +141,7 @@ func (rt *Runtime) translateACPEvent(chatID marotte.ChatID, origin acpResponder,
 	defer cancel()
 
 	// A run host session's frames take their own door.
-	if isRunChat(chatID) {
+	if marotte.IsRunHostChat(chatID) {
 		rt.dispatch(ctx, chatID, origin, msg)
 		return
 	}
@@ -211,19 +214,28 @@ func (rt *Runtime) routeInboundRequest(ctx context.Context, chatID marotte.ChatI
 	return false
 }
 
-// askReportsStepProgress reports a step's ask as progress before the handler, attributed by session id (a
-// request has no workflow meta), through the run host session's key when it arrived on one.
+// askReportsStepProgress reports a step's ask as progress before the handler, attributed by session id and the
+// requester's workflow (absent on an elicitation, which falls to the step registry), through the run host
+// session's key when it arrived on one.
 func (rt *Runtime) askReportsStepProgress(inner askHandler) askHandler {
 	return func(ctx context.Context, chatID marotte.ChatID, origin translate.AskOrigin, msg *marotte.RPCResponse) {
 		var params struct {
+			Meta struct {
+				Kiro struct {
+					Requester struct {
+						Workflow *translate.ACPWorkflowMeta `json:"workflow"`
+					} `json:"requester"`
+				} `json:"kiro"`
+			} `json:"_meta"`
 			SessionID string `json:"sessionId"`
 		}
 		if json.Unmarshal(msg.Params, &params) == nil {
+			wf := params.Meta.Kiro.Requester.Workflow
 			var attr translate.FrameAttribution
-			if runID := workflowIDOf(chatID); runID != "" {
-				attr = rt.translator.StepAttribution(runID, params.SessionID, nil)
+			if runID := marotte.RunHostWorkflowID(chatID); runID != "" {
+				attr = rt.translator.StepAttribution(runID, params.SessionID, wf)
 			} else {
-				attr = rt.translator.Attribute(chatID, params.SessionID, nil)
+				attr = rt.translator.Attribute(chatID, params.SessionID, wf)
 			}
 			rt.translator.ReportStepProgress(attr)
 		}
@@ -289,10 +301,10 @@ func (rt *Runtime) handleRunStepFrame(ctx context.Context, chatID marotte.ChatID
 	if !ok || base.Meta.Kiro.Replay {
 		return
 	}
-	attr := rt.translator.StepAttribution(workflowIDOf(chatID), env.SessionID, base.Meta.Kiro.Workflow)
+	attr := rt.translator.StepAttribution(marotte.RunHostWorkflowID(chatID), env.SessionID, base.Meta.Kiro.Workflow)
 	rt.translator.ReportStepProgress(attr)
 	rt.reportStepHeadway(attr, base.Kind)
-	rt.runs.askTurnEdge(workflowIDOf(chatID), env.SessionID, base.Edge())
+	rt.runs.askTurnEdge(marotte.RunHostWorkflowID(chatID), env.SessionID, base.Edge())
 	fn, handled := rt.runStepHandlers[base.Kind]
 	if !handled {
 		return

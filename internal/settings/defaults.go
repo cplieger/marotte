@@ -102,6 +102,9 @@ const (
 	KeyAutoRouting          = "auto_routing"
 	KeyAutoDelegation       = "auto_delegation"
 	KeyModelFallback        = "model_fallback_enabled"
+	// KeyModelFallbackSeeded lists the models whose account fallback marotte no longer fills with Kiro's default
+	// (internal/agent's seedModelFallbacks): it filled the row once, or found one already chosen.
+	KeyModelFallbackSeeded = "model_fallback_seeded"
 	// KeyWorkflowLaunch is asserted at the session doors as KAS's workflowLaunch option, and
 	// read only while KeyWorkflowsEnabled is on.
 	KeyWorkflowLaunch = "workflow_launch"
@@ -206,6 +209,7 @@ var KnownKeys = map[string]struct{}{
 	KeyKnowledgeMaxFiles:        {},
 	KeyKnowledgeChunking:        {},
 	KeyModelFallback:            {},
+	KeyModelFallbackSeeded:      {},
 	KeyContentCollectionEnabled: {},
 	KeyLastEffortByModel:        {},
 	KeyLastMergeMethod:          {},

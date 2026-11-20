@@ -23,7 +23,7 @@ function ask(over: Partial<PermissionNeededPayload> = {}): PermissionNeededPaylo
     title: "Write src/main.go",
     kind: "edit",
     rejection_note: "reason",
-    consent: { capability: "fs_write", subject: "src/main.go" },
+    consent: { capability: "fs_write", subject: "src/main.go", reaches: ["chat", "user"] },
     options: [
       { option_id: "a", name: "Allow", kind: "allow_once" },
       { option_id: "r", name: "Reject", kind: "reject_once" },
@@ -103,7 +103,7 @@ describe("the permission card's deny note", () => {
     card.querySelector<HTMLButtonElement>(".always-choice-option")?.click();
     expect(onSelect.mock.calls).toEqual([
       [{ optionID: "a" }],
-      [{ optionID: "ra", alwaysResource: "src/main.go" }],
+      [{ optionID: "ra", alwaysResource: "src/main.go", alwaysReach: "user" }],
     ]);
   });
 });

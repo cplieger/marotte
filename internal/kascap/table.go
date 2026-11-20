@@ -297,6 +297,7 @@ var table = []decl{
 		// false is what turns a resumed chat's switch off. cloud is always false: it overrides every other settings
 		// layer (~/.kiro, Kiro's synced and organization config) that could turn create_session on. awareness.mode is
 		// fixed at session/new: on load KAS keeps the record's mode and reads the member only with no record.
+		// session/set_config_option sessionToolsMessaging writes the same record field live, refused while a turn runs.
 		key:      "sessionTools",
 		door:     doorSession,
 		resolver: resolverSettingObject,

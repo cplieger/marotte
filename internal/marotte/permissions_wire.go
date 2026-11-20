@@ -65,12 +65,36 @@ type PermissionConsentAnswer struct {
 
 // Consent scopes an always answer saves its rule at.
 const (
-	// ConsentScopeUser saves a rule to the user permissions file, which every session reads.
-	ConsentScopeUser = "user"
-	// ConsentScopeSession has KAS keep the rule in the live session's memory only: nothing is
+	// consentScopeUser saves a rule to the user permissions file, which every session reads.
+	consentScopeUser = "user"
+	// consentScopeSession has KAS keep the rule in the live session's memory only: nothing is
 	// written, and the rule ends when that session closes.
-	ConsentScopeSession = "session"
+	consentScopeSession = "session"
+	// consentScopeLaunchingSession has KAS keep the rule in the memory of the session at the root
+	// of the asker's launch chain, which the run's steps read; KAS offers it only while that
+	// session is resident.
+	consentScopeLaunchingSession = "launching-session"
 )
+
+// alwaysReachScopes is the one table from a reach to the KAS scope its rule is kept at.
+var alwaysReachScopes = map[AlwaysReach]string{
+	AlwaysReachChat:          consentScopeSession,
+	AlwaysReachStep:          consentScopeSession,
+	AlwaysReachRun:           consentScopeLaunchingSession,
+	AlwaysReachLaunchingChat: consentScopeLaunchingSession,
+	AlwaysReachUser:          consentScopeUser,
+}
+
+// ConsentScope is the KAS scope r's rule is kept at, "" for an unknown reach.
+func (r AlwaysReach) ConsentScope() string {
+	return alwaysReachScopes[r]
+}
+
+// AllowOnly reports whether r saves an allow rule only: every reach but user, since the card
+// offers a deny at user reach alone.
+func (r AlwaysReach) AllowOnly() bool {
+	return r != AlwaysReachUser
+}
 
 // permissionOutcomeMeta is the `_meta` envelope on a permission reply.
 type permissionOutcomeMeta struct {

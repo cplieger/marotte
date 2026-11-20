@@ -1,6 +1,6 @@
 // v3 host-mediated client requests. _kiro/terminal/shell_type still arrives from KAS's workflow
 // step reloads and must be answered (KAS fails the load on -32603); _kiro/openExternalUrl
-// arrives on the engine lane for MCP browser OAuth.
+// arrives on the engine lane for MCP browser OAuth and the organization identity provider's sign-in.
 
 package agent
 
@@ -63,8 +63,15 @@ func (in *inbound) respondKiroOpenExternalURL(ctx context.Context, origin acpRes
 	case consentSeen:
 		slog.Debug("v3 openExternalUrl: answering a consent URL already anchored")
 		in.respondBridge(ctx, "", origin, msg, openedReply(), nil)
+	case consentOnCard:
+		slog.Info("v3 openExternalUrl: showing the organization's sign-in page on its card")
+		in.respondBridge(ctx, "", origin, msg, openedReply(), nil)
 	case consentBanner:
-		slog.Info("v3 openExternalUrl: showing a consent URL no standing Sign in took on every page", "server", p.Server)
+		if p.IdentityProviderSignIn {
+			slog.Info("v3 openExternalUrl: showing the organization's sign-in page no standing Sign in took on every page")
+		} else {
+			slog.Info("v3 openExternalUrl: showing a consent URL no standing Sign in took on every page", "server", p.Server)
+		}
 		in.respondBridge(ctx, "", origin, msg, openedReply(), nil)
 	}
 }

@@ -584,7 +584,7 @@ func (s *stepEnding) call(toolName string) {
 func (s *stepEnding) edge(kiro map[string]any) {
 	s.t.Helper()
 	update := mustJSON(s.t, map[string]any{"sessionUpdate": "session_info_update", "_meta": map[string]any{"kiro": kiro}})
-	s.h.translator.HandleStepInfoUpdate(s.t.Context(), runChatID(s.id), update,
+	s.h.translator.HandleStepInfoUpdate(s.t.Context(), marotte.RunHostChatID(s.id), update,
 		translate.FrameAttribution{SessionID: s.session, RunID: s.id, NodePath: s.nodePath, Step: true})
 }
 

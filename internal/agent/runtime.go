@@ -637,6 +637,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	sseP.observe = runs.noteRunEvent
 	configP.engine = h.engine
 	configP.observe = h.observe
+	h.mcpRegistry.observe = h.observe
 	configP.sessionRoots = h.sessionRoots
 	configP.broadcast = sseP.Broadcast
 	configP.onLocksChanged = h.onGovernanceLocksChanged
@@ -666,6 +667,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 			sseP.Broadcast(ctx, marotte.NewEvent(marotte.EventSignInHealth, "", s))
 		},
 		func(ctx context.Context, n *marotte.NotificationPayload) { h.coord.Notify(ctx, "", n) })
+	configP.kiroAccount = h.kiroAccountSignedIn
 	runs.gate.wire(h.signin.answerability())
 	h.signin.onAnswerability(runs.gateMoved)
 	requireCollaborators(h)

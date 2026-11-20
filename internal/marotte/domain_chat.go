@@ -565,6 +565,9 @@ type Chat struct {
 	// TurnCount is the newest turn_open's n, the counter windows are read against.
 	TurnCount      int  `json:"turn_count"`
 	SupervisedMode bool `json:"supervised_mode,omitempty"`
+	// MessagingOff takes this chat out of messages between chats while the Settings switch is on;
+	// the zero value is on. The chat's session runs the switch AND NOT this.
+	MessagingOff bool `json:"messaging_off,omitempty"`
 	// NameSetByUser marks Name as the user's own: no other title overwrites it, and
 	// every KAS session the chat opens is renamed to it.
 	NameSetByUser bool `json:"name_set_by_user,omitempty"`
@@ -750,6 +753,7 @@ func (c *Chat) Header() ChatHeader {
 		PendingModel:        c.PendingModel,
 		PendingEffort:       c.PendingEffort,
 		SupervisedMode:      c.SupervisedMode,
+		MessagingOff:        c.MessagingOff,
 		CompactionWatermark: c.CompactionWatermark,
 		Run:                 RunViewOf(c.Run, c.RunVersion),
 		Tangent:             c.Tangent,
@@ -863,6 +867,8 @@ type ChatHeader struct {
 	ReadPosition   uint64 `json:"read_position,omitempty"`
 	TurnCount      int    `json:"turn_count"`
 	SupervisedMode bool   `json:"supervised_mode,omitempty"`
+	// MessagingOff mirrors Chat's for the Chat options switch.
+	MessagingOff bool `json:"messaging_off,omitempty"`
 	// Tangent mirrors Chat's for the merge controls.
 	Tangent bool `json:"tangent,omitempty"`
 	// Compacting mirrors Chat's for the dock's Compacting row and the Compact controls. Outside Run: the run version

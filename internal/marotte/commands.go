@@ -32,6 +32,7 @@ const (
 	CmdSetMode             CommandType = "set_mode"
 	CmdSetSupervisedMode   CommandType = "set_supervised_mode"
 	CmdSetSecurityProfile  CommandType = "set_security_profile"
+	CmdSetChatMessaging    CommandType = "set_chat_messaging"
 	CmdSteer               CommandType = "steer"
 	CmdSteerClear          CommandType = "steer_clear"
 	CmdQueuePrompt         CommandType = "queue_prompt"
@@ -203,10 +204,10 @@ type PermissionResponseCommand struct {
 	// AlwaysResource is the pattern an allow_always or reject_always answer saves as a
 	// rule, required with those options and refused with any other.
 	AlwaysResource string `json:"always_resource,omitempty"`
-	// AlwaysScope is where that rule is kept: ConsentScopeUser when empty, or
-	// ConsentScopeSession on an allow_always answer only. Refused with any other answer.
-	AlwaysScope string `json:"always_scope,omitempty"`
-	RequestID   int64  `json:"request_id"`
+	// AlwaysReach is what that rule covers: one of the ask's Consent.Reaches, AlwaysReachUser when
+	// empty, and AlwaysReachUser alone on a reject_always answer. Refused with any other answer.
+	AlwaysReach AlwaysReach `json:"always_reach,omitempty"`
+	RequestID   int64       `json:"request_id"`
 }
 
 // MaxRejectionReasonRunes caps a deny note, matching the TUI's own cap.
@@ -287,6 +288,12 @@ type SetModeCommand struct {
 // Off stop sends false; picking any effort tier turns thinking back on through
 // set_effort itself.
 type SetThinkingCommand struct {
+	Enabled bool `json:"enabled"`
+}
+
+// SetChatMessagingCommand is the payload for type="set_chat_messaging": the chat's own messages-between-chats
+// choice, which takes effect only while the Settings switch is on.
+type SetChatMessagingCommand struct {
 	Enabled bool `json:"enabled"`
 }
 

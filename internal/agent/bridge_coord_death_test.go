@@ -101,18 +101,18 @@ func TestBridgeEnd_RetiresTheAsksItCarriedAsEnded(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h, _, br := newTestHub()
 			successor := newFakeBridge()
-			oldPerm := requestIDOf(t, h.bus.pendingPerms.add(7, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+			oldPerm := requestIDOf(t, h.bus.pendingPerms.add(7, "", marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 				marotte.PermissionNeededPayload{RunID: "wf_1", NodeID: "a"}), br))
-			oldQuestion := requestIDOf(t, h.bus.pendingPerms.add(8, marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
+			oldQuestion := requestIDOf(t, h.bus.pendingPerms.add(8, "", marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
 				marotte.UserInputNeededPayload{}), br))
 			succIDs := []int64{9, 10}
 			if engineExited {
 				// A new generation: 7 again for the same kind, 8 for another.
 				succIDs = []int64{7, 8}
 			}
-			succPerm := requestIDOf(t, h.bus.pendingPerms.add(succIDs[0], marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+			succPerm := requestIDOf(t, h.bus.pendingPerms.add(succIDs[0], "", marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 				marotte.PermissionNeededPayload{Options: []marotte.PermissionOption{{OptionID: "allow"}}}), successor))
-			succElicit := requestIDOf(t, h.bus.pendingPerms.add(succIDs[1], marotte.NewEvent(marotte.EventElicitationNeeded, "c1",
+			succElicit := requestIDOf(t, h.bus.pendingPerms.add(succIDs[1], "", marotte.NewEvent(marotte.EventElicitationNeeded, "c1",
 				marotte.ElicitationNeededPayload{}), successor))
 			registered := engineSession(successor)
 			if engineExited {
@@ -173,7 +173,7 @@ func TestChatTeardown_RetiresTheBridgesAsksAsEnded(t *testing.T) {
 			if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 				t.Fatalf("OpenBridge: %v", err)
 			}
-			askID := requestIDOf(t, h.bus.pendingPerms.add(7, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+			askID := requestIDOf(t, h.bus.pendingPerms.add(7, "", marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 				marotte.PermissionNeededPayload{}), guardSession(br)))
 			head := h.bus.fanout.Position().Head
 

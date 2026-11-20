@@ -195,7 +195,7 @@ func (rs *Runs) ReleaseTriggered(ctx context.Context, workflowID string) {
 	}
 	rs.owners.set(workflowID, holdReleased)
 	rs.forgetBounds(ctx, workflowID)
-	rs.coord.closeBridge(ctx, runChatID(workflowID), marotte.TurnOutcomeInterrupted)
+	rs.coord.closeBridge(ctx, marotte.RunHostChatID(workflowID), marotte.TurnOutcomeInterrupted)
 }
 
 // handBackAbandoned reports every retry to the confirmer, whatever lease is held: an abandoned record outlives the

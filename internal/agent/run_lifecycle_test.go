@@ -88,7 +88,7 @@ var lifecycleOps = []lifecycleOp{
 			}
 			br.setCallResult(marotte.MethodSessionSteerClear, json.RawMessage(`{"messageIds":["steer-m-a","steer-m-b"]}`))
 			// A forward that has folded the clear's reply position, and exits once its session's lane closes.
-			att := h.coord.turns.attachForwardNow(runChatID("wf_1"))
+			att := h.coord.turns.attachForwardNow(marotte.RunHostChatID("wf_1"))
 			exited := sync.OnceFunc(att.exited)
 			t.Cleanup(exited)
 			br.mu.Lock()
@@ -98,7 +98,7 @@ var lifecycleOps = []lifecycleOp{
 			br.mu.Lock()
 			br.deliveredSeq = 3
 			br.mu.Unlock()
-			h.coord.turns.observe(runChatID("wf_1"), gen, 3)
+			h.coord.turns.observe(marotte.RunHostChatID("wf_1"), gen, 3)
 		},
 		do: func(ctx context.Context, h *Runtime) error {
 			return h.runs.removeStepSteer(ctx, "wf_1", reviewPath, "steer-m-a")

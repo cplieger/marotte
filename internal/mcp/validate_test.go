@@ -723,3 +723,44 @@ func TestValidate_VersionNegotiation(t *testing.T) {
 		})
 	}
 }
+
+// TestValidate_OAuthMode holds oauth_mode to KAS's enum on a remote server, refuses it where KAS has no
+// per-server sign-in to choose (stdio, an organization-registry row), and refuses a redirect URI beside
+// enterprise, which KAS ignores.
+func TestValidate_OAuthMode(t *testing.T) {
+	remote := func(mode oauthMode, redirect string) *Server {
+		return &Server{Transport: transportHTTP, Name: "ok", URL: "https://x.example/mcp", OAuthMode: mode, OAuthRedirectURI: redirect}
+	}
+	for _, tc := range []struct {
+		srv       *Server
+		name      string
+		wantField string
+	}{
+		{name: "absent", srv: remote("", "")},
+		{name: "browser", srv: remote("browser", "")},
+		{name: "enterprise", srv: remote("enterprise", "")},
+		{name: "auto", srv: remote("auto", "")},
+		{name: "autoKeepsRedirect", srv: remote("auto", "localhost:7778")},
+		{name: "browserKeepsRedirect", srv: remote("browser", "localhost:7778")},
+		{name: "sse", srv: &Server{Transport: transportSSE, Name: "ok", URL: "https://x.example/sse", OAuthMode: "enterprise"}},
+		{name: "capitalised", srv: remote("Enterprise", ""), wantField: fieldOAuthMode},
+		{name: "leadingSpace", srv: remote(" auto", ""), wantField: fieldOAuthMode},
+		{name: "unknown", srv: remote("device", ""), wantField: fieldOAuthMode},
+		{name: "enterpriseWithRedirect", srv: remote("enterprise", "localhost:7778"), wantField: fieldOAuthRedirectURI},
+		{name: "stdio", srv: &Server{Transport: TransportStdio, Name: "ok", Command: "npx", OAuthMode: "browser"}, wantField: fieldOAuthMode},
+		{name: "registry", srv: &Server{Transport: transportRegistry, Name: "ok", OAuthMode: "enterprise"}, wantField: fieldOAuthMode},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := fieldErrors(validate(tc.srv))
+			if tc.wantField == "" {
+				if len(got) != 0 {
+					t.Errorf("validate(oauth_mode %q) = %+v, want no error", tc.srv.OAuthMode, got)
+				}
+				return
+			}
+			if len(got) != 1 || got[0].Field != tc.wantField {
+				t.Errorf("validate(oauth_mode %q) = %+v, want one %q error", tc.srv.OAuthMode, got, tc.wantField)
+			}
+		})
+	}
+}

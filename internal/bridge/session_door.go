@@ -651,6 +651,7 @@ func (s *Session) applySessionResultLocked(r *sessionCreated, fallbackModel stri
 	s.titleSetByUser = r.Meta.TitleSetByUser
 	s.policyErrors = r.Meta.PolicyErrors
 	s.reportWorkflowsDisagreement(r.Meta.WorkflowsEnabled)
+	s.applyMessagingConfigOptionLocked(r.ConfigOptions)
 	s.applyModelConfigOptionLocked(r.ConfigOptions)
 	if s.modelID == "" {
 		s.modelID = marotte.ModelID(fallbackModel)
@@ -696,6 +697,22 @@ func (s *Session) applyEffortConfigOptionLocked(opts []sessionConfigOption) {
 		_ = json.Unmarshal(opt.CurrentValue, &current) // string; ignore non-string
 		if current != "" {
 			s.effortLevel = current
+		}
+		return
+	}
+}
+
+// A door result without the option is a session that does not offer it (a workflow step, an older engine).
+func (s *Session) applyMessagingConfigOptionLocked(opts []sessionConfigOption) {
+	s.messaging, s.messagingOffered = "", false
+	for i := range opts {
+		if opts[i].ID != marotte.ConfigOptionSessionMessaging {
+			continue
+		}
+		var current string
+		if json.Unmarshal(opts[i].CurrentValue, &current) == nil &&
+			(current == marotte.SessionMessagingOn || current == marotte.SessionMessagingOff) {
+			s.messaging, s.messagingOffered = current, true
 		}
 		return
 	}

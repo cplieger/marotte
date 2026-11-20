@@ -223,7 +223,7 @@ func TestCodeIndexStatus_ArrivesFromARunHostSession(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 
-	h.dispatch(t.Context(), runChatID("wf_1"), br, indexStatusFrame(indexBuildingParse))
+	h.dispatch(t.Context(), marotte.RunHostChatID("wf_1"), br, indexStatusFrame(indexBuildingParse))
 
 	v := codeIndexView(t, h)
 	if len(v.Statuses) != 1 || v.Statuses[0].Build == nil || v.Statuses[0].Build.Phase != "parse" {

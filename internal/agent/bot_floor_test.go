@@ -527,12 +527,12 @@ func TestUnattendedFloors_AnswerOneAskAlike(t *testing.T) {
 				t.Errorf("chat floor optionId = %q, want %q", got, tc.want)
 			}
 
-			runChat := runChatID("wf_alike")
+			runChat := marotte.RunHostChatID("wf_alike")
 			h.insertBridgeNow(runChat, testBridge(br, bridgeReady))
 			h.runs.grantLease(t.Context(), "wf_alike", "nightly",
 				scheduledLaunch(launchrule.Row{ID: "sched-1"}, time.Time{}), &runlease.HostSecurity{Presets: trusted.Presets})
 			id := int64(7012)
-			h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, runChat,
+			h.bus.pendingPerms.add(id, "", marotte.NewEvent(marotte.EventPermissionNeeded, runChat,
 				marotte.PermissionNeededPayload{RequestID: id}), br)
 			h.runs.permissionWithUnattendedFloor(func(context.Context, marotte.ChatID, translate.AskOrigin, *marotte.RPCResponse) {})(
 				t.Context(), runChat, br, &marotte.RPCResponse{Method: marotte.MethodRequestPermission, ID: &id, Params: json.RawMessage(tc.params)},

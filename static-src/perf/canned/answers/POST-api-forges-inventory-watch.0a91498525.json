@@ -1,1 +1,0 @@
-{"route":"POST /api/forges/inventory/watch","url":"/api/forges/inventory/watch","decoder":null,"body":null,"request":{"page":"f75a188665302c77ca3ab007ed84964e","watching":true},"status":204}

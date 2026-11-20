@@ -223,7 +223,7 @@ func TestPermission_ForwardsToBridge(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The request must be pending: the handler claims it before answering.
-	askID := requestIDOf(t, h.bus.pendingPerms.add(42, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+	askID := requestIDOf(t, h.bus.pendingPerms.add(42, "", marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 		marotte.PermissionNeededPayload{
 			Options: []marotte.PermissionOption{{OptionID: "allow", Name: "Allow", Kind: "allow_once"}},
 		}), nil))
@@ -244,7 +244,7 @@ func TestPermission_SecondAnswerIs409(t *testing.T) {
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatal(err)
 	}
-	askID := requestIDOf(t, h.bus.pendingPerms.add(42, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+	askID := requestIDOf(t, h.bus.pendingPerms.add(42, "", marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 		marotte.PermissionNeededPayload{
 			Options: []marotte.PermissionOption{{OptionID: "allow", Name: "Allow", Kind: "allow_once"}},
 		}), nil))
@@ -567,7 +567,7 @@ func TestPermission_RejectsOptionNotOfferedByRequest(t *testing.T) {
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatal(err)
 	}
-	askID := requestIDOf(t, h.bus.pendingPerms.add(42, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+	askID := requestIDOf(t, h.bus.pendingPerms.add(42, "", marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 		marotte.PermissionNeededPayload{
 			Options: []marotte.PermissionOption{{OptionID: "allow-once", Name: "Allow", Kind: "allow_once"}},
 		}), nil))

@@ -29,7 +29,7 @@ func launchParentless(t *testing.T) *Runtime {
 // onRunLane delivers a lifecycle frame as KAS sends it for a parentless run: on the run's own host session.
 func onRunLane(t *testing.T, h *Runtime, method string, params map[string]any) {
 	t.Helper()
-	h.translateACPEvent(runChatID("wf_1"), h.originOf(runChatID("wf_1")), runNotif(method, params))
+	h.translateACPEvent(marotte.RunHostChatID("wf_1"), h.originOf(marotte.RunHostChatID("wf_1")), runNotif(method, params))
 }
 
 // liveRows reads GET /api/runs/live, checking every row carries its start and leaving it out of the rows returned.

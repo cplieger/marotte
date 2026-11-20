@@ -48,7 +48,7 @@ func askCoreHub(t *testing.T, workflowID string, reply json.RawMessage) (*Runtim
 	t.Cleanup(func() { shutdownHub(t, h) })
 	awaitBoot(h)
 	leaseRun(t, h, runlease.Lease{WorkflowID: workflowID, ParentSessionID: testLaunchSession})
-	h.insertBridgeNow(runChatID(workflowID), testBridge(br, bridgeReady))
+	h.insertBridgeNow(marotte.RunHostChatID(workflowID), testBridge(br, bridgeReady))
 	if reply != nil {
 		br.setCallResult(methodKiroWorkflowInspect, reply)
 	}
@@ -90,7 +90,7 @@ func TestRunAsks_ACellLivesExactlyAsLongAsItsLease(t *testing.T) {
 		t.Error("a run with no lease got a cell, so a TUI-launched run would show a card nobody can answer")
 	}
 	first := lastAsksOf(t, h, "wf_1")
-	if first.Reachable || len(first.Asks) != 0 || first.ChatID != runChatID("wf_1") || first.Epoch != h.Epoch() {
+	if first.Reachable || len(first.Asks) != 0 || first.ChatID != marotte.RunHostChatID("wf_1") || first.Epoch != h.Epoch() {
 		t.Errorf("a new cell = %+v, want no asks, unreachable, its envelope set", first)
 	}
 	r := readNow(t, h, "wf_1")
@@ -466,7 +466,7 @@ func TestRunAsks_VerbsOnARunWithNoCell(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _, br := newTestHub()
-			h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
+			h.insertBridgeNow(marotte.RunHostChatID("wf_1"), testBridge(br, bridgeReady))
 			status := cmp.Or(tc.status, marotte.RunStatusPaused)
 			steps := tc.steps
 			if steps == nil {
@@ -551,7 +551,7 @@ func TestRunAsks_TheParkingTurnsWarningIsTheQuestion(t *testing.T) {
 	t.Parallel()
 	h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 	h.runs.askTurnEdge("wf_1", "sess_step", translate.TurnEdgeStart)
-	h.runs.onNotify(t.Context(), runChatID("wf_1"), runNotif(methodKiroSessionNotify, map[string]any{
+	h.runs.onNotify(t.Context(), marotte.RunHostChatID("wf_1"), runNotif(methodKiroSessionNotify, map[string]any{
 		"sessionId": "sess_parent", "callerSessionId": "sess_step", "message": "Which branch?",
 		"severity": "warning", "sender": "step", "workflowId": "wf_1",
 	}))
@@ -570,7 +570,7 @@ func TestRunAsks_TheParkingTurnsWarningIsTheQuestion(t *testing.T) {
 func TestRunAsks_ALifecycleFrameIsATrigger(t *testing.T) {
 	t.Parallel()
 	h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
-	h.dispatch(t.Context(), runChatID("wf_1"), h.originOf(runChatID("wf_1")), runNotif(methodWFNodePaused, map[string]any{
+	h.dispatch(t.Context(), marotte.RunHostChatID("wf_1"), h.originOf(marotte.RunHostChatID("wf_1")), runNotif(methodWFNodePaused, map[string]any{
 		"workflowId": "wf_1", "nodeId": "review", "nodePath": []string{"root", "review"}, "reason": "waiting",
 	}))
 	waitFor(t, func() bool { p := lastAsksOf(t, h, "wf_1"); return p.Reachable && len(p.Asks) == 1 })
@@ -588,7 +588,7 @@ func TestRunAsks_TheParentsSendMessageEndsTheCard(t *testing.T) {
 	}
 
 	br.setCallResult(methodKiroWorkflowInspect, recordedReply(t, "running-after-parent-send"))
-	h.runs.onNotify(t.Context(), runChatID(recordedRun), runNotif(methodKiroSessionNotify, map[string]any{
+	h.runs.onNotify(t.Context(), marotte.RunHostChatID(recordedRun), runNotif(methodKiroSessionNotify, map[string]any{
 		"sessionId": recordedSession, "callerSessionId": testLaunchSession, "message": "Use main.",
 		"severity": "info", "sender": "parent", "workflowId": recordedRun,
 	}))
@@ -615,7 +615,7 @@ func TestRunAsks_AnAnsweredStepsWakeTurnRaisesNoSecondQuestion(t *testing.T) {
 		return strings.Count(logs.String(), "a workflow step is waiting for an answer")
 	}
 	h.runs.askTurnEdge("wf_1", "sess_step", translate.TurnEdgeStart)
-	h.runs.onNotify(t.Context(), runChatID("wf_1"), runNotif(methodKiroSessionNotify, map[string]any{
+	h.runs.onNotify(t.Context(), marotte.RunHostChatID("wf_1"), runNotif(methodKiroSessionNotify, map[string]any{
 		"sessionId": "sess_parent", "callerSessionId": "sess_step", "message": "Which branch?",
 		"severity": "warning", "sender": "step", "workflowId": "wf_1",
 	}))
@@ -625,7 +625,7 @@ func TestRunAsks_AnAnsweredStepsWakeTurnRaisesNoSecondQuestion(t *testing.T) {
 		t.Fatalf("Setup: the park = %+v, raised %d times, want one ask raised once", asked, n)
 	}
 
-	h.runs.onNotify(t.Context(), runChatID("wf_1"), runNotif(methodKiroSessionNotify, map[string]any{
+	h.runs.onNotify(t.Context(), marotte.RunHostChatID("wf_1"), runNotif(methodKiroSessionNotify, map[string]any{
 		"sessionId": "sess_step", "callerSessionId": testLaunchSession, "message": "Use main.",
 		"severity": "info", "sender": "parent", "workflowId": "wf_1",
 	}))
@@ -691,7 +691,7 @@ func TestRunAsks_AnUnseenQuestionReadsTheStepsLastWords(t *testing.T) {
 	h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 	h.runs.log = newRunLog(t.TempDir())
 	path := workflow.PathKey([]string{"root", "review"})
-	turn, _, err := h.runs.log.open(t.Context(), &translate.RunStep{RunID: "wf_1", NodePath: path, SessionID: "sess_step"}, runChatID("wf_1"))
+	turn, _, err := h.runs.log.open(t.Context(), &translate.RunStep{RunID: "wf_1", NodePath: path, SessionID: "sess_step"}, marotte.RunHostChatID("wf_1"))
 	if err != nil {
 		t.Fatalf("Setup: open the step's turn: %v", err)
 	}

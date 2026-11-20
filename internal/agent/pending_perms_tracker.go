@@ -19,8 +19,9 @@ import (
 
 // pendingPermsTracker tracks unresolved asks, replayed on every SSE connection, each under an ask id
 // it mints: the wire's request_id. Never the ACP request id, which every engine generation mints from zero, so
-// a successor's ask would replace an old generation's still on screen. Deliberately no TTL: the ACP
-// request stays open until answered, cancelled or its session ends.
+// a successor's ask would replace an old generation's still on screen. Answers key on (origin, JSON-RPC id),
+// withdrawals on KAS's askId. Deliberately no TTL: the ACP request stays open until answered, cancelled or
+// its session ends.
 type pendingPermsTracker struct {
 	asks map[int64]*askEntry
 	// versions holds the shared `pending` counter every change to what List answers bumps under mu (mintPending).
@@ -32,7 +33,9 @@ type pendingPermsTracker struct {
 type pendingAsk struct {
 	origin acpResponder
 	evt    marotte.ServerEvent
-	acpID  int64
+	// kasAskID is KAS's askId, "" for an ask KAS sends unstamped (an elicitation).
+	kasAskID string
+	acpID    int64
 }
 
 // askEntry is one ask: pending until a take claims it, then settled once by Complete. A terminal
@@ -74,13 +77,14 @@ func newPendingPermsTracker() *pendingPermsTracker {
 	return &pendingPermsTracker{asks: make(map[int64]*askEntry)}
 }
 
-// add registers the ask KAS sent as acpID on origin and returns evt carrying the minted ask id.
-func (t *pendingPermsTracker) add(acpID int64, evt marotte.ServerEvent, origin acpResponder) marotte.ServerEvent {
+// add registers the ask KAS sent as acpID and named kasAskID on origin and returns evt carrying the
+// minted ask id.
+func (t *pendingPermsTracker) add(acpID int64, kasAskID string, evt marotte.ServerEvent, origin acpResponder) marotte.ServerEvent {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.lastID++
 	evt = withAskID(evt, t.lastID)
-	t.asks[t.lastID] = &askEntry{ask: pendingAsk{origin: origin, evt: evt, acpID: acpID}}
+	t.asks[t.lastID] = &askEntry{ask: pendingAsk{origin: origin, evt: evt, kasAskID: kasAskID, acpID: acpID}}
 	mintPending(&t.versions)
 	return evt
 }
@@ -235,43 +239,25 @@ func peekPayload[P any](t *pendingPermsTracker, chatID marotte.ChatID, id int64)
 	return payload, ok
 }
 
-// takeForToolCall retires the chat's ask for toolCallID, false when none is open; should two be
-// outstanding, the newest is the awaited one. settled is false for a claimed ask, which Complete
-// announces.
-func (t *pendingPermsTracker) takeForToolCall(chatID marotte.ChatID, toolCallID string) (a settledAsk, settled, ok bool) {
-	if toolCallID == "" {
+// takeForAsk retires the chat's ask KAS filed as askID, false when none is open or askID is empty.
+// settled is false for a claimed ask, which Complete announces.
+func (t *pendingPermsTracker) takeForAsk(chatID marotte.ChatID, askID string) (a settledAsk, settled, ok bool) {
+	if askID == "" {
 		return settledAsk{}, false, false
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	var found *askEntry
-	var foundID int64
 	for id, e := range t.asks {
-		if e.end != endNone || e.ask.evt.ChatID != chatID || decisionToolCallID(e.ask.evt.Payload) != toolCallID {
+		if e.end != endNone || e.ask.evt.ChatID != chatID || e.ask.kasAskID != askID {
 			continue
 		}
-		if found == nil || id > foundID {
-			found, foundID = e, id
+		settled = t.settleLocked(id, e, endMoot)
+		if settled {
+			mintPending(&t.versions)
 		}
+		return settledAsk{evt: e.ask.evt, id: id}, settled, true
 	}
-	if found == nil {
-		return settledAsk{}, false, false
-	}
-	settled = t.settleLocked(foundID, found, endMoot)
-	if settled {
-		mintPending(&t.versions)
-	}
-	return settledAsk{evt: found.ask.evt, id: foundID}, settled, true
-}
-
-func decisionToolCallID(payload any) string {
-	switch p := payload.(type) {
-	case marotte.PermissionNeededPayload:
-		return p.ToolCallID
-	case marotte.UserInputNeededPayload:
-		return p.ToolCallID
-	}
-	return ""
+	return settledAsk{}, false, false
 }
 
 // inScope reports whether evt is one of chatID's asks in scope; ScopeChatSession leaves a run's step asks out.
@@ -422,8 +408,8 @@ func (b *bus) cancelAsk(ctx context.Context, chatID marotte.ChatID, ref askRef) 
 // PendingPermsAdd files an unanswered decision with the bridge its answer goes back on, for the connect replay. It
 // answers an ask of a chat whose turn a stop is ending with its kind's cancel instead, and reports false: KAS sent
 // it before reading the session/cancel, and the Stop's own answers have gone (kiro-cli's TUI does the same).
-func (b *bus) PendingPermsAdd(ctx context.Context, acpID int64, evt marotte.ServerEvent, origin translate.AskOrigin) (marotte.ServerEvent, bool) {
-	evt = b.pendingPerms.add(acpID, evt, origin)
+func (b *bus) PendingPermsAdd(ctx context.Context, acpID int64, kasAskID string, evt marotte.ServerEvent, origin translate.AskOrigin) (marotte.ServerEvent, bool) {
+	evt = b.pendingPerms.add(acpID, kasAskID, evt, origin)
 	// Before the stop check, whose cancel settles the ask.
 	if run := marotte.DecisionRunID(evt.Payload); run != "" && b.runAsk != nil {
 		b.runAsk.askOpened(run, marotte.DecisionNodeID(evt.Payload), marotte.DecisionRequestID(evt.Payload))
@@ -558,9 +544,9 @@ func (r *askReply) respondClaimed(ctx context.Context, result any) (claimOutcome
 	return outcome, nil
 }
 
-// PendingPermsWithdraw retires the ask KAS withdrew for toolCallID and announces it moot.
-func (b *bus) PendingPermsWithdraw(chatID marotte.ChatID, toolCallID string) bool {
-	a, settled, ok := b.pendingPerms.takeForToolCall(chatID, toolCallID)
+// PendingPermsWithdraw retires the ask KAS withdrew as askID and announces it moot.
+func (b *bus) PendingPermsWithdraw(chatID marotte.ChatID, askID string) bool {
+	a, settled, ok := b.pendingPerms.takeForAsk(chatID, askID)
 	if settled {
 		b.announceDecisionSettled(a.evt, a.id, marotte.SettledByMoot)
 	}

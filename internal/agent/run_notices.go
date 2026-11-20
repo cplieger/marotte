@@ -26,7 +26,7 @@ const maxRunNoticesPerChat = 16
 // recordRunNotice queues a terminal run behind the notice KAS is about to append, only for a real chat
 // whose turn is live: KAS prompts an idle parent instead. This mirrors KAS's hasActiveExecution.
 func (rs *Runs) recordRunNotice(chatID marotte.ChatID, workflowID, label string) {
-	if workflowIDOf(chatID) != "" || rs.coord == nil || !rs.coord.turns.live(chatID) {
+	if marotte.RunHostWorkflowID(chatID) != "" || rs.coord == nil || !rs.coord.turns.live(chatID) {
 		return
 	}
 	rs.mu.Lock()

@@ -21,11 +21,37 @@ type v3MCPStatus struct {
 	SessionID marotte.SessionID `json:"sessionId"`
 	// Present only while the organization sets an MCP registry; "registry" mode drops every
 	// server that is not a registry entry.
-	AccessMode      string             `json:"accessMode"`
-	Servers         []v3MCPServer      `json:"servers"`
-	Filtered        []string           `json:"accessModeFilteredServers"`
-	Unresolved      []string           `json:"unresolvedRegistryServers"`
-	RegistryServers []v3RegistryServer `json:"registryServers"`
+	AccessMode string `json:"accessMode"`
+	// IdentityProvider is absent while KAS has no organization provider configured.
+	IdentityProvider *v3IdentityProvider `json:"identityProvider"`
+	Servers          []v3MCPServer       `json:"servers"`
+	Filtered         []string            `json:"accessModeFilteredServers"`
+	Unresolved       []string            `json:"unresolvedRegistryServers"`
+	RegistryServers  []v3RegistryServer  `json:"registryServers"`
+}
+
+// v3IdentityProvider is the frame's organization sign-in: {state, issuer, displayName, account?}, or
+// {state: "invalid-config", errorMessage}.
+type v3IdentityProvider struct {
+	State        string `json:"state"`
+	Issuer       string `json:"issuer"`
+	DisplayName  string `json:"displayName"`
+	Account      string `json:"account"`
+	ErrorMessage string `json:"errorMessage"`
+}
+
+// status is the provider block through the display-text door; nil for an absent block or one with no state.
+func (p *v3IdentityProvider) status() *marotte.MCPIdentityProviderStatus {
+	if p == nil || p.State == "" {
+		return nil
+	}
+	return &marotte.MCPIdentityProviderStatus{
+		State:       marotte.MCPIdentityProviderState(displayText(p.State)),
+		Issuer:      displayText(p.Issuer),
+		DisplayName: displayText(p.DisplayName),
+		Account:     displayText(p.Account),
+		Error:       displayText(p.ErrorMessage),
+	}
 }
 
 // Enabled reports whether it is running.
@@ -82,12 +108,15 @@ const credentialsRejectedReason = "the server rejected its credentials (check it
 // for OAuth sign-in, authorizationUrl. KAS reports its internal "unavailable" as failed.
 // Every state may carry ignoredFields, the config keys KAS read and did not use.
 type v3MCPServer struct {
-	Meta             v3MCPServerMeta `json:"_meta"`
-	Name             string          `json:"name"`
-	Status           string          `json:"status"`
-	ErrorMessage     string          `json:"errorMessage"`
-	AuthorizationURL string          `json:"authorizationUrl"`
-	Tools            []struct {
+	// EnterpriseAuthorization is present on a server signing in through the organization provider: empty when
+	// connected, {reason, serverDescription?} when failed.
+	EnterpriseAuthorization *v3EnterpriseAuthorization `json:"enterpriseAuthorization"`
+	Meta                    v3MCPServerMeta            `json:"_meta"`
+	Name                    string                     `json:"name"`
+	Status                  string                     `json:"status"`
+	ErrorMessage            string                     `json:"errorMessage"`
+	AuthorizationURL        string                     `json:"authorizationUrl"`
+	Tools                   []struct {
 		Name string `json:"name"`
 	} `json:"tools"`
 	IgnoredFields       []string                `json:"ignoredFields"`
@@ -95,6 +124,24 @@ type v3MCPServer struct {
 	Resources           []v3MCPResource         `json:"resources"`
 	ResourceTemplates   []v3MCPResourceTemplate `json:"resourceTemplates"`
 	FailedAuthorization bool                    `json:"failedAuthorization"`
+}
+
+type v3EnterpriseAuthorization struct {
+	Reason            string `json:"reason"`
+	ServerDescription string `json:"serverDescription"`
+}
+
+// needsOrgSignIn reports whether the organization sign-in, not the server, is the remedy: KAS's two reasons for a
+// provider with no session or an expired one.
+func (e *v3EnterpriseAuthorization) needsOrgSignIn() bool {
+	return e != nil && (e.Reason == "idp-sign-in-required" || e.Reason == "idp-session-expired")
+}
+
+func (e *v3EnterpriseAuthorization) auth() *marotte.MCPEnterpriseAuth {
+	if e == nil {
+		return nil
+	}
+	return &marotte.MCPEnterpriseAuth{Reason: e.Reason, ServerDescription: displayText(e.ServerDescription)}
 }
 
 // v3MCPServerMeta is an entry's _meta.kiro.resource.source provenance stamp.
@@ -167,16 +214,20 @@ const (
 	MCPReportFailed
 	// MCPReportDisabled is a server KAS reports switched off.
 	MCPReportDisabled
+	// MCPReportNeedsOrgSignIn is a failed server waiting on the organization sign-in, its reason in Error.
+	MCPReportNeedsOrgSignIn
 )
 
 // MCPServerReport is one server as its session's frame reports it. Error is set for
-// MCPReportFailed, AuthorizationURL for MCPReportNeedsAuth, the four lists for MCPReportConnected.
+// MCPReportFailed and MCPReportNeedsOrgSignIn, AuthorizationURL for MCPReportNeedsAuth, the four lists for MCPReportConnected.
+// Enterprise is set on a server signing in through the organization provider, empty when connected.
 // IgnoredFields, in any state, names the config keys KAS reported it did not use.
 type MCPServerReport struct {
 	Name              string
 	Source            marotte.MCPSource
 	Error             string
 	AuthorizationURL  string
+	Enterprise        *marotte.MCPEnterpriseAuth
 	Tools             []string
 	IgnoredFields     []string
 	Prompts           []marotte.MCPPromptInfo
@@ -190,7 +241,19 @@ type MCPServerReport struct {
 type MCPSessionStatus struct {
 	// Registry is nil outside registry mode.
 	Registry *marotte.GovernanceMCPRegistry
-	Servers  []MCPServerReport
+	// IdentityProvider is the engine's organization sign-in, nil when KAS has no provider.
+	IdentityProvider *marotte.MCPIdentityProviderStatus
+	Servers          []MCPServerReport
+}
+
+// DecodeMCPIdentityProvider reads a _kiro/mcp/status frame's organization sign-in, for a frame no session view
+// records (an observer pass's); ok is false for a frame that does not decode.
+func DecodeMCPIdentityProvider(msg *marotte.RPCResponse) (status *marotte.MCPIdentityProviderStatus, ok bool) {
+	p, ok := unmarshalParams[v3MCPStatus](msg, "mcp/status")
+	if !ok {
+		return nil, false
+	}
+	return p.IdentityProvider.status(), true
 }
 
 // HandleMCPStatus hands a session's _kiro/mcp/status frame to the recorder whole. Under
@@ -204,7 +267,10 @@ func (t *Translator) HandleMCPStatus(ctx context.Context, _ marotte.ChatID, msg 
 		slog.Debug("mcp/status with no sessionId, dropped")
 		return
 	}
-	status := MCPSessionStatus{Registry: p.registry(), Servers: make([]MCPServerReport, 0, len(p.Servers))}
+	status := MCPSessionStatus{
+		Registry: p.registry(), IdentityProvider: p.IdentityProvider.status(),
+		Servers: make([]MCPServerReport, 0, len(p.Servers)),
+	}
 	for i := range p.Servers {
 		if r, ok := p.Servers[i].report(); ok {
 			status.Servers = append(status.Servers, r)
@@ -217,7 +283,9 @@ func (s *v3MCPServer) report() (MCPServerReport, bool) {
 	if s.Name == "" {
 		return MCPServerReport{}, false
 	}
-	r := MCPServerReport{Name: s.Name, Source: s.source(), IgnoredFields: displayNames(s.IgnoredFields)}
+	r := MCPServerReport{
+		Name: s.Name, Source: s.source(), Enterprise: s.EnterpriseAuthorization.auth(), IgnoredFields: displayNames(s.IgnoredFields),
+	}
 	switch s.Status {
 	case "connected":
 		r.State = MCPReportConnected
@@ -225,9 +293,12 @@ func (s *v3MCPServer) report() (MCPServerReport, bool) {
 		r.Resources, r.ResourceTemplates = mcpResources(s.Resources), mcpResourceTemplates(s.ResourceTemplates)
 	case "failed":
 		// The URL outranks failedAuthorization: an OAuth server needing sign-in carries both.
-		if s.AuthorizationURL != "" {
+		switch {
+		case s.AuthorizationURL != "":
 			r.State, r.AuthorizationURL = MCPReportNeedsAuth, s.AuthorizationURL
-		} else {
+		case s.EnterpriseAuthorization.needsOrgSignIn():
+			r.State, r.Error = MCPReportNeedsOrgSignIn, s.failureReason()
+		default:
 			r.State, r.Error = MCPReportFailed, s.failureReason()
 		}
 	case "disabled":

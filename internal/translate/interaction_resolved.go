@@ -14,6 +14,11 @@ type interactionResolvedBlock struct {
 	ToolCallID     string `json:"toolCallId"`
 	Outcome        string `json:"outcome"`
 	SelectedOption string `json:"selectedOption"`
+	Meta           struct {
+		Kiro struct {
+			AskID string `json:"askId"`
+		} `json:"kiro"`
+	} `json:"_meta"`
 }
 
 // The outcomes of an ask KAS closed without an answer from marotte.
@@ -29,13 +34,16 @@ func withdrawnOutcome(outcome string) bool {
 
 // handleInteractionResolved retires an ask KAS closed without an answer. Every other outcome
 // echoes an answer marotte sent and already claimed. No response is sent: KAS no
-// longer awaits the id.
+// longer awaits the id. Withdrawal is keyed on KAS's askId, one per consent round, because two
+// rounds of one tool call share its toolCallId and a load can drain a round's close late.
 func (t *Translator) handleInteractionResolved(key marotte.ChatID, r *interactionResolvedBlock) {
-	if !withdrawnOutcome(r.Outcome) || r.ToolCallID == "" {
+	if !withdrawnOutcome(r.Outcome) {
 		return
 	}
-	if !t.pendingPerms.PendingPermsWithdraw(key, r.ToolCallID) {
-		slog.Debug("interaction_resolved: no pending ask for the withdrawn tool call",
-			"chat_id", key, "tool_call_id", textsafe.SanitizeSingleLineBounded(r.ToolCallID, maxCensusNameBytes))
+	askID := r.Meta.Kiro.AskID
+	if askID == "" || !t.pendingPerms.PendingPermsWithdraw(key, askID) {
+		slog.Debug("interaction_resolved: no pending ask for the withdrawn ask id",
+			"chat_id", key, "ask_id", textsafe.SanitizeSingleLineBounded(askID, maxCensusNameBytes),
+			"tool_call_id", textsafe.SanitizeSingleLineBounded(r.ToolCallID, maxCensusNameBytes))
 	}
 }

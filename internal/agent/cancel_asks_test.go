@@ -81,17 +81,18 @@ func cancelFixture(t *testing.T) (*Runtime, *orderedSession) {
 // addAsk files one ask of the event's kind on chat c1 as KAS's request acpID, a step's when runID is set.
 func addAsk(t *testing.T, h *Runtime, origin acpResponder, event marotte.EventType, acpID int64, runID string) int64 {
 	t.Helper()
-	toolCallID := fmt.Sprintf("tool-%d", acpID)
+	toolCallID, kasAskID := fmt.Sprintf("tool-%d", acpID), fmt.Sprintf("pr-%d", acpID)
 	var payload any
 	switch event {
 	case marotte.EventElicitationNeeded:
-		payload = marotte.ElicitationNeededPayload{ToolCallID: toolCallID, RunID: runID}
+		// KAS stamps no askId on an elicitation.
+		payload, kasAskID = marotte.ElicitationNeededPayload{ToolCallID: toolCallID, RunID: runID}, ""
 	case marotte.EventUserInputNeeded:
 		payload = marotte.UserInputNeededPayload{ToolCallID: toolCallID, RunID: runID}
 	default:
 		payload = marotte.PermissionNeededPayload{ToolCallID: toolCallID, RunID: runID}
 	}
-	return requestIDOf(t, h.bus.pendingPerms.add(acpID, marotte.NewEvent(event, "c1", payload), origin))
+	return requestIDOf(t, h.bus.pendingPerms.add(acpID, kasAskID, marotte.NewEvent(event, "c1", payload), origin))
 }
 
 func addPermission(t *testing.T, h *Runtime, origin acpResponder, acpID int64, runID string) int64 {
@@ -375,7 +376,7 @@ func TestPendingPermsAdd_AnAskAfterAStopIsAnsweredWithItsKindsCancel(t *testing.
 			}
 			head := h.bus.fanout.Position().Head
 
-			evt, filed := h.bus.PendingPermsAdd(t.Context(), 9, marotte.NewEvent(tc.event, "c1", tc.payload), sess)
+			evt, filed := h.bus.PendingPermsAdd(t.Context(), 9, "pr-9", marotte.NewEvent(tc.event, "c1", tc.payload), sess)
 
 			if filed {
 				t.Error("PendingPermsAdd filed the ask, want it answered at once with no card")
@@ -429,7 +430,7 @@ func TestPendingPermsAdd_FilesAnAskNoStopIsEnding(t *testing.T) {
 				t.Cleanup(func() { h.ReleaseTurn("c1", next) })
 			}
 
-			_, filed := h.bus.PendingPermsAdd(t.Context(), 9, marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
+			_, filed := h.bus.PendingPermsAdd(t.Context(), 9, "pr-9", marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
 				marotte.UserInputNeededPayload{RunID: tc.runID}), sess)
 
 			if !filed {

@@ -122,7 +122,7 @@ func TestScheduledRun_AFaultPastItsHealsEndsTheRun(t *testing.T) {
 				h.runs.claimHeal(gateRunID)
 			}
 
-			h.runs.resumeIfInterrupted(t.Context(), runChatID(gateRunID), gateRunID)
+			h.runs.resumeIfInterrupted(t.Context(), marotte.RunHostChatID(gateRunID), gateRunID)
 
 			if got := waitForEndReason(h, gateRunID, 5*time.Second); got != runEndUnattended {
 				t.Fatalf("a scheduled run past its heals recorded %q, want %q; calls were %v",
@@ -235,7 +235,7 @@ func TestManualRun_AStepQuestionStaysPaused(t *testing.T) {
 		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
 		methodKiroWorkflowInspect: inspectPaused(t, gateRunID, stepQuestionReason),
 	}
-	h.insertBridgeNow(runChatID(gateRunID), testBridge(br, bridgeReady))
+	h.insertBridgeNow(marotte.RunHostChatID(gateRunID), testBridge(br, bridgeReady))
 	h.runs.grantLease(t.Context(), gateRunID, "publish", launchOrigin{origin: runlease.OriginManual}, hostSec())
 	h.runs.armDeadline(t.Context(), gateRunID)
 
@@ -281,7 +281,7 @@ func TestParentlessRun_AFaultPauseIsResumedOnItsFrame(t *testing.T) {
 				methodKiroWorkflowInspect: inspectPaused(t, gateRunID, interruptedReason),
 				methodKiroWorkflowResume:  json.RawMessage(`{}`),
 			}
-			h.insertBridgeNow(runChatID(gateRunID), testBridge(br, bridgeReady))
+			h.insertBridgeNow(marotte.RunHostChatID(gateRunID), testBridge(br, bridgeReady))
 			h.runs.grantLease(t.Context(), gateRunID, "nightly", origin, hostSec())
 
 			heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})

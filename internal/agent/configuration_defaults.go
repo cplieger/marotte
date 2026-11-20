@@ -49,6 +49,8 @@ func (st *Settings) cacheConfigurationState(raw json.RawMessage) {
 	if changed {
 		st.announceSettings()
 	}
+	// Every view, not only a changed one: a restarted engine with Model fallback just turned on reports the same rows.
+	st.seedModelFallbacksSoon()
 }
 
 // announceSettings tells every tab to refetch GET /api/settings.
