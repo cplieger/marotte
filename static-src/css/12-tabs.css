@@ -1150,7 +1150,8 @@
   flex-direction: column;
   padding-block: var(--sp-1);
   border-block-start: var(--hairline) solid var(--c-border);
-  /* Zero, not its automatic minimum, so the list's floor and cap below are the whole claim. */
+  /* Zero, not its automatic minimum, so the list's floor and the middle's Runs track are the whole
+     claim. */
   min-block-size: 0;
 
   &[hidden] {

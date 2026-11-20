@@ -1,9 +1,9 @@
 // Against the REAL binary, in a real browser: a tab switch paints the view it switches to. On Chrome
 // before 158, a style change inside `#chat-area` (an inline-size container) made in the same frame as a
-// `:has()` re-match on the sidebar's size container is never applied: the parked view keeps its old
-// box and the new one gets none, so the screen stops changing. Set VIEW_SWITCH_CHROMIUM to such a
-// Chrome (Chrome for Testing 156: `npx @puppeteer/browsers install chrome@156.0.8078.4`) to run the
-// cases where they fail; Playwright's own Chromium has the fix.
+// `:has()` re-match on a size or inline-size container in the sidebar is never applied: the parked
+// view keeps its old box and the new one gets none, so the screen stops changing. Set
+// VIEW_SWITCH_CHROMIUM to such a Chrome (Chrome for Testing 156: `npx @puppeteer/browsers install
+// chrome@156.0.8078.4`) to run the cases where they fail; Playwright's own Chromium has the fix.
 
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { type Browser, type Page, chromium } from "playwright";
@@ -136,14 +136,16 @@ describe.skipIf(FIXTURE === undefined || FIXTURE === "")("a tab switch paints it
 
   // The case above passes on a fixed Chrome whatever the sheet says, so this one holds the trigger's
   // precondition in every browser.
-  it("makes no box outside the chat area a size container", async () => {
+  it("makes no box outside the chat area a size or inline-size container", async () => {
     const page = await open("/");
     const sizers = await page.evaluate(() =>
       [...document.querySelectorAll("body *")]
         .filter(
           (e) =>
             e.closest("#chat-area") === null &&
-            getComputedStyle(e).containerType.split(" ").includes("size"),
+            getComputedStyle(e)
+              .containerType.split(" ")
+              .some((t) => t === "size" || t === "inline-size"),
         )
         .map((e) => (e.id === "" ? e.className : `#${e.id}`)),
     );

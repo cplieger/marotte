@@ -251,9 +251,10 @@ body.sidebar-resizing {
   display: grid;
 
   /* Runs' track: its rows up to three, or what the tab sections leave once they keep `--tabs-keep`,
-     never below its floor, so the track's tween never moves unseen under the floor. The cap is a
-     percentage of this grid, never a size container: in Chrome before 158 a size container here
-     drops a chat switch's style recalc under #chat-area's (e2e-sse/view-switch-sidebar.test.ts). */
+     a cap never below its floor, so the track's tween never moves unseen under the floor. The cap is
+     a percentage of this grid, never a container unit: in Chrome before 158 a size or inline-size
+     container here drops a chat switch's style recalc under #chat-area's
+     (e2e-sse/view-switch-sidebar.test.ts). */
   grid-template-rows:
     minmax(
       min(var(--row-tap-dense) + var(--sp-1) + var(--tab-row-h), 100% - var(--runs-floor)),
