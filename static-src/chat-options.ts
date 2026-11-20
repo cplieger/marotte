@@ -19,7 +19,7 @@ import {
 import { copyClipboard } from "./actions/messages.js";
 import { downloadChatExport } from "./chat-export.js";
 import { buildPath } from "./route-path.js";
-import { ICON_COMPACT, ICON_EXPORT, ICON_LINK, ICON_TANGENT_ROW } from "./icons.js";
+import { ICON_COMPACT, ICON_EXPORT, ICON_LINK, ICON_RENAME_UI, ICON_TANGENT_ROW } from "./icons.js";
 import { openFilePicker } from "./files-picker.js";
 import { uploadLimitHint } from "./upload-policy.js";
 import { openTangentChat } from "./chat.js";
@@ -44,8 +44,6 @@ const ICON_MERGE =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/></svg>';
 const ICON_SESSION =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg>';
-const ICON_RENAME =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4z"/></svg>';
 
 /**
  * KAS's own clamp on the goal loop's budget, mirrored: `parseGoalCommand` runs
@@ -478,7 +476,7 @@ function goalCommand(objective: string, cap: string): string {
  *  is a closed drawer. */
 function renameRow(): HTMLElement {
   return actionRow({
-    icon: ICON_RENAME,
+    icon: ICON_RENAME_UI,
     name: "Rename chat",
     hint: "Give this chat a name of your own",
     onClick: (row) => {

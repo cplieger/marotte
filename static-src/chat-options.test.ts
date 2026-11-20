@@ -2,6 +2,8 @@
 // the markup test). The goal row's string is run through KAS's transcribed parser.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { iconEl } from "./icon-el.js";
+import { ICON_RENAME_UI } from "./icons.js";
 import { uploadLimitHint } from "./upload-policy.js";
 
 const {
@@ -320,6 +322,12 @@ describe("the chat strip", () => {
 });
 
 describe("rename chat", () => {
+  it("leads its row with the app's one Rename icon", async () => {
+    const { card } = await mountMenu();
+    const glyph = rowButton(card, "Rename chat").querySelector(".chat-opt-icon svg");
+    expect(glyph?.innerHTML).toBe(iconEl(ICON_RENAME_UI).innerHTML);
+  });
+
   it("opens a bounded field holding the current name and sends the new one", async () => {
     const { card } = await mountMenu();
     clickRow(card, "Rename chat");

@@ -106,6 +106,7 @@ vi.mock("./icons.js", () => ({
   ICON_SAVE_OK: "",
   ICON_SAVE_FAIL: "",
   ICON_TAB_WEB: "",
+  ICON_RENAME_UI: '<svg data-glyph="rename"></svg>',
 }));
 vi.mock("./toast.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Toast>()),
@@ -1150,6 +1151,11 @@ describe("renaming an entry", () => {
       }
       vi.unstubAllGlobals();
     };
+  });
+
+  it("draws the Rename button with the app's one Rename icon", () => {
+    initFileBrowser();
+    expect($.fbRename.querySelector('svg[data-glyph="rename"]')).not.toBeNull();
   });
 
   async function renameTo(name: string): Promise<void> {
