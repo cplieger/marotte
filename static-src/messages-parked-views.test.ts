@@ -702,14 +702,40 @@ describe("the view handle", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => 
 
     const view = viewOf(a);
     const reads: string[] = [];
+    // The restore lands with the scroller's first write, so the window ends there without asking the code under test.
+    let restored = false;
+    const scrollTo = scroller.scrollTo.bind(scroller);
+    scroller.scrollTo = ((...args: Parameters<HTMLElement["scrollTo"]>) => {
+      restored = true;
+      scrollTo(...args);
+    }) as HTMLElement["scrollTo"];
+    const count = (el: Element): void => {
+      if (view.classList.contains("is-active") && !restored && view.contains(el)) {
+        reads.push(el.className);
+      }
+    };
     const height = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+    const rect = Object.getOwnPropertyDescriptor(Element.prototype, "getBoundingClientRect");
+    const rects = Object.getOwnPropertyDescriptor(Element.prototype, "getClientRects");
     Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
       ...height,
       get(this: HTMLElement): number {
-        if (scroll.restorePending() && view.contains(this)) {
-          reads.push(this.className);
-        }
+        count(this);
         return (height?.get?.call(this) as number | undefined) ?? 0;
+      },
+    });
+    Object.defineProperty(Element.prototype, "getBoundingClientRect", {
+      ...rect,
+      value(this: Element): DOMRect {
+        count(this);
+        return (rect?.value as (this: Element) => DOMRect).call(this);
+      },
+    });
+    Object.defineProperty(Element.prototype, "getClientRects", {
+      ...rects,
+      value(this: Element): DOMRectList {
+        count(this);
+        return (rects?.value as (this: Element) => DOMRectList).call(this);
       },
     });
     try {
@@ -719,12 +745,20 @@ describe("the view handle", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => 
       if (height !== undefined) {
         Object.defineProperty(HTMLElement.prototype, "offsetHeight", height);
       }
+      if (rect !== undefined) {
+        Object.defineProperty(Element.prototype, "getBoundingClientRect", rect);
+      }
+      if (rects !== undefined) {
+        Object.defineProperty(Element.prototype, "getClientRects", rects);
+      }
+      Reflect.deleteProperty(scroller, "scrollTo");
     }
+    expect(restored, "the premise: the switch back restored the view").toBe(true);
     expect(mountedWindow(t)?.from, "the premise: the switch back dropped the head").toBeGreaterThan(
       head,
     );
     // The view's rendering is still skipped until its restore, so any read there forces a skipped subtree's layout.
-    expect(reads, "row heights read in the incoming view before its restore").toEqual([]);
+    expect(reads, "layout reads in the incoming view before its restore").toEqual([]);
   });
 
   it("holds the reading position through a park/unpark over a turn that GREW", async () => {
