@@ -466,12 +466,18 @@ func writeContextResetMarkdown(b *strings.Builder, e *marotte.Entry) {
 	}
 }
 
-// writeJobEndedMarkdown writes the job's row in the transcript's words (messages-events.ts jobEndedLabel).
+// writeJobEndedMarkdown writes the job's row in the transcript's words (messages-events.ts jobEndedRow).
 func writeJobEndedMarkdown(b *strings.Builder, e *marotte.Entry) {
 	var p marotte.EntryJobEnded
-	if decodePayload(e, &p) {
-		fmt.Fprintf(b, "**Job %s ended: %s**\n\n", oneLine(cmp.Or(p.Description, p.JobID)), jobOutcomeWords[p.End.Status])
+	if !decodePayload(e, &p) {
+		return
 	}
+	what := oneLine(cmp.Or(p.Description, p.JobID))
+	if p.End.Status == marotte.BackgroundJobDetached {
+		fmt.Fprintf(b, "**Job %s left running**\n\n", what)
+		return
+	}
+	fmt.Fprintf(b, "**Job %s ended: %s**\n\n", what, jobOutcomeWords[p.End.Status])
 }
 
 // jobOutcomeWords is how a job's end reads in a sentence, as the client's row words it (JOB_OUTCOME_WORDS).

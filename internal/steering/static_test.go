@@ -386,6 +386,23 @@ func TestStaticGuide_NamesMarottesHelperNotACLILogin(t *testing.T) {
 	}
 }
 
+// The jobs box and the card's move are named in the on-screen words, with what kiro-cli does on its own.
+func TestWriteUIGuide_NamesTheBackgroundJobControls(t *testing.T) {
+	var b strings.Builder
+	writeUIGuide(&b, "/w", "/cfg")
+	out := b.String()
+	for _, want := range []string{
+		`"Background jobs" on`,
+		`"Stop" and "Show output"`,
+		`"Move to background"`,
+		"still running after 10 seconds",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("writeUIGuide output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 // The notifications path is the one a user asks about most; the labels must be
 // the exact on-screen text.
 func TestWriteUIGuide_NotificationsPath(t *testing.T) {

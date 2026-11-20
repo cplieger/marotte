@@ -248,8 +248,8 @@ function worded(text: string): HTMLElement {
   return el("span", { [CHROME_ATTR]: "" }, text);
 }
 
-/** "Job <description> ended: <outcome>", the outcome in the failed tone when the job failed or timed out, with
- *  Show the job while the job's card is in the transcript. */
+/** "Job <description> ended: <outcome>" ("left running" for a fork's copy of a job), the outcome in the failed tone
+ *  when the job failed or timed out, with Show the job while the job's card is in the transcript. */
 function jobEndedRow(p: EntryJobEnded): HTMLElement {
   const status = p.end.status;
   const failed = status === "failed" || status === "timed_out";
@@ -259,7 +259,11 @@ function jobEndedRow(p: EntryJobEnded): HTMLElement {
     ICON_TOOL_TERMINAL,
     worded("Job "),
     what === "" ? p.job_id : what,
-    worded(` ended: ${JOB_OUTCOME_WORDS[status].toLowerCase()}`),
+    worded(
+      status === "detached"
+        ? " left running"
+        : ` ended: ${JOB_OUTCOME_WORDS[status].toLowerCase()}`,
+    ),
   );
   const show = el(
     "button",

@@ -663,6 +663,10 @@ function jobLine(job: BackgroundJob): string {
     return `Running in background, job ${job.id}`;
   }
   const parts = [JOB_OUTCOME_WORDS[end.status]];
+  // A fork's copy of a job runs on in the parent chat, so its times say nothing about how it ran.
+  if (end.status === "detached") {
+    return parts[0] ?? "";
+  }
   if (end.duration_ms > 0) {
     parts.push(formatElapsed(end.duration_ms));
   }

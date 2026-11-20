@@ -466,7 +466,7 @@ describe("safety_blocked", () => {
 
 describe("job_ended", () => {
   const ended = (
-    status: "completed" | "failed" | "timed_out" | "cancelled",
+    status: "completed" | "failed" | "timed_out" | "cancelled" | "detached",
     description?: string,
   ) =>
     event("job_ended", {
@@ -485,6 +485,13 @@ describe("job_ended", () => {
 
   it("names the job by its id when kiro-cli gave no description", () => {
     expect(labelOf(buildEvent(ended("cancelled")))).toBe("Job 7 ended: cancelled");
+  });
+
+  it("reads a fork's copy of a job as left running, not as an end", () => {
+    const node = buildEvent(ended("detached", "sleep 60"));
+
+    expect(labelOf(node)).toBe("Job sleep 60 left running");
+    expect(node.className).not.toContain("boundary-failed");
   });
 
   it("takes the failed tone for a failure or a timeout only", () => {

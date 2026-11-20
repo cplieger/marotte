@@ -12,7 +12,32 @@ const (
 	BackgroundJobCancelled      BackgroundJobState = "cancelled"
 	BackgroundJobTimedOut       BackgroundJobState = "timed_out"
 	BackgroundJobOutcomeUnknown BackgroundJobState = "outcome_unknown"
+	// BackgroundJobDetached is a forked chat's copy of a job that was running at the fork: it keeps running in the
+	// parent chat's session, and the fork's session does not track it.
+	BackgroundJobDetached BackgroundJobState = "detached"
 )
+
+// BackgroundJobMoveOutcome is kiro-cli's answer to POST /api/chats/{id}/jobs: the call became a job, it had already
+// ended, or it cannot become one.
+type BackgroundJobMoveOutcome string
+
+// BackgroundJobMoved and the following constants are the valid BackgroundJobMoveOutcome values.
+const (
+	BackgroundJobMoved      BackgroundJobMoveOutcome = "moved"
+	BackgroundJobMoveEnded  BackgroundJobMoveOutcome = "ended"
+	BackgroundJobNotMovable BackgroundJobMoveOutcome = "not_movable"
+)
+
+// BackgroundJobMoveRequest is the body of POST /api/chats/{id}/jobs: the running tool call to move into a job.
+type BackgroundJobMoveRequest struct {
+	ToolCallID string `json:"tool_call_id"`
+}
+
+// BackgroundJobMove answers POST /api/chats/{id}/jobs. JobID is set when Outcome is moved.
+type BackgroundJobMove struct {
+	Outcome BackgroundJobMoveOutcome `json:"outcome"`
+	JobID   string                   `json:"job_id,omitempty"`
+}
 
 // BackgroundJob marks a tool call kiro-cli moved into a background job (_meta.kiro.job). End is nil while
 // the job runs.

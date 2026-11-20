@@ -412,6 +412,27 @@ describe("a call kiro-cli moved into a background job", () => {
     expect(card.dataset["outcome"]).toBe("fail");
   });
 
+  it("reads a fork's copy of a job as left running, with no times", () => {
+    const card = liveCard("job-fork");
+    applyToolCallUpdate(card, moved("job-fork"), "c1");
+
+    applyToolCallUpdate(
+      card,
+      frame("job-fork", {
+        kind: "execute",
+        status: "completed",
+        job: {
+          id: "7",
+          end: { status: "detached", duration_ms: 61000, ended_at: new Date().toISOString() },
+        },
+      }),
+      "c1",
+    );
+
+    expect(card.querySelector(".tool-job")?.textContent).toBe("Left running");
+    expect(card.dataset["outcome"]).toBe("warn");
+  });
+
   it("paints the end the chat's log holds once its turn closed", async () => {
     const { noteJobEnded } = await import("./job-state.js");
     const card = mountToolCallCard("c-late", moved("job-late"));

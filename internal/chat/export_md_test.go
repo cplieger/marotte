@@ -603,6 +603,10 @@ func TestRenderChatMarkdown_NamesABackgroundJobsEnd(t *testing.T) {
 			payload: marotte.EntryJobEnded{JobID: "7", End: marotte.BackgroundJobEnd{Status: marotte.BackgroundJobOutcomeUnknown}},
 			want:    "**Job 7 ended: outcome unknown**\n\n",
 		},
+		{
+			payload: marotte.EntryJobEnded{JobID: "7", Description: "sleep 60", End: marotte.BackgroundJobEnd{Status: marotte.BackgroundJobDetached}},
+			want:    "**Job sleep 60 left running**\n\n",
+		},
 	} {
 		entries, _ := chatOf(openTurn("t-1", 1, nil).add("", marotte.JobEndedID("7"), marotte.EntryKindJobEnded, tc.payload))
 

@@ -47,6 +47,8 @@ const { buildAssistantBubble } = await import("../fundamentals/text-bubble.js");
 const { buildToolCard } = await import("../tool-card.js");
 const { buildToolGroupShell, groupBody, refreshGroupHeader } = await import("../tool-group.js");
 const { stampHookCard } = await import("../hook-fold.js");
+const { syncMoveAction } = await import("../job-move.js");
+const { shownSettingsSignal } = await import("../persist.js");
 const { iconEl } = await import("../icon-el.js");
 const { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP, ICON_CLOSE, ICON_RUN_WHEN_UI, ICON_SEND, modelIcon } =
   await import("../icons.js");
@@ -347,6 +349,37 @@ function plantLoneEdit(): void {
   });
   stampHookCard(guard, { status: "completed", hook_trigger: "PreToolUse" });
   groupBody(shell).appendChild(guard);
+  turn(shell);
+  refreshGroupHeader(shell);
+}
+
+/** A shell command still running with Background jobs on, so its card offers Move to background. */
+function plantRunningCommand(): void {
+  const shell = buildToolGroupShell();
+  const card = buildToolCard({
+    id: "running-command",
+    title: "Running: npm test",
+    kind: "execute",
+    status: "in_progress",
+    live: true,
+    input: { command: "npm test" },
+    output: "Running 1,940 tests",
+  });
+  const shown = shownSettingsSignal.peek();
+  shownSettingsSignal.value = settingsPayload({ background_jobs: true });
+  syncMoveAction(
+    card,
+    {
+      id: "running-command",
+      title: "Running: npm test",
+      kind: "execute",
+      status: "in_progress",
+      ts: 0,
+    },
+    "c1",
+  );
+  shownSettingsSignal.value = shown;
+  groupBody(shell).appendChild(card);
   turn(shell);
   refreshGroupHeader(shell);
 }
@@ -1711,6 +1744,13 @@ export const SURFACES: readonly Surface[] = [
     setup: plantLoneEdit,
     controls: [".tool-file-link", ".tool-disclosure"],
     rows: [".tool-header", ".tool-group-hooks"],
+  },
+  {
+    name: "a running command's card",
+    sizes: TWO,
+    setup: plantRunningCommand,
+    controls: [".tool-move-bg", ".tool-disclosure"],
+    rows: [".tool-header"],
   },
   {
     name: "a long edit's diff",

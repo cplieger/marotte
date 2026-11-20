@@ -966,7 +966,12 @@ const CENSUS: readonly Family[] = [
   {
     name: "text button",
     selector:
-      ":is(.btn, .btn-small, .btn-save, .action-pill, .tool-output-reveal, .uip-ask-ok, .uip-ask-cancel):not(.add-form > .btn, .list-row .btn-small, .entry-actions > .btn-small, .conflict-hunk-row > .btn-small, .mcp-install-btn, .git-pr-row-actions .btn-small, .git-repo-section-header-row > .btn-small)",
+      ":is(.btn, .btn-small, .btn-save, .action-pill, .tool-output-reveal, .uip-ask-ok, .uip-ask-cancel):not(.add-form > .btn, .tool-header > .btn-small, .list-row .btn-small, .entry-actions > .btn-small, .conflict-hunk-row > .btn-small, .mcp-install-btn, .git-pr-row-actions .btn-small, .git-repo-section-header-row > .btn-small)",
+    kind: "toolbar",
+  },
+  {
+    name: "tool card header action",
+    selector: ".tool-header > .btn-small",
     kind: "toolbar",
   },
   {
@@ -1262,6 +1267,7 @@ const MOUNTED: Readonly<Record<string, readonly string[]>> = {
   "the pull request form": ["[data-pr-close]"],
   "a diagram's full view": [".mermaid-overlay-actions .icon-btn"],
   "a turn": [".turn-action-btn", ".tool-disclosure", ".turn-fold-toggle"],
+  "a running command's card": [".tool-move-bg"],
   "a long edit's diff": [".tool-diff-more"],
   "the find bar": [".chat-find-btn"],
   "a page's find popup": [".page-find-btn"],

@@ -24,6 +24,7 @@ import {
   setToolIdentity,
 } from "./tool-card.js";
 import { jobEndFor, jobPaintStatus, peekJobEnd, withJobEnd } from "./job-state.js";
+import { syncMoveAction } from "./job-move.js";
 import type { EntryJobEnded } from "./wire/types.gen.js";
 import { clearToolSilence, forgetToolSilence } from "./tool-silence.js";
 import { toolCardOptsFor } from "./tool-card-opts.js";
@@ -60,8 +61,10 @@ function armSlot(slot: ToolSlot, sig: ReturnType<typeof ensureToolCallSig>): voi
     // Tracked, so the log's job_ended repaints a card whose turn already closed.
     const jobID = next.job?.id;
     const ended = jobID === undefined ? undefined : jobEndFor(slot.chatID, jobID);
-    // Before the early return: the effect must subscribe to the silence ticker, since a quiet call sends no frame.
+    // Before the early return: the effect must subscribe to the silence ticker, since a quiet call sends no frame,
+    // and to the Background jobs setting.
     syncSilenceMarker(slot.card, slot.chatID, slot.toolID);
+    syncMoveAction(slot.card, next, slot.chatID);
     if (next === slot.applied && ended === slot.appliedEnd) {
       return;
     }
