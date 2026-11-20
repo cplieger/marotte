@@ -883,8 +883,6 @@ func (r *runLog) transientFailure(workflowID, nodePath string) (code string, ok 
 	return t.transientFailure()
 }
 
-// stepLive is what the run log holds of one open step turn for the run's health: the facts, and the turn's id, which
-// a grade of an earlier turn on the path is superseded by.
 // attnSteps is a run's step turns as the run-attention ledger reads them: the open ones' facts by path, and each
 // path's newest turn, open or closed.
 type attnSteps struct {

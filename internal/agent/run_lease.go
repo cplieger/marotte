@@ -302,6 +302,7 @@ func (rs *Runs) grantKeeping(
 			"workflow_id", workflowID, "recipe", recipe, "origin", o.origin, "error", err)
 	}
 	rs.beginLife(workflowID)
+	rs.attention.granted(workflowID)
 	// A triggered run's row start is its run_start's confirmation, not the grant.
 	if o.origin != runlease.OriginTriggered {
 		run := ruleRun(&l)

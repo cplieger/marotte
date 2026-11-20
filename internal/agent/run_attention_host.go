@@ -27,6 +27,11 @@ func (rs *Runs) attentionLease(workflowID string) (attnLease, bool) {
 	return out, true
 }
 
+func (rs *Runs) attentionHeld(workflowID string) bool {
+	_, held := rs.lease(workflowID)
+	return held
+}
+
 // attentionCell is the run's cell's held read, false for a run with no cell.
 func (rs *Runs) attentionCell(workflowID string) (attentionInput, bool) {
 	c := rs.asks.get(workflowID)
@@ -40,7 +45,7 @@ func (rs *Runs) cellInput(c *askCell) attentionInput {
 	epoch := rs.asks.epochNow()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	in := attentionInput{workflowID: c.workflowID, reply: c.reply, readFailed: c.readFailed, seq: rs.asks.attnSeq.Add(1)}
+	in := attentionInput{workflowID: c.workflowID, reply: c.reply, readFailed: c.readFailed, gone: c.gone, seq: rs.asks.attnSeq.Add(1)}
 	in.reachable = c.reply.OK && !c.readFailed
 	if c.reply.OK {
 		in.asks = workflow.OpenAsks(c.reply, c.runLogLocked(c.basis, epoch))

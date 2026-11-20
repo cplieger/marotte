@@ -36,6 +36,9 @@ const (
 	// attentionUnknownAfter outlasts a boot pass's reads and an engine restart's failed ones.
 	attentionUnknownAfter = 10 * time.Minute
 	attentionTickEvery    = 60 * time.Second
+	// attentionForgetFor outlasts a grade or read already under way when a lease ended, each bounded by
+	// clientRequestBudget, so none brings the run back as a live one.
+	attentionForgetFor = 10 * time.Minute
 	// attentionWarnAt is the re-delivery, 31 minutes after the first failure, whose own failure is logged at Warn.
 	attentionWarnAt     = 5
 	attentionMaxLines   = 20
@@ -71,6 +74,8 @@ type attentionInput struct {
 	seq        uint64
 	reachable  bool
 	readFailed bool
+	// gone: kiro-cli answered the newest read that it holds no such run.
+	gone bool
 }
 
 // attnLease is what the lease store and the run log hold of a leased run.
@@ -99,6 +104,7 @@ const (
 // attentionHost is the run host as the ledger reads and delivers through it; every call runs with no ledger lock held.
 type attentionHost interface {
 	attentionLease(workflowID string) (attnLease, bool)
+	attentionHeld(workflowID string) bool
 	attentionCell(workflowID string) (attentionInput, bool)
 	attentionEntry(chat marotte.ChatID, entryID string) attnEntry
 	attentionNotify(ctx context.Context, chat marotte.ChatID, text string) (command.NotifyReceipt, error)
@@ -172,11 +178,12 @@ type attnOutbox struct {
 	early map[string]marotte.TurnOutcome
 	// owed is every item the chat was owed at the last classification, by run and key: a new one resets the backoff.
 	owed map[string]bool
-	// replacing is the waiting entry the Notify out is replacing; replaceClosed says its close came meanwhile, so
-	// the receipt naming it is not a delivery any close will end.
-	replacing string
-	frozen    []attnFrozen
-	attempt   int
+	// replacing is the waiting entry the Notify out is replacing; replaceClosed says its close came meanwhile, with
+	// replaceOutcome, so the receipt naming it is not a delivery any close will end.
+	replacing      string
+	replaceOutcome marotte.TurnOutcome
+	frozen         []attnFrozen
+	attempt        int
 	// readSeq counts the chat's reads of an unread wake (read), so a hold decided on an older probe is not kept.
 	readSeq       uint64
 	sending       bool
@@ -188,9 +195,11 @@ type attnOutbox struct {
 
 // runAttention's mutex is a leaf: no other lock is taken and nothing is called out while it is held.
 type runAttention struct {
-	host      attentionHost
-	now       func() time.Time
-	runs      map[string]*attnRun
+	host attentionHost
+	now  func() time.Time
+	runs map[string]*attnRun
+	// forgotten is when each run forget dropped stopped holding its lease; a new lease clears it (granted).
+	forgotten map[string]time.Time
 	boxes     map[marotte.ChatID]*attnOutbox
 	timer     *time.Timer
 	timerAt   time.Time
@@ -199,7 +208,9 @@ type runAttention struct {
 }
 
 func newRunAttention() *runAttention {
-	return &runAttention{now: time.Now, runs: map[string]*attnRun{}, boxes: map[marotte.ChatID]*attnOutbox{}}
+	return &runAttention{
+		now: time.Now, runs: map[string]*attnRun{}, forgotten: map[string]time.Time{}, boxes: map[marotte.ChatID]*attnOutbox{},
+	}
 }
 
 // loop ticks until done closes: the time-driven rules and any due delivery.
@@ -224,6 +235,8 @@ func (a *runAttention) tick() {
 	}
 	a.mu.Lock()
 	ids := slices.Sorted(maps.Keys(a.runs))
+	cut := a.now().Add(-attentionForgetFor)
+	maps.DeleteFunc(a.forgotten, func(_ string, at time.Time) bool { return at.Before(cut) })
 	a.mu.Unlock()
 	for _, id := range ids {
 		a.recompute(id)
@@ -282,6 +295,9 @@ func (a *runAttention) observe(in *attentionInput) {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if _, ended := a.forgotten[in.workflowID]; ended {
+		return
+	}
 	r := a.runLocked(in.workflowID)
 	if in.seq != 0 && in.seq < r.in.seq {
 		return
@@ -312,6 +328,9 @@ func (a *runAttention) healing(workflowID string, try int) {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if _, ended := a.forgotten[workflowID]; ended {
+		return
+	}
 	r := a.runLocked(workflowID)
 	if r.healingSince.IsZero() {
 		r.healingSince = a.now()
@@ -336,8 +355,8 @@ func (a *runAttention) healed(workflowID string) {
 }
 
 // attnGradeOf is a step's unfinished grade as the grade's caller hands it over: the lease node_complete held (chat and
-// name, the only record left of an ended run), whether the run is known to have ended, and newest, the path's newest
-// turn in the run log, open or closed, once the graded one closed.
+// name, the only record left of an ended run), whether the grade's trigger knows the run ended, and newest, the
+// path's newest turn in the run log, open or closed, once the graded one closed.
 type attnGradeOf struct {
 	grade    *attnGrade
 	chat     marotte.ChatID
@@ -347,22 +366,27 @@ type attnGradeOf struct {
 	ended    bool
 }
 
-// grade records a step's unfinished grade. An ended run's grade is a frozen line at once.
+// grade records a step's unfinished grade. An ended run's grade is a frozen line at once: one the trigger knows ended,
+// one with no lease, or one forget dropped since the lease was checked.
 func (a *runAttention) grade(workflowID string, in *attnGradeOf) {
-	if a == nil {
+	if a == nil || a.host == nil {
 		return
 	}
+	held := a.host.attentionHeld(workflowID)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	g := in.grade
 	g.at = a.now()
-	if in.ended {
+	_, forgotten := a.forgotten[workflowID]
+	if in.ended || !held || forgotten {
 		if in.chat != "" {
 			a.freezeLocked(in.chat, frozenLine(workflowID, in.name, nodeOfPath(in.nodePath), g, g.at))
 		}
 		return
 	}
 	r := a.runLocked(workflowID)
+	// A run no read classified yet has no chat, and forget freezes only a run with one.
+	r.chat, r.name = cmp.Or(r.chat, in.chat), cmp.Or(r.name, in.name)
 	if r.grades == nil {
 		r.grades = map[string]*attnGrade{}
 	}
@@ -380,14 +404,16 @@ func nodeOfPath(path string) string {
 	return path
 }
 
-// forget drops a run whose lease ended. Its still-owed unfinished steps become frozen lines with the finished-run
-// advice, since a step in the run's last node is graded at or after its end.
+// forget drops a run whose lease ended, which no later observe, heal mark or grade brings back until a new lease
+// (granted). Its still-owed unfinished steps become frozen lines with the finished-run advice, since a step in the
+// run's last node is graded at or after its end.
 func (a *runAttention) forget(workflowID string) {
 	if a == nil {
 		return
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.forgotten[workflowID] = a.now()
 	r, ok := a.runs[workflowID]
 	if !ok {
 		return
@@ -408,6 +434,16 @@ func (a *runAttention) forget(workflowID string) {
 	}
 }
 
+// granted lifts forget's hold on a run id granted a lease again, as a retry reuses its id.
+func (a *runAttention) granted(workflowID string) {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.forgotten, workflowID)
+}
+
 func (a *runAttention) runLocked(workflowID string) *attnRun {
 	r, ok := a.runs[workflowID]
 	if !ok {
@@ -424,7 +460,7 @@ func (a *runAttention) classifyLocked(r *attnRun) {
 	now := a.now()
 	f := workflow.HealthFacts{
 		AutoResumeStoppedAt: r.stoppedAt, HealingSince: r.healingSince, HealTry: r.healTry,
-		Asks: r.in.asks, Reachable: r.in.reachable, ReadFailed: r.in.readFailed, Launched: r.chat != "",
+		Asks: r.in.asks, Reachable: r.in.reachable, ReadFailed: r.in.readFailed, Gone: r.in.gone, Launched: r.chat != "",
 		Steps: map[string]workflow.StepFacts{},
 	}
 	if s := r.in.reply.State; s != nil {
@@ -767,7 +803,7 @@ func (a *runAttention) deliver(chat marotte.ChatID) {
 		slog.Debug("run attention: nothing is owed to the chat any more", "chat_id", chat)
 		return
 	}
-	b.replacing, b.replaceClosed = replace, false
+	b.replacing, b.replaceClosed, b.replaceOutcome = replace, false, ""
 	a.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), clientRequestBudget)
 	rcpt, err := a.host.attentionNotify(ctx, chat, text)
@@ -780,7 +816,7 @@ func (a *runAttention) deliver(chat marotte.ChatID) {
 	} else {
 		a.placedLocked(chat, b, d, rcpt, seq)
 	}
-	b.sending, b.replacing, b.replaceClosed = false, "", false
+	b.sending, b.replacing, b.replaceClosed, b.replaceOutcome = false, "", false, ""
 	clear(b.early)
 	a.scheduleLocked(chat, a.now())
 }
@@ -808,11 +844,16 @@ func (a *runAttention) read(chat marotte.ChatID) {
 }
 
 // placedLocked records a Notify's receipt: a new wake, a replaced one's new carried keys, or a hold while the earlier
-// wake is unread. A receipt naming a replaced entry whose close already came records nothing: that close settled or
-// backed off the earlier text, and the next build recomputes what is still owed.
+// wake is unread. A receipt naming a replaced entry whose close already came means the replace landed first, so that
+// close ended this text: a settling one marks d's keys delivered, and any other already backed off.
 func (a *runAttention) placedLocked(chat marotte.ChatID, b *attnOutbox, d *attnDelivery, rcpt command.NotifyReceipt, seq uint64) {
 	if rcpt.MessageID == b.replacing && b.replaceClosed {
-		slog.Debug("run attention: the wake a notify replaced ended first", "chat_id", chat, "entry", rcpt.MessageID)
+		slog.Debug("run attention: the wake a notify replaced ended first", "chat_id", chat, "entry", rcpt.MessageID,
+			"outcome", string(b.replaceOutcome))
+		if attentionSettles(b.replaceOutcome) {
+			a.markDeliveredLocked(b, d)
+			a.classifyChatLocked(chat)
+		}
 		return
 	}
 	b.nextAt = time.Time{}
@@ -878,7 +919,7 @@ func (a *runAttention) closedLocked(chat marotte.ChatID, b *attnOutbox, entryID 
 	d := b.inflight[entryID]
 	delete(b.inflight, entryID)
 	if entryID == b.replacing {
-		b.replaceClosed = true
+		b.replaceClosed, b.replaceOutcome = true, outcome
 	}
 	if !attentionSettles(outcome) {
 		slog.Info("run attention: a wake's turn did not settle; it is re-delivered", "chat_id", chat, "entry", entryID,
@@ -891,6 +932,10 @@ func (a *runAttention) closedLocked(chat marotte.ChatID, b *attnOutbox, entryID 
 	a.markDeliveredLocked(b, d)
 	b.attempt, b.nextAt, b.warned, b.followUp = 0, time.Time{}, false, false
 	b.notBefore = a.now().Add(attentionCoalesce)
+	a.classifyChatLocked(chat)
+}
+
+func (a *runAttention) classifyChatLocked(chat marotte.ChatID) {
 	for _, r := range a.runs {
 		if r.chat == chat {
 			a.classifyLocked(r)

@@ -94,9 +94,11 @@ type HealthFacts struct {
 	// Asks is the run's open asks from the same reply (OpenAsks).
 	Asks    []Ask
 	HealTry int
-	// Reachable is false while the ask cell's newest read failed or it holds none; ReadFailed tells the first.
+	// Reachable is false while the ask cell's newest read failed or it holds none; ReadFailed tells the first, and
+	// Gone a read kiro-cli answered with no such run.
 	Reachable  bool
 	ReadFailed bool
+	Gone       bool
 	// Launched: the run has a launching chat.
 	Launched bool
 	// InterruptedPause: the run's pause reason is one a restart writes (marotte's resumablePause).
@@ -163,7 +165,10 @@ const (
 func Health(in Inspect, f *HealthFacts, now time.Time) RunHealth {
 	if !in.OK || in.State == nil {
 		why := "marotte has not read this run since it started"
-		if f.ReadFailed {
+		switch {
+		case f.Gone:
+			why = "kiro-cli reports no such run"
+		case f.ReadFailed:
 			why = "marotte cannot read this run"
 		}
 		return RunHealth{State: HealthUnknown, Lead: -1, Why: why}

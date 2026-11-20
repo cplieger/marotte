@@ -182,8 +182,8 @@ func (rs *Runs) stepEnds(ctx context.Context, workflowID string, kas map[string]
 }
 
 // gradeAttention hands the run-attention ledger an unfinished step end, synchronously, so the wake that names it is
-// owed before the grade's caller returns. l is the lease node_complete held for the close; runEnded says the run is
-// known to be terminal, as a run whose lease is gone is.
+// owed before the grade's caller returns. l is the lease node_complete held for the close; runEnded says the grade's
+// trigger knows the run is terminal (runAttention.grade owns the lease check).
 func (rs *Runs) gradeAttention(l *runlease.Lease, nodePath string, c *stepClose, runEnded bool) {
 	var kind workflow.UnfinishedKind
 	switch {
@@ -200,13 +200,12 @@ func (rs *Runs) gradeAttention(l *runlease.Lease, nodePath string, c *stepClose,
 	if c := marotte.ChatID(l.ChatID); c != "" && !marotte.IsRunHostChat(c) {
 		chat = c
 	}
-	_, held := rs.lease(l.WorkflowID)
 	in := &attnGradeOf{
 		grade:    &attnGrade{kind: kind, turnID: c.turn},
 		chat:     chat,
 		name:     rs.leasedRunName(l),
 		nodePath: nodePath,
-		ended:    runEnded || !held,
+		ended:    runEnded,
 	}
 	if rs.log != nil {
 		in.newest = rs.log.newestTurn(l.WorkflowID, nodePath)

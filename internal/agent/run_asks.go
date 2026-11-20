@@ -130,6 +130,8 @@ type askCell struct {
 	decodeWarns bool
 	// readFailed is set while the newest read failed, so reply is older than the run.
 	readFailed bool
+	// gone is set while the newest read was kiro-cli answering that it holds no such run.
+	gone bool
 }
 
 func newAskCell(workflowID string, chatID marotte.ChatID) *askCell {
@@ -560,7 +562,7 @@ func (rs *Runs) refreshCell(ctx context.Context, c *askCell) (askRead, error) {
 	}
 	rs.readSaid(ctx, c, in, basis)
 	c.mu.Lock()
-	c.reply, c.raw, c.basis, c.readFailed = in, raw, basis, false
+	c.reply, c.raw, c.basis, c.readFailed, c.gone = in, raw, basis, false, false
 	asks := workflow.OpenAsks(in, c.runLogLocked(basis, rs.asks.epochNow()))
 	c.settleOnReadLocked(in, asks)
 	// Settling can clear marotte's own holds, which are part of this snapshot.
@@ -600,7 +602,7 @@ func (rs *Runs) markGone(ctx context.Context, c *askCell) {
 	c.clearPendingLocked()
 	stopTimer(c.requery)
 	stopTimer(c.quiet)
-	c.reply, c.raw, c.readFailed = workflow.Inspect{}, nil, false
+	c.reply, c.raw, c.readFailed, c.gone = workflow.Inspect{}, nil, false, true
 	n := rs.publishLocked(ctx, c, nil, true)
 	c.mu.Unlock()
 	rs.sendNotices(ctx, c, n)
@@ -609,7 +611,7 @@ func (rs *Runs) markGone(ctx context.Context, c *askCell) {
 
 func (rs *Runs) markUnreadable(ctx context.Context, c *askCell) {
 	c.mu.Lock()
-	c.readFailed = true
+	c.readFailed, c.gone = true, false
 	n := rs.publishLocked(ctx, c, c.last.Asks, false)
 	rs.armRequeryLocked(c)
 	c.mu.Unlock()

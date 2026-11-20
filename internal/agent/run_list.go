@@ -592,15 +592,37 @@ func (l *runList) advance(f *orderFacts) {
 			h.gateHeld = false
 		}
 	}()
-	if e == nil || !l.mayLaunch(e) {
-		return
-	}
-	if (e.kind == marotte.RunKindRevert && by != nil) || !f.admit || !l.gateStarts(e, f) || !l.reserveStarted(e, f) {
+	e, dl, ok := l.startPastGate(e, dl, f, by, &held)
+	if !ok || !l.reserveStarted(e, f) {
 		return
 	}
 	l.take(e, n)
 	if dl.Kind == marotte.DeliverPrompt {
 		l.carry(e, dl)
+	}
+}
+
+// startPastGate reports whether e's take may start, recording an attention entry's start with the model gate. When
+// another chat's start landed between pickPastGate's check and this one, e is held too and what waits behind it is
+// picked once more, so a person's row is never held behind a wake; held gathers every entry held.
+func (l *runList) startPastGate(
+	e *runEntry, dl marotte.Delivery, f *orderFacts, by *runEntry, held *[]*runEntry,
+) (*runEntry, marotte.Delivery, bool) {
+	for retried := false; ; retried = true {
+		if e == nil || !l.mayLaunch(e) || (e.kind == marotte.RunKindRevert && by != nil) || !f.admit {
+			return nil, dl, false
+		}
+		if l.gateStarts(e, f) {
+			return e, dl, true
+		}
+		if retried {
+			return nil, dl, false
+		}
+		e.gateHeld = true
+		var more []*runEntry
+		*held = append(*held, e)
+		e, dl, more = l.pickPastGate(f)
+		*held = append(*held, more...)
 	}
 }
 
