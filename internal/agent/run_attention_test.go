@@ -112,8 +112,21 @@ type attnHost struct {
 	refuse error
 	// lease, when set, is the lease and run log facts the ledger reads, in place of the run host's.
 	lease *attnLease
-	armed []attnTimer
-	mu    sync.Mutex
+	// onHeld, when set, runs after the ledger's lease check answered, before the ledger acts on the answer.
+	onHeld func(workflowID string, held bool)
+	armed  []attnTimer
+	mu     sync.Mutex
+}
+
+func (h *attnHost) attentionHeld(workflowID string) bool {
+	held := h.attentionHost.attentionHeld(workflowID)
+	h.mu.Lock()
+	hook := h.onHeld
+	h.mu.Unlock()
+	if hook != nil {
+		hook(workflowID, held)
+	}
+	return held
 }
 
 func (h *attnHost) attentionLease(workflowID string) (attnLease, bool) {
@@ -716,6 +729,36 @@ func TestRunAttention_UnfinishedSteps(t *testing.T) {
 			t.Errorf("after a stale read the run reads %q, want unfinished_step", got)
 		}
 	})
+	t.Run("the run ends between the grade's lease check and its record", func(t *testing.T) {
+		g := newAttnRig(t, nil)
+		const id = "wf_00000000000000b6"
+		g.launch(t, id, "review")
+		var once sync.Once
+		g.host.mu.Lock()
+		g.host.onHeld = func(workflowID string, held bool) {
+			if workflowID == id && held {
+				once.Do(func() { g.h.runs.releaseLease(context.Background(), id) })
+			}
+		}
+		g.host.mu.Unlock()
+		g.gradeStep(t, id, "seat-b", workflow.UnfinishedEmptyAnswer)
+		if _, live := ledgerHealth(g.h, id); live {
+			t.Error("the grade brought the ended run back into the ledger as a live run")
+		}
+		g.h.runs.attention.healing(id, 1)
+		if _, live := ledgerHealth(g.h, id); live {
+			t.Error("a heal mark brought the ended run back into the ledger as a live run")
+		}
+		g.deliver()
+		wakes := g.awaitWakes(t, 1)
+		if len(wakes) != 1 {
+			t.Fatalf("c1 got %d wakes, want the ended run's line: %q", len(wakes), wakes)
+		}
+		wantWakeNames(t, wakes[0], id, "run_workflow")
+		if strings.Contains(wakes[0], "replace_remaining") {
+			t.Errorf("the ended run's wake %q offers replace_remaining, which KAS refuses on a finished run", wakes[0])
+		}
+	})
 	t.Run("the run ends inside the coalescing window", func(t *testing.T) {
 		g := newAttnRig(t, nil)
 		const id = "wf_00000000000000b3"
@@ -1217,7 +1260,8 @@ func TestRunAttention_ASecondWakeInARunningTurn(t *testing.T) {
 }
 
 // The reader removing the waiting wake a new notify is replacing, with its close reaching the ledger before the
-// notify's receipt, leaves no wake in flight that no close will end: the chat's next trouble still wakes it.
+// notify's receipt, leaves no wake in flight that no close will end, and the discard settles the replacing text: the
+// chat's next trouble still wakes it, without the discarded run's line.
 func TestRunAttention_ACloseRacingAReplacedWake(t *testing.T) {
 	t.Parallel()
 	g := newAttnRig(t, nil)
@@ -1266,6 +1310,9 @@ func TestRunAttention_ACloseRacingAReplacedWake(t *testing.T) {
 	wakes := g.awaitWakes(t, 1)
 	if len(wakes) != 1 || !strings.Contains(wakes[0], third) {
 		t.Fatalf("c1 got %q after the race, want a wake naming %s", wakes, third)
+	}
+	if strings.Contains(wakes[0], second) {
+		t.Errorf("the reader discarded the replaced wake that carried %s, yet the next wake names it again: %q", second, wakes[0])
 	}
 }
 
@@ -1478,6 +1525,29 @@ func TestRunAttention_Unknown(t *testing.T) {
 	g.after(attentionUnknownAfter + time.Second)
 	if wakes := g.awaitWakes(t, 2); len(wakes) != 2 {
 		t.Errorf("c1 got %d wakes, want a second for the later failure: %q", len(wakes), wakes)
+	}
+}
+
+// A leased run kiro-cli answers "no such run" for wakes the chat at 10 minutes with that reason, not as a run marotte
+// never read.
+func TestRunAttention_ARunKiroCLIDoesNotKnow(t *testing.T) {
+	t.Parallel()
+	g := newAttnRig(t, nil)
+	const id = "wf_0000000000000602"
+	g.launch(t, id, "perf")
+	g.br.setCallRPCErr(methodKiroWorkflowInspect, workflowNotFoundErr())
+	if _, err := g.h.runs.readAsks(t.Context(), g.h.runs.cellFor(id)); !workflowNotFound(err) {
+		t.Fatalf("Setup: the read answered %v, want kiro-cli's no such run", err)
+	}
+	g.deliver()
+	g.after(attentionUnknownAfter)
+	wakes := g.awaitWakes(t, 1)
+	if len(wakes) != 1 {
+		t.Fatalf("c1 got %d wakes, want one: %q", len(wakes), wakes)
+	}
+	wantWakeNames(t, wakes[0], id, "no such run")
+	if strings.Contains(wakes[0], "has not read") {
+		t.Errorf("the wake %q says marotte never read a run kiro-cli answered for", wakes[0])
 	}
 }
 

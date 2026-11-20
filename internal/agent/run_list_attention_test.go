@@ -183,4 +183,21 @@ func TestRunList_TheModelGateHoldsAWakesTake(t *testing.T) {
 	if !slices.Contains(asked, "d") || slices.Contains(asked, "m-b") {
 		t.Errorf("the gate was asked for %v, want the wake alone", asked)
 	}
+
+	// Another chat's start can land between the gate's check and this take's start.
+	w = newTableWorld()
+	w.gate = func(*runEntry) (bool, time.Time) { return true, time.Time{} }
+	w.gateStart = func(*runEntry) (bool, time.Time) { return false, open }
+	w.wake("d")
+	w.l.takeEffects()
+	w.user("m-b", marotte.RunWantPrompt)
+	if got := w.order(); got != "m-b:starting d:pending" {
+		t.Errorf("with the wake's start refused after its check, the list = %q, want the person's row taken", got)
+	}
+	if fx := w.l.takeEffects(); !fx.gateAt.Equal(open) {
+		t.Errorf("after a refused start gateAt = %v, want %v", fx.gateAt, open)
+	}
+	if e := w.entry(t, "d"); e.gateHeld {
+		t.Error("the hold from a refused start outlived the advance")
+	}
 }

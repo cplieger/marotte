@@ -446,6 +446,10 @@ func TestHealth_NoReadYetIsUnknown(t *testing.T) {
 	if h.State != HealthUnknown || !strings.Contains(h.Why, "cannot read") {
 		t.Errorf("Health of a failed first read = %q (%s), want unknown, cannot read", h.State, h.Why)
 	}
+	h = Health(Inspect{}, &HealthFacts{Gone: true}, healthNow)
+	if h.State != HealthUnknown || !strings.Contains(h.Why, "no such run") || strings.Contains(h.Why, "has not read") {
+		t.Errorf("Health of a run kiro-cli does not know = %q (%s), want unknown, no such run", h.State, h.Why)
+	}
 }
 
 // heldBranch is a parallel with a branch that sent success and is held open beside a running sibling.
