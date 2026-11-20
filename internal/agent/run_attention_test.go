@@ -442,9 +442,9 @@ func TestRunAttention_RunLevelPauses(t *testing.T) {
 	t.Run("continuation exhausted", func(t *testing.T) {
 		g := newAttnRig(t, nil)
 		g.launch(t, capRun, "publish")
-		raw := edited(t, recordedReply(t, "at-cap"), func(doc map[string]any) {
+		// The live settled parallel pause, its transient class swapped for the one the heal never takes.
+		raw := edited(t, retarget(t, "parallel-settled-paused", capRun), func(doc map[string]any) {
 			st := doc["state"].(map[string]any)
-			delete(st, "pause")
 			st["pauseReason"] = "Step exhausted its continuation budget."
 			st["pauseDetail"] = map[string]any{"class": "continuation-exhausted", "occurredAt": "2026-11-20T01:00:00.000Z"}
 		})

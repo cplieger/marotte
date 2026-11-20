@@ -1,10 +1,10 @@
 package workflow
 
-// The table runs workflow.Health over live kiro-cli replies (testdata/inspect). branch-engine-paused, reparked-silently
-// and at-cap are kiro-cli 3.5.0 replies (scrubbed: workspace, model ids, agent names, captured text); the
-// owner-state and pause-record cases overlay a reply with the run-level fields kiro-cli 3.5.0's state schema
-// declares (pauseDetail {class, code, occurredAt}, pausePending {initiator, reason, requestedAt}, stopInitiator
-// "user", stopReason, pause {kind: maxIterations}), as asks_test.go recombines node shapes.
+// The table runs workflow.Health over live kiro-cli replies (testdata/inspect). branch-engine-paused,
+// parallel-settled-paused, reparked-silently and at-cap are kiro-cli 3.5.0 replies (scrubbed: workspace, model ids,
+// agent names, captured text); the owner-state and pause-record cases overlay a reply with the run-level fields
+// kiro-cli 3.5.0's state schema declares (pauseDetail {class, code, occurredAt}, pausePending {initiator, reason,
+// requestedAt}, stopInitiator "user", stopReason, pause {kind: maxIterations}), as asks_test.go recombines node shapes.
 
 import (
 	"encoding/json"
@@ -228,6 +228,44 @@ func TestHealth_EnginePausedBranch(t *testing.T) {
 			}
 			if running, ok := stepState(h, "search-build"); !ok || running.State != HealthHealthy {
 				t.Errorf("the running sibling = %+v, want a healthy listed step", running)
+			}
+		})
+	}
+}
+
+// parallel-settled-paused is a kiro-cli 3.5.0 run read once its throttled branch's sibling settled: the parallel
+// and the run read paused, and the run carries the branch's transient pauseDetail.
+func TestHealth_SettledParallelPause(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		facts HealthFacts
+		want  HealthState
+		owner bool
+	}{
+		{name: "the heal declines it", facts: HealthFacts{Reachable: true, Launched: true}, want: HealthEnginePaused},
+		{
+			name:  "the heal takes it",
+			facts: HealthFacts{Reachable: true, Launched: true, HealingSince: healthNow.Add(-time.Minute), HealTry: 1},
+			want:  HealthHealing, owner: true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			in := overlaid(t, "parallel-settled-paused", nil)
+			if in.State.Status != statusPaused {
+				t.Fatalf("Setup: the capture's run status = %q, want paused", in.State.Status)
+			}
+			h := healthOf(in, c.facts)
+			if h.State != c.want {
+				t.Fatalf("run state = %q (%s), want %q", h.State, h.Why, c.want)
+			}
+			if h.Owner != c.owner {
+				t.Errorf("Owner = %v, want %v", h.Owner, c.owner)
+			}
+			if done, ok := stepState(h, "seat-a"); ok {
+				t.Errorf("the settled sibling is listed as %+v, want it left out as healthy and finished", done)
 			}
 		})
 	}
