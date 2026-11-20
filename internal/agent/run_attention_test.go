@@ -59,6 +59,7 @@ type attnRig struct {
 	br      *fakeBridge
 	cs      *testChatStore
 	clk     *attnClock
+	host    *attnHost
 	replies map[string]json.RawMessage
 	stops   []promptStop
 	prompts int
@@ -90,14 +91,85 @@ func newAttnRig(t *testing.T, leases *runlease.Store) *attnRig {
 	return g
 }
 
-// useClock puts h's ledger, model gate and run log on the rig's clock.
+// useClock puts h's ledger, model gate and run log on the rig's clock, and the ledger's timers on the rig's host.
 func (g *attnRig) useClock(h *Runtime) {
 	if g.clk == nil {
 		g.clk = &attnClock{t: time.Now()}
 	}
-	h.runs.attention.setClock(g.clk.now)
-	h.coord.turns.gate.setClock(g.clk.now)
+	g.host = attnOnClock(h, g.clk)
 	h.runs.log.setClock(g.clk.now)
+}
+
+// attnHost is the run host as h's ledger sees it in a test: its timers are recorded with their due time on the test
+// clock and run only once a test moves the clock past it (fireDue), and a hook may act once a notify returns.
+type attnHost struct {
+	attentionHost
+	clk *attnClock
+	// onNotify runs on the delivering goroutine after the door answered and before the ledger reads the receipt.
+	onNotify func(command.NotifyReceipt)
+	armed    []attnTimer
+	mu       sync.Mutex
+}
+
+type attnTimer struct {
+	due time.Time
+	fn  func()
+	// t is what the ledger holds; its Stop is the ledger's cancel, which fireDue reads back.
+	t *time.Timer
+}
+
+// attnOnClock puts h's ledger and model gate on clk and the ledger's timers on the returned host.
+func attnOnClock(h *Runtime, clk *attnClock) *attnHost {
+	a := h.runs.attention
+	host := &attnHost{clk: clk}
+	a.mu.Lock()
+	a.now, host.attentionHost, a.host = clk.now, a.host, host
+	a.mu.Unlock()
+	gate := h.coord.turns.gate
+	gate.mu.Lock()
+	gate.now = clk.now
+	gate.mu.Unlock()
+	return host
+}
+
+func (h *attnHost) attentionAfter(d time.Duration, fn func()) *time.Timer {
+	t := time.AfterFunc(24*time.Hour, func() {})
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.armed = append(h.armed, attnTimer{due: h.clk.now().Add(d), fn: fn, t: t})
+	return t
+}
+
+func (h *attnHost) attentionNotify(ctx context.Context, chat marotte.ChatID, text string) (command.NotifyReceipt, error) {
+	rcpt, err := h.attentionHost.attentionNotify(ctx, chat, text)
+	h.mu.Lock()
+	hook := h.onNotify
+	h.mu.Unlock()
+	if hook != nil && err == nil {
+		hook(rcpt)
+	}
+	return rcpt, err
+}
+
+// fireDue runs every timer the ledger armed and did not cancel whose due time the clock reached.
+func (h *attnHost) fireDue() {
+	now := h.clk.now()
+	h.mu.Lock()
+	var due []func()
+	keep := h.armed[:0]
+	for _, x := range h.armed {
+		switch {
+		case now.Before(x.due):
+			keep = append(keep, x)
+		case x.t.Stop():
+			due = append(due, x.fn)
+		}
+	}
+	h.armed = keep
+	h.mu.Unlock()
+	for _, fn := range due {
+		fn()
+	}
 }
 
 func (g *attnRig) call(method string, p map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
@@ -170,12 +242,6 @@ func (g *attnRig) launch(t *testing.T, id, name string) {
 	g.h.runs.recordParentSession(t.Context(), id, parkSession)
 }
 
-// launchParentless leases id with no launching chat, as POST /api/runs does.
-func (g *attnRig) launchParentless(t *testing.T, id, name string) {
-	t.Helper()
-	g.h.runs.grantLease(t.Context(), id, name, manualLaunch(), hostSec())
-}
-
 func (g *attnRig) serve(id string, raw json.RawMessage) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -190,16 +256,16 @@ func (g *attnRig) read(t *testing.T, id string, raw json.RawMessage) {
 }
 
 // deliver moves the clock past the coalescing window, and past the model gate's spacing since the last wake started,
-// and runs the ledger's tick.
+// and runs the ledger's tick and every timer then due.
 func (g *attnRig) deliver() {
-	g.clk.advance(max(attentionCoalesce, modelGateSpacing) + time.Second)
-	g.h.runs.attention.tick()
+	g.after(max(attentionCoalesce, modelGateSpacing) + time.Second)
 }
 
-// after moves the clock by d and runs the ledger's tick.
+// after moves the clock by d and runs the ledger's tick and every timer then due.
 func (g *attnRig) after(d time.Duration) {
 	g.clk.advance(d)
 	g.h.runs.attention.tick()
+	g.host.fireDue()
 }
 
 // wakeTurns is the prompt of every c1 turn marotte's wake opened, oldest first.
@@ -231,10 +297,12 @@ func (g *attnRig) settle(t *testing.T) {
 	joinInflight(g.h)
 }
 
-// noWake fails t when c1 holds more than had wake turns once the work in flight finished.
+// noWake fails t when c1 holds more than had wake turns once every timer due by the clock ran and the work in flight
+// finished.
 func (g *attnRig) noWake(t *testing.T, had int, why string) {
 	t.Helper()
-	time.Sleep(20 * time.Millisecond)
+	joinInflight(g.h)
+	g.host.fireDue()
 	joinInflight(g.h)
 	if w := g.wakeTurns(t); len(w) != had {
 		t.Errorf("%s: c1 holds %d wake turns, want %d: %q", why, len(w), had, w)
@@ -315,18 +383,32 @@ func leafOf(doc map[string]any, nodeID string) map[string]any {
 	return walk(doc["state"].(map[string]any)["root"].(map[string]any))
 }
 
-// facts is the ledger's newest classification of id, failing t when it holds none.
-func (g *attnRig) facts(t *testing.T, id string) runAttentionFacts {
-	t.Helper()
-	f, ok := g.h.runs.attention.facts(id)
+// ledgerHealth is h's ledger's newest classification of id, a copy; false when it holds none.
+func ledgerHealth(h *Runtime, id string) (workflow.RunHealth, bool) {
+	a := h.runs.attention
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	r, ok := a.runs[id]
 	if !ok {
-		t.Fatalf("the ledger holds no facts for %s", id)
+		return workflow.RunHealth{}, false
+	}
+	out := r.health
+	out.Steps = slices.Clone(out.Steps)
+	return out, true
+}
+
+// health is the ledger's newest classification of id, failing t when it holds none.
+func (g *attnRig) health(t *testing.T, id string) workflow.RunHealth {
+	t.Helper()
+	f, ok := ledgerHealth(g.h, id)
+	if !ok {
+		t.Fatalf("the ledger holds no classification of %s", id)
 	}
 	return f
 }
 
-func stepOf(f runAttentionFacts, nodeID string) (workflow.StepHealth, bool) {
-	for _, s := range f.health.Steps {
+func stepOf(f workflow.RunHealth, nodeID string) (workflow.StepHealth, bool) {
+	for _, s := range f.Steps {
 		if s.NodeID == nodeID {
 			return s, true
 		}
@@ -387,7 +469,7 @@ func TestRunAttention_ARepark(t *testing.T) {
 			const id = "wf_00000000000000a1"
 			g.launch(t, id, "perf")
 			g.read(t, id, retarget(t, fixture, id))
-			if got := g.facts(t, id).health.State; got != workflow.HealthParkedSilently {
+			if got := g.health(t, id).State; got != workflow.HealthParkedSilently {
 				t.Fatalf("the run reads %q, want parked_silently", got)
 			}
 			g.deliver()
@@ -410,10 +492,10 @@ func TestRunAttention_AnEnginePausedBranch(t *testing.T) {
 	frame := g.h.runs.asksOnFrame(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
 	frame(t.Context(), parkChat, runNotif(methodWFNodePaused, map[string]any{"workflowId": branchRun, "nodeId": "media-build"}))
 	waitUntil(t, "the ledger's engine pause", func() bool {
-		f, ok := g.h.runs.attention.facts(branchRun)
-		return ok && f.health.State == workflow.HealthEnginePaused
+		f, ok := ledgerHealth(g.h, branchRun)
+		return ok && f.State == workflow.HealthEnginePaused
 	})
-	step, ok := stepOf(g.facts(t, branchRun), "media-build")
+	step, ok := stepOf(g.health(t, branchRun), "media-build")
 	if !ok || step.State != workflow.HealthEnginePaused {
 		t.Fatalf("step media-build = %+v, want engine_paused", step)
 	}
@@ -464,12 +546,12 @@ func TestRunAttention_RunLevelPauses(t *testing.T) {
 	t.Run("automatic resumes stopped", func(t *testing.T) {
 		g := newThrottleRig(t, nil)
 		clk := &attnClock{t: time.Now()}
-		g.h.runs.attention.setClock(clk.now)
-		g.h.coord.turns.gate.setClock(clk.now)
+		host := attnOnClock(g.h, clk)
 		g.h.runs.log.setClock(clk.now)
 		g.spend(t)
 		clk.advance(attentionCoalesce + time.Second)
 		g.h.runs.attention.tick()
+		host.fireDue()
 		cs := g.h.chatStore.(*testChatStore)
 		wake := nextPrompt(t, cs, parkChat, 0)
 		if wake.Caller == nil || wake.Caller.Kind != marotte.CallerKindMarotte {
@@ -534,13 +616,7 @@ func TestRunAttention_UnfinishedSteps(t *testing.T) {
 			g := newAttnRig(t, nil)
 			const id = "wf_00000000000000b1"
 			g.launch(t, id, "review")
-			nodePath := g.gradeStep(t, id, "seat-b", tc.kind)
-			if tc.kind == workflow.UnfinishedEmptyAnswer {
-				want := stepEmptyAnswerNoteText(id, "review", nodePath, "step-session-1", false)
-				if got := g.facts(t, id).next[nodePath]; got != want {
-					t.Errorf("next = %q, want the empty-answer advice %q", got, want)
-				}
-			}
+			g.gradeStep(t, id, "seat-b", tc.kind)
 			g.deliver()
 			wakes := g.awaitWakes(t, 1)
 			if len(wakes) != 1 {
@@ -563,6 +639,30 @@ func TestRunAttention_UnfinishedSteps(t *testing.T) {
 		g.read(t, id, inspectWithStep(t, id, "seat-b", "running", ""))
 		g.deliver()
 		g.noWake(t, 0, "a step re-run before the wake")
+	})
+	t.Run("a newer turn on the path that already closed drops the item", func(t *testing.T) {
+		g := newAttnRig(t, nil)
+		const id = "wf_00000000000000b4"
+		g.launch(t, id, "review")
+		nodePath := g.gradeStep(t, id, "seat-b", workflow.UnfinishedEmptyAnswer)
+		step := &translate.RunStep{RunID: id, NodePath: nodePath, SessionID: "step-session-2"}
+		g.h.runs.RunNodeStart(t.Context(), step, parkChat)
+		turn, ok := g.h.runs.RunFoldTarget(t.Context(), step, parkChat)
+		if !ok {
+			t.Fatal("Setup: the re-run has no open turn")
+		}
+		if _, err := turn.TextDelta(t.Context(), "", "say-2", "The review is written."); err != nil {
+			t.Fatalf("Setup: text: %v", err)
+		}
+		if !g.h.runs.RunStopReason(id, nodePath, marotte.StopReasonEndTurn) {
+			t.Fatal("Setup: RunStopReason refused on the re-run's turn")
+		}
+		g.h.runs.RunNodeComplete(t.Context(), id, []string{id, "seat-b"}, "completed", "")
+		joinInflight(g.h)
+		stepEndsOf(t, g.h, id)
+		joinInflight(g.h)
+		g.deliver()
+		g.noWake(t, 0, "a step re-run to its end before the wake")
 	})
 	t.Run("the run ends inside the coalescing window", func(t *testing.T) {
 		g := newAttnRig(t, nil)
@@ -659,7 +759,7 @@ func TestRunAttention_QuestionsAndARestart(t *testing.T) {
 	g := newAttnRig(t, before)
 	g.launch(t, parkedRun, "asks")
 	g.read(t, parkedRun, recordedReply(t, "parked"))
-	if got := g.facts(t, parkedRun).health.State; got != workflow.HealthWaitingOnParent {
+	if got := g.health(t, parkedRun).State; got != workflow.HealthWaitingOnParent {
 		t.Fatalf("the question reads %q, want waiting_on_parent", got)
 	}
 	g.deliver()
@@ -735,7 +835,7 @@ func TestRunAttention_Dedupe(t *testing.T) {
 	g.awaitWakes(t, 2)
 
 	g.read(t, id, runningTree(t, id, "ask"))
-	if got := g.facts(t, id).health.State; got != workflow.HealthHealthy {
+	if got := g.health(t, id).State; got != workflow.HealthHealthy {
 		t.Fatalf("Setup: the run reads %q, want healthy", got)
 	}
 	g.read(t, id, retarget(t, reparkFixture, id))
@@ -769,8 +869,7 @@ func TestRunAttention_OwedOnly(t *testing.T) {
 	t.Run("engine paused when queued, healing when due", func(t *testing.T) {
 		g := newThrottleRig(t, nil)
 		clk := &attnClock{t: time.Now()}
-		g.h.runs.attention.setClock(clk.now)
-		g.h.coord.turns.gate.setClock(clk.now)
+		host := attnOnClock(g.h, clk)
 		g.h.runs.log.setClock(clk.now)
 		g.br.setCallResult(methodKiroWorkflowInspect, inspectPausedWithDetail(t, gateRunID, modelServiceReason,
 			pauseDetail{Class: transientErrorClass, Code: throttleCode}))
@@ -780,7 +879,7 @@ func TestRunAttention_OwedOnly(t *testing.T) {
 		joinInflight(g.h)
 		clk.advance(attentionCoalesce + time.Second)
 		g.h.runs.attention.tick()
-		time.Sleep(20 * time.Millisecond)
+		host.fireDue()
 		joinInflight(g.h)
 		if n := countCalls(g.br, marotte.MethodPrompt); n != 0 {
 			t.Errorf("a run the heal took sent %d prompts, want none", n)
@@ -847,9 +946,9 @@ func TestRunAttention_OwedOnly(t *testing.T) {
 			st["stopInitiator"] = "user"
 			st["stopReason"] = "Pause requested by owning parent/orchestrator; human intent not verified."
 		}))
-		f := g.facts(t, id)
-		if f.health.State != workflow.HealthPaused {
-			t.Errorf("the run reads %q, want paused", f.health.State)
+		f := g.health(t, id)
+		if f.State != workflow.HealthPaused {
+			t.Errorf("the run reads %q, want paused", f.State)
 		}
 		if s, ok := stepOf(f, "ask"); !ok || s.State != workflow.HealthParkedSilently {
 			t.Errorf("step ask = %+v, want parked_silently listed", s)
@@ -1027,9 +1126,9 @@ func TestRunAttention_Redelivery(t *testing.T) {
 	})
 }
 
-// While kiro-cli holds the first wake's steer unread, a second run's trouble is a follow-up after the first carry
-// settles, and settling the first marks only the run it carried.
-func TestRunAttention_AHeldSteerGetsAFollowUp(t *testing.T) {
+// While kiro-cli holds the first wake's steer unread, a second run's trouble waits; once the agent read the first, the
+// second is steered into the same running turn, and that turn's close settles both.
+func TestRunAttention_ASecondWakeInARunningTurn(t *testing.T) {
 	t.Parallel()
 	g := newAttnRig(t, nil)
 	const first, second = "wf_0000000000000201", "wf_0000000000000202"
@@ -1041,18 +1140,78 @@ func TestRunAttention_AHeldSteerGetsAFollowUp(t *testing.T) {
 	waitUntil(t, "the first wake's steer", func() bool { return len(steeredWakes(k)) == 1 })
 	g.read(t, second, retarget(t, reparkFixture, second))
 	g.deliver()
-	time.Sleep(20 * time.Millisecond)
-	joinInflight(g.h)
+	g.noWake(t, 0, "a second run's trouble while the first wake is unread")
 	if s := steeredWakes(k); len(s) != 1 || strings.Contains(s[0], second) {
-		t.Fatalf("steered %q while the first was held, want the first wake alone", s)
+		t.Fatalf("steered %q while the first was held unread, want the first wake alone", s)
 	}
 	held := k.holds()
 	g.h.translateACPEvent(parkChat, g.h.originOf(parkChat), injectedMsg(held[len(held)-1], steeredWakes(k)[0]))
+	g.deliver()
+	waitUntil(t, "the second wake's steer", func() bool { return len(steeredWakes(k)) == 2 })
+	s := steeredWakes(k)
+	if !strings.Contains(s[1], second) || strings.Contains(s[1], first) {
+		t.Fatalf("the second steer = %q, want it to name %s alone", s[1], second)
+	}
+	held = k.holds()
+	g.h.translateACPEvent(parkChat, g.h.originOf(parkChat), injectedMsg(held[len(held)-1], s[1]))
 	g.userTurnEnds(t, turn, "end_turn")
+	g.after(attentionBackoffCap)
+	g.noWake(t, 0, "two wakes the running turn read and closed clean")
+	if n := len(steeredWakes(k)); n != 2 {
+		t.Errorf("steered %d wakes, want two", n)
+	}
+}
+
+// The reader removing the waiting wake a new notify is replacing, with its close reaching the ledger before the
+// notify's receipt, leaves no wake in flight that no close will end: the chat's next trouble still wakes it.
+func TestRunAttention_ACloseRacingAReplacedWake(t *testing.T) {
+	t.Parallel()
+	g := newAttnRig(t, nil)
+	const first, second, third = "wf_0000000000000211", "wf_0000000000000212", "wf_0000000000000213"
+	for _, id := range []string{first, second, third} {
+		g.launch(t, id, "perf")
+	}
+	turn, _ := g.userTurnRuns(t)
+	queueTextDuring(t, g.h, "m-user", "then run the tests")
+	g.read(t, first, retarget(t, reparkFixture, first))
+	g.deliver()
+	waitUntil(t, "the queued wake", func() bool { return len(marotteEntries(g.h)) == 1 })
+	waiting := marotteEntries(g.h)[0].ID
+	var once sync.Once
+	g.host.mu.Lock()
+	g.host.onNotify = func(rcpt command.NotifyReceipt) {
+		if rcpt.MessageID != waiting {
+			return
+		}
+		once.Do(func() {
+			if err := g.h.coord.Unqueue(context.Background(), parkChat, waiting); err != nil {
+				return
+			}
+			a := g.h.runs.attention
+			for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+				a.mu.Lock()
+				_, open := a.boxLocked(parkChat).inflight[waiting]
+				a.mu.Unlock()
+				if !open {
+					return
+				}
+			}
+		})
+	}
+	g.host.mu.Unlock()
+	g.read(t, second, retarget(t, reparkFixture, second))
+	g.deliver()
+	joinInflight(g.h)
+	if e := marotteEntries(g.h); len(e) != 0 {
+		t.Fatalf("Setup: the replaced wake is still on the list: %+v", e)
+	}
+	g.userTurnEnds(t, turn, "end_turn")
+	g.settle(t)
+	g.read(t, third, retarget(t, reparkFixture, third))
 	g.deliver()
 	wakes := g.awaitWakes(t, 1)
-	if len(wakes) != 1 || !strings.Contains(wakes[0], second) || strings.Contains(wakes[0], first) {
-		t.Fatalf("the follow-up = %q, want one wake naming %s alone", wakes, second)
+	if len(wakes) != 1 || !strings.Contains(wakes[0], third) {
+		t.Fatalf("c1 got %q after the race, want a wake naming %s", wakes, third)
 	}
 }
 
@@ -1224,9 +1383,9 @@ func TestRunAttention_AHeldSignalIsHealthy(t *testing.T) {
 		n := leafOf(doc, "ask")
 		n["completionSignal"], n["completionSignalSource"] = "success", "send_message"
 	}))
-	f := g.facts(t, id)
-	if f.health.State != workflow.HealthHealthy {
-		t.Errorf("the run reads %q, want healthy", f.health.State)
+	f := g.health(t, id)
+	if f.State != workflow.HealthHealthy {
+		t.Errorf("the run reads %q, want healthy", f.State)
 	}
 	if s, _ := stepOf(f, "ask"); !strings.Contains(s.Why, "#12281") {
 		t.Errorf("step ask why = %q, want the hold named", s.Why)
@@ -1355,8 +1514,8 @@ func TestRunAttention_StepActivityMintsNoRunRevision(t *testing.T) {
 	if after := len(eventsOfType(g.h, marotte.EventRunRev)); after != before {
 		t.Errorf("100 step entries minted %d run revisions, want none", after-before)
 	}
-	if f := g.facts(t, id); f.health.State != workflow.HealthHealthy {
-		t.Errorf("the working run reads %q, want healthy", f.health.State)
+	if f := g.health(t, id); f.State != workflow.HealthHealthy {
+		t.Errorf("the working run reads %q, want healthy", f.State)
 	}
 }
 
@@ -1373,8 +1532,8 @@ func TestRunAttention_AStuckChatIsLoggedOnceAt31Minutes(t *testing.T) {
 	g.awaitWakes(t, 1)
 	const warn = "a launching chat has not taken a run-attention wake for 31 minutes"
 	for i, wait := range []time.Duration{60 * time.Second, 120 * time.Second, 240 * time.Second, 480 * time.Second, 960 * time.Second} {
-		if n := strings.Count(logs.String(), warn); n != 0 && i < 4 {
-			t.Fatalf("Warn logged after %d failed deliveries, want it at the fifth", i+1)
+		if n := strings.Count(logs.String(), warn); n != 0 {
+			t.Fatalf("Warn logged once %d deliveries failed (%d re-deliveries), want it once the fifth re-delivery failed", i+1, i)
 		}
 		g.after(wait + time.Second)
 		g.awaitWakes(t, i+2)

@@ -3,7 +3,6 @@ package agent
 import (
 	"encoding/json"
 	"errors"
-	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -365,7 +364,7 @@ type wakeRig struct {
 	br     *fakeBridge
 	cs     *testChatStore
 	push   *runOutcomePush
-	clk    *attnClock
+	host   *attnHost
 	steers []map[string]any
 	mu     sync.Mutex
 }
@@ -382,13 +381,12 @@ func newWakeRig(t *testing.T, id string, inspect json.RawMessage) *wakeRig {
 	push := newRunOutcomePush()
 	h, cs, br := newTestHub(WithPush(push))
 	t.Cleanup(func() { shutdownHub(t, h) })
-	g := &wakeRig{t: t, h: h, br: br, cs: cs, push: push, clk: &attnClock{t: time.Now()}}
-	h.runs.attention.setClock(g.clk.now)
-	h.coord.turns.gate.setClock(g.clk.now)
+	clk := &attnClock{t: time.Now()}
+	g := &wakeRig{t: t, h: h, br: br, cs: cs, push: push, host: attnOnClock(h, clk)}
 	br.sessionID = parkSession
 	h.insertBridgeNow(parkChat, testBridge(br, bridgeReady))
 	h.runs.useLog(newRunLog(t.TempDir()))
-	h.runs.log.setClock(g.clk.now)
+	h.runs.log.setClock(clk.now)
 	h.coord.runs = h.runs.log
 	if _, err := cs.Mutate(t.Context(), parkChat, func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
@@ -412,15 +410,14 @@ func newWakeRig(t *testing.T, id string, inspect json.RawMessage) *wakeRig {
 	return g
 }
 
-// wakes delivers what the run-attention ledger owes the launching chat, then answers each wake turn it started there,
-// each followed by the next moves the ledger holds for its runs: a line carries the short move, and the full
-// advice is the health read's. A warning notice steered into the launching session fails the test: no launching
-// agent is told that way.
+// wakes delivers what the run-attention ledger owes the launching chat, then answers each wake turn it started there.
+// A warning notice steered into the launching session fails the test: no launching agent is told that way.
 func (g *wakeRig) wakes() []string {
 	t := g.t
 	t.Helper()
-	g.clk.advance(attentionCoalesce + time.Second)
+	g.host.clk.advance(attentionCoalesce + time.Second)
 	g.h.runs.attention.tick()
+	g.host.fireDue()
 	joinInflight(g.h)
 	g.mu.Lock()
 	for _, p := range g.steers {
@@ -429,22 +426,10 @@ func (g *wakeRig) wakes() []string {
 		}
 	}
 	g.mu.Unlock()
-	next := ""
-	a := g.h.runs.attention
-	a.mu.Lock()
-	ids := slices.Sorted(maps.Keys(a.runs))
-	a.mu.Unlock()
-	for _, id := range ids {
-		if f, ok := a.facts(id); ok {
-			for _, k := range slices.Sorted(maps.Keys(f.next)) {
-				next += "\n" + f.next[k]
-			}
-		}
-	}
 	var out []string
 	for _, o := range opensOf(t, logOf(t, g.cs, parkChat)) {
 		if p := o.Prompt; p != nil && p.Caller != nil && p.Caller.Kind == marotte.CallerKindMarotte {
-			out = append(out, p.Text+next)
+			out = append(out, p.Text)
 		}
 	}
 	return out
@@ -536,7 +521,7 @@ func TestRunNodeComplete_AnEmptyAnswerWakesTheLaunchingAgent(t *testing.T) {
 			if len(wakes) != 1 {
 				t.Fatalf("the launching agent got %d wakes, want one: %q", len(wakes), wakes)
 			}
-			for _, part := range []string{wakeRunID, nodePath, wakeSession, "update_workflow", "replace_remaining"} {
+			for _, part := range []string{wakeRunID, "seat-b", "update_workflow", "replace_remaining"} {
 				if !strings.Contains(wakes[0], part) {
 					t.Errorf("the wake %q does not name %q", wakes[0], part)
 				}

@@ -38,12 +38,12 @@ func runOutcomePushes(fp *runOutcomePush) []runPushSent {
 	}
 }
 
-// onClock puts the rig's ledger, model gate and run log on a test clock, and has every turn on the launching chat's
-// session answer with words, as the engine's read loop would fold them, so a wake's turn completes.
-func (g *throttleRig) onClock() *attnClock {
+// onClock puts the rig's ledger, model gate and run log on a test clock, and the ledger's timers on the returned host,
+// and has every turn on the launching chat's session answer with words, as the engine's read loop would fold them, so
+// a wake's turn completes.
+func (g *throttleRig) onClock() *attnHost {
 	clk := &attnClock{t: time.Now()}
-	g.h.runs.attention.setClock(clk.now)
-	g.h.coord.turns.gate.setClock(clk.now)
+	host := attnOnClock(g.h, clk)
 	g.h.runs.log.setClock(clk.now)
 	g.br.mu.Lock()
 	prev := g.br.onCall
@@ -55,39 +55,37 @@ func (g *throttleRig) onClock() *attnClock {
 		}
 		return prev(method, p)
 	})
-	return clk
+	return host
 }
 
-// stopRead waits until the ledger reads the run as marotte's stopped resumes, answering its facts.
-func (g *throttleRig) stopRead(t *testing.T) runAttentionFacts {
+// stopRead waits until the ledger reads the run as marotte's stopped resumes.
+func (g *throttleRig) stopRead(t *testing.T) {
 	t.Helper()
-	var f runAttentionFacts
 	waitUntil(t, "the ledger's read of the stop", func() bool {
-		var ok bool
-		f, ok = g.h.runs.attention.facts(gateRunID)
-		return ok && f.health.State == workflow.HealthEnginePaused && strings.Contains(f.next[""], "stopped resuming")
+		h, ok := ledgerHealth(g.h, gateRunID)
+		return ok && h.State == workflow.HealthEnginePaused && strings.Contains(h.Why, "stopped resuming")
 	})
-	return f
 }
 
-// deliver runs the ledger past its coalescing window and answers the wake turns c1 then holds.
-func (g *throttleRig) deliver(t *testing.T, clk *attnClock) int {
+// deliver runs the ledger past its coalescing window, and the timers then due, and answers the wake turns c1 then
+// holds.
+func (g *throttleRig) deliver(t *testing.T, host *attnHost) int {
 	t.Helper()
-	clk.advance(attentionCoalesce + time.Second)
+	host.clk.advance(attentionCoalesce + time.Second)
 	g.h.runs.attention.tick()
-	time.Sleep(20 * time.Millisecond)
+	host.fireDue()
 	joinInflight(g.h)
 	return wakesOf(t, g.h.chatStore.(*testChatStore), parkChat)
 }
 
-// When marotte stops resuming a throttled run, the chat that launched it is woken with a turn naming the run, and
-// the next move it reads names the cause and the resume; no notice is steered into its session.
+// When marotte stops resuming a throttled run, the chat that launched it is woken with a turn naming the run and the
+// stop; no notice is steered into its session.
 func TestHealStop_WakesTheLaunchingChat(t *testing.T) {
 	t.Parallel()
 	g := newThrottleRig(t, nil)
 	clk := g.onClock()
 	g.spend(t)
-	f := g.stopRead(t)
+	g.stopRead(t)
 	if n := g.deliver(t, clk); n != 1 {
 		t.Fatalf("the stop woke the launching chat %d times, want once", n)
 	}
@@ -95,11 +93,6 @@ func TestHealStop_WakesTheLaunchingChat(t *testing.T) {
 	for _, want := range []string{gateRunID, "publish", "stopped resuming"} {
 		if !strings.Contains(wake.Text, want) {
 			t.Errorf("the wake %q does not name %q", wake.Text, want)
-		}
-	}
-	for _, want := range []string{"for model throttling", "update_workflow resume"} {
-		if !strings.Contains(f.next[""], want) {
-			t.Errorf("the run's next move %q does not name %q", f.next[""], want)
 		}
 	}
 	if n := g.stopNotices(); len(n) != 0 {
