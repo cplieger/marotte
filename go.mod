@@ -5,6 +5,7 @@ go 1.27.4
 require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
+	github.com/cplieger/go/textsafe v1.1.0 // indirect
 	github.com/cplieger/httpx/v5 v5.3.0 // indirect
 	github.com/cplieger/jsoncap/v2 v2.1.0 // indirect
 	github.com/cplieger/scheduler/v4 v4.3.0 // indirect
@@ -13,7 +14,7 @@ require (
 	github.com/expr-lang/expr v1.17.8 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
 	golang.org/x/mod v0.43.0 // indirect
-	golang.org/x/tools v0.52.0 // indirect
+	golang.org/x/tools v0.53.0 // indirect
 )
 
 require (
@@ -30,15 +31,15 @@ require (
 	github.com/cplieger/sse v1.5.0
 	github.com/cplieger/ssrf/v4 v4.6.0
 	github.com/cplieger/toolbelt/v3 v3.14.0
-	github.com/cplieger/web-terminal-engine/v6 v6.4.0
+	github.com/cplieger/web-terminal-engine/v6 v6.5.0
 	github.com/cplieger/webhttp/v4 v4.1.0
 	github.com/cplieger/wiregen/v4 v4.0.0
 	github.com/evanw/esbuild v0.28.2
-	github.com/klauspost/compress v1.20.4
+	github.com/klauspost/compress v1.20.5
 	github.com/tailscale/hujson v0.0.0-20260727124030-b80ff77dac4f
 	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/image v0.48.0
-	golang.org/x/net v0.62.0
+	golang.org/x/net v0.63.0
 	golang.org/x/sync v0.25.0
 	golang.org/x/sys v0.50.0
 	pgregory.net/rapid v1.3.0
