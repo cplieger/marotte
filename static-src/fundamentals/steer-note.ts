@@ -193,7 +193,8 @@ export function buildSteerNote(d: SteerNoteData): HTMLElement {
       : drawParts(rest, (words) => el("span", {}, words))),
   );
   body.appendChild(text);
-  // A workflow's message is the news itself and shows in full; only the reader's own words clamp.
+  // A workflow's message is the news itself and shows in full; only user-origin words clamp, the reader's or an API
+  // caller's.
   if (d.origin !== "user") {
     return root;
   }

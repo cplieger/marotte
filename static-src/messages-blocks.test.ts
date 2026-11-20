@@ -1616,8 +1616,8 @@ describe("a render's markdown tables are let go of with the DOM that holds them"
 });
 
 describe("a render's clamped steer notes are let go of with the DOM that holds them", () => {
-  // Only the reader's own words clamp, and the shared clamp observer keeps each watched text reachable until it is
-  // released (`clamp-text.ts` `releaseClamp`).
+  // Only user-origin words clamp, the reader's or an API caller's, and the shared clamp observer keeps each watched
+  // text reachable until it is released (`clamp-text.ts` `releaseClamp`).
   const note = (): Entry =>
     sealed("t", 1, "steer", { text: "use tabs", origin: "user", state: "read" }, { id: "steer-1" });
 

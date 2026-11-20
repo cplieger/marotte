@@ -86,8 +86,8 @@ func (rs *Runs) stepTranscript(ctx context.Context, workflowID, nodePath string)
 	return out, nil
 }
 
-// markInstruction marks a replayed step session's first turn's prompt as the workflow's instruction. Only the first
-// turn: a later prompt is a message someone sent the step, and a first turn with no prompt leaves nothing to mark.
+// markInstruction marks the prompt of a replayed step session's first turn_open as the workflow's instruction, then
+// stops; a first turn with no prompt marks nothing.
 func markInstruction(entries []marotte.Entry) {
 	for i := range entries {
 		if entries[i].Kind != marotte.EntryKindTurnOpen {
@@ -156,7 +156,7 @@ func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]tran
 		return nil, marotte.RunStepTranscriptUnavailable
 	}
 
-	// The first turn_open's prompt is the step's instruction (markInstruction marks it); the pane reads its node_path and n.
+	// The first turn_open's prompt is the step's instruction (markInstruction marks it).
 	return rs.stepReplays.take(sessionID), marotte.RunStepTranscriptReady
 }
 

@@ -1416,8 +1416,8 @@ export interface EntryPrompt {
   attachments?: Attachment[];
   resends?: string[];
   /**
-   * Instruction is set on a replayed step session's first prompt: the workflow's own
-   * instruction to the step, which nobody sent as a message.
+   * Instruction is set on the prompt of a replayed step session's first turn: the
+   * workflow's own instruction to the step, which nobody sent as a message.
    */
   instruction?: boolean;
 }

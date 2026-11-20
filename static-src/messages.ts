@@ -484,7 +484,6 @@ function rebuildTurnBody(session: Session, t: Turn, body: HTMLElement): void {
   finalizeAssistantBody(t.id);
   disposeAssistantBody(t.id);
   clearTurnSigs(t.id);
-  releaseClampsIn(body);
   releaseMarkdownIn(body);
   heldMutation(() => {
     body.replaceChildren();
@@ -2529,8 +2528,6 @@ function unmountTurnBody(card: HTMLElement): void {
   if (turnID !== null) {
     disposeTurnBody(turnID);
   }
-  // The header's clamp stays with the card.
-  releaseClampsIn(body);
   releaseMarkdownIn(body);
   // The tail spacer is the body's sibling, so it leaves with it.
   for (const space of card.querySelectorAll<HTMLElement>(":scope > .turn-space")) {
