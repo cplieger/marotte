@@ -101,7 +101,7 @@ const OPT_ROWS = [
 function optMenuHTML(): string {
   const actions = OPT_ROWS.map(
     ([name, hint]) => `<div class="chat-opt-entry"><button type="button" class="chat-opt-btn">
-      <span class="chat-opt-icon"><svg width="14" height="14" viewBox="0 0 24 24"></svg></span>
+      <span class="chat-opt-icon"><svg class="ic-ui" viewBox="0 0 24 24"></svg></span>
       <span class="chat-opt-text"><span class="chat-opt-name">${name}</span
       ><span class="chat-opt-hint">${hint}</span></span>
     </button></div>`,
