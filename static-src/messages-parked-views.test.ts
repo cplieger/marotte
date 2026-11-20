@@ -629,6 +629,42 @@ describe("the view handle", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => 
     expect(card()?.textContent ?? "").toContain("while parked");
   });
 
+  it("collapses a trace a successor reached while parked, with no slide on the switch back", async () => {
+    const a = freshID("c-seal");
+    const b = freshID("c-seal");
+    const t = `${a}-t1`;
+    const s = session(a, { thinking: true });
+    s.turns.set(t, {
+      entries: [turnOpen(t, 1), thinkingEntry(t, 1, "weighing the options at some length")],
+      openEntries: new Map(),
+    });
+    s.turn_order.push(t);
+    s.turn_count = 1;
+    seed(s, oneTurn(b, "x"));
+    const trace = (): HTMLDetailsElement | null =>
+      viewOf(a).querySelector<HTMLDetailsElement>(".reasoning-block");
+    await vi.waitFor(() => {
+      expect(trace()?.open, "the premise: the newest trace stands open").toBe(true);
+    });
+    switchTo(b);
+    await flushed();
+    await settledFrames();
+    store.appendEntry(a, textEntry(t, 2, "the answer", "say-2"));
+    await flushed();
+
+    const animate = vi.spyOn(Element.prototype, "animate");
+    switchTo(a);
+    await flushed();
+    await settledFrames();
+    const slid = animate.mock.contexts.filter(
+      (c) => c instanceof Element && c.classList.contains("reasoning-block"),
+    );
+    animate.mockRestore();
+    // The reader never watched the trace stop being newest, so the switch shows it already shut.
+    expect(slid.length, "slides started on a reasoning trace by the switch").toBe(0);
+    expect(trace()?.open).toBe(false);
+  });
+
   it("holds the reading position through a park/unpark over a turn that GREW", async () => {
     // The reader is Reading, so `deferWhileReading` holds the unpark paint; this reads the window the park left over a
     // grown turn.

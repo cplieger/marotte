@@ -18,7 +18,8 @@ for (const id of [
 
 const { isSliding, slideBox } = await import("./disclosure-row.js");
 const { buildReasoning } = await import("./fundamentals/reasoning.js");
-const { buildAssistantBody, initBlockRenderer } = await import("./messages-blocks.js");
+const { buildAssistantBody, initBlockRenderer, updateAssistantBody } =
+  await import("./messages-blocks.js");
 
 initBlockRenderer({
   pushEntryEffect: (): void => undefined,
@@ -78,18 +79,65 @@ describe("sealing a trace outside the active view", () => {
     expect(view.root.open).toBe(false);
     expect(reads.n(), "geometry reads sealing a detached trace").toBe(0);
   });
+});
 
-  it("collapses a trace inside a parked transcript view with no geometry read", () => {
-    const parked = document.createElement("div");
-    parked.className = "transcript-view";
-    document.body.appendChild(parked);
-    hosts.push(parked);
-    const view = buildReasoning("thought", false, true);
-    parked.appendChild(view.root);
-    const reads = countRects();
-    view.seal();
-    expect(view.root.open).toBe(false);
-    expect(reads.n(), "geometry reads sealing a parked trace").toBe(0);
+describe("a successor sealing a trace the page is not rendering", () => {
+  const turnID = "t-seal-hidden";
+  const entry = (seq: number, kind: Entry["kind"], text: string): Entry => ({
+    id: `${turnID}-e${String(seq)}`,
+    turn: turnID,
+    kind,
+    seq,
+    ts: seq + 1,
+    payload: { text },
+  });
+  const live = (body: Entry[]): Turn => ({
+    id: turnID,
+    n: 1,
+    trigger: { id: `${turnID}-p`, text: "go" },
+    branchFrom: undefined,
+    body,
+    openEntries: new Map(),
+    ts: 1,
+    outcome: "running",
+    rewindTo: undefined,
+  });
+
+  /** Mount a live turn whose newest entry is a trace, under `host`, then append its successor. */
+  function sealUnder(host: HTMLElement, body: HTMLElement): HTMLDetailsElement | null {
+    document.body.appendChild(host);
+    hosts.push(host);
+    const thought = entry(1, "thinking", "weighing it up at some length");
+    buildAssistantBody(body, live([thought]), "c-seal-hidden", true);
+    const trace = body.querySelector<HTMLDetailsElement>(".reasoning-block");
+    expect(trace?.open, "the premise: the newest trace stands open").toBe(true);
+    const rect = vi.spyOn(Element.prototype, "getBoundingClientRect");
+    updateAssistantBody(body, live([thought, entry(2, "text", "answer")]), "c-seal-hidden", true);
+    expect(rect.mock.contexts.filter((c) => c === trace).length, "rect reads on the trace").toBe(0);
+    expect(trace !== null && isSliding(trace), "a slide on the trace").toBe(false);
+    return trace;
+  }
+
+  it("collapses a trace in a parked view with no slide", () => {
+    const view = document.createElement("div");
+    view.className = "transcript-view";
+    const body = document.createElement("div");
+    body.className = "turn-body";
+    view.appendChild(body);
+    expect(sealUnder(view, body)?.open).toBe(false);
+  });
+
+  it("collapses a trace in a folded turn's body with no slide", () => {
+    const view = document.createElement("div");
+    view.className = "transcript-view is-active";
+    const card = document.createElement("div");
+    card.className = "turn";
+    card.setAttribute("data-folded", "");
+    const body = document.createElement("div");
+    body.className = "turn-body";
+    card.appendChild(body);
+    view.appendChild(card);
+    expect(sealUnder(view, body)?.open).toBe(false);
   });
 });
 

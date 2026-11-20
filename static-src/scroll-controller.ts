@@ -1238,6 +1238,12 @@ export class ScrollController {
     }
   }
 
+  /** Whether the attached view's position has yet to land: until `applyPendingRestore`, the reader has seen nothing
+   *  of the view. */
+  restorePending(): boolean {
+    return this.pendingRestore !== null;
+  }
+
   /** The state `detach` parks the current view with, from layout reads alone, so a caller can take it at a clean
    *  layout ahead of the writes before its detach. It stays true while the view neither scrolls nor changes above the
    *  reader. */

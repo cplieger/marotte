@@ -54,6 +54,7 @@ import {
   toolCallSigs,
 } from "./store-signals.js";
 import { recordEntryHeight, recordGroupHeight, recordRowHeight } from "./block-heights.js";
+import { restorePending } from "./scroll.js";
 import { lineDelta } from "./diff.js";
 import { isInternalToolTitle, isSubagentInvocation, isToolActive } from "./tool-schema.js";
 import type { TurnSummaryData } from "./fundamentals/turn-footer.js";
@@ -1289,6 +1290,11 @@ export function geometrySkipped(el: Element): boolean {
     el.closest(".turn[data-folded] > .turn-body:not([data-fold-closing])") !== null ||
     el.closest(".transcript-view:not(.is-active)") !== null
   );
+}
+
+/** Whether a reader can be watching `el`, which a slide needs: rendered, and not in a view a switch is still writing. */
+function watched(el: Element): boolean {
+  return !geometrySkipped(el) && !restorePending();
 }
 
 /**
@@ -2579,7 +2585,7 @@ function mountThinking(
   // Head insertion never reaches `openReasoning`, which holds only trailing traces. Only the open trace the reader
   // watched stream slides shut; one mounted already followed collapses at once.
   if (followed) {
-    view.seal({ motion: adopted !== undefined });
+    view.seal({ motion: adopted !== undefined && watched(view.root) });
   } else {
     st.openReasoning.set(container, view);
   }
@@ -2788,7 +2794,7 @@ function subagentSummary(st: TurnRender, subtask: string, invocation: ToolCall):
 function sealReasoning(st: TurnRender, container: HTMLElement): void {
   const view = st.openReasoning.get(container);
   if (view !== undefined) {
-    view.seal();
+    view.seal({ motion: watched(view.root) });
     st.openReasoning.delete(container);
   }
 }
