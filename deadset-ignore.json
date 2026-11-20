@@ -17,36 +17,6 @@
       "symbol": "go://github.com/cplieger/marotte/internal/marotte#RunFromCarried",
       "path": "internal/marotte/run_order.go",
       "reason": "A chat record stored by an earlier version can hold a held row with origin carried; SanitizeRun keeps it held and the client decoder must still accept the value, so the wire value stays though nothing writes it now."
-    },
-    {
-      "code": "DS1501",
-      "symbol": "go://github.com/cplieger/marotte/internal/marotte#LoadedMCP",
-      "path": "internal/marotte/tool_title.go",
-      "reason": "A member of the LoadedType wire enum, which internal/wirespec registers and wire-codegen emits as the TS LoadedType union; the enum's members stay exported together with their type, as LoadedSkill, used outside the package, must be."
-    },
-    {
-      "code": "DS1501",
-      "symbol": "go://github.com/cplieger/marotte/internal/marotte#LoadedTool",
-      "path": "internal/marotte/tool_title.go",
-      "reason": "A member of the LoadedType wire enum, which internal/wirespec registers and wire-codegen emits as the TS LoadedType union; the enum's members stay exported together with their type, as LoadedSkill, used outside the package, must be."
-    },
-    {
-      "code": "DS1501",
-      "symbol": "go://github.com/cplieger/marotte/internal/marotte#LoadedSteering",
-      "path": "internal/marotte/tool_title.go",
-      "reason": "A member of the LoadedType wire enum, which internal/wirespec registers and wire-codegen emits as the TS LoadedType union; the enum's members stay exported together with their type, as LoadedSkill, used outside the package, must be."
-    },
-    {
-      "code": "DS1501",
-      "symbol": "go://github.com/cplieger/marotte/internal/marotte#LoadedOverview",
-      "path": "internal/marotte/tool_title.go",
-      "reason": "A member of the LoadedType wire enum, which internal/wirespec registers and wire-codegen emits as the TS LoadedType union; the enum's members stay exported together with their type, as LoadedSkill, used outside the package, must be."
-    },
-    {
-      "code": "DS1501",
-      "symbol": "go://github.com/cplieger/marotte/internal/marotte#LoadedUnknown",
-      "path": "internal/marotte/tool_title.go",
-      "reason": "A member of the LoadedType wire enum, which internal/wirespec registers and wire-codegen emits as the TS LoadedType union; the enum's members stay exported together with their type, as LoadedSkill, used outside the package, must be."
     }
   ]
 }

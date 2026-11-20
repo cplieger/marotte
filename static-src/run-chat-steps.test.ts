@@ -76,6 +76,7 @@ vi.mock("./messages-blocks.js", () => ({
 
 const { createRunStepStream } = await import("./run-chat-steps.js");
 const { rebuildDetached } = await import("./messages-blocks.js");
+const { clampObservationCount } = await import("./clamp-text.js");
 
 function entry(turn: string, seq: number, kind: Entry["kind"] = "text"): Entry {
   return { id: `${turn}-${String(seq)}`, turn, kind, seq, ts: 0, payload: {} };
@@ -232,6 +233,44 @@ describe("run step stream", () => {
     expect(heading?.classList.contains("turn-header")).toBe(true);
     expect(heading?.querySelector(".turn-req-text")?.textContent).toBe("measure it");
     expect(h.host("a/ask").querySelector(".steer-note")).toBeNull();
+  });
+
+  // The reader's words clamp, and the shared clamp observer holds each watched text until it is released
+  // (`clamp-text.ts` `releaseClamp`), so every path that discards the note releases it.
+  describe("releases the steer note's clamp", () => {
+    it("when the turn leaves the pane", () => {
+      const before = clampObservationCount();
+      const h = harness();
+      h.apply({ "a/ask": [paint("t-resumed", ["text"], true, "teal")] });
+      expect(clampObservationCount() - before).toBe(1);
+
+      h.apply({ "a/ask": [] });
+
+      expect(clampObservationCount() - before).toBe(0);
+    });
+
+    it("when the turn stays but its heading goes", () => {
+      const before = clampObservationCount();
+      const h = harness();
+      h.apply({ "a/ask": [paint("t-resumed", ["text"], true, "teal")] });
+      expect(clampObservationCount() - before).toBe(1);
+
+      h.apply({ "a/ask": [paint("t-resumed", ["text"], true)] });
+
+      expect(h.host("a/ask").querySelector(".steer-note")).toBeNull();
+      expect(clampObservationCount() - before).toBe(0);
+    });
+
+    it("when the stream is disposed", () => {
+      const before = clampObservationCount();
+      const h = harness();
+      h.apply({ "a/ask": [paint("t-resumed", ["text"], true, "teal")] });
+      expect(clampObservationCount() - before).toBe(1);
+
+      h.dispose();
+
+      expect(clampObservationCount() - before).toBe(0);
+    });
   });
 
   // The dispatcher's incremental update appends past a watermark, so it is correct only while the

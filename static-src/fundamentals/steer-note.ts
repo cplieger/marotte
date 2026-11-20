@@ -1,5 +1,6 @@
-// SteerNote: a message delivered into a running turn, at the `seq` where the agent read it. A CARD
-// on the tool-card vocabulary, since a leading rail is reserved for work this agent did not do.
+// SteerNote: a message to a running agent, delivered into its turn at the `seq` where it read it, or
+// the words that opened a run step's next turn. A CARD on the tool-card vocabulary, since a leading
+// rail is reserved for work this agent did not do.
 // It holds the reader's words alone and no control: the agent's `steer_ack` renders at its own
 // position, marked here by an attribute plus a label clause.
 

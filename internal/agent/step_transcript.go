@@ -156,7 +156,7 @@ func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]tran
 		return nil, marotte.RunStepTranscriptUnavailable
 	}
 
-	// The turn_open's prompt is the step's instruction; the pane reads its node_path and n.
+	// The first turn_open's prompt is the step's instruction (markInstruction marks it); the pane reads its node_path and n.
 	return rs.stepReplays.take(sessionID), marotte.RunStepTranscriptReady
 }
 

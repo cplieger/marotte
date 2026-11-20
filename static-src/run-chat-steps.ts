@@ -3,6 +3,7 @@
 // the live edge the rows far above them are unmounted again.
 
 import { el } from "@cplieger/reactive";
+import { releaseClampsIn } from "./clamp-text.js";
 import {
   blockElement,
   buildDetachedBody,
@@ -159,8 +160,7 @@ export function createRunStepStream(hostFor: StepHostFor, scroller?: StepScrolle
     const trigger = rec.last.turn.trigger;
     const request = trigger?.text.trim() ?? "";
     if (trigger === undefined || !headMounted || request === "") {
-      rec.heading?.remove();
-      rec.heading = undefined;
+      dropHeading(rec);
       return;
     }
     rec.heading ??=
@@ -175,6 +175,15 @@ export function createRunStepStream(hostFor: StepHostFor, scroller?: StepScrolle
     if (rec.heading.nextElementSibling !== rec.box) {
       rec.box.before(rec.heading);
     }
+  }
+
+  function dropHeading(rec: TurnRender): void {
+    if (rec.heading === undefined) {
+      return;
+    }
+    releaseClampsIn(rec.heading);
+    rec.heading.remove();
+    rec.heading = undefined;
   }
 
   function render(rec: TurnRender, shape: readonly string[]): void {
@@ -286,7 +295,7 @@ export function createRunStepStream(hostFor: StepHostFor, scroller?: StepScrolle
         continue;
       }
       disposeDetachedBody(turnID, ROOT_LANE);
-      rec.heading?.remove();
+      dropHeading(rec);
       rec.box.remove();
       renders.delete(turnID);
     }
@@ -319,8 +328,11 @@ export function createRunStepStream(hostFor: StepHostFor, scroller?: StepScrolle
     dispose() {
       stopHookVisibility();
       scroller?.setPageIn(null);
-      for (const turnID of renders.keys()) {
+      for (const [turnID, rec] of renders) {
         disposeDetachedBody(turnID, ROOT_LANE);
+        if (rec.heading !== undefined) {
+          releaseClampsIn(rec.heading);
+        }
       }
       renders.clear();
       starts.clear();

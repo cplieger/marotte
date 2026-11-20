@@ -400,7 +400,7 @@ func TestStepTranscript_IncludesReaderInterventions(t *testing.T) {
 	if question >= answer || answer >= reply {
 		t.Errorf("StepTranscript order: question at %d, answer at %d, reply at %d; want the answer's turn_open between the two texts", question, answer, reply)
 	}
-	// The pane draws the instruction as the step's request and the answer as a message to the step.
+	// Only the session's first prompt is marked as the instruction.
 	marked := map[string]bool{}
 	for i := range got.Entries {
 		var open marotte.EntryTurnOpen
