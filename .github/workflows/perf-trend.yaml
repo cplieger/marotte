@@ -46,7 +46,7 @@ jobs:
       actions: read
       contents: write
       issues: write
-    uses: cplieger/ci/.github/workflows/perf-trend.yaml@09aa5453bf0f413bfc5cdbf1e3d27d280a655f09 # v3
+    uses: cplieger/ci/.github/workflows/perf-trend.yaml@2f27db36961907e0baebf415bd16f3212c4fb8de # v3
     with:
       ref: ${{ inputs.ref }}
       series: ${{ inputs.series }}
