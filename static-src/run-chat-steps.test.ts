@@ -1,7 +1,7 @@
 // The run pane's step-transcript render lifecycle.
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
-import type { Caller, Entry } from "./types.js";
+import type { Entry, EntryPrompt } from "./types.js";
 // TYPE-only, so it is erased and cannot defeat the `vi.mock` hoisting the value import below is
 // deferred for.
 import type { RunStepPaint } from "./run-chat-steps.js";
@@ -76,6 +76,7 @@ vi.mock("./messages-blocks.js", () => ({
 
 const { createRunStepStream } = await import("./run-chat-steps.js");
 const { rebuildDetached } = await import("./messages-blocks.js");
+const { clampObservationCount } = await import("./clamp-text.js");
 
 function entry(turn: string, seq: number, kind: Entry["kind"] = "text"): Entry {
   return { id: `${turn}-${String(seq)}`, turn, kind, seq, ts: 0, payload: {} };
@@ -88,17 +89,14 @@ function paint(
   kinds: readonly Entry["kind"][],
   live = true,
   prompt?: string,
-  caller?: Caller,
+  extra?: Partial<Omit<EntryPrompt, "id" | "text">>,
 ): RunStepPaint {
   const body = kinds.map((kind, i) => entry(turnID, i + 1, kind));
   return {
     turn: {
       id: turnID,
       n: 1,
-      trigger:
-        prompt === undefined
-          ? undefined
-          : { id: `p-${turnID}`, text: prompt, ...(caller === undefined ? {} : { caller }) },
+      trigger: prompt === undefined ? undefined : { id: `p-${turnID}`, text: prompt, ...extra },
       body,
       openEntries: new Map(),
       ts: 0,
@@ -189,35 +187,90 @@ describe("run step stream", () => {
     expect(h.host("a/coder").childElementCount).toBe(2);
   });
 
-  // A message that resumed a paused step opened its next turn: the user's words head that turn, the
-  // way a prompt heads a chat turn, and leave with it.
-  it("heads a turn the user's message opened with their words", () => {
+  // A message the reader sent a paused step through the run dock opened its next turn. It heads
+  // that turn as the main chat's own mid-turn message does, a steer note, and leaves with it.
+  it("heads a turn the reader's message opened with their steer note", () => {
     const h = harness();
     h.apply({
       "a/ask": [paint("t-asked", ["text"], false), paint("t-resumed", ["text"], true, "teal")],
     });
     const host = h.host("a/ask");
-    const [first, heading, resumed] = [...host.children];
+    const [first, note, resumed] = [...host.children];
     expect(first).toBe(builds(h)[0]?.host);
-    expect(heading?.classList.contains("turn-header")).toBe(true);
-    expect(heading?.getAttribute("data-trigger")).toBe("user");
-    expect(heading?.textContent).toBe("teal");
+    expect(note?.classList.contains("steer-note")).toBe(true);
+    expect(note?.getAttribute("data-origin")).toBe("user");
+    expect(note?.hasAttribute("data-caller")).toBe(false);
+    expect(note?.querySelector(".steer-note-label")?.textContent).toBe("Mid-turn message");
+    expect(note?.querySelector(".steer-note-text")?.textContent).toBe("teal");
+    expect(host.querySelector(".turn-header")).toBeNull();
     expect(resumed).toBe(builds(h)[1]?.host);
 
     h.apply({ "a/ask": [paint("t-asked", ["text"], false)] });
     expect(host.childElementCount).toBe(1);
   });
 
-  // A message an API caller sent heads the turn it resumed as that caller's, never in the user's voice.
-  it("heads a turn an API caller's message opened with who sent it", () => {
+  // A message an API caller sent heads the turn it resumed as that caller's, never in the reader's voice.
+  it("heads a turn an API caller's message opened with a steer note naming the caller", () => {
     const h = harness();
     h.apply({
-      "a/ask": [paint("t-resumed", ["text"], true, "teal", { label: "Agent Mail" })],
+      "a/ask": [paint("t-resumed", ["text"], true, "teal", { caller: { label: "Agent Mail" } })],
+    });
+    const note = h.host("a/ask").firstElementChild;
+    expect(note?.classList.contains("steer-note")).toBe(true);
+    expect(note?.getAttribute("data-origin")).toBe("user");
+    expect(note?.hasAttribute("data-caller")).toBe(true);
+    expect(note?.querySelector(".steer-note-label")?.textContent).toBe("Sent by Agent Mail");
+    expect(note?.querySelector(".steer-note-text")?.textContent).toBe("teal");
+  });
+
+  // The workflow's own instruction to the step is no message anyone sent: it keeps the request band.
+  it("heads a turn the workflow's instruction opened with the request band, not a steer note", () => {
+    const h = harness();
+    h.apply({
+      "a/ask": [paint("t-first", ["text"], true, "measure it", { instruction: true })],
     });
     const heading = h.host("a/ask").firstElementChild;
-    expect(heading?.getAttribute("data-trigger")).toBe("caller");
-    expect(heading?.querySelector(".turn-sent-by")?.textContent).toBe("Sent by Agent Mail");
-    expect(heading?.querySelector(".turn-req-text")?.textContent).toBe("teal");
+    expect(heading?.classList.contains("turn-header")).toBe(true);
+    expect(heading?.querySelector(".turn-req-text")?.textContent).toBe("measure it");
+    expect(h.host("a/ask").querySelector(".steer-note")).toBeNull();
+  });
+
+  // The reader's words clamp, and the shared clamp observer holds each watched text until it is released
+  // (`clamp-text.ts` `releaseClamp`), so every path that discards the note releases it.
+  describe("releases the steer note's clamp", () => {
+    it("when the turn leaves the pane", () => {
+      const before = clampObservationCount();
+      const h = harness();
+      h.apply({ "a/ask": [paint("t-resumed", ["text"], true, "teal")] });
+      expect(clampObservationCount() - before).toBe(1);
+
+      h.apply({ "a/ask": [] });
+
+      expect(clampObservationCount() - before).toBe(0);
+    });
+
+    it("when the turn stays but its heading goes", () => {
+      const before = clampObservationCount();
+      const h = harness();
+      h.apply({ "a/ask": [paint("t-resumed", ["text"], true, "teal")] });
+      expect(clampObservationCount() - before).toBe(1);
+
+      h.apply({ "a/ask": [paint("t-resumed", ["text"], true)] });
+
+      expect(h.host("a/ask").querySelector(".steer-note")).toBeNull();
+      expect(clampObservationCount() - before).toBe(0);
+    });
+
+    it("when the stream is disposed", () => {
+      const before = clampObservationCount();
+      const h = harness();
+      h.apply({ "a/ask": [paint("t-resumed", ["text"], true, "teal")] });
+      expect(clampObservationCount() - before).toBe(1);
+
+      h.dispose();
+
+      expect(clampObservationCount() - before).toBe(0);
+    });
   });
 
   // The dispatcher's incremental update appends past a watermark, so it is correct only while the

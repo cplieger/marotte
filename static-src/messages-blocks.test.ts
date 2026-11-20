@@ -43,6 +43,7 @@ const { toolResultID } = await import("./entry-ids.js");
 const { clearAllEntrySigs, ensureToolCallSig, toolCallSigs } = await import("./store-signals.js");
 const { setActive, setPainted } = await import("./store.js");
 const { liveRenderCount } = await import("./markdown.js");
+const { clampObservationCount } = await import("./clamp-text.js");
 
 /** Part of the per-tool signal key, and the store's active chat: the live-anchor fallback scans only that chat. */
 const CHAT_ID = "c-blocks";
@@ -1610,6 +1611,48 @@ describe("a render's markdown tables are let go of with the DOM that holds them"
 
     expect(r.body.querySelectorAll("table"), "the table left the page").toHaveLength(0);
     expect(liveRenderCount() - before).toBe(0);
+    disposeAssistantBody(r.turnID);
+  });
+});
+
+describe("a render's clamped steer notes are let go of with the DOM that holds them", () => {
+  // Only user-origin words clamp, the reader's or an API caller's, and the shared clamp observer keeps each watched
+  // text reachable until it is released (`clamp-text.ts` `releaseClamp`).
+  const note = (): Entry =>
+    sealed("t", 1, "steer", { text: "use tabs", origin: "user", state: "read" }, { id: "steer-1" });
+
+  it("when the render is disposed", () => {
+    const before = clampObservationCount();
+    const r = render([note()]);
+    expect(r.body.querySelectorAll(".steer-note"), "the note rendered").toHaveLength(1);
+    expect(clampObservationCount() - before).toBe(1);
+
+    disposeAssistantBody(r.turnID);
+
+    expect(clampObservationCount() - before).toBe(0);
+  });
+
+  it("when a detached lane is disposed, as a run step or a delegate page does before it clears the box", () => {
+    const before = clampObservationCount();
+    const turnID = nextTurnID();
+    const host = bodyHost();
+    buildDetachedBody(host, turnOf(turnID, retarget([note()], turnID)), "", "", false);
+    expect(clampObservationCount() - before).toBe(1);
+
+    disposeDetachedBody(turnID, "");
+
+    expect(clampObservationCount() - before).toBe(0);
+  });
+
+  it("when the window drops the entry that holds one", () => {
+    const before = clampObservationCount();
+    const r = render([note(), callEntry("t", 2, toolCall("tool-a"))]);
+    expect(clampObservationCount() - before).toBe(1);
+
+    dropHead(r.turn, { from: 2, to: 3 });
+
+    expect(r.body.querySelectorAll(".steer-note"), "the note left the page").toHaveLength(0);
+    expect(clampObservationCount() - before).toBe(0);
     disposeAssistantBody(r.turnID);
   });
 });

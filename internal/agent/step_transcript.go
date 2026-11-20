@@ -80,9 +80,29 @@ func (rs *Runs) stepTranscript(ctx context.Context, workflowID, nodePath string)
 	for i := range turns {
 		out.Entries = append(out.Entries, turns[i].Entries...)
 	}
+	markInstruction(out.Entries)
 	marotte.ServeToolEntries(out.Entries, nil)
 	gradeNewestClose(out.Entries, func() (workflow.StepRecord, bool) { return kasStepIn(workflowID, raw, nodePath) })
 	return out, nil
+}
+
+// markInstruction marks the prompt of a replayed step session's first turn_open as the workflow's instruction, then
+// stops; a first turn with no prompt marks nothing.
+func markInstruction(entries []marotte.Entry) {
+	for i := range entries {
+		if entries[i].Kind != marotte.EntryKindTurnOpen {
+			continue
+		}
+		var open marotte.EntryTurnOpen
+		if json.Unmarshal(entries[i].Payload, &open) != nil || open.Prompt == nil {
+			return
+		}
+		open.Prompt.Instruction = true
+		if payload, err := json.Marshal(&open); err == nil {
+			entries[i].Payload = payload
+		}
+		return
+	}
 }
 
 // stepSessionAt resolves the step path's ACP session off one inspect reply: errStepUnknown for no such path,
@@ -142,7 +162,7 @@ func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]tran
 		return nil, marotte.RunStepTranscriptUnavailable
 	}
 
-	// The turn_open's prompt is the step's instruction; the pane reads its node_path and n.
+	// The first turn_open's prompt is the step's instruction (markInstruction marks it).
 	return rs.stepReplays.take(sessionID), marotte.RunStepTranscriptReady
 }
 

@@ -1586,6 +1586,10 @@ export const decodeEntryPrompt: Decoder<EntryPrompt> = (v) => {
     const $v = own(o, "resends");
     if ($v !== undefined && $v !== null) out.resends = own(o, "resends") === null ? [] : decodeArray(own(o, "resends"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.entry_prompt.resends");
   }
+  {
+    const $v = own(o, "instruction");
+    if ($v !== undefined && $v !== null) out.instruction = reqBool(o, "instruction", "$.entry_prompt");
+  }
   return out;
 };
 

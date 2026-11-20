@@ -4,6 +4,7 @@ package agent
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -465,6 +466,66 @@ func TestStepTranscript_IncludesReaderInterventions(t *testing.T) {
 	}
 	if question >= answer || answer >= reply {
 		t.Errorf("StepTranscript order: question at %d, answer at %d, reply at %d; want the answer's turn_open between the two texts", question, answer, reply)
+	}
+	// Only the session's first prompt is marked as the instruction.
+	marked := map[string]bool{}
+	for i := range got.Entries {
+		var open marotte.EntryTurnOpen
+		if got.Entries[i].Kind != marotte.EntryKindTurnOpen || json.Unmarshal(got.Entries[i].Payload, &open) != nil || open.Prompt == nil {
+			continue
+		}
+		marked[open.Prompt.Text] = open.Prompt.Instruction
+	}
+	want := map[string]bool{"the step's own instruction": true, "main": false, "step notice": false}
+	if !maps.Equal(marked, want) {
+		t.Errorf("StepTranscript prompts' instruction marks = %v, want %v", marked, want)
+	}
+}
+
+// Only the session's first turn carries the instruction: a first turn opened with no prompt leaves a later
+// prompt, a message to the step, unmarked.
+func TestMarkInstruction_OnlyTheFirstTurn(t *testing.T) {
+	open := func(prompt *marotte.EntryPrompt) marotte.Entry {
+		payload, err := json.Marshal(marotte.EntryTurnOpen{Prompt: prompt, Source: marotte.TurnOpenNamePrompt})
+		if err != nil {
+			t.Fatalf("marshal turn_open: %v", err)
+		}
+		return marotte.Entry{Kind: marotte.EntryKindTurnOpen, Payload: payload}
+	}
+	instructions := func(entries []marotte.Entry) []bool {
+		var out []bool
+		for i := range entries {
+			var o marotte.EntryTurnOpen
+			if err := json.Unmarshal(entries[i].Payload, &o); err != nil {
+				t.Fatalf("decode turn_open: %v", err)
+			}
+			out = append(out, o.Prompt != nil && o.Prompt.Instruction)
+		}
+		return out
+	}
+	tests := []struct {
+		name    string
+		entries []marotte.Entry
+		want    []bool
+	}{
+		{
+			name:    "the first prompt is marked and a later one is not",
+			entries: []marotte.Entry{open(&marotte.EntryPrompt{ID: "a", Text: "do it"}), open(&marotte.EntryPrompt{ID: "b", Text: "main"})},
+			want:    []bool{true, false},
+		},
+		{
+			name:    "a first turn with no prompt marks nothing",
+			entries: []marotte.Entry{open(nil), open(&marotte.EntryPrompt{ID: "b", Text: "main"})},
+			want:    []bool{false, false},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			markInstruction(tt.entries)
+			if got := instructions(tt.entries); !slices.Equal(got, tt.want) {
+				t.Errorf("instruction marks = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

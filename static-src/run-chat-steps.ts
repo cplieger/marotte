@@ -3,6 +3,7 @@
 // the live edge the rows far above them are unmounted again.
 
 import { el } from "@cplieger/reactive";
+import { releaseClampsIn } from "./clamp-text.js";
 import {
   blockElement,
   buildDetachedBody,
@@ -25,6 +26,7 @@ import {
   type EntryRange,
   type ResidencyAnchor,
 } from "./block-window.js";
+import { buildSteerNote } from "./fundamentals/steer-note.js";
 import { buildRequestHeader } from "./fundamentals/turn-header.js";
 import { onHookVisibility } from "./hook-fold.js";
 import { blockShape, shapeExtends } from "./subagent-slice.js";
@@ -59,8 +61,8 @@ export interface RunStepStream {
 }
 
 interface TurnRender {
-  /** The words that opened the turn (a message that resumed the step), above its box while the turn's head is
-   *  mounted. */
+  /** The words that opened the turn, above its box while the turn's head is mounted: a message to the step as a
+   *  steer note, the workflow's instruction as a request band. */
   heading: HTMLElement | undefined;
   box: HTMLElement;
   /** The entry shape already mounted, for the update-versus-rebuild decision. */
@@ -153,18 +155,35 @@ export function createRunStepStream(hostFor: StepHostFor, scroller?: StepScrolle
     render(rec, shape);
   }
 
-  /** The turn's request header stands above its box only while its first entry is mounted. */
+  /** The turn's heading stands above its box only while its first entry is mounted. */
   function syncHeading(rec: TurnRender, headMounted: boolean): void {
-    const request = rec.last.turn.trigger?.text.trim() ?? "";
-    if (!headMounted || request === "") {
-      rec.heading?.remove();
-      rec.heading = undefined;
+    const trigger = rec.last.turn.trigger;
+    const request = trigger?.text.trim() ?? "";
+    if (trigger === undefined || !headMounted || request === "") {
+      dropHeading(rec);
       return;
     }
-    rec.heading ??= buildRequestHeader(request, rec.last.turn.trigger);
+    rec.heading ??=
+      trigger.instruction === true
+        ? buildRequestHeader(request)
+        : buildSteerNote({
+            text: request,
+            origin: "user",
+            dropped: false,
+            ...(trigger.caller === undefined ? {} : { caller: trigger.caller }),
+          });
     if (rec.heading.nextElementSibling !== rec.box) {
       rec.box.before(rec.heading);
     }
+  }
+
+  function dropHeading(rec: TurnRender): void {
+    if (rec.heading === undefined) {
+      return;
+    }
+    releaseClampsIn(rec.heading);
+    rec.heading.remove();
+    rec.heading = undefined;
   }
 
   function render(rec: TurnRender, shape: readonly string[]): void {
@@ -276,7 +295,7 @@ export function createRunStepStream(hostFor: StepHostFor, scroller?: StepScrolle
         continue;
       }
       disposeDetachedBody(turnID, ROOT_LANE);
-      rec.heading?.remove();
+      dropHeading(rec);
       rec.box.remove();
       renders.delete(turnID);
     }
@@ -309,8 +328,11 @@ export function createRunStepStream(hostFor: StepHostFor, scroller?: StepScrolle
     dispose() {
       stopHookVisibility();
       scroller?.setPageIn(null);
-      for (const turnID of renders.keys()) {
+      for (const [turnID, rec] of renders) {
         disposeDetachedBody(turnID, ROOT_LANE);
+        if (rec.heading !== undefined) {
+          releaseClampsIn(rec.heading);
+        }
       }
       renders.clear();
       starts.clear();

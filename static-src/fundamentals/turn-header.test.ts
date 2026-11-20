@@ -667,10 +667,9 @@ describe("a request that opens with a quoted reply passage", () => {
     expect(band(h)).toBeNull();
   });
 
-  it("draws the same band over a run step's request, below its Sent-by line", () => {
-    const h = buildRequestHeader(quoted, { caller: { label: "Agent Mail" } });
+  it("draws the same band over a run step's instruction", () => {
+    const h = buildRequestHeader(quoted);
     expect(band(h)?.innerHTML).toBe(band(buildTurnHeader(data({ request: quoted })))?.innerHTML);
-    expect(h.querySelector(".turn-req")?.firstElementChild?.className).toBe("turn-sent-by");
     expect(band(h)?.nextElementSibling).toBe(text(h));
     expect(text(h).textContent).toBe("why that?");
     expect(band(buildRequestHeader("> something I typed\n\nmy question"))).toBeNull();

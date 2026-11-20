@@ -1544,8 +1544,8 @@ export interface EntryProfileSwitched {
 }
 
 /**
- * EntryPrompt is the prompt a turn_open carries when the reader opened the turn; ID is
- * the client-minted message id. Resends names the steer rows (their dock keys) whose words
+ * EntryPrompt is the words that opened a turn: the reader's or an API caller's message, or
+ * a replayed step session's instruction; ID is the message id. Resends names the steer rows (their dock keys) whose words
  * this prompt carries; the record owns it and the projection never synthesises it. Label is
  * the PromptCommand.DisplayText the prompt was sent with, which KAS's replay gives as the text.
  */
@@ -1557,6 +1557,11 @@ export interface EntryPrompt {
   label?: string;
   attachments?: Attachment[];
   resends?: string[];
+  /**
+   * Instruction is set on the prompt of a replayed step session's first turn: the
+   * workflow's own instruction to the step, which nobody sent as a message.
+   */
+  instruction?: boolean;
 }
 
 /**
@@ -1852,8 +1857,8 @@ export interface EntryTurnClose {
 
 /**
  * EntryTurnOpen is the turn_open payload. Prompt is present for a prompt or
- * empty_retry turn and absent otherwise. Run, NodePath and SessionID are set on
- * a run log's turns only.
+ * empty_retry turn and for a workflow_step turn a message opened, and absent
+ * otherwise. Run, NodePath and SessionID are set on a run log's turns only.
  */
 export interface EntryTurnOpen {
   prompt?: EntryPrompt;
