@@ -163,7 +163,11 @@ func TestNotify_AnswerComesWhileTheDeliveryIsHeld(t *testing.T) {
 		}
 		release()
 		if !reachesState(s.h, "c1", wake, marotte.RunInKAS) {
-			t.Errorf("wake entry = %q after kiro-cli answered its steer, want in_kas", stateOf(s.h, "c1", wake))
+			t.Fatalf("wake entry = %q after kiro-cli answered its steer, want in_kas", stateOf(s.h, "c1", wake))
+		}
+		r, err := s.h.dispatcher.Notify(t.Context(), "c1", "2 new; run grelot inbox", &marotte.Caller{Label: "grelot"}, command.NotifyOptions{})
+		if err != nil || r.MessageID != wake || !r.Held {
+			t.Errorf("a second wake while kiro-cli holds the first = %+v, %v; want held by %q", r, err, wake)
 		}
 	})
 

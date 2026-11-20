@@ -637,12 +637,12 @@ func TestNotify_ALaterWakeReplacesTheWaitingOnesTextInPlace(t *testing.T) {
 	}
 	first, _ := grelotRows(s.h, "c1")
 
-	holder, err := s.h.dispatcher.Notify(t.Context(), "c1", "2 new; run grelot inbox", &marotte.Caller{Label: "grelot"}, command.NotifyOptions{})
+	r, err := s.h.dispatcher.Notify(t.Context(), "c1", "2 new; run grelot inbox", &marotte.Caller{Label: "grelot"}, command.NotifyOptions{})
 	if err != nil {
 		t.Errorf("second wake = %v, want accepted", err)
 	}
-	if len(first) != 1 || holder != first[0] {
-		t.Errorf("second wake answered %q, want the waiting row %v that took its text", holder, first)
+	if len(first) != 1 || r.MessageID != first[0] || r.Held {
+		t.Errorf("second wake answered %+v, want the waiting row %v that took its text, not held", r, first)
 	}
 	joinInflight(s.h)
 	ids, texts := grelotRows(s.h, "c1")

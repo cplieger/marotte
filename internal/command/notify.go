@@ -24,26 +24,42 @@ type NotifyOptions struct {
 	DisplayText string
 }
 
-// Notify places text from an outside caller on chatID's run order as the notify door's entry (RunFromNotify) and
-// returns once it is placed, with the id of the run entry holding the text; the run order delivers it after, as a
-// steer, a turn of its own or in turn. A caller's earlier entry still waiting takes the text instead, and one kiro-cli
-// holds unread covers it. from must be non-nil: a caller's message neither ends the chat's waiting_on_user claim nor
-// touches its composer. A refusal is a 400 StatusError for text that reads as a system notice or holds a
-// context-mention token, BeginMessage's refusal for a chat with no tab, else Submit's refusal as HTTP.
-func (d *Dispatcher) Notify(ctx context.Context, chatID marotte.ChatID, text string, from *marotte.Caller, opts NotifyOptions) (string, error) {
+// NotifyReceipt is Notify's answer. MessageID is the run entry that holds the text: its own, or its caller's earlier
+// one. Held says that earlier entry is a steer kiro-cli holds unread, which took no new text.
+type NotifyReceipt struct {
+	MessageID string
+	Held      bool
+}
+
+// CheckNotifyText refuses text Notify refuses before placing it: text that reads as a system notice, or that holds a
+// context-mention token, each a 400 StatusError.
+func CheckNotifyText(text string) error {
 	switch {
 	case notificationPrefix.MatchString(text):
-		return "", StatusError(http.StatusBadRequest, errSteerLooksLikeNotification)
+		return StatusError(http.StatusBadRequest, errSteerLooksLikeNotification)
 	case mentionRe.MatchString(text):
-		return "", StatusError(http.StatusBadRequest, errNotifyMention)
+		return StatusError(http.StatusBadRequest, errNotifyMention)
+	}
+	return nil
+}
+
+// Notify places text from an outside caller, or from marotte itself, on chatID's run order as the notify door's entry
+// (RunFromNotify) and returns once it is placed; the run order delivers it after, as a steer, a turn of its own or in
+// turn. A caller's earlier entry still waiting takes the text instead, and one kiro-cli holds unread covers it. from
+// must be non-nil: a caller's message neither ends the chat's waiting_on_user claim nor touches its composer. A
+// marotte caller's turn is never re-sent by the empty-turn retry, since its sender re-delivers it. A refusal is
+// CheckNotifyText's, BeginMessage's refusal for a chat with no tab, else Submit's refusal as HTTP.
+func (d *Dispatcher) Notify(ctx context.Context, chatID marotte.ChatID, text string, from *marotte.Caller, opts NotifyOptions) (NotifyReceipt, error) {
+	if err := CheckNotifyText(text); err != nil {
+		return NotifyReceipt{}, err
 	}
 	roles := d.prompts
 	if err := refuseBotDraft(ctx, roles.chats, chatID); err != nil {
-		return "", err
+		return NotifyReceipt{}, err
 	}
 	stamp, err := roles.door.BeginMessage(ctx, chatID, from, roles.admission.LifeStamp)
 	if err != nil {
-		return "", err
+		return NotifyReceipt{}, err
 	}
 	kind := marotte.SendPlain
 	if opts.DisplayText != "" {
@@ -52,13 +68,13 @@ func (d *Dispatcher) Notify(ctx context.Context, chatID marotte.ChatID, text str
 	s := Submission{
 		Row:    marotte.QueuedPrompt{ID: ids.NewMessageID(), Text: text, Label: opts.DisplayText, Caller: from},
 		Origin: marotte.RunFromNotify, Kind: kind,
-		AdmitWait: notifyAdmitWait, Retry: !kasClaimsPromptText(text),
+		AdmitWait: notifyAdmitWait, Retry: from.Kind != marotte.CallerKindMarotte && !kasClaimsPromptText(text),
 	}
 	a, err := roles.runq.Submit(ctx, chatID, stamp, &s)
 	if err != nil {
-		return "", submitRefusal(err)
+		return NotifyReceipt{}, submitRefusal(err)
 	}
-	return a.MessageID, nil
+	return NotifyReceipt{MessageID: a.MessageID, Held: a.As == SubmitSteered}, nil
 }
 
 // NotifyRefusal is what a Notify error means to its outside caller.

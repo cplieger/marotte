@@ -67,7 +67,8 @@ type ruleDoor struct{ rt *Runtime }
 func (d ruleDoor) Notify(ctx context.Context, chatID marotte.ChatID, text string, from *marotte.Caller,
 	opts command.NotifyOptions,
 ) (string, error) {
-	return d.rt.dispatcher.Notify(ctx, chatID, text, from, opts)
+	r, err := d.rt.dispatcher.Notify(ctx, chatID, text, from, opts)
+	return r.MessageID, err
 }
 
 func (d ruleDoor) Unqueue(ctx context.Context, chatID marotte.ChatID, messageID string) error {

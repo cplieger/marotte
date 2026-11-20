@@ -18,12 +18,12 @@ func notifyInto(t *testing.T, f *callerFixture) {
 
 func notifyWith(t *testing.T, f *callerFixture, opts NotifyOptions) string {
 	t.Helper()
-	id, err := f.d.Notify(t.Context(), "c1", notifyText, &marotte.Caller{Label: "grelot"}, opts)
+	r, err := f.d.Notify(t.Context(), "c1", notifyText, &marotte.Caller{Label: "grelot"}, opts)
 	f.join.join()
 	if err != nil {
 		t.Fatalf("Notify: %v", err)
 	}
-	return id
+	return r.MessageID
 }
 
 // composerKept fails t unless c1's draft and staged file are the fixture's.

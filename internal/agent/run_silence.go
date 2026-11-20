@@ -114,11 +114,14 @@ func (r *runLog) askOpened(workflowID, nodeID string, askID int64) {
 	}
 }
 
-// askClosed settles an ask on the run's open turns of node nodeID.
+// askClosed settles an ask on the run's open turns of node nodeID, its close ending the step's wait.
 func (r *runLog) askClosed(workflowID, nodeID string, askID int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, t := range r.nodeTurnsLocked(workflowID, nodeID) {
+		if _, open := t.asks[askID]; open {
+			t.stamp(r.now())
+		}
 		delete(t.asks, askID)
 	}
 }
