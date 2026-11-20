@@ -57,6 +57,8 @@ import { opened, typeInto } from "./__test-helpers__/editor-transitions-driver.j
 import { mountEditorView } from "./__test-helpers__/editor-dom.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
 import { initEditor } from "./editor-core.js";
+import { iconEl } from "./icon-el.js";
+import { ICON_RENAME_UI } from "./icons.js";
 import { activateFile, closeEditorFile, moveEditorFile } from "./editor-openers.js";
 import { fileStates } from "./editor-types.js";
 import { BUS_FILES_REVEAL, onBus } from "./bus.js";
@@ -142,6 +144,12 @@ async function typeName(name: string): Promise<void> {
 }
 
 describe("the editor's Rename", () => {
+  it("draws Rename with the registry's Rename icon, a different glyph from Edit's pencil", () => {
+    const glyph = (id: string): string => byId(id).querySelector("svg")?.innerHTML ?? "";
+    expect(glyph("editor-rename-btn")).toBe(iconEl(ICON_RENAME_UI).innerHTML);
+    expect(glyph("editor-rename-btn")).not.toBe(glyph("editor-edit-btn"));
+  });
+
   it("shows Rename (F2) on a renamable file and hides it when the server says it cannot be renamed", async () => {
     await openPrompt();
     expect(shown("editor-rename-btn")).toBe(true);
