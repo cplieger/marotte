@@ -156,9 +156,14 @@ type orderFacts struct {
 	// newOffer mints a steer offer's token, unique in the process, so a fate the steer record reports for an earlier
 	// offer, in this life or another, never matches a later one.
 	newOffer func() uint64
-	// gate is the model gate's answer for an attention entry's take (modelGate.admit); nil admits every take.
-	gate  func(e *runEntry) (ok bool, openAt time.Time)
-	stamp uint64
+	// gate is the model gate's answer for an attention entry's take (modelGate.check); nil admits every take.
+	gate func(e *runEntry) (ok bool, openAt time.Time)
+	// gateStart is the gate's answer at an attention entry's take, recording the start (modelGate.start); nil starts
+	// every take.
+	gateStart func(e *runEntry) (ok bool, openAt time.Time)
+	// gateUnstart takes back a start whose take was then refused (modelGate.unstart).
+	gateUnstart func(e *runEntry)
+	stamp       uint64
 	// nextSeq and stopSeq are the lifecycle's open and stop sequences (chatLifecycle.nextSeq, stopSeq).
 	nextSeq uint64
 	stopSeq uint64
@@ -178,6 +183,8 @@ type runEffects struct {
 	closed []attentionClose
 	// changed: the projection changed, so the version is bumped and the list written and announced.
 	changed bool
+	// attentionRead: the agent read an attention entry kiro-cli held as a steer (runAttention.read).
+	attentionRead bool
 }
 
 // attentionClose is how one attention entry ended: its carrying turn's outcome, attnLost or attnDiscarded.
@@ -233,7 +240,8 @@ func (l *runList) touch() { l.fx.changed = true }
 
 // owesEffects reports effects recorded since the last takeEffects.
 func (l *runList) owesEffects() bool {
-	return l.fx.changed || len(l.fx.launch) > 0 || len(l.fx.steer) > 0 || len(l.fx.closed) > 0 || !l.fx.gateAt.IsZero()
+	return l.fx.changed || len(l.fx.launch) > 0 || len(l.fx.steer) > 0 || len(l.fx.closed) > 0 || !l.fx.gateAt.IsZero() ||
+		l.fx.attentionRead
 }
 
 // attentionEnded records an attention entry's end for the glue.
@@ -587,18 +595,38 @@ func (l *runList) advance(f *orderFacts) {
 	if e == nil || !l.mayLaunch(e) {
 		return
 	}
-	switch {
-	case e.kind == marotte.RunKindRevert && by != nil, !f.admit:
+	if (e.kind == marotte.RunKindRevert && by != nil) || !f.admit || !l.gateStarts(e, f) || !l.reserveStarted(e, f) {
 		return
-	default:
-		if !l.reserveFor(e, f) {
-			return
-		}
 	}
 	l.take(e, n)
 	if dl.Kind == marotte.DeliverPrompt {
 		l.carry(e, dl)
 	}
+}
+
+// gateStarts reports whether e's take may go, recording an attention entry's start with the model gate; a refusal
+// arms the taker's re-run for when the gate opens.
+func (l *runList) gateStarts(e *runEntry, f *orderFacts) bool {
+	if !e.attention() || f.gateStart == nil {
+		return true
+	}
+	ok, openAt := f.gateStart(e)
+	if !ok && (l.fx.gateAt.IsZero() || openAt.Before(l.fx.gateAt)) {
+		l.fx.gateAt = openAt
+	}
+	return ok
+}
+
+// reserveStarted is reserveFor for an entry whose model gate start is recorded: a refused reservation takes the start
+// back, so a take that did not happen spaces no other.
+func (l *runList) reserveStarted(e *runEntry, f *orderFacts) bool {
+	if l.reserveFor(e, f) {
+		return true
+	}
+	if e.attention() && f.gateUnstart != nil {
+		f.gateUnstart(e)
+	}
+	return false
 }
 
 // pickPastGate is pick with every attention entry the model gate holds left pending at its place, so a person's row
@@ -1274,7 +1302,27 @@ func (l *runList) steerRead(id string, gone bool) {
 			l.attentionCarriers = map[string][]string{}
 		}
 		l.attentionCarriers[head] = append(l.attentionCarriers[head], e.id)
+		l.fx.attentionRead = true
 	}
+}
+
+// attentionEntry is where attention entry id stands: on the list, or carried by the turn that read it.
+func (l *runList) attentionEntry(id string) attnEntry {
+	if _, e := l.find(id); e != nil {
+		switch {
+		case e.state == marotte.RunPending || e.state == marotte.RunPaused:
+			return attnEntryWaiting
+		case e.inFlight():
+			return attnEntryUnread
+		}
+		return attnEntryCarried
+	}
+	for _, ids := range l.attentionCarriers {
+		if slices.Contains(ids, id) {
+			return attnEntryCarried
+		}
+	}
+	return attnEntryGone
 }
 
 // headTurn is the running turn a steer is read in: the live steerable turn, else the first live turn not closing; ""

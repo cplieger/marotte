@@ -92,10 +92,8 @@ type HealthFacts struct {
 	// Steps is keyed by the step's PathKey.
 	Steps map[string]StepFacts
 	// Asks is the run's open asks from the same reply (OpenAsks).
-	Asks []Ask
-	// HungAfter is the silence a counted step may keep before it reads hung; zero means DefaultHungAfter.
-	HungAfter time.Duration
-	HealTry   int
+	Asks    []Ask
+	HealTry int
 	// Reachable is false while the ask cell's newest read failed or it holds none; ReadFailed tells the first.
 	Reachable  bool
 	ReadFailed bool
@@ -155,7 +153,6 @@ const questionPauseReason = "Step requested user input via send_message."
 const continuationCap = 4
 
 const (
-	sourceSendMessage  = "send_message"
 	sourceStatusUpdate = "status_update"
 	signalNeedInput    = "need_input"
 )
@@ -270,10 +267,7 @@ func detailWhy(p *RunPause, f *HealthFacts) string {
 
 // stepsHealth classifies every leaf, listing the ones that are not healthy or are running.
 func stepsHealth(in Inspect, f *HealthFacts, now time.Time) []StepHealth {
-	c := stepClassifier{s: in.State, f: f, now: now, hungAfter: f.HungAfter, sole: len(f.Asks) == 1}
-	if c.hungAfter <= 0 {
-		c.hungAfter = DefaultHungAfter
-	}
+	c := stepClassifier{s: in.State, f: f, now: now, sole: len(f.Asks) == 1}
 	c.asks = make(map[string]*Ask, len(f.Asks))
 	for i := range f.Asks {
 		c.asks[PathKey(f.Asks[i].NodePath)] = &f.Asks[i]
@@ -304,12 +298,11 @@ func isContainer(t string) bool {
 
 // stepClassifier holds what every leaf of one run is classified against.
 type stepClassifier struct {
-	now       time.Time
-	s         *State
-	f         *HealthFacts
-	asks      map[string]*Ask
-	hungAfter time.Duration
-	sole      bool
+	now  time.Time
+	s    *State
+	f    *HealthFacts
+	asks map[string]*Ask
+	sole bool
 }
 
 // classify sets st's state. Question or re-park is read from the node's completion signal, which survives a
@@ -338,7 +331,7 @@ func (c *stepClassifier) classify(st *StepHealth, n *node, facts *StepFacts, ask
 
 func (c *stepClassifier) hung(n *node, facts *StepFacts) bool {
 	return n.Status == statusRunning && facts.CountsTowardSilence && !facts.LastAt.IsZero() &&
-		c.now.Sub(facts.LastAt) >= c.hungAfter
+		c.now.Sub(facts.LastAt) >= DefaultHungAfter
 }
 
 // stamp is t as a state entry's discriminator, "" for zero.

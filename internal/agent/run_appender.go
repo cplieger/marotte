@@ -99,15 +99,15 @@ func (rs *Runs) gradeStepEnd(workflowID, nodePath string, sealed []turnlog.Seale
 		return
 	}
 	if marotte.RunStatus(status) != marotte.RunStatusCompleted {
-		tc, ok := turnCloseOf(sealed)
+		tc, turn, ok := turnCloseOf(sealed)
 		if !ok {
 			return
 		}
-		c := stepCloseOf(&tc, "")
+		c := stepCloseOf(&tc, turn)
 		if !c.mayNote() || note == nil || rs.coord == nil {
 			return
 		}
-		rs.gradeAttention(note, nodePath, &c, "", false)
+		rs.gradeAttention(note, nodePath, &c, false)
 		rs.lifecycle.goUnlessDraining(func() {
 			ctx, cancel := rs.lifecycle.derivedContext()
 			defer cancel()
@@ -163,7 +163,7 @@ func (rs *Runs) recordGrade(ctx context.Context, workflowID string, g *stepGrade
 	if l == nil || rs.coord == nil || rs.lifecycle == nil {
 		return
 	}
-	rs.gradeAttention(l, g.nodePath, &g.grade, g.sessionID, runEnded)
+	rs.gradeAttention(l, g.nodePath, &g.grade, runEnded)
 	// Off the caller's context: a run read's request ending must not cut the note's write.
 	rs.lifecycle.goUnlessDraining(func() {
 		nctx, cancel := rs.lifecycle.derivedContext()
@@ -184,7 +184,7 @@ func (rs *Runs) stepEnds(ctx context.Context, workflowID string, kas map[string]
 // gradeAttention hands the run-attention ledger an unfinished step end, synchronously, so the wake that names it is
 // owed before the grade's caller returns. l is the lease node_complete held for the close; runEnded says the run is
 // known to be terminal, as a run whose lease is gone is.
-func (rs *Runs) gradeAttention(l *runlease.Lease, nodePath string, c *stepClose, sessionID string, runEnded bool) {
+func (rs *Runs) gradeAttention(l *runlease.Lease, nodePath string, c *stepClose, runEnded bool) {
 	var kind workflow.UnfinishedKind
 	switch {
 	case c.outcome == marotte.TurnOutcomeRefused:
@@ -201,8 +201,17 @@ func (rs *Runs) gradeAttention(l *runlease.Lease, nodePath string, c *stepClose,
 		chat = c
 	}
 	_, held := rs.lease(l.WorkflowID)
-	rs.attention.grade(l.WorkflowID, nodePath, &attnGrade{kind: kind, turnID: c.turn, sessionID: sessionID, refusal: c.refusal},
-		chat, rs.leasedRunName(l), runEnded || !held)
+	in := &attnGradeOf{
+		grade:    &attnGrade{kind: kind, turnID: c.turn},
+		chat:     chat,
+		name:     rs.leasedRunName(l),
+		nodePath: nodePath,
+		ended:    runEnded || !held,
+	}
+	if rs.log != nil {
+		in.newest = rs.log.newestTurn(l.WorkflowID, nodePath)
+	}
+	rs.attention.grade(l.WorkflowID, in)
 }
 
 // noteGradedStepEnd leaves the user the note a graded step end calls for, if any: a push for an empty answer, else a
@@ -232,19 +241,19 @@ func (rs *Runs) noteGradedStepEnd(ctx context.Context, l *runlease.Lease, nodePa
 	})
 }
 
-// turnCloseOf answers a close's turn_close; false when it sealed none or its payload does not decode.
-func turnCloseOf(sealed []turnlog.Sealed) (marotte.EntryTurnClose, bool) {
+// turnCloseOf answers a close's turn_close and its turn; false when it sealed none or its payload does not decode.
+func turnCloseOf(sealed []turnlog.Sealed) (tc marotte.EntryTurnClose, turn string, ok bool) {
 	for _, s := range sealed {
 		if s.Entry == nil || s.Entry.Kind != marotte.EntryKindTurnClose {
 			continue
 		}
 		var c marotte.EntryTurnClose
 		if json.Unmarshal(s.Entry.Payload, &c) != nil {
-			return marotte.EntryTurnClose{}, false
+			return marotte.EntryTurnClose{}, "", false
 		}
-		return c, true
+		return c, s.Entry.Turn, true
 	}
-	return marotte.EntryTurnClose{}, false
+	return marotte.EntryTurnClose{}, "", false
 }
 
 // stepModelCallLimitNoteText names the step by its workflow.PathKey, as an included node's id holds a '/'.
@@ -258,31 +267,6 @@ func stepModelCallLimitNoteText(run, nodePath string) string {
 func (rs *Runs) notifyEmptyAnswer(ctx context.Context, l *runlease.Lease, nodePath string) {
 	n := notice.StepEmptyAnswer(notice.RunTarget(l.WorkflowID, rs.leasedRunName(l)), nodePath)
 	rs.coord.Notify(ctx, marotte.ChatID(l.ChatID), &n)
-}
-
-// stepEmptyAnswerNoteText is an empty-answer step's next move, as the health read serves it: the run by id for its
-// workflow tools, the step by its workflow.PathKey, the session that holds the empty answer, and the retry it can
-// call. KAS refuses
-// update_workflow replace_remaining on a finished run, and a step in the run's last node is graded while its
-// run_complete is still on the way, so a run not known to have ended is offered both retries.
-func stepEmptyAnswerNoteText(workflowID, name, nodePath, sessionID string, runEnded bool) string {
-	run := workflowID
-	if name != "" {
-		run = name + " (" + workflowID + ")"
-	}
-	session := ""
-	if sessionID != "" {
-		session = " (session " + sessionID + ")"
-	}
-	newRun := "start a new run with run_workflow whose workflowPrompt re-runs step " + nodePath + "'s work"
-	retry := " The run has finished, so update_workflow can no longer replace its steps: to retry it, " + newRun + "."
-	if !runEnded {
-		retry = " To retry it while the run is running or paused, call update_workflow on " + workflowID +
-			" with action replace_remaining and a workflowPrompt that re-runs step " + nodePath +
-			" first; once the run has finished, " + newRun + "."
-	}
-	return "Workflow run " + run + " step " + nodePath + session + " failed. " + marotte.EmptyAnswerStepReason + retry +
-		" marotte will not resume or re-run it on its own."
 }
 
 // stepRefusalNoteText names the step and does not invite a re-run: a refusal is deterministic.

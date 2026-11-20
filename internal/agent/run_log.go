@@ -202,6 +202,8 @@ type runRecord struct {
 	log    *chat.EntryLog
 	open   map[string]*runTurn
 	closed map[string]string
+	// opened counts each path's turns this process opened: the newest turn's ordinal, open or closed (attnTurn).
+	opened map[string]int
 	// staged holds, per path, the user's words a paused step resumes on, until KAS reopens the path's
 	// turn: they become that turn's prompt.
 	staged map[string]*marotte.EntryPrompt
@@ -733,6 +735,10 @@ func (r *runLog) open(ctx context.Context, step *translate.RunStep, chatID marot
 		r.steps.holdStep(rec.host, e.ID)
 	}
 	rec.open[nodePath] = t
+	if rec.opened == nil {
+		rec.opened = make(map[string]int)
+	}
+	rec.opened[nodePath]++
 	if rec.starts != nil {
 		noteAttemptOpen(rec.starts, nodePath, e.Ts)
 		rec.turns[nodePath] = append(rec.turns[nodePath], e.ID)
@@ -879,28 +885,67 @@ func (r *runLog) transientFailure(workflowID, nodePath string) (code string, ok 
 
 // stepLive is what the run log holds of one open step turn for the run's health: the facts, and the turn's id, which
 // a grade of an earlier turn on the path is superseded by.
-type stepLive struct {
-	turnID string
-	facts  workflow.StepFacts
+// attnSteps is a run's step turns as the run-attention ledger reads them: the open ones' facts by path, and each
+// path's newest turn, open or closed.
+type attnSteps struct {
+	live   map[string]workflow.StepFacts
+	newest map[string]attnTurn
 }
 
-// liveSteps is the run's open step turns by path.
-func (r *runLog) liveSteps(workflowID string) map[string]stepLive {
+// attnTurn is a path's newest step turn: its id and its ordinal among the path's turns this process opened, which
+// orders two reads of the path taken at different times.
+type attnTurn struct {
+	id string
+	n  int
+}
+
+// attentionSteps is the run's open step turns and each path's newest turn.
+func (r *runLog) attentionSteps(workflowID string) attnSteps {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec, ok := r.runs[workflowID]
-	if !ok || len(rec.open) == 0 {
-		return nil
+	if !ok {
+		return attnSteps{}
 	}
-	out := make(map[string]stepLive, len(rec.open))
+	out := attnSteps{}
+	for path := range rec.opened {
+		if t := newestLocked(rec, path); t.id != "" {
+			if out.newest == nil {
+				out.newest = make(map[string]attnTurn, len(rec.opened))
+			}
+			out.newest[path] = t
+		}
+	}
+	if len(rec.open) > 0 {
+		out.live = make(map[string]workflow.StepFacts, len(rec.open))
+	}
 	for path, t := range rec.open {
 		code, _ := t.transientFailure()
-		out[path] = stepLive{turnID: t.turn.ID(), facts: workflow.StepFacts{
+		out.live[path] = workflow.StepFacts{
 			PausedAt: t.pausedAt, LastAt: t.lastActivity(), OpenCall: t.oldestCall(),
 			TransientFailure: code, CountsTowardSilence: t.countsTowardSilence(),
-		}}
+		}
 	}
 	return out
+}
+
+// newestTurn is the path's newest step turn, open or closed; zero when the run log holds none.
+func (r *runLog) newestTurn(workflowID, nodePath string) attnTurn {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.runs[workflowID]
+	if !ok {
+		return attnTurn{}
+	}
+	return newestLocked(rec, nodePath)
+}
+
+func newestLocked(rec *runRecord, path string) attnTurn {
+	t := attnTurn{n: rec.opened[path], id: rec.closed[path]}
+	if open := rec.open[path]; open != nil {
+		t.id = open.turn.ID()
+	}
+	return t
 }
 
 // throttledStop reports a step whose current KAS turn ended `error` on a model throttle.
@@ -1216,7 +1261,7 @@ func lateCallsOf(sealed []turnlog.Sealed, dock stepCalls) *lateCalls {
 // sealedClose is the close a closer sealed, through the scan's constructor so a live close and a scanned one cannot
 // differ: the conclusion, the fallback when the turn_close does not decode, has no refusal.
 func sealedClose(sealed []turnlog.Sealed, turn string, c *marotte.TurnConclusion) stepClose {
-	if tc, ok := turnCloseOf(sealed); ok {
+	if tc, _, ok := turnCloseOf(sealed); ok {
 		return stepCloseOf(&tc, turn)
 	}
 	return stepClose{
@@ -1375,7 +1420,7 @@ func (*runLog) gradeLocked(ctx context.Context, rec *runRecord, path string, k k
 		return nil, err
 	}
 	rec.closes[path] = graded
-	g := &stepGrade{entry: e, nodePath: path, grade: graded, sessionID: kas.SessionID}
+	g := &stepGrade{entry: e, nodePath: path, grade: graded}
 	if n, held := rec.noteLeases[path]; held {
 		delete(rec.noteLeases, path)
 		if n.turn == c.turn {

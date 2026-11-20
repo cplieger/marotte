@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -107,8 +108,22 @@ type attnHost struct {
 	clk *attnClock
 	// onNotify runs on the delivering goroutine after the door answered and before the ledger reads the receipt.
 	onNotify func(command.NotifyReceipt)
-	armed    []attnTimer
-	mu       sync.Mutex
+	// refuse, when set, is the door's answer to every notify, which then reaches no chat.
+	refuse error
+	// lease, when set, is the lease and run log facts the ledger reads, in place of the run host's.
+	lease *attnLease
+	armed []attnTimer
+	mu    sync.Mutex
+}
+
+func (h *attnHost) attentionLease(workflowID string) (attnLease, bool) {
+	h.mu.Lock()
+	l := h.lease
+	h.mu.Unlock()
+	if l != nil {
+		return *l, true
+	}
+	return h.attentionHost.attentionLease(workflowID)
 }
 
 type attnTimer struct {
@@ -141,6 +156,12 @@ func (h *attnHost) attentionAfter(d time.Duration, fn func()) *time.Timer {
 }
 
 func (h *attnHost) attentionNotify(ctx context.Context, chat marotte.ChatID, text string) (command.NotifyReceipt, error) {
+	h.mu.Lock()
+	refuse := h.refuse
+	h.mu.Unlock()
+	if refuse != nil {
+		return command.NotifyReceipt{}, refuse
+	}
 	rcpt, err := h.attentionHost.attentionNotify(ctx, chat, text)
 	h.mu.Lock()
 	hook := h.onNotify
@@ -549,6 +570,7 @@ func TestRunAttention_RunLevelPauses(t *testing.T) {
 		host := attnOnClock(g.h, clk)
 		g.h.runs.log.setClock(clk.now)
 		g.spend(t)
+		g.stopRead(t)
 		clk.advance(attentionCoalesce + time.Second)
 		g.h.runs.attention.tick()
 		host.fireDue()
@@ -599,6 +621,30 @@ func (g *attnRig) gradeStep(t *testing.T, id, nodeID string, kind workflow.Unfin
 	return nodePath
 }
 
+// finishStep drives step nodeID of id through one turn that says its work is done, then KAS's node_complete and the
+// grade's read.
+func (g *attnRig) finishStep(t *testing.T, id, nodeID string) {
+	t.Helper()
+	nodePath := workflow.PathKey([]string{id, nodeID})
+	g.serve(id, inspectWithStep(t, id, nodeID, "completed", ""))
+	step := &translate.RunStep{RunID: id, NodePath: nodePath, SessionID: "step-session-" + newMessageID()}
+	g.h.runs.RunNodeStart(t.Context(), step, parkChat)
+	turn, ok := g.h.runs.RunFoldTarget(t.Context(), step, parkChat)
+	if !ok {
+		t.Fatal("Setup: the step has no open turn")
+	}
+	if _, err := turn.TextDelta(t.Context(), "", "say-"+newMessageID(), "The review is written."); err != nil {
+		t.Fatalf("Setup: text: %v", err)
+	}
+	if !g.h.runs.RunStopReason(id, nodePath, marotte.StopReasonEndTurn) {
+		t.Fatal("Setup: RunStopReason refused on the open turn")
+	}
+	g.h.runs.RunNodeComplete(t.Context(), id, []string{id, nodeID}, "completed", "")
+	joinInflight(g.h)
+	stepEndsOf(t, g.h, id)
+	joinInflight(g.h)
+}
+
 // A step KAS counted completed though its work may be unfinished (an empty answer, a refusal, the model-call limit)
 // wakes the chat with a line of at most 300 bytes naming the kind and the short next move; the full advice is the
 // step's next move in the ledger's facts.
@@ -644,25 +690,31 @@ func TestRunAttention_UnfinishedSteps(t *testing.T) {
 		g := newAttnRig(t, nil)
 		const id = "wf_00000000000000b4"
 		g.launch(t, id, "review")
-		nodePath := g.gradeStep(t, id, "seat-b", workflow.UnfinishedEmptyAnswer)
-		step := &translate.RunStep{RunID: id, NodePath: nodePath, SessionID: "step-session-2"}
-		g.h.runs.RunNodeStart(t.Context(), step, parkChat)
-		turn, ok := g.h.runs.RunFoldTarget(t.Context(), step, parkChat)
-		if !ok {
-			t.Fatal("Setup: the re-run has no open turn")
+		g.gradeStep(t, id, "seat-b", workflow.UnfinishedEmptyAnswer)
+		if got := g.health(t, id).State; got != workflow.HealthUnfinishedStep {
+			t.Fatalf("Setup: the graded run reads %q, want unfinished_step", got)
 		}
-		if _, err := turn.TextDelta(t.Context(), "", "say-2", "The review is written."); err != nil {
-			t.Fatalf("Setup: text: %v", err)
-		}
-		if !g.h.runs.RunStopReason(id, nodePath, marotte.StopReasonEndTurn) {
-			t.Fatal("Setup: RunStopReason refused on the re-run's turn")
-		}
-		g.h.runs.RunNodeComplete(t.Context(), id, []string{id, "seat-b"}, "completed", "")
-		joinInflight(g.h)
-		stepEndsOf(t, g.h, id)
-		joinInflight(g.h)
+		g.finishStep(t, id, "seat-b")
 		g.deliver()
 		g.noWake(t, 0, "a step re-run to its end before the wake")
+	})
+	t.Run("run log facts read before the graded turn opened do not drop the item", func(t *testing.T) {
+		g := newAttnRig(t, nil)
+		const id = "wf_00000000000000b5"
+		g.launch(t, id, "review")
+		g.finishStep(t, id, "seat-b")
+		stale, _ := g.h.runs.attentionLease(id)
+		g.gradeStep(t, id, "seat-b", workflow.UnfinishedEmptyAnswer)
+		g.host.mu.Lock()
+		g.host.lease = &stale
+		g.host.mu.Unlock()
+		g.h.runs.attention.recompute(id)
+		g.host.mu.Lock()
+		g.host.lease = nil
+		g.host.mu.Unlock()
+		if got := g.health(t, id).State; got != workflow.HealthUnfinishedStep {
+			t.Errorf("after a stale read the run reads %q, want unfinished_step", got)
+		}
 	})
 	t.Run("the run ends inside the coalescing window", func(t *testing.T) {
 		g := newAttnRig(t, nil)
@@ -1146,7 +1198,9 @@ func TestRunAttention_ASecondWakeInARunningTurn(t *testing.T) {
 	}
 	held := k.holds()
 	g.h.translateACPEvent(parkChat, g.h.originOf(parkChat), injectedMsg(held[len(held)-1], steeredWakes(k)[0]))
-	g.deliver()
+	// The read alone sends what waited on it: no tick runs.
+	joinInflight(g.h)
+	g.host.fireDue()
 	waitUntil(t, "the second wake's steer", func() bool { return len(steeredWakes(k)) == 2 })
 	s := steeredWakes(k)
 	if !strings.Contains(s[1], second) || strings.Contains(s[1], first) {
@@ -1543,5 +1597,86 @@ func TestRunAttention_AStuckChatIsLoggedOnceAt31Minutes(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), `"chat_id":"c1"`) {
 		t.Error("the Warn does not name the chat")
+	}
+}
+
+// A cell snapshot handed to the ledger after a newer one is dropped: a tick's read that lost the race with a cell
+// refresh cannot put the older state back.
+func TestRunAttention_AnOlderSnapshotIsDropped(t *testing.T) {
+	t.Parallel()
+	g := newAttnRig(t, nil)
+	const id = "wf_0000000000000a01"
+	g.launch(t, id, "perf")
+	g.read(t, id, runningTree(t, id, "ask"))
+	older, ok := g.h.runs.attentionCell(id)
+	if !ok {
+		t.Fatal("Setup: the run has no cell")
+	}
+	g.read(t, id, retarget(t, reparkFixture, id))
+	g.h.runs.attention.observe(&older)
+	if got := g.health(t, id).State; got != workflow.HealthParkedSilently {
+		t.Errorf("after an older snapshot the run reads %q, want parked_silently from the newer read", got)
+	}
+}
+
+// A wake whose text the notify door refuses is a marotte bug, not a busy chat: it is dropped, not re-sent on the
+// backoff, while a chat that cannot take a wake yet gets it on the backoff.
+func TestRunAttention_ARefusedText(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		refuse error
+		want   int
+	}{
+		{"the text is refused", command.StatusError(http.StatusBadRequest, errors.New("bad text")), 0},
+		{"the chat is busy", command.StatusError(http.StatusConflict, errors.New("busy")), 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newAttnRig(t, nil)
+			const id = "wf_0000000000000a02"
+			g.launch(t, id, "perf")
+			g.host.mu.Lock()
+			g.host.refuse = tc.refuse
+			g.host.mu.Unlock()
+			g.read(t, id, retarget(t, reparkFixture, id))
+			g.deliver()
+			joinInflight(g.h)
+			g.host.mu.Lock()
+			g.host.refuse = nil
+			g.host.mu.Unlock()
+			g.after(attentionBackoffBase + time.Second)
+			if tc.want > 0 {
+				g.awaitWakes(t, tc.want)
+			}
+			g.noWake(t, tc.want, "after the refused notify's backoff")
+		})
+	}
+}
+
+// A wake in flight whose entry left the chat's list with no close, which no close will ever end, is ended as lost by
+// the ledger's sweep, so the items it carried are re-delivered rather than held forever.
+func TestRunAttention_AWakeWithNoEndIsSwept(t *testing.T) {
+	t.Parallel()
+	g := newAttnRig(t, nil)
+	const id = "wf_0000000000000a03"
+	g.launch(t, id, "perf")
+	g.read(t, id, retarget(t, reparkFixture, id))
+	a := g.h.runs.attention
+	a.mu.Lock()
+	ghost := &attnDelivery{entryID: "ghost"}
+	for _, it := range itemsOf(a.runs[id], a.now()) {
+		ghost.carried = append(ghost.carried, attnCarry{workflowID: id, slot: it.slot, key: it.key})
+	}
+	a.boxLocked(parkChat).inflight[ghost.entryID] = ghost
+	a.mu.Unlock()
+	if len(ghost.carried) == 0 {
+		t.Fatal("Setup: the re-park owes nothing")
+	}
+	g.deliver()
+	g.noWake(t, 0, "an item a wake in flight carries")
+	g.after(attentionCoalesce)
+	g.after(attentionBackoffBase + time.Second)
+	if wakes := g.awaitWakes(t, 1); len(wakes) != 1 || !strings.Contains(wakes[0], id) {
+		t.Errorf("c1 got %q once the stray wake was swept, want one wake naming %s", wakes, id)
 	}
 }

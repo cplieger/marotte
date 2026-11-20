@@ -400,26 +400,10 @@ func (rs *Runs) notifyAutoResumeStop(ctx context.Context, workflowID string, thr
 	}
 	n := notice.AutoResumeStopped(notice.RunTarget(workflowID, rs.leasedRunName(&l)), throttled)
 	rs.coord.Notify(ctx, marotte.ChatID(l.ChatID), &n)
-	rs.attention.stopped(workflowID, throttled)
 	rs.attention.recompute(workflowID)
 	if c := rs.cellFor(workflowID); c != nil {
 		rs.kickCell(c)
 	}
-}
-
-// autoResumeStopNoteText is the stop's next move, as the health read serves it, naming the run by id for the
-// launching agent's workflow tools.
-func autoResumeStopNoteText(workflowID, name string, throttled bool) string {
-	cause := "for a cause nobody chose"
-	if throttled {
-		cause = "for model throttling"
-	}
-	run := workflowID
-	if name != "" {
-		run = name + " (" + workflowID + ")"
-	}
-	return "marotte stopped resuming workflow run " + run + " on its own: it kept pausing " + cause +
-		" with no progress between resumes. It stays paused until it is resumed (update_workflow resume) or ended."
 }
 
 // endAutoResumeStop drops a run's stop and the spent heal budget behind it, reporting whether it had one: the run

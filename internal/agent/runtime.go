@@ -598,7 +598,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		runs.useLog(newRunLog(lc.configDir))
 	}
 	h.coord = newBridgeCoordinator(h)
-	h.coord.onAttentionClosed = runs.attention.closed
+	h.coord.onAttentionClosed, h.coord.onAttentionRead = runs.attention.closed, runs.attention.read
 	if runs.log != nil {
 		runs.log.steps = h.coord.turns
 	}

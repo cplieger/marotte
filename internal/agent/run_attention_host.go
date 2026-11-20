@@ -22,7 +22,7 @@ func (rs *Runs) attentionLease(workflowID string) (attnLease, bool) {
 		out.chat = chat
 	}
 	if rs.log != nil {
-		out.live = rs.log.liveSteps(workflowID)
+		out.steps = rs.log.attentionSteps(workflowID)
 	}
 	return out, true
 }
@@ -40,7 +40,7 @@ func (rs *Runs) cellInput(c *askCell) attentionInput {
 	epoch := rs.asks.epochNow()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	in := attentionInput{workflowID: c.workflowID, reply: c.reply, readFailed: c.readFailed}
+	in := attentionInput{workflowID: c.workflowID, reply: c.reply, readFailed: c.readFailed, seq: rs.asks.attnSeq.Add(1)}
 	in.reachable = c.reply.OK && !c.readFailed
 	if c.reply.OK {
 		in.asks = workflow.OpenAsks(c.reply, c.runLogLocked(c.basis, epoch))
@@ -57,18 +57,17 @@ func (rs *Runs) attend(c *askCell) {
 	rs.attention.observe(&in)
 }
 
-func (rs *Runs) attentionWaiting(chat marotte.ChatID, entryID string) bool {
+func (rs *Runs) attentionEntry(chat marotte.ChatID, entryID string) attnEntry {
 	if rs.coord == nil {
-		return false
+		return attnEntryGone
 	}
 	lc, ok := rs.coord.turns.lookup(chat)
 	if !ok {
-		return false
+		return attnEntryGone
 	}
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	_, e := lc.run.find(entryID)
-	return e != nil && (e.state == marotte.RunPending || e.state == marotte.RunPaused)
+	return lc.run.attentionEntry(entryID)
 }
 
 func (rs *Runs) attentionNotify(ctx context.Context, chat marotte.ChatID, text string) (command.NotifyReceipt, error) {

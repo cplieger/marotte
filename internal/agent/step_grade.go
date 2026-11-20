@@ -39,10 +39,9 @@ type stepClose struct {
 type stepGrade struct {
 	entry *marotte.Entry
 	// note is the lease node_complete held for the close (runRecord.noteLeases), nil when it held none.
-	note      *runlease.Lease
-	nodePath  string
-	sessionID string    // KAS's record's step session, named by the empty-answer note
-	grade     stepClose // the close under the grade (withGrade)
+	note     *runlease.Lease
+	nodePath string
+	grade    stepClose // the close under the grade (withGrade)
 }
 
 // kasNoAnswerText opens the text KAS records in place of a model answer that came back empty (kiro-cli 3.0.0).

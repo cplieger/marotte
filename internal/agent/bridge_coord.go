@@ -99,6 +99,8 @@ type bridgeCoordinator struct {
 	launchEntry func(context.Context, marotte.ChatID, *command.EntryLaunch) (string, error) `wiring:"optional"`
 	// onAttentionClosed is the run-attention ledger's end of an attention entry (runAttention.closed).
 	onAttentionClosed func(chatID marotte.ChatID, entryID string, outcome marotte.TurnOutcome)
+	// onAttentionRead is the ledger's word that a chat's agent read a held attention steer (runAttention.read).
+	onAttentionRead func(chatID marotte.ChatID)
 	// sendEntrySteer routes and sends a row the run list offered as a steer, answering the refusal and kiro-cli's
 	// acceptance (command.Dispatcher.SteerEntry).
 	sendEntrySteer func(context.Context, marotte.ChatID, *command.EntrySteer) (string, bool) `wiring:"optional"`

@@ -166,9 +166,8 @@ type chatLifecycle struct {
 	cancel context.CancelCauseFunc
 	// changed is closed and replaced on every state change, under mu. A channel, not a Cond, which would re-take the
 	// lock the finalize needs.
-	changed   chan struct{}
-	wakes     map[string]*time.Timer
-	gateTimer *time.Timer
+	changed chan struct{}
+	wakes   map[string]*time.Timer
 	// closedIDs are the ids of the life's newest finished turns, a ring at closedAt: a prompt's reply settles right
 	// after its turn closed, and its wait must stay in the life that turn belonged to (awaitClosePosition).
 	closedIDs [recentCloses]string

@@ -600,13 +600,12 @@ func TestDecodeInspect_LenientPauseFields(t *testing.T) {
 	in := overlaid(t, "parked", func(doc map[string]any) {
 		stateOf(doc)["pauseDetail"] = "not an object"
 		firstStep(doc)["continuationAttempts"] = "four"
-		firstStep(doc)["awaitingUserInput"] = 1
 	})
 	if !in.OK {
 		t.Fatal("a drifted pause field failed the whole reply")
 	}
-	if got := Unreadable(in.State); len(got) != 3 {
-		t.Errorf("Unreadable = %q, want the three drifted fields", got)
+	if got := Unreadable(in.State); len(got) != 2 {
+		t.Errorf("Unreadable = %q, want the two drifted fields", got)
 	}
 	if in.State.Pause.HasDetail {
 		t.Error("an unparsed pauseDetail reads as present")

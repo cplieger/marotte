@@ -51,7 +51,7 @@
       "reason": "restart",
       "label": "Workflow result not delivered · the session restarted",
       "sites": [
-        "internal/agent/bridge_coord.go:1995",
+        "internal/agent/bridge_coord.go:1997",
         "internal/agent/entry_merge.go:612",
         "internal/agent/runtime.go:882"
       ]
@@ -62,7 +62,7 @@
       "reason": "",
       "label": "Workflow result",
       "sites": [
-        "internal/agent/run_appender.go:225",
+        "internal/agent/run_appender.go:234",
         "internal/agent/run_bounds.go:474",
         "internal/agent/run_plan.go:138",
         "internal/translate/steering.go:130",
@@ -220,7 +220,7 @@
       "reason": "",
       "label": "Mid-turn message",
       "sites": [
-        "internal/agent/run_appender.go:402",
+        "internal/agent/run_appender.go:386",
         "internal/agent/run_message.go:524",
         "internal/translate/steering.go:130",
         "internal/translate/steering.go:272"
@@ -239,7 +239,7 @@
   ],
   "sites": [
     {
-      "site": "internal/agent/bridge_coord.go:1995",
+      "site": "internal/agent/bridge_coord.go:1997",
       "form": "literal",
       "origin": "agent",
       "state": "dropped",
@@ -260,14 +260,14 @@
       "reason": "restart"
     },
     {
-      "site": "internal/agent/run_appender.go:225",
+      "site": "internal/agent/run_appender.go:234",
       "form": "literal",
       "origin": "agent",
       "state": "read",
       "reason": ""
     },
     {
-      "site": "internal/agent/run_appender.go:402",
+      "site": "internal/agent/run_appender.go:386",
       "form": "literal",
       "origin": "user",
       "state": "read",

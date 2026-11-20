@@ -71,7 +71,7 @@ func TestRunLine_UntrustedTextStaysOneSafeLine(t *testing.T) {
 func TestFrozenLine_OffersANewRun(t *testing.T) {
 	t.Parallel()
 	for _, kind := range []workflow.UnfinishedKind{workflow.UnfinishedEmptyAnswer, workflow.UnfinishedRefused, workflow.UnfinishedModelCallLimit} {
-		line := frozenLine("wf_0123456789abcdef", strings.Repeat("r", 100), "wf_0123456789abcdef:seat-b",
+		line := frozenLine("wf_0123456789abcdef", strings.Repeat("r", 100), "seat-b",
 			&attnGrade{kind: kind, at: lineNow}, lineNow)
 		wantSafeLine(t, line)
 		if !strings.Contains(line, "run_workflow") || strings.Contains(line, "replace_remaining") {

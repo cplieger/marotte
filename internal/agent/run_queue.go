@@ -38,6 +38,8 @@ type runEffectsHost interface {
 	spawnRun(fn func())
 	// attentionClosed hands the run-attention ledger the ends of a chat's attention entries. Called with no lock held.
 	attentionClosed(chatID marotte.ChatID, closes []attentionClose)
+	// attentionRead tells the run-attention ledger the chat's agent read an attention entry. Called with no lock held.
+	attentionRead(chatID marotte.ChatID)
 	// afterRun runs fn after d on the process's in-flight count, refused once shutdown began.
 	afterRun(d time.Duration, fn func())
 }
@@ -74,6 +76,10 @@ func (lc *chatLifecycle) flushRunLocked() {
 	if len(fx.closed) > 0 {
 		chatID, closes := lc.chatID, fx.closed
 		host.spawnRun(func() { host.attentionClosed(chatID, closes) })
+	}
+	if fx.attentionRead {
+		chatID := lc.chatID
+		host.spawnRun(func() { host.attentionRead(chatID) })
 	}
 	if !fx.gateAt.IsZero() {
 		lc.armGateLocked(fx.gateAt)
@@ -153,7 +159,18 @@ func (lc *chatLifecycle) orderFactsLocked() orderFacts {
 			if r.gate == nil {
 				return true, time.Time{}
 			}
-			return r.gate.admit(e.id)
+			return r.gate.check(e.id)
+		},
+		gateStart: func(e *runEntry) (bool, time.Time) {
+			if r.gate == nil {
+				return true, time.Time{}
+			}
+			return r.gate.start(e.id)
+		},
+		gateUnstart: func(e *runEntry) {
+			if r.gate != nil {
+				r.gate.unstart(e.id)
+			}
 		},
 		stamp:   lc.stamp,
 		nextSeq: lc.nextSeq,
@@ -1043,6 +1060,12 @@ func (bc *bridgeCoordinator) attentionClosed(chatID marotte.ChatID, closes []att
 	}
 	for _, c := range closes {
 		bc.onAttentionClosed(chatID, c.entryID, c.outcome)
+	}
+}
+
+func (bc *bridgeCoordinator) attentionRead(chatID marotte.ChatID) {
+	if bc.onAttentionRead != nil {
+		bc.onAttentionRead(chatID)
 	}
 }
 

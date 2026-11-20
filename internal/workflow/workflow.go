@@ -37,7 +37,6 @@ type node struct {
 	// failed decode. Read through signalSource and continuations; Unreadable reports one that does not parse.
 	RawSignalSource  json.RawMessage `json:"completionSignalSource"`
 	RawContinuations json.RawMessage `json:"continuationAttempts"`
-	RawAwaiting      json.RawMessage `json:"awaitingUserInput"`
 }
 
 // signalSource is the node's completionSignalSource, "" when absent or unparsed.
@@ -180,9 +179,6 @@ func Unreadable(s *State) []string {
 		}
 		if unparsed[int](n.RawContinuations) {
 			out = append(out, "node "+n.NodeID+" continuationAttempts="+string(n.RawContinuations))
-		}
-		if unparsed[bool](n.RawAwaiting) {
-			out = append(out, "node "+n.NodeID+" awaitingUserInput="+string(n.RawAwaiting))
 		}
 		for i := range n.Children {
 			walk(&n.Children[i])

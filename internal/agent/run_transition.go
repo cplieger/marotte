@@ -624,7 +624,7 @@ const healContinueText = `Continue - your previous turn was interrupted before i
 	`if you need user input, "warning"; if the work has failed, "error".`
 
 // healCaller is who an automatic answer's words are from, in the step's transcript.
-var healCaller = &marotte.Caller{Label: "marotte"}
+var healCaller = &marotte.Caller{Kind: marotte.CallerKindMarotte, Label: "marotte"}
 
 // writeHealAnswer is writeHealResume for a seenThrottledAsk read: KAS continues a step paused on a question only when
 // a message resumes it (acp-server.js executeNode, KAS 3.1.0), and a plain resume parks it again. It answers each

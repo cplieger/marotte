@@ -17,24 +17,27 @@ const (
 )
 
 // modelGate spaces the turns marotte starts on its own (run-attention wakes) under the account's model rate limit,
-// one per runtime and shared by every chat. Its mutex is a leaf: admit runs under a chat's lc.mu.
+// one per runtime and shared by every chat. Its mutex is a leaf: check and start run under a chat's lc.mu.
 type modelGate struct {
 	now func() time.Time
 	// held is when each entry the gate holds was first held, keyed by entry id.
 	held         map[string]time.Time
 	lastThrottle time.Time
 	lastStart    time.Time
-	mu           sync.Mutex
+	// undo is what the newest start replaced, for unstart.
+	undo gateUndo
+	mu   sync.Mutex
+}
+
+type gateUndo struct {
+	prevStart time.Time
+	since     time.Time
+	id        string
+	wasHeld   bool
 }
 
 func newModelGate() *modelGate {
 	return &modelGate{now: time.Now, held: map[string]time.Time{}}
-}
-
-func (g *modelGate) setClock(now func() time.Time) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.now = now
 }
 
 // clock is the gate's now, which an open time is measured against.
@@ -52,11 +55,37 @@ func (g *modelGate) sawThrottle() {
 	g.lastThrottle = g.now()
 }
 
-// admit reports whether entry id may start its turn now, recording the start when it may; otherwise openAt is when
-// the gate next opens for it.
-func (g *modelGate) admit(id string) (ok bool, openAt time.Time) {
+// check reports whether entry id may start its turn now; otherwise openAt is when the gate next opens for it. It
+// records no start: the run list asks it while it picks, and only start, once the take is decided, spaces later ones.
+func (g *modelGate) check(id string) (ok bool, openAt time.Time) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	return g.admitLocked(id, false)
+}
+
+// start is check, recording entry id's turn start when it may go. Asked again at the take, under the gate's lock,
+// since another chat may have started in between.
+func (g *modelGate) start(id string) (ok bool, openAt time.Time) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.admitLocked(id, true)
+}
+
+// unstart takes back entry id's start, whose take the run list refused after it, unless another start came since.
+func (g *modelGate) unstart(id string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	u := g.undo
+	if u.id != id {
+		return
+	}
+	g.lastStart, g.undo = u.prevStart, gateUndo{}
+	if u.wasHeld {
+		g.held[id] = u.since
+	}
+}
+
+func (g *modelGate) admitLocked(id string, starts bool) (bool, time.Time) {
 	now := g.now()
 	since, held := g.held[id]
 	if !held {
@@ -69,11 +98,15 @@ func (g *modelGate) admit(id string) (ok bool, openAt time.Time) {
 		g.pruneLocked(now)
 		return false, earlier(open, since.Add(modelGateCap))
 	}
+	if !starts {
+		return true, time.Time{}
+	}
 	if now.Before(open) {
 		slog.Info("a run-attention wake was held at the model gate for 5 minutes; starting it anyway",
 			"entry", id, "held", len(g.held))
 	}
 	delete(g.held, id)
+	g.undo = gateUndo{id: id, prevStart: g.lastStart, since: since, wasHeld: held}
 	g.lastStart = now
 	return true, time.Time{}
 }

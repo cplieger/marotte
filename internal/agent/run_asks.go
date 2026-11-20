@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cplieger/go/keyenc"
@@ -64,7 +65,10 @@ type runAsks struct {
 	// seq stamps every snapshot, monotonic across cells, so a cell rebuilt for the same run never
 	// re-uses a number a client already holds.
 	seq uint64
-	mu  sync.Mutex
+	// attnSeq orders the run-attention ledger's snapshots of every cell (attentionInput.seq), each taken under its
+	// cell's mu.
+	attnSeq atomic.Uint64
+	mu      sync.Mutex
 }
 
 type pendingPhase int
@@ -563,7 +567,7 @@ func (rs *Runs) refreshCell(ctx context.Context, c *askCell) (askRead, error) {
 	asks = workflow.OpenAsks(in, c.runLogLocked(basis, rs.asks.epochNow()))
 	n := rs.publishLocked(ctx, c, wireAsks(asks), true)
 	rs.armTimersLocked(c, asks)
-	held := attentionInput{workflowID: c.workflowID, reply: in, asks: asks, reachable: true}
+	held := attentionInput{workflowID: c.workflowID, reply: in, asks: asks, reachable: true, seq: rs.asks.attnSeq.Add(1)}
 	c.mu.Unlock()
 	rs.sendNotices(ctx, c, n)
 	rs.attention.observe(&held)

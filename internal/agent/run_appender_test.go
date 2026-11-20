@@ -563,6 +563,9 @@ func TestRunNodeComplete_AnEmptyAnswerGradedAtTheRunsEndOffersANewRun(t *testing
 	if !strings.Contains(wakes[0], "run_workflow") {
 		t.Errorf("the wake %q does not offer a new run_workflow", wakes[0])
 	}
+	if !strings.Contains(wakes[0], "step seat-b: ") {
+		t.Errorf("the wake %q does not name the step by its node id", wakes[0])
+	}
 }
 
 // A step that ended by its own signal is graded by it, so no empty-answer wake follows however blank its last
