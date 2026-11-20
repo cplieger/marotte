@@ -369,7 +369,13 @@ function plantRunningCommand(): void {
   shownSettingsSignal.value = settingsPayload({ background_jobs: true });
   syncMoveAction(
     card,
-    { id: "running-command", title: "Running: npm test", kind: "execute", status: "in_progress", ts: 0 },
+    {
+      id: "running-command",
+      title: "Running: npm test",
+      kind: "execute",
+      status: "in_progress",
+      ts: 0,
+    },
     "c1",
   );
   shownSettingsSignal.value = shown;

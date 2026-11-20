@@ -260,7 +260,9 @@ function jobEndedRow(p: EntryJobEnded): HTMLElement {
     worded("Job "),
     what === "" ? p.job_id : what,
     worded(
-      status === "detached" ? " left running" : ` ended: ${JOB_OUTCOME_WORDS[status].toLowerCase()}`,
+      status === "detached"
+        ? " left running"
+        : ` ended: ${JOB_OUTCOME_WORDS[status].toLowerCase()}`,
     ),
   );
   const show = el(
