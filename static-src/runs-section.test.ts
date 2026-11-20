@@ -1315,8 +1315,8 @@ describe("on a short screen", () => {
     });
   }
 
-  /** Press a neighbour's header and step its list's slide frame by frame, with Runs' own transitions on the
-   *  same clock: Runs' cap moves over the fold's tween, so in no frame does Runs move more than the tween's
+  /** Press a neighbour's header and step its list's slide frame by frame, with the middle's track transition on
+   *  the same clock: Runs' cap moves over the fold's tween, so in no frame does Runs move more than the tween's
    *  share of `before` to `after` that frame. */
   async function inStep(
     press: HTMLButtonElement,
@@ -1333,12 +1333,11 @@ describe("on a short screen", () => {
     if (slide === undefined || !(effect instanceof KeyframeEffect)) {
       throw new Error(`#${list.id} does not slide`);
     }
-    const moving = [
-      slide,
-      ...el("runs-list")
-        .getAnimations()
-        .filter((a) => a instanceof CSSTransition),
-    ];
+    const middle = shell.querySelector(".sidebar-middle");
+    if (middle === null) {
+      throw new Error("no .sidebar-middle");
+    }
+    const moving = [slide, ...middle.getAnimations().filter((a) => a instanceof CSSTransition)];
     for (const a of moving) {
       a.pause();
     }
