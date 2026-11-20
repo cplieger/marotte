@@ -9,6 +9,7 @@ export const scrollMock = {
   // The default snapshot is a fresh view's state, so a mocked park/unpark round-trips unprimed.
   attach: vi.fn(),
   applyPendingRestore: vi.fn(),
+  restorePending: vi.fn(() => false),
   detach: vi.fn((): ViewScrollState => ({ scrollTop: 0, readingState: "following" })),
   snapshot: vi.fn((): ViewScrollState => ({ scrollTop: 0, readingState: "following" })),
   scrollToBottom: vi.fn(),

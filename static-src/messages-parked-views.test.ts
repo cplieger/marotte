@@ -52,6 +52,8 @@ const sigs = await import("./store-signals.js");
 const scroll = await import("./scroll.js");
 const messages = await import("./messages.js");
 const { appendTerminalChunk } = await import("./messages-tools.js");
+const { mountedWindow } = await import("./messages-blocks.js");
+const { RESIDENT_ENTRIES } = await import("./block-window.js");
 
 messages.mountChatView();
 
@@ -627,6 +629,136 @@ describe("the view handle", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => 
     await flushed();
     await settledFrames();
     expect(card()?.textContent ?? "").toContain("while parked");
+  });
+
+  it("collapses a trace a successor reached while parked, with no slide on the switch back", async () => {
+    const a = freshID("c-seal");
+    const b = freshID("c-seal");
+    const t = `${a}-t1`;
+    const s = session(a, { thinking: true });
+    s.turns.set(t, {
+      entries: [turnOpen(t, 1), thinkingEntry(t, 1, "weighing the options at some length")],
+      openEntries: new Map(),
+    });
+    s.turn_order.push(t);
+    s.turn_count = 1;
+    seed(s, oneTurn(b, "x"));
+    const trace = (): HTMLDetailsElement | null =>
+      viewOf(a).querySelector<HTMLDetailsElement>(".reasoning-block");
+    await vi.waitFor(() => {
+      expect(trace()?.open, "the premise: the newest trace stands open").toBe(true);
+    });
+    switchTo(b);
+    await flushed();
+    await settledFrames();
+    store.appendEntry(a, textEntry(t, 2, "the answer", "say-2"));
+    await flushed();
+
+    const animate = vi.spyOn(Element.prototype, "animate");
+    switchTo(a);
+    await flushed();
+    await settledFrames();
+    const slid = animate.mock.contexts.filter(
+      (c) => c instanceof Element && c.classList.contains("reasoning-block"),
+    );
+    animate.mockRestore();
+    // The reader never watched the trace stop being newest, so the switch shows it already shut.
+    expect(slid.length, "slides started on a reasoning trace by the switch").toBe(0);
+    expect(trace()?.open).toBe(false);
+  });
+
+  it("reads no layout in the incoming view when the switch back drops its window's head", async () => {
+    const a = freshID("c-head");
+    const b = freshID("c-head");
+    const t = `${a}-t1`;
+    const span = RESIDENT_ENTRIES + 8;
+    const entries: Entry[] = [turnOpen(t, 1)];
+    for (let at = 1; at <= span; at++) {
+      entries.push(textEntry(t, at, `line ${String(at)}`));
+    }
+    const s = session(a);
+    s.turns.set(t, { entries, openEntries: new Map() });
+    s.turn_order.push(t);
+    s.turn_count = 1;
+    seed(s, oneTurn(b, "x"));
+    await vi.waitFor(() => {
+      expect(mountedWindow(t)?.to, "the premise: the window reaches the live edge").toBe(span + 1);
+    });
+    const scroller = document.getElementById("messages-wrap") as HTMLElement;
+    await vi.waitFor(() => {
+      expect(
+        scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop,
+        "the premise: Following at the end",
+      ).toBeLessThanOrEqual(1);
+    });
+    const head = mountedWindow(t)?.from ?? 0;
+    switchTo(b);
+    await flushed();
+    await settledFrames();
+    for (let at = span + 1; at <= span + 16; at++) {
+      store.appendEntry(a, textEntry(t, at, `line ${String(at)}`));
+    }
+    await flushed();
+
+    const view = viewOf(a);
+    const reads: string[] = [];
+    // The restore lands with the scroller's first write, so the window ends there without asking the code under test.
+    let restored = false;
+    const scrollTo = scroller.scrollTo.bind(scroller);
+    scroller.scrollTo = ((...args: Parameters<HTMLElement["scrollTo"]>) => {
+      restored = true;
+      scrollTo(...args);
+    }) as HTMLElement["scrollTo"];
+    const count = (el: Element): void => {
+      if (view.classList.contains("is-active") && !restored && view.contains(el)) {
+        reads.push(el.className);
+      }
+    };
+    const height = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+    const rect = Object.getOwnPropertyDescriptor(Element.prototype, "getBoundingClientRect");
+    const rects = Object.getOwnPropertyDescriptor(Element.prototype, "getClientRects");
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      ...height,
+      get(this: HTMLElement): number {
+        count(this);
+        return (height?.get?.call(this) as number | undefined) ?? 0;
+      },
+    });
+    Object.defineProperty(Element.prototype, "getBoundingClientRect", {
+      ...rect,
+      value(this: Element): DOMRect {
+        count(this);
+        return (rect?.value as (this: Element) => DOMRect).call(this);
+      },
+    });
+    Object.defineProperty(Element.prototype, "getClientRects", {
+      ...rects,
+      value(this: Element): DOMRectList {
+        count(this);
+        return (rects?.value as (this: Element) => DOMRectList).call(this);
+      },
+    });
+    try {
+      switchTo(a);
+      await flushed();
+    } finally {
+      if (height !== undefined) {
+        Object.defineProperty(HTMLElement.prototype, "offsetHeight", height);
+      }
+      if (rect !== undefined) {
+        Object.defineProperty(Element.prototype, "getBoundingClientRect", rect);
+      }
+      if (rects !== undefined) {
+        Object.defineProperty(Element.prototype, "getClientRects", rects);
+      }
+      Reflect.deleteProperty(scroller, "scrollTo");
+    }
+    expect(restored, "the premise: the switch back restored the view").toBe(true);
+    expect(mountedWindow(t)?.from, "the premise: the switch back dropped the head").toBeGreaterThan(
+      head,
+    );
+    // The view's rendering is still skipped until its restore, so any read there forces a skipped subtree's layout.
+    expect(reads, "layout reads in the incoming view before its restore").toEqual([]);
   });
 
   it("holds the reading position through a park/unpark over a turn that GREW", async () => {

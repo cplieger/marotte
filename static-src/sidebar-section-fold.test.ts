@@ -267,7 +267,7 @@ const slideEnd = async (box: HTMLElement): Promise<void> => {
   });
 };
 
-/** The fold's slides on `box`: Runs' cap also transitions with a neighbour's fold, which is no slide. */
+/** The fold's slides on `box`, not the transitions its styles run. */
 const slidesOf = (box: HTMLElement): Animation[] =>
   box.getAnimations().filter((a) => !(a instanceof CSSTransition));
 

@@ -1150,7 +1150,8 @@
   flex-direction: column;
   padding-block: var(--sp-1);
   border-block-start: var(--hairline) solid var(--c-border);
-  /* Zero, not its automatic minimum, so the list's floor and cap below are the whole claim. */
+  /* Zero, not its automatic minimum, so the list's floor and the middle's Runs track are the whole
+     claim. */
   min-block-size: 0;
 
   &[hidden] {
@@ -1158,25 +1159,14 @@
   }
 }
 
-/* The floor and the cap sit on the list, the box the fold slides (disclosure-row.ts `slideBox` lifts
-   both for the slide's length), so neither holds the slide and snaps at its end. The cap moves with a
-   neighbour's fold at that slide's tween, so Runs gives and takes height in step with it. */
+/* The floor sits on the list, the box the fold slides (disclosure-row.ts `slideBox` lifts it for the
+   slide's length), so it never holds the slide and snaps at its end. The cap is the middle's Runs track. */
 .runs-list {
   overflow-y: auto;
   overscroll-behavior: contain;
-  transition: max-block-size var(--uip-disclosure-duration) var(--uip-disclosure-easing);
 
   &:not([data-folded]) {
     min-block-size: calc(var(--runs-floor) - var(--runs-chrome));
-    /* Never below the floor: a cap there draws nothing (CSS 2.1 §10.7), so a neighbour's fold would
-       spend part of its tween moving the cap unseen and the rest moving Runs faster than the fold. */
-    max-block-size: max(
-      var(--runs-floor) - var(--runs-chrome),
-      min(
-        var(--sp-1) + 3 * var(--tab-row-h) + 2 * var(--sp-05),
-        100cqb - var(--tabs-keep) - var(--runs-chrome)
-      )
-    );
   }
 }
 
