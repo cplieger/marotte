@@ -1,0 +1,943 @@
+{
+ "workflowId": "wf_d1f0557b5fa2b856",
+ "state": {
+  "workflowId": "wf_d1f0557b5fa2b856",
+  "workflowName": "lanes",
+  "status": "running",
+  "inputs": {},
+  "artifacts": {},
+  "capturedOutputs": {},
+  "root": {
+   "nodeId": "wf_d1f0557b5fa2b856",
+   "type": "sequence",
+   "status": "running",
+   "startedAt": "2026-11-20T00:18:47.163Z",
+   "children": [
+    {
+     "nodeId": "lanes-c",
+     "type": "parallel",
+     "status": "running",
+     "startedAt": "2026-11-20T00:18:47.169Z",
+     "children": [
+      {
+       "nodeId": "lane-media",
+       "type": "repeat",
+       "status": "paused",
+       "startedAt": "2026-11-20T00:18:47.237Z",
+       "branchId": "lane-media",
+       "children": [
+        {
+         "nodeId": "lane-media#0",
+         "type": "sequence",
+         "status": "completed",
+         "startedAt": "2026-11-19T03:58:32.350Z",
+         "endedAt": "2026-11-19T18:13:59.153Z",
+         "iteration": 0,
+         "children": [
+          {
+           "nodeId": "media-build-loop",
+           "type": "repeat",
+           "status": "completed",
+           "startedAt": "2026-11-19T03:58:32.910Z",
+           "endedAt": "2026-11-19T16:49:12.176Z",
+           "iteration": 0,
+           "children": [
+            {
+             "nodeId": "media-build-loop#0",
+             "type": "sequence",
+             "status": "completed",
+             "startedAt": "2026-11-18T19:50:06.694Z",
+             "endedAt": "2026-11-18T19:50:52.651Z",
+             "iteration": 0,
+             "children": [
+              {
+               "nodeId": "media-build",
+               "type": "step",
+               "status": "completed",
+               "agentName": "coder",
+               "modelId": "model-b-5.5",
+               "effortLevel": "high",
+               "sessionId": "sess_60e3ec9b-b125-4ef9-a89c-60fec766b3bb",
+               "startedAt": "2026-11-18T19:50:06.742Z",
+               "endedAt": "2026-11-18T19:50:52.236Z",
+               "iteration": 0,
+               "credits": [
+                {
+                 "usage": 22.455571767495854,
+                 "unit": "credit",
+                 "unitPlural": "credits"
+                }
+               ],
+               "completionSignal": "success",
+               "completionSignalSource": "send_message",
+               "captureSummary": "Probe capture.",
+               "hasCapture": true
+              }
+             ]
+            },
+            {
+             "nodeId": "media-build-loop#1",
+             "type": "sequence",
+             "status": "completed",
+             "startedAt": "2026-11-18T20:32:26.760Z",
+             "endedAt": "2026-11-18T22:56:17.895Z",
+             "iteration": 1,
+             "children": [
+              {
+               "nodeId": "media-build",
+               "type": "step",
+               "status": "completed",
+               "agentName": "coder",
+               "modelId": "model-b-5.5",
+               "effortLevel": "high",
+               "sessionId": "sess_7cf56daa-990a-47ae-bc24-afe43688e765",
+               "startedAt": "2026-11-18T20:32:26.765Z",
+               "endedAt": "2026-11-18T22:56:16.823Z",
+               "iteration": 1,
+               "credits": [
+                {
+                 "usage": 18.521733269320066,
+                 "unit": "credit",
+                 "unitPlural": "credits"
+                }
+               ],
+               "completionSignal": "success",
+               "completionSignalSource": "send_message",
+               "captureSummary": "Probe capture.",
+               "hasCapture": true
+              }
+             ]
+            },
+            {
+             "nodeId": "media-build-loop#2",
+             "type": "sequence",
+             "status": "completed",
+             "startedAt": "2026-11-18T22:56:17.906Z",
+             "endedAt": "2026-11-19T01:31:52.334Z",
+             "iteration": 2,
+             "children": [
+              {
+               "nodeId": "media-build",
+               "type": "step",
+               "status": "completed",
+               "agentName": "coder",
+               "modelId": "model-b-5.5",
+               "effortLevel": "high",
+               "sessionId": "sess_4a6e0986-575c-464f-bff2-cfca4efea124",
+               "startedAt": "2026-11-18T22:56:17.912Z",
+               "endedAt": "2026-11-19T01:31:48.094Z",
+               "iteration": 2,
+               "credits": [
+                {
+                 "usage": 15.60766795953565,
+                 "unit": "credit",
+                 "unitPlural": "credits"
+                }
+               ],
+               "completionSignal": "success",
+               "completionSignalSource": "send_message",
+               "captureSummary": "Probe capture.",
+               "hasCapture": true
+              }
+             ]
+            },
+            {
+             "nodeId": "media-build-loop#3",
+             "type": "sequence",
+             "status": "completed",
+             "startedAt": "2026-11-19T03:58:33.698Z",
+             "endedAt": "2026-11-19T06:03:13.186Z",
+             "iteration": 3,
+             "children": [
+              {
+               "nodeId": "media-build",
+               "type": "step",
+               "status": "completed",
+               "agentName": "coder",
+               "modelId": "model-b-5.5",
+               "effortLevel": "high",
+               "sessionId": "sess_d65f907e-552f-457c-bf4a-bf956e9a5ab0",
+               "startedAt": "2026-11-19T03:58:33.812Z",
+               "endedAt": "2026-11-19T06:03:12.873Z",
+               "iteration": 3,
+               "credits": [
+                {
+                 "usage": 14.846284639137645,
+                 "unit": "credit",
+                 "unitPlural": "credits"
+                }
+               ],
+               "completionSignal": "success",
+               "completionSignalSource": "send_message",
+               "captureSummary": "Probe capture.",
+               "hasCapture": true
+              }
+             ]
+            },
+            {
+             "nodeId": "media-build-loop#4",
+             "type": "sequence",
+             "status": "completed",
+             "startedAt": "2026-11-19T06:03:13.189Z",
+             "endedAt": "2026-11-19T16:48:58.127Z",
+             "iteration": 4,
+             "children": [
+              {
+               "nodeId": "media-build",
+               "type": "step",
+               "status": "completed",
+               "agentName": "coder",
+               "modelId": "model-b-5.5",
+               "effortLevel": "high",
+               "sessionId": "sess_3345f4a1-feea-4e4e-9529-aca2f90a517e",
+               "startedAt": "2026-11-19T06:03:13.194Z",
+               "endedAt": "2026-11-19T16:48:56.976Z",
+               "iteration": 4,
+               "credits": [
+                {
+                 "usage": 117.8660594119403,
+                 "unit": "credit",
+                 "unitPlural": "credits"
+                }
+               ],
+               "completionSignal": "success",
+               "completionSignalSource": "send_message",
+               "captureSummary": "Probe capture.",
+               "hasCapture": true
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "nodeId": "media-seats",
+           "type": "parallel",
+           "status": "completed",
+           "startedAt": "2026-11-19T16:49:13.154Z",
+           "endedAt": "2026-11-19T17:52:39.241Z",
+           "iteration": 0,
+           "children": [
+            {
+             "nodeId": "media-seat-a",
+             "type": "step",
+             "status": "completed",
+             "agentName": "seat-a",
+             "modelId": "model-b-5.5",
+             "effortLevel": "high",
+             "sessionId": "sess_d8463e31-6ec7-44ae-b90a-9238622dc35a",
+             "startedAt": "2026-11-19T16:49:13.363Z",
+             "endedAt": "2026-11-19T17:52:37.189Z",
+             "iteration": 0,
+             "branchId": "media-seat-a",
+             "credits": [
+              {
+               "usage": 67.48189821160865,
+               "unit": "credit",
+               "unitPlural": "credits"
+              }
+             ],
+             "completionSignal": "success",
+             "completionSignalSource": "send_message",
+             "captureSummary": "Probe capture.",
+             "hasCapture": true
+            },
+            {
+             "nodeId": "media-seat-b",
+             "type": "step",
+             "status": "completed",
+             "agentName": "seat-b",
+             "modelId": "model-c-4.7",
+             "effortLevel": "high",
+             "sessionId": "sess_082b6741-00f6-485c-91a5-59d090e1a274",
+             "startedAt": "2026-11-19T16:49:13.363Z",
+             "endedAt": "2026-11-19T17:12:22.897Z",
+             "iteration": 0,
+             "branchId": "media-seat-b",
+             "credits": [
+              {
+               "usage": 46.68479129353233,
+               "unit": "credit",
+               "unitPlural": "credits"
+              }
+             ],
+             "completionSignal": "success",
+             "completionSignalSource": "send_message",
+             "captureSummary": "Probe capture.",
+             "hasCapture": true
+            }
+           ]
+          },
+          {
+           "nodeId": "media-gate",
+           "type": "step",
+           "status": "completed",
+           "agentName": "aggregator",
+           "modelId": "model-b-5.5",
+           "effortLevel": "high",
+           "sessionId": "sess_cf8fb69f-6a23-49d1-b277-4975fca3a6fc",
+           "startedAt": "2026-11-19T17:52:39.385Z",
+           "endedAt": "2026-11-19T18:13:55.602Z",
+           "iteration": 0,
+           "credits": [
+            {
+             "usage": 14.431955780762852,
+             "unit": "credit",
+             "unitPlural": "credits"
+            }
+           ],
+           "completionSignal": "success",
+           "completionSignalSource": "send_message",
+           "captureSummary": "Probe capture.",
+           "hasCapture": true
+          }
+         ]
+        },
+        {
+         "nodeId": "lane-media#1",
+         "type": "sequence",
+         "status": "completed",
+         "startedAt": "2026-11-20T00:18:47.245Z",
+         "iteration": 1,
+         "children": [
+          {
+           "nodeId": "media-build-loop",
+           "type": "repeat",
+           "status": "completed",
+           "startedAt": "2026-11-19T23:14:35.578Z",
+           "iteration": 1,
+           "children": [
+            {
+             "nodeId": "media-build-loop#0",
+             "type": "sequence",
+             "status": "completed",
+             "startedAt": "2026-11-19T23:14:35.595Z",
+             "iteration": 0,
+             "children": [
+              {
+               "nodeId": "media-build",
+               "type": "step",
+               "status": "completed",
+               "agentName": "coder",
+               "modelId": "model-b-5.5",
+               "effortLevel": "high",
+               "sessionId": "sess_1d2035ce-8f5d-42d5-a1b5-ac104597814b",
+               "startedAt": "2026-11-19T23:14:35.626Z",
+               "iteration": 0,
+               "completionSignal": "success",
+               "completionSignalSource": "send_message",
+               "credits": [
+                {
+                 "usage": 98.98557655124378,
+                 "unit": "credit",
+                 "unitPlural": "credits"
+                }
+               ],
+               "endedAt": "2026-11-19T23:33:51.020Z",
+               "captureSummary": "Probe capture.",
+               "hasCapture": true
+              }
+             ],
+             "endedAt": "2026-11-19T23:33:51.895Z"
+            }
+           ],
+           "endedAt": "2026-11-19T23:33:52.188Z"
+          },
+          {
+           "nodeId": "media-seats",
+           "type": "parallel",
+           "status": "completed",
+           "children": [
+            {
+             "nodeId": "media-seat-a",
+             "type": "step",
+             "status": "completed",
+             "agentName": "seat-a",
+             "branchId": "media-seat-a",
+             "startedAt": "2026-11-19T23:33:52.279Z",
+             "iteration": 1,
+             "modelId": "model-b-5.5",
+             "effortLevel": "high",
+             "sessionId": "sess_ea26418b-3cf0-47cc-b278-9b9b73795d79",
+             "completionSignal": "success",
+             "completionSignalSource": "send_message",
+             "credits": [
+              {
+               "usage": 26.134702413267,
+               "unit": "credit",
+               "unitPlural": "credits"
+              }
+             ],
+             "endedAt": "2026-11-19T23:54:43.871Z",
+             "captureSummary": "Probe capture.",
+             "hasCapture": true
+            },
+            {
+             "nodeId": "media-seat-b",
+             "type": "step",
+             "status": "completed",
+             "agentName": "seat-b",
+             "branchId": "media-seat-b",
+             "startedAt": "2026-11-19T23:33:52.279Z",
+             "iteration": 1,
+             "modelId": "model-c-4.7",
+             "effortLevel": "high",
+             "sessionId": "sess_4aa91852-3d0c-463a-b13d-a0dfa7671c54",
+             "completionSignal": "success",
+             "completionSignalSource": "send_message",
+             "credits": [
+              {
+               "usage": 40.881257595356544,
+               "unit": "credit",
+               "unitPlural": "credits"
+              }
+             ],
+             "endedAt": "2026-11-20T00:01:49.329Z",
+             "captureSummary": "Probe capture.",
+             "hasCapture": true
+            }
+           ],
+           "startedAt": "2026-11-19T23:33:52.271Z",
+           "iteration": 1,
+           "endedAt": "2026-11-20T00:01:50.142Z"
+          },
+          {
+           "nodeId": "media-gate",
+           "type": "step",
+           "status": "completed",
+           "agentName": "aggregator",
+           "startedAt": "2026-11-20T00:01:50.151Z",
+           "iteration": 1,
+           "modelId": "model-b-5.5",
+           "effortLevel": "high",
+           "sessionId": "sess_3a34004d-28af-44d6-92e4-e76f7eff4751",
+           "credits": [
+            {
+             "usage": 14.833017354228858,
+             "unit": "credit",
+             "unitPlural": "credits"
+            }
+           ],
+           "endedAt": "2026-11-20T00:12:14.905Z",
+           "captureSummary": "Probe capture.",
+           "hasCapture": true
+          }
+         ],
+         "endedAt": "2026-11-20T00:18:47.255Z"
+        },
+        {
+         "nodeId": "lane-media#2",
+         "type": "sequence",
+         "status": "paused",
+         "iteration": 2,
+         "children": [
+          {
+           "nodeId": "media-build-loop",
+           "type": "repeat",
+           "status": "paused",
+           "children": [
+            {
+             "nodeId": "media-build-loop#0",
+             "type": "sequence",
+             "status": "paused",
+             "iteration": 0,
+             "children": [
+              {
+               "nodeId": "media-build",
+               "type": "step",
+               "status": "paused",
+               "agentName": "coder",
+               "startedAt": "2026-11-20T00:18:47.316Z",
+               "iteration": 0,
+               "modelId": "model-b-5.5",
+               "effortLevel": "high",
+               "sessionId": "sess_44c03709-c0e0-4675-9103-577939fea39c"
+              }
+             ],
+             "startedAt": "2026-11-20T00:18:47.283Z"
+            }
+           ],
+           "startedAt": "2026-11-20T00:18:47.274Z",
+           "iteration": 2
+          },
+          {
+           "nodeId": "media-seats",
+           "type": "parallel",
+           "status": "pending",
+           "children": []
+          },
+          {
+           "nodeId": "media-gate",
+           "type": "step",
+           "status": "pending",
+           "agentName": "aggregator"
+          }
+         ],
+         "startedAt": "2026-11-20T00:18:47.261Z"
+        }
+       ]
+      },
+      {
+       "nodeId": "lane-search",
+       "type": "repeat",
+       "status": "running",
+       "startedAt": "2026-11-20T00:18:47.237Z",
+       "branchId": "lane-search",
+       "children": [
+        {
+         "nodeId": "lane-search#0",
+         "type": "sequence",
+         "status": "running",
+         "startedAt": "2026-11-20T00:18:47.247Z",
+         "iteration": 0,
+         "children": [
+          {
+           "nodeId": "search-build-loop",
+           "type": "repeat",
+           "status": "running",
+           "startedAt": "2026-11-20T00:18:47.256Z",
+           "iteration": 0,
+           "children": [
+            {
+             "nodeId": "search-build-loop#0",
+             "type": "sequence",
+             "status": "completed",
+             "startedAt": "2026-11-18T16:15:41.835Z",
+             "endedAt": "2026-11-18T16:41:45.331Z",
+             "iteration": 0,
+             "children": [
+              {
+               "nodeId": "search-build",
+               "type": "step",
+               "status": "completed",
+               "agentName": "coder",
+               "modelId": "model-b-5.5",
+               "effortLevel": "high",
+               "sessionId": "sess_89089a4e-b14b-454f-b610-c054b2948a0b",
+               "startedAt": "2026-11-18T16:15:41.844Z",
+               "endedAt": "2026-11-18T16:41:44.009Z",
+               "iteration": 0,
+               "credits": [
+                {
+                 "usage": 4.48575168026534,
+                 "unit": "credit",
+                 "unitPlural": "credits"
+                }
+               ],
+               "completionSignal": "success",
+               "completionSignalSource": "send_message",
+               "captureSummary": "Probe capture.",
+               "hasCapture": true
+              }
+             ]
+            },
+            {
+             "nodeId": "search-build-loop#1",
+             "type": "sequence",
+             "status": "completed",
+             "startedAt": "2026-11-19T03:58:33.681Z",
+             "endedAt": "2026-11-19T04:21:05.094Z",
+             "iteration": 1,
+             "children": [
+              {
+               "nodeId": "search-build",
+               "type": "step",
+               "status": "completed",
+               "agentName": "coder",
+               "modelId": "model-b-5.5",
+               "effortLevel": "high",
+               "sessionId": "sess_a4493b60-5cdb-446d-96b5-3b3a36dd9ab3",
+               "startedAt": "2026-11-19T03:58:33.811Z",
+               "endedAt": "2026-11-19T04:21:03.917Z",
+               "iteration": 1,
+               "credits": [
+                {
+                 "usage": 29.666827583747924,
+                 "unit": "credit",
+                 "unitPlural": "credits"
+                }
+               ],
+               "completionSignal": "success",
+               "completionSignalSource": "send_message",
+               "captureSummary": "Probe capture.",
+               "hasCapture": true
+              }
+             ]
+            },
+            {
+             "nodeId": "search-build-loop#2",
+             "type": "sequence",
+             "status": "completed",
+             "startedAt": "2026-11-19T04:21:05.156Z",
+             "endedAt": "2026-11-19T06:06:37.532Z",
+             "iteration": 2,
+             "children": [
+              {
+               "nodeId": "search-build",
+               "type": "step",
+               "status": "completed",
+               "agentName": "coder",
+               "modelId": "model-b-5.5",
+               "effortLevel": "high",
+               "sessionId": "sess_b994c004-5e33-4227-aa29-81a23829b306",
+               "startedAt": "2026-11-19T04:21:05.182Z",
+               "endedAt": "2026-11-19T06:06:37.024Z",
+               "iteration": 2,
+               "credits": [
+                {
+                 "usage": 11.216611627197347,
+                 "unit": "credit",
+                 "unitPlural": "credits"
+                }
+               ],
+               "completionSignal": "success",
+               "completionSignalSource": "send_message",
+               "captureSummary": "Probe capture.",
+               "hasCapture": true
+              }
+             ]
+            },
+            {
+             "nodeId": "search-build-loop#3",
+             "type": "sequence",
+             "status": "completed",
+             "startedAt": "2026-11-19T06:06:37.534Z",
+             "endedAt": "2026-11-19T06:48:18.367Z",
+             "iteration": 3,
+             "children": [
+              {
+               "nodeId": "search-build",
+               "type": "step",
+               "status": "completed",
+               "agentName": "coder",
+               "modelId": "model-b-5.5",
+               "effortLevel": "high",
+               "sessionId": "sess_569511c4-d97f-47ef-a063-5018a1613a27",
+               "startedAt": "2026-11-19T06:06:37.542Z",
+               "endedAt": "2026-11-19T06:48:15.945Z",
+               "iteration": 3,
+               "credits": [
+                {
+                 "usage": 5.552281745605305,
+                 "unit": "credit",
+                 "unitPlural": "credits"
+                }
+               ],
+               "completionSignal": "success",
+               "completionSignalSource": "send_message",
+               "captureSummary": "Probe capture.",
+               "hasCapture": true
+              }
+             ]
+            },
+            {
+             "nodeId": "search-build-loop#4",
+             "type": "sequence",
+             "status": "completed",
+             "startedAt": "2026-11-19T06:48:18.553Z",
+             "endedAt": "2026-11-19T07:19:24.969Z",
+             "iteration": 4,
+             "children": [
+              {
+               "nodeId": "search-build",
+               "type": "step",
+               "status": "completed",
+               "agentName": "coder",
+               "modelId": "model-b-5.5",
+               "effortLevel": "high",
+               "sessionId": "sess_93c748a9-be5d-48c4-9271-6d657a6e1795",
+               "startedAt": "2026-11-19T06:48:18.563Z",
+               "endedAt": "2026-11-19T07:19:24.570Z",
+               "iteration": 4,
+               "credits": [
+                {
+                 "usage": 4.780707574792703,
+                 "unit": "credit",
+                 "unitPlural": "credits"
+                }
+               ],
+               "completionSignal": "success",
+               "completionSignalSource": "send_message",
+               "captureSummary": "Probe capture.",
+               "hasCapture": true
+              }
+             ]
+            },
+            {
+             "nodeId": "search-build-loop#5",
+             "type": "sequence",
+             "status": "completed",
+             "startedAt": "2026-11-19T07:19:24.975Z",
+             "endedAt": "2026-11-19T08:11:20.369Z",
+             "iteration": 5,
+             "children": [
+              {
+               "nodeId": "search-build",
+               "type": "step",
+               "status": "completed",
+               "agentName": "coder",
+               "modelId": "model-b-5.5",
+               "effortLevel": "high",
+               "sessionId": "sess_1e5ad51b-7923-4677-a5a7-0a6145f7b43b",
+               "startedAt": "2026-11-19T07:19:24.981Z",
+               "endedAt": "2026-11-19T08:11:17.721Z",
+               "iteration": 5,
+               "credits": [
+                {
+                 "usage": 6.201311038474294,
+                 "unit": "credit",
+                 "unitPlural": "credits"
+                }
+               ],
+               "completionSignal": "success",
+               "completionSignalSource": "send_message",
+               "captureSummary": "Probe capture.",
+               "hasCapture": true
+              }
+             ]
+            },
+            {
+             "nodeId": "search-build-loop#6",
+             "type": "sequence",
+             "status": "completed",
+             "startedAt": "2026-11-19T08:11:20.379Z",
+             "endedAt": "2026-11-19T10:44:11.171Z",
+             "iteration": 6,
+             "children": [
+              {
+               "nodeId": "search-build",
+               "type": "step",
+               "status": "completed",
+               "agentName": "coder",
+               "modelId": "model-b-5.5",
+               "effortLevel": "high",
+               "sessionId": "sess_0f4a4b21-327d-41ea-9c25-81100fa61d93",
+               "startedAt": "2026-11-19T08:11:20.392Z",
+               "endedAt": "2026-11-19T10:44:10.127Z",
+               "iteration": 6,
+               "credits": [
+                {
+                 "usage": 13.716044579104476,
+                 "unit": "credit",
+                 "unitPlural": "credits"
+                }
+               ],
+               "completionSignal": "success",
+               "completionSignalSource": "send_message",
+               "captureSummary": "Probe capture.",
+               "hasCapture": true
+              }
+             ]
+            },
+            {
+             "nodeId": "search-build-loop#7",
+             "type": "sequence",
+             "status": "completed",
+             "startedAt": "2026-11-19T10:44:11.177Z",
+             "endedAt": "2026-11-19T14:52:36.810Z",
+             "iteration": 7,
+             "children": [
+              {
+               "nodeId": "search-build",
+               "type": "step",
+               "status": "completed",
+               "agentName": "coder",
+               "modelId": "model-b-5.5",
+               "effortLevel": "high",
+               "sessionId": "sess_55472bc1-69c7-495e-8f93-1228e6a814c9",
+               "startedAt": "2026-11-19T10:44:11.200Z",
+               "endedAt": "2026-11-19T14:52:26.125Z",
+               "iteration": 7,
+               "credits": [
+                {
+                 "usage": 21.110601126036485,
+                 "unit": "credit",
+                 "unitPlural": "credits"
+                }
+               ],
+               "completionSignal": "success",
+               "completionSignalSource": "send_message",
+               "captureSummary": "Probe capture.",
+               "hasCapture": true
+              }
+             ]
+            },
+            {
+             "nodeId": "search-build-loop#8",
+             "type": "sequence",
+             "status": "running",
+             "startedAt": "2026-11-20T00:18:47.270Z",
+             "iteration": 8,
+             "children": [
+              {
+               "nodeId": "search-build",
+               "type": "step",
+               "status": "running",
+               "agentName": "coder",
+               "modelId": "model-b-5.5",
+               "effortLevel": "high",
+               "sessionId": "sess_eaae0499-435e-47b4-bcc6-5617b5af044c",
+               "startedAt": "2026-11-20T00:18:47.275Z",
+               "iteration": 8,
+               "continuationAttempts": 1
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "nodeId": "search-seats",
+           "type": "parallel",
+           "status": "pending",
+           "children": []
+          },
+          {
+           "nodeId": "search-gate",
+           "type": "step",
+           "status": "pending",
+           "agentName": "aggregator"
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  "parentSessionId": "sess_fe657706-3b4c-4a4f-8452-7123574bac1c",
+  "backgroundExecution": true,
+  "sessionTools": {
+   "awareness": false,
+   "messaging": false,
+   "cloud": false
+  },
+  "rootConversationId": "sess_fe657706-3b4c-4a4f-8452-7123574bac1c",
+  "workspacePath": "/work",
+  "additionalDirectories": [
+   "/extra"
+  ],
+  "createdAt": "2026-11-18T16:15:40.788Z",
+  "runLabel": "lanes",
+  "originalUserMessages": [],
+  "memoryConfig": {
+   "mode": "disabled",
+   "reflection": false
+  },
+  "memoryConfigSource": "explicit",
+  "parentModelId": "model-b-5.5",
+  "parentEffortLevel": "high",
+  "planRevision": 0
+ },
+ "nodePlan": [
+  {
+   "nodeId": "lanes-c",
+   "type": "parallel",
+   "branches": [
+    {
+     "nodeId": "lane-media",
+     "type": "repeat",
+     "steps": [
+      {
+       "nodeId": "media-build-loop",
+       "type": "repeat",
+       "steps": [
+        {
+         "nodeId": "media-build",
+         "type": "step",
+         "agentName": "coder",
+         "modelId": "model-b-5.5",
+         "effortLevel": "high"
+        }
+       ],
+       "maxIterations": 12,
+       "onMaxIterations": "continue",
+       "stopWhen": "{{media-build.output}} contains UNIT-READY"
+      },
+      {
+       "nodeId": "media-seats",
+       "type": "parallel",
+       "branches": [
+        {
+         "nodeId": "media-seat-a",
+         "type": "step",
+         "agentName": "seat-a",
+         "modelId": "model-b-5.5",
+         "effortLevel": "high"
+        },
+        {
+         "nodeId": "media-seat-b",
+         "type": "step",
+         "agentName": "seat-b",
+         "modelId": "model-c-4.7",
+         "effortLevel": "high"
+        }
+       ]
+      },
+      {
+       "nodeId": "media-gate",
+       "type": "step",
+       "agentName": "aggregator",
+       "modelId": "model-b-5.5",
+       "effortLevel": "high"
+      }
+     ],
+     "maxIterations": 24,
+     "onMaxIterations": "pause",
+     "stopWhen": "{{media-gate.output}} contains LANE-media-DONE"
+    },
+    {
+     "nodeId": "lane-search",
+     "type": "repeat",
+     "steps": [
+      {
+       "nodeId": "search-build-loop",
+       "type": "repeat",
+       "steps": [
+        {
+         "nodeId": "search-build",
+         "type": "step",
+         "agentName": "coder",
+         "modelId": "model-b-5.5",
+         "effortLevel": "high"
+        }
+       ],
+       "maxIterations": 12,
+       "onMaxIterations": "continue",
+       "stopWhen": "{{search-build.output}} contains UNIT-READY"
+      },
+      {
+       "nodeId": "search-seats",
+       "type": "parallel",
+       "branches": [
+        {
+         "nodeId": "search-seat-a",
+         "type": "step",
+         "agentName": "seat-a",
+         "modelId": "model-b-5.5",
+         "effortLevel": "high"
+        },
+        {
+         "nodeId": "search-seat-b",
+         "type": "step",
+         "agentName": "seat-b",
+         "modelId": "model-c-4.7",
+         "effortLevel": "high"
+        }
+       ]
+      },
+      {
+       "nodeId": "search-gate",
+       "type": "step",
+       "agentName": "aggregator",
+       "modelId": "model-b-5.5",
+       "effortLevel": "high"
+      }
+     ],
+     "maxIterations": 19,
+     "onMaxIterations": "pause",
+     "stopWhen": "{{search-gate.output}} contains LANE-search-DONE"
+    }
+   ]
+  }
+ ]
+}

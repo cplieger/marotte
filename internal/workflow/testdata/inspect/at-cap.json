@@ -1,0 +1,630 @@
+{
+ "workflowId": "wf_635841eca4ecb8e5",
+ "state": {
+  "workflowId": "wf_635841eca4ecb8e5",
+  "workflowName": "loop",
+  "status": "paused",
+  "inputs": {},
+  "artifacts": {},
+  "capturedOutputs": {},
+  "root": {
+   "nodeId": "wf_635841eca4ecb8e5",
+   "type": "sequence",
+   "status": "paused",
+   "startedAt": "2026-11-19T18:53:27.300Z",
+   "children": [
+    {
+     "nodeId": "create-workflow",
+     "type": "step",
+     "status": "completed",
+     "agentName": "creator",
+     "modelId": "model-b-5.5",
+     "effortLevel": "high",
+     "sessionId": "sess_5b6f90f2-ec3b-4bb1-974f-13ba13cfe07c",
+     "startedAt": "2026-11-19T15:17:02.676Z",
+     "endedAt": "2026-11-19T15:25:08.391Z",
+     "credits": [
+      {
+       "usage": 8.754555507131013,
+       "unit": "credit",
+       "unitPlural": "credits"
+      }
+     ],
+     "completionSignal": "success",
+     "completionSignalSource": "send_message",
+     "capturePinned": true,
+     "captureSummary": "Probe capture.",
+     "hasCapture": true
+    },
+    {
+     "nodeId": "setup",
+     "type": "step",
+     "status": "completed",
+     "agentName": "coder",
+     "modelId": "model-f-5.5",
+     "effortLevel": "low",
+     "sessionId": "sess_04f997dc-5a28-484f-94fb-71264e211957",
+     "startedAt": "2026-11-19T15:25:08.953Z",
+     "endedAt": "2026-11-19T15:27:22.235Z",
+     "credits": [
+      {
+       "usage": 0.6958210868490879,
+       "unit": "credit",
+       "unitPlural": "credits"
+      }
+     ],
+     "completionSignal": "success",
+     "completionSignalSource": "send_message",
+     "captureSummary": "Probe capture.",
+     "hasCapture": true
+    },
+    {
+     "nodeId": "review-loop",
+     "type": "repeat",
+     "status": "paused",
+     "startedAt": "2026-11-19T18:53:27.472Z",
+     "children": [
+      {
+       "nodeId": "review-loop#0",
+       "type": "sequence",
+       "status": "completed",
+       "startedAt": "2026-11-19T15:27:31.789Z",
+       "endedAt": "2026-11-19T17:39:34.099Z",
+       "iteration": 0,
+       "children": [
+        {
+         "nodeId": "build-loop",
+         "type": "repeat",
+         "status": "completed",
+         "startedAt": "2026-11-19T15:27:32.124Z",
+         "endedAt": "2026-11-19T16:51:38.195Z",
+         "iteration": 0,
+         "children": [
+          {
+           "nodeId": "build-loop#0",
+           "type": "sequence",
+           "status": "completed",
+           "startedAt": "2026-11-19T15:27:32.177Z",
+           "endedAt": "2026-11-19T16:51:33.527Z",
+           "iteration": 0,
+           "children": [
+            {
+             "nodeId": "code",
+             "type": "step",
+             "status": "completed",
+             "agentName": "coder",
+             "modelId": "model-b-5.5",
+             "effortLevel": "high",
+             "sessionId": "sess_f4e2a1c4-06ac-4d05-84b3-f56dbecefe2b",
+             "startedAt": "2026-11-19T15:27:32.209Z",
+             "endedAt": "2026-11-19T16:51:23.240Z",
+             "iteration": 0,
+             "credits": [
+              {
+               "usage": 60.35847572106137,
+               "unit": "credit",
+               "unitPlural": "credits"
+              }
+             ],
+             "completionSignal": "success",
+             "completionSignalSource": "send_message",
+             "captureSummary": "Probe capture.",
+             "hasCapture": true
+            }
+           ]
+          }
+         ]
+        },
+        {
+         "nodeId": "dispatch",
+         "type": "step",
+         "status": "completed",
+         "agentName": "coder",
+         "modelId": "model-f-5.5",
+         "effortLevel": "high",
+         "sessionId": "sess_df79d28c-846b-4a25-b14f-8a99108df63d",
+         "startedAt": "2026-11-19T16:51:38.924Z",
+         "endedAt": "2026-11-19T16:56:11.412Z",
+         "iteration": 0,
+         "credits": [
+          {
+           "usage": 0.7776473451575454,
+           "unit": "credit",
+           "unitPlural": "credits"
+          }
+         ],
+         "completionSignal": "success",
+         "completionSignalSource": "send_message",
+         "captureSummary": "Probe capture.",
+         "hasCapture": true
+        },
+        {
+         "nodeId": "seats",
+         "type": "parallel",
+         "status": "completed",
+         "startedAt": "2026-11-19T16:56:30.319Z",
+         "endedAt": "2026-11-19T17:28:27.524Z",
+         "iteration": 0,
+         "children": [
+          {
+           "nodeId": "seat-a-loop",
+           "type": "repeat",
+           "status": "completed",
+           "startedAt": "2026-11-19T16:56:30.337Z",
+           "endedAt": "2026-11-19T17:28:27.486Z",
+           "iteration": 0,
+           "branchId": "seat-a-loop",
+           "children": [
+            {
+             "nodeId": "seat-a-loop#0",
+             "type": "sequence",
+             "status": "completed",
+             "startedAt": "2026-11-19T16:56:30.562Z",
+             "endedAt": "2026-11-19T17:28:27.455Z",
+             "iteration": 0,
+             "children": [
+              {
+               "nodeId": "seat-a",
+               "type": "step",
+               "status": "completed",
+               "agentName": "seat-a",
+               "modelId": "model-b-5.5",
+               "effortLevel": "high",
+               "sessionId": "sess_25d0755c-a9ee-4276-9d0e-bdd229302225",
+               "startedAt": "2026-11-19T16:56:31.570Z",
+               "endedAt": "2026-11-19T17:28:25.614Z",
+               "iteration": 0,
+               "credits": [
+                {
+                 "usage": 27.625621077280265,
+                 "unit": "credit",
+                 "unitPlural": "credits"
+                }
+               ],
+               "completionSignal": "success",
+               "completionSignalSource": "send_message",
+               "captureSummary": "Probe capture.",
+               "hasCapture": true
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "nodeId": "seat-b-loop",
+           "type": "repeat",
+           "status": "completed",
+           "startedAt": "2026-11-19T16:56:30.337Z",
+           "endedAt": "2026-11-19T17:23:02.101Z",
+           "iteration": 0,
+           "branchId": "seat-b-loop",
+           "children": [
+            {
+             "nodeId": "seat-b-loop#0",
+             "type": "sequence",
+             "status": "completed",
+             "startedAt": "2026-11-19T16:56:30.563Z",
+             "endedAt": "2026-11-19T17:23:01.498Z",
+             "iteration": 0,
+             "children": [
+              {
+               "nodeId": "seat-b",
+               "type": "step",
+               "status": "completed",
+               "agentName": "seat-b",
+               "modelId": "model-c-4.7",
+               "effortLevel": "high",
+               "sessionId": "sess_af181be2-43bd-404d-a4fe-d27964cae66b",
+               "startedAt": "2026-11-19T16:56:31.570Z",
+               "endedAt": "2026-11-19T17:22:56.018Z",
+               "iteration": 0,
+               "credits": [
+                {
+                 "usage": 43.101224958540634,
+                 "unit": "credit",
+                 "unitPlural": "credits"
+                }
+               ],
+               "completionSignal": "success",
+               "completionSignalSource": "send_message",
+               "captureSummary": "Probe capture.",
+               "hasCapture": true
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        },
+        {
+         "nodeId": "gate",
+         "type": "step",
+         "status": "completed",
+         "agentName": "coder",
+         "modelId": "model-b-5.5",
+         "effortLevel": "high",
+         "sessionId": "sess_988bf16a-4f83-42fd-86f0-e29ee2d1085d",
+         "startedAt": "2026-11-19T17:28:27.537Z",
+         "endedAt": "2026-11-19T17:39:23.016Z",
+         "iteration": 0,
+         "credits": [
+          {
+           "usage": 7.74268926832504,
+           "unit": "credit",
+           "unitPlural": "credits"
+          }
+         ],
+         "completionSignal": "success",
+         "completionSignalSource": "send_message",
+         "captureSummary": "Probe capture.",
+         "hasCapture": true
+        }
+       ]
+      },
+      {
+       "nodeId": "review-loop#1",
+       "type": "sequence",
+       "status": "completed",
+       "startedAt": "2026-11-19T18:53:27.529Z",
+       "iteration": 1,
+       "children": [
+        {
+         "nodeId": "build-loop",
+         "type": "repeat",
+         "status": "completed",
+         "startedAt": "2026-11-19T18:30:10.936Z",
+         "iteration": 1,
+         "children": [
+          {
+           "nodeId": "build-loop#0",
+           "type": "sequence",
+           "status": "completed",
+           "startedAt": "2026-11-19T18:30:10.945Z",
+           "iteration": 0,
+           "children": [
+            {
+             "nodeId": "code",
+             "type": "step",
+             "status": "completed",
+             "agentName": "coder",
+             "modelId": "model-b-5.5",
+             "effortLevel": "high",
+             "sessionId": "sess_9a811fbb-99f6-4662-ae73-e74bb095dbb8",
+             "startedAt": "2026-11-19T18:30:11.006Z",
+             "iteration": 0,
+             "completionSignal": "success",
+             "completionSignalSource": "send_message",
+             "credits": [
+              {
+               "usage": 14.162070719071313,
+               "unit": "credit",
+               "unitPlural": "credits"
+              }
+             ],
+             "endedAt": "2026-11-19T18:39:01.119Z",
+             "captureSummary": "Probe capture.",
+             "hasCapture": true
+            }
+           ],
+           "endedAt": "2026-11-19T18:39:01.535Z"
+          }
+         ],
+         "endedAt": "2026-11-19T18:39:01.541Z"
+        },
+        {
+         "nodeId": "dispatch",
+         "type": "step",
+         "status": "completed",
+         "agentName": "coder",
+         "startedAt": "2026-11-19T18:39:01.553Z",
+         "iteration": 1,
+         "modelId": "model-f-5.5",
+         "effortLevel": "high",
+         "sessionId": "sess_b9cfcd85-3f78-4600-a15a-57a8789100e5",
+         "completionSignal": "success",
+         "completionSignalSource": "send_message",
+         "credits": [
+          {
+           "usage": 1.0718746075124377,
+           "unit": "credit",
+           "unitPlural": "credits"
+          }
+         ],
+         "endedAt": "2026-11-19T18:39:41.512Z",
+         "captureSummary": "Probe capture.",
+         "hasCapture": true
+        },
+        {
+         "nodeId": "seats",
+         "type": "parallel",
+         "status": "completed",
+         "children": [
+          {
+           "nodeId": "seat-a-loop",
+           "type": "repeat",
+           "status": "completed",
+           "children": [
+            {
+             "nodeId": "seat-a-loop#0",
+             "type": "sequence",
+             "status": "completed",
+             "iteration": 0,
+             "children": [
+              {
+               "nodeId": "seat-a",
+               "type": "step",
+               "status": "completed",
+               "agentName": "seat-a",
+               "startedAt": "2026-11-19T18:53:27.766Z",
+               "iteration": 0,
+               "modelId": "model-b-5.5",
+               "effortLevel": "high",
+               "sessionId": "sess_20195ce0-ce12-4d20-8b3c-df9043e07a93",
+               "completionSignal": "success",
+               "completionSignalSource": "send_message",
+               "credits": [
+                {
+                 "usage": 21.4816434331675,
+                 "unit": "credit",
+                 "unitPlural": "credits"
+                }
+               ],
+               "endedAt": "2026-11-19T18:57:22.332Z",
+               "captureSummary": "Probe capture.",
+               "hasCapture": true
+              }
+             ],
+             "startedAt": "2026-11-19T18:53:27.624Z",
+             "endedAt": "2026-11-19T18:57:22.694Z"
+            }
+           ],
+           "branchId": "seat-a-loop",
+           "startedAt": "2026-11-19T18:53:27.592Z",
+           "iteration": 1,
+           "endedAt": "2026-11-19T18:57:22.702Z"
+          },
+          {
+           "nodeId": "seat-b-loop",
+           "type": "repeat",
+           "status": "completed",
+           "children": [
+            {
+             "nodeId": "seat-b-loop#0",
+             "type": "sequence",
+             "status": "completed",
+             "iteration": 0,
+             "children": [
+              {
+               "nodeId": "seat-b",
+               "type": "step",
+               "status": "completed",
+               "agentName": "seat-b",
+               "startedAt": "2026-11-19T18:39:41.900Z",
+               "iteration": 0,
+               "modelId": "model-c-4.7",
+               "effortLevel": "high",
+               "sessionId": "sess_b5c342e1-057d-4ba4-b7f5-62192489d091",
+               "completionSignal": "success",
+               "completionSignalSource": "send_message",
+               "credits": [
+                {
+                 "usage": 37.30978004975125,
+                 "unit": "credit",
+                 "unitPlural": "credits"
+                }
+               ],
+               "endedAt": "2026-11-19T18:49:40.171Z",
+               "captureSummary": "Probe capture.",
+               "hasCapture": true
+              }
+             ],
+             "startedAt": "2026-11-19T18:39:41.897Z",
+             "endedAt": "2026-11-19T18:49:40.419Z"
+            }
+           ],
+           "branchId": "seat-b-loop",
+           "startedAt": "2026-11-19T18:39:41.890Z",
+           "iteration": 1,
+           "endedAt": "2026-11-19T18:49:40.421Z"
+          }
+         ],
+         "startedAt": "2026-11-19T18:53:27.564Z",
+         "iteration": 1,
+         "endedAt": "2026-11-19T18:57:22.709Z"
+        },
+        {
+         "nodeId": "gate",
+         "type": "step",
+         "status": "completed",
+         "agentName": "coder",
+         "startedAt": "2026-11-19T18:57:22.714Z",
+         "iteration": 1,
+         "modelId": "model-b-5.5",
+         "effortLevel": "high",
+         "sessionId": "sess_e523135a-1921-4048-9792-48716bdbf1e9",
+         "completionSignal": "success",
+         "completionSignalSource": "send_message",
+         "credits": [
+          {
+           "usage": 6.171583893200665,
+           "unit": "credit",
+           "unitPlural": "credits"
+          }
+         ],
+         "endedAt": "2026-11-19T19:00:06.948Z",
+         "captureSummary": "Probe capture.",
+         "hasCapture": true
+        }
+       ],
+       "endedAt": "2026-11-19T19:00:07.622Z"
+      }
+     ]
+    },
+    {
+     "nodeId": "finalize",
+     "type": "step",
+     "status": "pending",
+     "agentName": "coder"
+    }
+   ]
+  },
+  "pauseReason": "Repeat 'review-loop' reached maxIterations.",
+  "parentSessionId": "sess_ddb19abc-5e37-4907-8a24-4c06476e65e0",
+  "backgroundExecution": true,
+  "sessionTools": {
+   "awareness": false,
+   "messaging": false,
+   "cloud": false
+  },
+  "rootConversationId": "sess_ddb19abc-5e37-4907-8a24-4c06476e65e0",
+  "workspacePath": "/work",
+  "additionalDirectories": [
+   "/extra"
+  ],
+  "createdAt": "2026-11-19T15:16:50.241Z",
+  "runLabel": "loop",
+  "originalUserMessages": [],
+  "memoryConfig": {
+   "mode": "disabled",
+   "reflection": false
+  },
+  "memoryConfigSource": "explicit",
+  "parentModelId": "model-b-5.5",
+  "parentEffortLevel": "high",
+  "planRevision": 1,
+  "pause": {
+   "kind": "maxIterations",
+   "nodeId": "review-loop",
+   "maxIterations": 2,
+   "iterationsRun": 2
+  }
+ },
+ "nodePlan": [
+  {
+   "nodeId": "create-workflow",
+   "type": "step",
+   "agentName": "creator",
+   "modelId": "model-b-5.5",
+   "effortLevel": "high"
+  },
+  {
+   "nodeId": "setup",
+   "type": "step",
+   "agentName": "coder",
+   "modelId": "model-f-5.5",
+   "effortLevel": "low"
+  },
+  {
+   "nodeId": "review-loop",
+   "type": "repeat",
+   "steps": [
+    {
+     "nodeId": "build-loop",
+     "type": "repeat",
+     "steps": [
+      {
+       "nodeId": "code",
+       "type": "step",
+       "agentName": "coder",
+       "modelId": "model-b-5.5",
+       "effortLevel": "high"
+      }
+     ],
+     "maxIterations": 5,
+     "onMaxIterations": "pause",
+     "stopWhen": "{{code.output}} contains BUILD COMPLETE"
+    },
+    {
+     "nodeId": "dispatch",
+     "type": "step",
+     "agentName": "coder",
+     "modelId": "model-f-5.5",
+     "effortLevel": "high"
+    },
+    {
+     "nodeId": "seats",
+     "type": "parallel",
+     "branches": [
+      {
+       "nodeId": "seat-a-loop",
+       "type": "repeat",
+       "steps": [
+        {
+         "nodeId": "seat-a",
+         "type": "step",
+         "agentName": "seat-a",
+         "modelId": "model-b-5.5",
+         "effortLevel": "high"
+        }
+       ],
+       "maxIterations": 3,
+       "onMaxIterations": "continue",
+       "stopCondition": {
+        "fileCheck": {
+         "path": "/work/review/a.json",
+         "jsonPath": "status",
+         "value": [
+          "complete",
+          "refused",
+          "skipped",
+          "not-owed"
+         ]
+        }
+       }
+      },
+      {
+       "nodeId": "seat-b-loop",
+       "type": "repeat",
+       "steps": [
+        {
+         "nodeId": "seat-b",
+         "type": "step",
+         "agentName": "seat-b",
+         "modelId": "model-c-4.7",
+         "effortLevel": "high"
+        }
+       ],
+       "maxIterations": 3,
+       "onMaxIterations": "continue",
+       "stopCondition": {
+        "fileCheck": {
+         "path": "/work/review/b.json",
+         "jsonPath": "status",
+         "value": [
+          "complete",
+          "refused",
+          "skipped",
+          "not-owed"
+         ]
+        }
+       }
+      }
+     ]
+    },
+    {
+     "nodeId": "gate",
+     "type": "step",
+     "agentName": "coder",
+     "modelId": "model-b-5.5",
+     "effortLevel": "high"
+    }
+   ],
+   "maxIterations": 2,
+   "onMaxIterations": "pause",
+   "stopCondition": {
+    "fileCheck": {
+     "path": "/work/review/gate.json",
+     "jsonPath": "verdict",
+     "value": "APPROVED"
+    }
+   }
+  },
+  {
+   "nodeId": "finalize",
+   "type": "step",
+   "agentName": "coder",
+   "modelId": "model-b-5.5",
+   "effortLevel": "medium"
+  }
+ ]
+}
