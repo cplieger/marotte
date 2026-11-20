@@ -355,6 +355,17 @@
   --dot-color: var(--c-dot-done);
 }
 
+/* Background — the reply is over and a background job of the chat still runs.
+   STILL, because motion means the agent is replying now; working's ink, because
+   the chat is busy. Hollow with a 3px band, twice idle's 1.5px, so it separates
+   from idle without hue, and from waiting by having no ring. */
+.tab-status-dot[data-status="background"] {
+  background: transparent;
+  border: 3px solid var(--dot-color);
+
+  --dot-color: var(--c-dot-working);
+}
+
 /* Dirty — an editor tab's unsaved changes. Not a chat state: editor tabs never
    receive setTabStatus and chat tabs never receive setTabDirty, so the two
    halves cannot collide on the one attribute. */

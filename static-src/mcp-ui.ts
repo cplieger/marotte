@@ -14,7 +14,7 @@ import { onModalClose, openModal } from "./modals.js";
 import { refreshConfigStanding, standingBadge } from "./config-standing.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { showToast } from "./toast.js";
-import { ICON_EDIT_UI, ICON_TRASH_UI, ICON_PLUS_UI, ICON_REFRESH } from "./icons.js";
+import { ICON_EDIT_UI, ICON_TRASH_UI, ICON_PLUS_UI, ICON_REFRESH, ICON_WARN } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { spinnerEl } from "./spinner.js";
 import {
@@ -439,11 +439,13 @@ export function mountForeignRow(name: string): HTMLElement {
   const originChip = buildOriginChip();
   const metaText = el("span", { className: "mcp-row-meta-text" });
   const discoveryBox = el("div", { className: "mcp-discovery" }) as HTMLDivElement;
+  const ignored = ignoredLine();
   const body = el(
     "div",
     { className: "mcp-row-body" },
     el("div", { className: "mcp-row-name-line" }, dot, nameEl, standingSlot),
     el("div", { className: "mcp-row-meta" }, originChip, metaText),
+    ignored.line,
     discoveryBox,
   );
   const reconnectBtn = renderReconnectBtn(name, () => name);
@@ -466,6 +468,7 @@ export function mountForeignRow(name: string): HTMLElement {
       applyStatusDotForeign(dot, name, st);
       applyOriginChip(originChip, st);
       metaText.textContent = renderForeignMeta(st, identityProviderName.value);
+      ignored.paint(st);
       applyStanding(standingSlot, name);
       const live = carriesLiveReport(st, false);
       reconnectBtn.hidden = !live;
@@ -488,6 +491,27 @@ function applyStatusDotForeign(dot: HTMLSpanElement, name: string, st: RuntimeSt
   }
   dot.dataset["tooltip"] = meta.title;
   dot.setAttribute("aria-label", `${name}: ${meta.title.toLowerCase()}`);
+}
+
+/** The keys kiro-cli ignores for a server, or "" when none. Exported for its test. */
+export function ignoredText(st: RuntimeStatus): string {
+  const keys = st.ignoredFields ?? [];
+  return keys.length === 0 ? "" : `Kiro ignores: ${keys.join(", ")}`;
+}
+
+/** Its own line under the meta line, never in it: the meta line ellipsises, and the user must read every key to fix
+ *  the config. */
+function ignoredLine(): { readonly line: HTMLElement; paint: (st: RuntimeStatus | null) => void } {
+  const text = el("span");
+  const line = el("p", { className: "mcp-mode-hint", hidden: true }, iconEl(ICON_WARN), " ", text);
+  return {
+    line,
+    paint: (st) => {
+      const t = st === null ? "" : ignoredText(st);
+      line.hidden = t === "";
+      text.textContent = t;
+    },
+  };
 }
 
 /** Meta text for a read-only row; `org` names the organization provider. Exported for testing. */
@@ -563,7 +587,8 @@ export function mountRow(s: Server, id: string): HTMLElement {
   );
   const metaText = el("span", { className: "mcp-row-meta-text" });
   const meta = el("div", { className: "mcp-row-meta" }, metaText);
-  const body = el("div", { className: "mcp-row-body" }, nameLine, meta);
+  const ignored = ignoredLine();
+  const body = el("div", { className: "mcp-row-body" }, nameLine, meta, ignored.line);
 
   const reconnectBtn = renderReconnectBtn(s.name, () => (servers.signalFor(id)?.value ?? s).name);
   const editBtn = renderEditBtn(s, cleanups);
@@ -621,6 +646,8 @@ export function mountRow(s: Server, id: string): HTMLElement {
       transportBadge.textContent = cur.transport;
       applyStatusDot(dot, cur, st, notInRegistry);
       metaText.textContent = renderMeta(cur, st, notInRegistry, identityProviderName.value);
+      // A shadowed name's report belongs to the running server's own row.
+      ignored.paint(st.origin === "user" ? st : null);
       applyStanding(standingSlot, cur.name);
 
       const live = carriesLiveReport(st, true);

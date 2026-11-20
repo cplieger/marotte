@@ -60,6 +60,7 @@ function need(status: TabDotState): number {
     case "failed":
       return 1;
     case "working":
+    case "background":
       return 2;
     case "done":
       return 3;

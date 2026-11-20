@@ -140,7 +140,7 @@ func TestSettings_SessionDoorMoveReloadsSessionsAndNeverRestarts(t *testing.T) {
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	writeSetting(t, dir, settings.KeyMemoryMode, "learn")
+	writeSetting(t, dir, settings.KeyBackgroundJobs, true)
 	h.ReconcileSessionSettings(t.Context())
 	if !reloadMarked(h, "c1") {
 		t.Error("a session-door move left the resident session unmarked")
@@ -280,27 +280,27 @@ func TestEnsureResident_ACallerWaitsOnlyItsOwnContextAndALaterCallerJoinsTheLoad
 
 func TestUnreadableConfig_AResidentSessionIsNotMarkedUntilTheRepairMovesAValue(t *testing.T) {
 	t.Parallel()
-	dir := writeSettings(t, `{"memory_mode":"learn"}`)
+	dir := writeSettings(t, `{"background_jobs":true}`)
 	h := reopenFixtureIn(t, dir, nil)
 	awaitBoot(h)
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
-	rewriteConfigByHand(t, dir, `{"memory_mode":`)
+	rewriteConfigByHand(t, dir, `{"background_jobs":`)
 	h.ReconcileSessionSettings(t.Context())
 	if reloadMarked(h, "c1") {
 		t.Error("an unreadable config.json marked the open chat to reload onto the defaults")
 	}
-	rewriteConfigByHand(t, dir, `{"memory_mode":"learn"}`)
+	rewriteConfigByHand(t, dir, `{"background_jobs":true}`)
 	h.ReconcileSessionSettings(t.Context())
 	if reloadMarked(h, "c1") {
 		t.Error("a repair to the same document marked the open chat to reload")
 	}
-	rewriteConfigByHand(t, dir, `{"memory_mode":"read_only"}`)
+	rewriteConfigByHand(t, dir, `{"background_jobs":false}`)
 	h.ReconcileSessionSettings(t.Context())
 	if !reloadMarked(h, "c1") {
-		t.Error("a repair that moved the memory mode left the open chat unmarked")
+		t.Error("a repair that moved background jobs left the open chat unmarked")
 	}
 }
 
@@ -312,13 +312,13 @@ func TestUnreadableConfig_AMarkedSessionWaitsForConfigToReadBeforeItReloads(t *t
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	sb1 := h.bridge.mgr.get("c1")
-	writeSetting(t, dir, settings.KeyMemoryMode, "learn")
+	writeSetting(t, dir, settings.KeyBackgroundJobs, true)
 	h.ReconcileSessionSettings(t.Context())
 	if !reloadMarked(h, "c1") {
-		t.Fatal("Setup: a memory mode move left the open chat unmarked")
+		t.Fatal("Setup: a background jobs move left the open chat unmarked")
 	}
 
-	rewriteConfigByHand(t, dir, `{"memory_mode":`)
+	rewriteConfigByHand(t, dir, `{"background_jobs":`)
 	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge over an unreadable config.json: %v", err)
 	}
@@ -329,7 +329,7 @@ func TestUnreadableConfig_AMarkedSessionWaitsForConfigToReadBeforeItReloads(t *t
 		t.Error("the marked chat lost its mark while config.json cannot be read")
 	}
 
-	rewriteConfigByHand(t, dir, `{"memory_mode":"learn"}`)
+	rewriteConfigByHand(t, dir, `{"background_jobs":true}`)
 	sb2, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge after the repair: %v", err)
@@ -340,7 +340,7 @@ func TestUnreadableConfig_AMarkedSessionWaitsForConfigToReadBeforeItReloads(t *t
 	if reloadMarked(h, "c1") {
 		t.Error("the reloaded chat is still marked")
 	}
-	if so := fakeOf(sb2).lastSessionOpts(); so == nil || so.Memory != settings.MemoryPreferenceFor("learn") {
-		t.Errorf("the reload's door = %+v, want memory %v", so, settings.MemoryPreferenceFor("learn"))
+	if so := fakeOf(sb2).lastSessionOpts(); so == nil || !so.Features.BackgroundJobs {
+		t.Errorf("the reload's door = %+v, want background jobs on", so)
 	}
 }

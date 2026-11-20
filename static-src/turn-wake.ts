@@ -63,6 +63,8 @@ export function wakeLine(w: EntryTurnWake): WakeLine {
       return runFinishedLine(w);
     case "rewake":
       return rewakeLine(w.steers ?? []);
+    case "job_ended":
+      return JOB_ENDED;
     case "unknown":
       return FALLBACK;
     default:
@@ -76,6 +78,17 @@ const FALLBACK: WakeLine = {
   label: WAKE_FALLBACK_LINE,
   body: "",
   fallback: true,
+  message: false,
+};
+
+/** The twin of the Go `wakeJobEndedLine`: it names no job, which the job-ended row above it does. */
+const JOB_ENDED_LINE = "A background job ended";
+
+const JOB_ENDED: WakeLine = {
+  rest: JOB_ENDED_LINE,
+  label: JOB_ENDED_LINE,
+  body: "",
+  fallback: false,
   message: false,
 };
 

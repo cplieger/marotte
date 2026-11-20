@@ -402,6 +402,7 @@ describe("restart reasons", () => {
     "knowledge_max_files",
     "knowledge_chunking",
     "steering_reminders_enabled",
+    "code_analysis_enabled",
     "cloudformation_safety_check",
     "model_fallback_enabled",
     "auto_routing",

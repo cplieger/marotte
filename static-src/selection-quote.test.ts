@@ -665,7 +665,7 @@ describe("what a quote can come from", () => {
   });
 
   it("names the run list for the recap box's fold row", async () => {
-    runBarFold.append(roleButton("run-bar-open run-bar-toggle", "2 workflows running"));
+    runBarFold.append(roleButton("tracker-toggle", "2 workflows running"));
     selectAll(runBarFold);
     expect(await sourceLine()).toBe("> From the run list:");
   });

@@ -30,7 +30,8 @@ import (
 const (
 	relayURLCap = 4096
 
-	// relayMinPort refuses a privileged port: KAS's listener is ephemeral.
+	// relayMinPort refuses a privileged port: KAS's listener is on an ephemeral port, or on a declared redirectUri's
+	// port, which validate.go holds to this floor.
 	relayMinPort = 1024
 
 	relayDialTimeout  = 3 * time.Second

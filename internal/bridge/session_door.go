@@ -91,8 +91,6 @@ func validIdent(s string) bool { return ids.ValidIdent(s) }
 // sessionSpawnOf is o's session door input.
 func sessionSpawnOf(o *marotte.SessionOpts) kascap.SessionSpawn {
 	return kascap.SessionSpawn{
-		MemoryMode:              o.Memory.Mode,
-		MemoryReflection:        o.Memory.Reflection,
 		SpecPlan:                o.Features.SpecPlan,
 		SpecAskClarification:    o.Features.SpecAskClarification,
 		WorkValidation:          o.Features.WorkValidation,
@@ -106,6 +104,8 @@ func sessionSpawnOf(o *marotte.SessionOpts) kascap.SessionSpawn {
 		DisableAutoCompaction:   o.DisableAutoCompaction,
 		AutoCompactionThreshold: o.AutoCompactionThreshold,
 		ProfileAgentTurns:       o.Role == marotte.SessionRoleChat,
+		MemoryFromDevice:        o.Role != marotte.SessionRoleObserver,
+		BackgroundJobs:          o.Features.BackgroundJobs,
 	}
 }
 
@@ -364,9 +364,10 @@ func (e *Engine) closeAndReap(id marotte.SessionID) {
 }
 
 // LoadSession loads o.SessionID with a lane registered under it first, attach running before the write as
-// NewSession's does. replayBudget bounds the door on top of ctx (StallAware): KAS replays the transcript before the
-// reply. A door that gives up keeps its handle until kiro-cli answers, then releases the loaded session, so a door
-// for the id waits for that.
+// NewSession's does. The load is strict (`_meta.kiro.requireExisting`): an id KAS holds no record of answers -32000
+// (marotte.SessionRecordGone) and creates nothing. replayBudget bounds the door on top of ctx (StallAware): KAS
+// replays the transcript before the reply. A door that gives up keeps its handle until kiro-cli answers, then
+// releases the loaded session, so a door for the id waits for that.
 func (e *Engine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach func(*Session) error) (*Session, error) {
 	id := marotte.SessionID(o.SessionID)
 	if !ids.ValidSessionID(o.SessionID) {
@@ -379,6 +380,7 @@ func (e *Engine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach
 	if err != nil {
 		return nil, err
 	}
+	s.spawn.RequireExisting = true
 	if attach != nil {
 		if err = attach(s); err != nil {
 			s.closed()
@@ -408,8 +410,6 @@ func (e *Engine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach
 	s.applySupervised(dctx, o.Supervised)
 	// A chat created in another mode, or under another setting, never had the value applied.
 	s.applyWorkflowLaunch(dctx)
-	// A loaded session keeps its memory mode, but reflection has a live setter.
-	s.applyMemoryReflection(dctx, o.Memory.Reflection)
 	if !s.open(false) {
 		return nil, marotte.ErrChatClosedDuringCall
 	}
@@ -605,22 +605,6 @@ func (s *Session) applyWorkflowLaunch(ctx context.Context) {
 	if err := s.ensureWorkflowLaunch(ctx); err != nil {
 		slog.Warn("workflow use not applied; the session keeps its own value",
 			"session_id", s.id, "want", s.workflowLaunchWant, "error", err)
-	}
-}
-
-// applyMemoryReflection sets the memoryReflection option to the preference; best-effort.
-func (s *Session) applyMemoryReflection(ctx context.Context, on bool) {
-	value := marotte.ConfigValueAutopilotOff
-	if on {
-		value = marotte.ConfigValueAutopilotOn
-	}
-	if _, err := s.doorSetConfig(ctx, map[string]any{
-		marotte.KeySessionID: s.id,
-		keyConfigID:          marotte.ConfigOptionMemoryReflection,
-		keyConfigValue:       value,
-	}); err != nil {
-		slog.Warn("memory reflection not re-applied on session/load",
-			"session_id", s.id, "reflection", on, "error", err)
 	}
 }
 

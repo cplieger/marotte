@@ -348,9 +348,9 @@ func publishedUsageInfo(t *testing.T, pct float64) json.RawMessage {
 	}}})
 }
 
-// KAS's published figure is its stored one, which a compaction leaves at the context before it: it is shown only
-// while no compaction waits on a live reading. A replayed reading is history, shown the same way.
-func TestContextUsage_APublishedOrReplayedFigureIsShownWithNoCompactionWaiting(t *testing.T) {
+// KAS's published figure is its stored one, shown like a model response's own reading; a replayed reading is
+// history, shown the same way.
+func TestContextUsage_APublishedOrReplayedFigureIsShown(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 
@@ -360,7 +360,7 @@ func TestContextUsage_APublishedOrReplayedFigureIsShownWithNoCompactionWaiting(t
 	}}}), FrameAttribution{})
 
 	if c, _ := store.Get(t.Context(), "c1"); c.Usage.ContextPct != 30 || !c.Usage.HasRealData {
-		t.Errorf("usage = %+v, want the newest figure shown (30) with no compaction waiting", c.Usage)
+		t.Errorf("usage = %+v, want the newest figure shown (30)", c.Usage)
 	}
 }
 
@@ -380,9 +380,9 @@ func TestContextUsage_ABreakdownTwinsFigureIsShown(t *testing.T) {
 	}
 }
 
-// After a summary lands, KAS republishes its pre-summary figure until its next live reading: that figure is not
-// shown, a live reading is and ends the wait, and a figure published after it is shown again.
-func TestContextUsage_ACompactionWaitsForALiveReading(t *testing.T) {
+// After a summary lands, KAS publishes its estimate of the compacted context: it is shown, then the next model
+// reading and a figure published after it.
+func TestContextUsage_ACompactionShowsKASEstimate(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	if _, err := store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Usage = marotte.Usage{ContextPct: 96, HasRealData: true}
@@ -393,13 +393,13 @@ func TestContextUsage_ACompactionWaitsForALiveReading(t *testing.T) {
 	tr := New(rolesOf(deps))
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), FrameAttribution{})
 
-	tr.HandleSessionInfoUpdate(t.Context(), "c1", publishedUsageInfo(t, 96), FrameAttribution{})
-	if c, _ := store.Get(t.Context(), "c1"); c.Usage.ContextPct != 0 || c.Usage.HasRealData || !c.Usage.ContextCompacted {
-		t.Errorf("usage after the republished figure = %+v, want the cleared figure kept, still waiting", c.Usage)
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", publishedUsageInfo(t, 18), FrameAttribution{})
+	if c, _ := store.Get(t.Context(), "c1"); c.Usage.ContextPct != 18 || !c.Usage.HasRealData {
+		t.Errorf("usage after KAS's estimate = %+v, want 18 shown", c.Usage)
 	}
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", contextUsageInfo(t, "contextUsage", 31), FrameAttribution{})
-	if c, _ := store.Get(t.Context(), "c1"); c.Usage.ContextPct != 31 || !c.Usage.HasRealData || c.Usage.ContextCompacted {
-		t.Errorf("usage after a live reading = %+v, want 31 shown and the wait over", c.Usage)
+	if c, _ := store.Get(t.Context(), "c1"); c.Usage.ContextPct != 31 {
+		t.Errorf("usage after a model reading = %+v, want 31 shown", c.Usage)
 	}
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", publishedUsageInfo(t, 33), FrameAttribution{})
 	if c, _ := store.Get(t.Context(), "c1"); c.Usage.ContextPct != 33 {

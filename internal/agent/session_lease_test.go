@@ -77,7 +77,6 @@ var sessionTakers = map[string]string{
 	"bridgeCoordinator.goRunForward":              "the forward",
 	"bridgeCoordinator.forwardAt":                 "the forward",
 	"bridgeCoordinator.drainLane":                 "the forward",
-	"closeBlankLoad":                              "door step",
 	"guardSession":                                "decorator",
 	"newHostRelay":                                "decorator",
 	"Runtime.closeSession":                        "the closer",

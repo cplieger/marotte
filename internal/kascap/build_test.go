@@ -38,6 +38,7 @@ var engineMatrix = []struct {
 	// (isSettingEnabled).
 	{"knowledge on", EngineSpawn{Knowledge: true}},
 	{"steering reminders on", EngineSpawn{SteeringReminders: true}},
+	{"code analysis on", EngineSpawn{CodeAnalysis: true}},
 	{"safety check on", EngineSpawn{InfraSafety: "on"}},
 	{"safety check off", EngineSpawn{InfraSafety: "off"}},
 	{"safety check enforce", EngineSpawn{InfraSafety: "enforce"}},
@@ -56,7 +57,7 @@ var engineMatrix = []struct {
 	{"every gate on", EngineSpawn{
 		SecretStorage: true, Knowledge: true, InfraSafety: "enforce", ContentCollection: true,
 		AutoRouting: "on", AutoDelegation: "on",
-		TerminalCommandTimeoutMs: 300000, SteeringReminders: true,
+		TerminalCommandTimeoutMs: 300000, SteeringReminders: true, CodeAnalysis: true,
 		DisableTelemetry: true, ModelFallback: true, MessageDeliveryLimit: 12,
 		KnowledgeTuning: marotte.KnowledgeTuning{
 			IndexType: "fast", IncludePatterns: []string{"**/*.md"}, ExcludePatterns: []string{"drafts/**"},
@@ -71,13 +72,13 @@ var sessionMatrix = []struct {
 }{
 	{"gates off", SessionSpawn{}},
 	{"a minted id", SessionSpawn{OverrideSessionID: "sess_00000000-0000-4000-8000-000000000000"}},
+	{"a load", SessionSpawn{RequireExisting: true}},
 	// Presets need both states: an empty set withholds the policyPreset key entirely (the Custom
 	// profile).
 	{"one preset", SessionSpawn{Presets: []string{"read-workspace"}}},
 	{"several presets", SessionSpawn{Presets: []string{"read-workspace", "read-only-shell", "read-all"}}},
-	{"memory read only", SessionSpawn{MemoryMode: "read_only"}},
-	{"memory read write", SessionSpawn{MemoryMode: "read_write"}},
-	{"memory learn", SessionSpawn{MemoryMode: "read_write", MemoryReflection: true}},
+	{"memory from the device", SessionSpawn{MemoryFromDevice: true}},
+	{"background jobs on", SessionSpawn{BackgroundJobs: true}},
 	{"auto compaction off", SessionSpawn{DisableAutoCompaction: true}},
 	{"auto compaction at 65", SessionSpawn{AutoCompactionThreshold: 65}},
 	{"spec planning quick", SessionSpawn{SpecPlan: "quick"}},
@@ -94,7 +95,7 @@ var sessionMatrix = []struct {
 	{"every gate on", SessionSpawn{
 		OverrideSessionID: "sess_00000000-0000-4000-8000-000000000000",
 		Presets:           []string{"read-workspace"},
-		MemoryMode:        "read_write", MemoryReflection: true,
+		MemoryFromDevice:  true, BackgroundJobs: true,
 		DisableAutoCompaction: true, AutoCompactionThreshold: 80, SpecPlan: "full", SpecAskClarification: true,
 		WorkValidation: "on", Workflows: true, WorkflowCreatorEffort: "max", Messaging: true, Awareness: true,
 		AwarenessMode: "consult", ProfileAgentTurns: true, CustomAgents: []marotte.ClientCustomAgent{probeAgent},
@@ -266,15 +267,37 @@ func TestSessionDoor_OverrideSessionIDOnlyWhenMinted(t *testing.T) {
 	}
 }
 
-// TestMemoryRow_FailsClosedAndNeverVetoes pins the memory preference's two
-// load-bearing facts: a zero SessionSpawn (an observer pass) sends mode disabled on
-// the session door, and the legacy userMemoryOptIn veto is on no door, because
-// sending it refuses the sessionless _kiro/memory/* calls the Memories tab makes.
-func TestMemoryRow_FailsClosedAndNeverVetoes(t *testing.T) {
+// TestSessionDoor_RequireExistingOnlyOnLoad pins that a load asks KAS to refuse a missing record with a bare true, and
+// that session/new, which names no existing session, never carries the key.
+func TestSessionDoor_RequireExistingOnlyOnLoad(t *testing.T) {
+	if got := SessionMeta(&SessionSpawn{RequireExisting: true})["requireExisting"]; got != true {
+		t.Errorf("SessionMeta(load) requireExisting = %#v, want true", got)
+	}
+	minted := &SessionSpawn{OverrideSessionID: "sess_00000000-0000-4000-8000-000000000000"}
+	if got, present := SessionMeta(minted)["requireExisting"]; present {
+		t.Errorf("SessionMeta(new) carries requireExisting = %#v, want it absent", got)
+	}
+}
+
+// TestMemoryRow_DeviceDefaultOnChatAndHostOffOnObserver pins the memory row's load-bearing facts: a session that
+// takes the device Memory choice (a chat's or a run host's) sends no memory key on either door, so KAS's
+// chooseSessionMemory reads the device rows; the zero spawn (an observer pass, or a role that never opted in) sends
+// mode disabled; and userMemoryOptIn and memory ride no other door, since KAS would read an initialize memory as
+// explicit and skip the device read.
+func TestMemoryRow_DeviceDefaultOnChatAndHostOffOnObserver(t *testing.T) {
 	settings, _ := SessionMeta(&SessionSpawn{})[settingsKey].(map[string]any)
 	want := map[string]any{"mode": "disabled", "reflection": false}
 	if got := settings["memory"]; !reflect.DeepEqual(got, want) {
 		t.Errorf("SessionMeta(&SessionSpawn{}) memory = %#v, want %#v", got, want)
+	}
+	for name, spawn := range map[string]*SessionSpawn{
+		"new":  {MemoryFromDevice: true, OverrideSessionID: "sess_00000000-0000-4000-8000-000000000000"},
+		"load": {MemoryFromDevice: true, RequireExisting: true},
+	} {
+		s, _ := SessionMeta(spawn)[settingsKey].(map[string]any)
+		if got, present := s["memory"]; present {
+			t.Errorf("%s door with MemoryFromDevice: memory = %#v, want it absent", name, got)
+		}
 	}
 	for _, tc := range sessionMatrix {
 		s, _ := SessionMeta(&tc.spawn)[settingsKey].(map[string]any)
@@ -288,7 +311,7 @@ func TestMemoryRow_FailsClosedAndNeverVetoes(t *testing.T) {
 			t.Errorf("engine %s: userMemoryOptIn is sent; want it withheld on every door", tc.name)
 		}
 		if _, present := s["memory"]; present {
-			t.Errorf("engine %s: memory rides initialize; want the session door only (only it upgrades a legacy session)", tc.name)
+			t.Errorf("engine %s: memory rides initialize; want the session door only", tc.name)
 		}
 	}
 }
@@ -321,10 +344,10 @@ func TestChildEnv_PinsNoArmByDefault(t *testing.T) {
 
 const universalBackgroundToolOff = "KIRO_FEATURE_UNIVERSAL_BACKGROUND_TOOL_ENABLED=false"
 
-// TestSessionJobs_PinnedOffOnEveryEngineAndSession pins session jobs off at both of KAS's gates, so an
-// experiment ramp cannot move a session's commands off marotte's terminal: the environment arm on every engine
-// (a setting no Settings control owns) and the session setting, which KAS reads first, on every session.
-func TestSessionJobs_PinnedOffOnEveryEngineAndSession(t *testing.T) {
+// TestSessionJobs_EnginePinnedOffAndSessionsFollowTheSetting pins session jobs at both of KAS's gates: the
+// environment arm is off on every engine, so a ramp cannot reach the step sessions that never carry the setting, and
+// the session setting, which KAS reads first, follows the Background jobs switch on both doors, off included.
+func TestSessionJobs_EnginePinnedOffAndSessionsFollowTheSetting(t *testing.T) {
 	spawns := map[string]*EngineSpawn{"zero": {}}
 	for i := range engineMatrix {
 		spawns[engineMatrix[i].name] = &engineMatrix[i].spawn
@@ -337,13 +360,15 @@ func TestSessionJobs_PinnedOffOnEveryEngineAndSession(t *testing.T) {
 	if OwnsEnv(universalBackgroundToolOff) {
 		t.Errorf("OwnsEnv(%q) = true; no setting decides the arm", universalBackgroundToolOff)
 	}
-	for _, tc := range append(sessionMatrix, struct {
-		name  string
-		spawn SessionSpawn
-	}{"zero", SessionSpawn{}}) {
-		settings, _ := SessionMeta(&tc.spawn)[settingsKey].(map[string]any)
-		if got, want := settings["universalBackgroundTool"], enabledIf(false); !reflect.DeepEqual(got, want) {
-			t.Errorf("session %s: universalBackgroundTool = %#v, want %#v", tc.name, got, want)
+	for _, on := range []bool{false, true} {
+		for door, spawn := range map[string]SessionSpawn{
+			"new":  {OverrideSessionID: "sess_00000000-0000-4000-8000-000000000000", BackgroundJobs: on},
+			"load": {RequireExisting: true, BackgroundJobs: on},
+		} {
+			settings, _ := SessionMeta(&spawn)[settingsKey].(map[string]any)
+			if got, want := settings["universalBackgroundTool"], enabledIf(on); !reflect.DeepEqual(got, want) {
+				t.Errorf("%s door, BackgroundJobs %v: universalBackgroundTool = %#v, want %#v", door, on, got, want)
+			}
 		}
 	}
 }
@@ -505,6 +530,7 @@ func TestSessionDoor_WithholdsSteeringSupervisor(t *testing.T) {
 // TestSessionDoor_SessionToolsFollowTheSettings pins settings.sessionTools.messaging and .awareness in every state,
 // the shape KAS's session-tools reader takes (`keys:["sessionTools"]`, then `.<switch>.enabled` as a boolean): on
 // load a stated false clears the persisted sessionMessagingEnabled or sessionAwarenessEnabled, so off is sent too.
+// cloud is false in every state, which clears a persisted cloudSessionsEnabled whatever layer set it.
 // awareness.mode rides only a stated mode with awareness on; KAS reads its absence as direct.
 func TestSessionDoor_SessionToolsFollowTheSettings(t *testing.T) {
 	for _, messaging := range []bool{false, true} {
@@ -513,6 +539,7 @@ func TestSessionDoor_SessionToolsFollowTheSettings(t *testing.T) {
 			want := map[string]any{
 				"messaging": map[string]any{"enabled": messaging},
 				"awareness": map[string]any{"enabled": awareness},
+				"cloud":     map[string]any{"enabled": false},
 			}
 			if got := settings["sessionTools"]; !reflect.DeepEqual(got, want) {
 				t.Errorf("SessionMeta(Messaging=%v, Awareness=%v) sessionTools = %#v, want %#v", messaging, awareness, got, want)

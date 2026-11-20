@@ -182,7 +182,8 @@ var table = []decl{
 		key:      "mcpElicitation",
 		door:     doorConnection,
 		resolver: resolverCapability,
-		send:     false,
+		value:    true,
+		send:     true,
 	},
 	{
 		key:      "backgroundProcesses",
@@ -290,16 +291,18 @@ var table = []decl{
 		send:        true,
 	},
 	{
-		// KAS's sessionToolsMessaging and sessionToolsAwareness switches, read as settings.sessionTools.<switch>.enabled
-		// (record fields sessionMessagingEnabled, sessionAwarenessEnabled). Both always present: on load a stated value
-		// replaces the persisted field, so an explicit false is what turns a resumed chat's switch off. awareness.mode
-		// is fixed at session/new: on load KAS keeps the session record's mode and reads the member only with no record.
+		// KAS's sessionToolsMessaging, sessionToolsAwareness and sessionToolsCloud switches, read as
+		// settings.sessionTools.<switch>.enabled (record fields sessionMessagingEnabled, sessionAwarenessEnabled,
+		// cloudSessionsEnabled). All always present: on load a stated value replaces the persisted field, so an explicit
+		// false is what turns a resumed chat's switch off. cloud is always false: it overrides every other settings
+		// layer (~/.kiro, Kiro's synced and organization config) that could turn create_session on. awareness.mode is
+		// fixed at session/new: on load KAS keeps the record's mode and reads the member only with no record.
 		// session/set_config_option sessionToolsMessaging writes the same record field live, refused while a turn runs.
 		key:      "sessionTools",
 		door:     doorSession,
 		resolver: resolverSettingObject,
 		sessionGate: func(s *SessionSpawn) (any, bool) {
-			return map[string]any{"messaging": enabledIf(s.Messaging), "awareness": awarenessValue(s)}, true
+			return map[string]any{"messaging": enabledIf(s.Messaging), "awareness": awarenessValue(s), "cloud": enabledIf(false)}, true
 		},
 		send: true,
 	},
@@ -320,11 +323,11 @@ var table = []decl{
 		send:     true,
 	},
 	{
-		key:      "universalBackgroundTool",
-		door:     doorSession,
-		resolver: resolverSetting,
-		value:    enabledIf(false),
-		send:     true,
+		key:         "universalBackgroundTool",
+		door:        doorSession,
+		resolver:    resolverSetting,
+		sessionGate: func(s *SessionSpawn) (any, bool) { return enabledIf(s.BackgroundJobs), true },
+		send:        true,
 	},
 	{
 		key:      "shellType",
@@ -473,6 +476,13 @@ var table = []decl{
 		send:        true,
 	},
 	{
+		key:         "requireExisting",
+		door:        doorSession,
+		resolver:    resolverCapability,
+		sessionGate: func(s *SessionSpawn) (any, bool) { return true, s.RequireExisting },
+		send:        true,
+	},
+	{
 		key:      "nonInteractive",
 		door:     doorSession,
 		resolver: resolverCapability,
@@ -510,10 +520,8 @@ var table = []decl{
 		key:      "memory",
 		door:     doorSession,
 		resolver: resolverSettingObject,
-		// Always present: an absent key leaves the chat's memory to KAS's
-		// fallback config, not the user's choice.
 		sessionGate: func(s *SessionSpawn) (any, bool) {
-			return map[string]any{"mode": cmp.Or(s.MemoryMode, "disabled"), "reflection": s.MemoryReflection}, true
+			return map[string]any{"mode": "disabled", "reflection": false}, !s.MemoryFromDevice
 		},
 		send: true,
 	},
@@ -533,7 +541,8 @@ var table = []decl{
 		key:      "streamingShellContent",
 		door:     doorConnection,
 		resolver: resolverCapability,
-		send:     false,
+		value:    true,
+		send:     true,
 	},
 	{
 		key:      "agentHostsForegroundShell",
@@ -554,10 +563,11 @@ var table = []decl{
 		send:     false,
 	},
 	{
-		key:      "c2s",
-		door:     doorConnection,
-		resolver: resolverSetting,
-		send:     false,
+		key:        "c2s",
+		door:       doorConnection,
+		resolver:   resolverSetting,
+		engineGate: func(s *EngineSpawn) (any, bool) { return enabledIf(s.CodeAnalysis), true },
+		send:       true,
 	},
 	{
 		key:      "c2sViews",

@@ -359,3 +359,34 @@ func TestHandleMCPStatus_DecodesEnterpriseAuthorization(t *testing.T) {
 		t.Errorf("servers = %+v, want %+v", got, want)
 	}
 }
+
+// KAS puts ignoredFields on every row kind it sends; each report carries the names as
+// display text, a blank one dropped.
+func TestHandleMCPStatus_CarriesIgnoredFieldsOnEveryRowKind(t *testing.T) {
+	ignored := []string{"autoApprove", "disabled\x1bTool", " \x07 "}
+	want := []string{"autoApprove", "disabled Tool"}
+	rows := []map[string]any{
+		{"name": "up", "status": "connected"},
+		{"name": "down", "status": "failed", "errorMessage": "spawn ENOENT"},
+		{"name": "auth", "status": "failed", "authorizationUrl": "https://example.test/oauth"},
+		{"name": "off", "status": "disabled"},
+		{"name": "slow", "status": "connecting"},
+	}
+	for _, row := range rows {
+		row["ignoredFields"] = ignored
+	}
+	deps, _ := newEventCaptureDeps()
+	var frames []capturedMCPFrame
+	New(rolesOf(&mcpCaptureDeps{baseDeps: deps, frames: &frames})).HandleMCPStatus(t.Context(), "", &marotte.RPCResponse{
+		Params: mustJSON(t, map[string]any{"sessionId": "s1", "servers": rows}),
+	})
+
+	if len(frames) != 1 || len(frames[0].status.Servers) != len(rows) {
+		t.Fatalf("frames = %+v, want one frame of %d servers", frames, len(rows))
+	}
+	for _, r := range frames[0].status.Servers {
+		if !reflect.DeepEqual(r.IgnoredFields, want) {
+			t.Errorf("%s: IgnoredFields = %q, want %q", r.Name, r.IgnoredFields, want)
+		}
+	}
+}

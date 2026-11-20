@@ -82,6 +82,6 @@ func isWorkflowProgress(m *acpKiroMeta) bool {
 		m.Kiro.Notification.Kind == workflowProgressKind
 }
 
-// replayUserChunkKind is KAS's user-message replay frame; the LIVE path has no handler for it
-// (marotte echoes its own user rows).
-const replayUserChunkKind marotte.ACPUpdateKind = "user_message_chunk"
+// UserChunkKind is KAS's user-message frame. Live, only a job notice is read (HandleJobNotice):
+// marotte records its own user rows.
+const UserChunkKind marotte.ACPUpdateKind = "user_message_chunk"

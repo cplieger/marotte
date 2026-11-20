@@ -86,6 +86,8 @@ type EngineFeatures struct {
 	// MessageDeliveryLimit is KAS's sendMessageDeliveryLimit; 0 withholds it.
 	MessageDeliveryLimit int
 	SteeringReminders    bool
+	// CodeAnalysis registers KAS's code index tools (its c2s setting) on every session of the engine.
+	CodeAnalysis bool
 	// ModelFallback sends KAS's refusal and availability fallback flags.
 	ModelFallback bool
 }
@@ -112,8 +114,8 @@ const (
 	SessionRoleObserver SessionRole = "observer"
 )
 
-// SessionOpts collects what one session door sends. KAS persists none of the presets, steering
-// or memory reflection, so a load sends them again.
+// SessionOpts collects what one session door sends. KAS persists neither the presets nor the steering, so a load
+// sends them again.
 type SessionOpts struct {
 	// SessionID is the session to load; empty creates one under an id the engine mints.
 	SessionID string
@@ -139,10 +141,6 @@ type SessionOpts struct {
 	// AdditionalDirectories are the directories beyond the workspace the session may reach, sent
 	// on BOTH doors: KAS adopts the list per call, so a door without it drops them.
 	AdditionalDirectories []string
-	// Memory is the session's memory preference, sent on BOTH doors as
-	// `_meta.kiro.settings.memory`. The zero value means mode "disabled". KAS freezes the mode per
-	// session; the door re-asserts the reflection half after a load.
-	Memory MemoryPreference
 	// Features are the session half of the Agent-capabilities settings; an observer leaves them zero.
 	Features SessionFeatures
 	// AutoCompactionThreshold is the context use, in percent, at which KAS compacts inside a turn; zero withholds
@@ -178,14 +176,9 @@ type SessionFeatures struct {
 	// Awareness is KAS's sessionToolsAwareness switch, which gives the session the tools that list and search others.
 	Awareness            bool
 	SpecAskClarification bool
-}
-
-// MemoryPreference mirrors KAS's `settings.memory` object field for field.
-// Mode is "disabled", "read_only" or "read_write"; Reflection is background
-// learning from the conversation, meaningful only under "read_write".
-type MemoryPreference struct {
-	Mode       string
-	Reflection bool
+	// BackgroundJobs is KAS's universalBackgroundTool switch: on, KAS hosts the session's commands and moves a long
+	// one into a background job.
+	BackgroundJobs bool
 }
 
 // No ACPSession interface: internal/agent declares the session contract at its consumer.

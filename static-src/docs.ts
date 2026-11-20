@@ -280,10 +280,11 @@ export function resolveDocsTab(tab: DocsTab): DocsTab {
 
 function refreshMemoryAvailability(read: () => Promise<EffectiveSettings | null>): void {
   void read().then((s) => {
-    if (s !== null) {
-      memoryOff.value = s.memory_mode === "off";
+    if (s?.memory != null) {
+      memoryOff.value = s.memory.mode === "off";
     } else if (memoryOff.peek() === null) {
-      // Never answered: offer the tab rather than leave a segment whose panel never renders.
+      // Never answered, or kiro-cli has not reported Memory yet: offer the tab rather than leave a segment whose
+      // panel never renders.
       memoryOff.value = false;
     }
   });

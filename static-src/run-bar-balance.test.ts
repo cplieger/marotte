@@ -63,9 +63,9 @@ function mount(count: number, open: boolean, width: number): Mounted {
   const form = document.createElement("form");
   form.className = "bottom-bar";
   const box = document.createElement("div");
-  box.className = "run-bar-host";
+  box.className = "tracker-host";
   const fold = document.createElement("div");
-  fold.className = "run-bar-fold";
+  fold.className = "tracker-fold";
   const bar = document.createElement("ul");
   bar.className = "run-bar";
 
@@ -77,16 +77,16 @@ function mount(count: number, open: boolean, width: number): Mounted {
     toggle = document.createElement("div");
     toggle.setAttribute("role", "button");
     toggle.tabIndex = 0;
-    toggle.className = "run-bar-open run-bar-toggle";
+    toggle.className = "tracker-toggle";
     toggle.setAttribute("aria-expanded", String(open));
     const chev = document.createElement("span");
-    chev.className = "run-bar-chev";
+    chev.className = "tracker-chev";
     chev.append(chevronEl());
     const glyph = document.createElement("span");
     glyph.className = "run-bar-glyph";
     glyph.dataset["status"] = "working";
     const text = document.createElement("span");
-    text.className = "run-bar-count";
+    text.className = "tracker-count";
     text.textContent = `${String(count)} workflows running`;
     toggle.append(chev, glyph, text);
     fold.append(toggle);
@@ -257,7 +257,7 @@ describe("the run bar box's vertical balance", () => {
           const { box, toggle } = mount(runs, true, w - 16);
           await settle();
           const ink = await readInk(box);
-          const head = bandOf(ink, box, toggle?.querySelector(".run-bar-count"));
+          const head = bandOf(ink, box, toggle?.querySelector(".tracker-count"));
           const titles = [...box.querySelectorAll(".ev-sum-label")];
           const firstTitle = bandOf(ink, box, titles[0]);
           const secondTitle = bandOf(ink, box, titles[1]);
@@ -385,7 +385,7 @@ describe("the fold row's reach", () => {
       document.documentElement.setAttribute("data-pointer", tier);
       const { box, toggle } = mount(4, true, w <= 768 ? w - 16 : 1000);
       await settle();
-      const line = box.querySelector<HTMLElement>(".run-bar-fold")!.getBoundingClientRect();
+      const line = box.querySelector<HTMLElement>(".tracker-fold")!.getBoundingClientRect();
       const t = toggle!.getBoundingClientRect();
       expect(t.width).toBeCloseTo(line.width, 0);
       const y = t.top + t.height / 2;

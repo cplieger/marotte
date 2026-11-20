@@ -2,6 +2,7 @@
 // `turn_closed`, `BUS_RECONCILE` and a newest-page GET stating `live === false` — and each
 // applies whatever else it knows itself.
 
+import { chatRunsJob } from "./job-state.js";
 import { setThinking, get, tabStatusFor } from "./store.js";
 import { setTabStatus, tabIdFor } from "./tabs.js";
 import { hasPendingDecision } from "./decision-dock.js";
@@ -10,5 +11,8 @@ import { hasPendingDecision } from "./decision-dock.js";
  *  TAB id, so the subject is resolved rather than passed through. */
 export function clearTurnState(chatID: string): void {
   setThinking(chatID, false);
-  setTabStatus(tabIdFor("chat", chatID), tabStatusFor(get(chatID), hasPendingDecision(chatID)));
+  setTabStatus(
+    tabIdFor("chat", chatID),
+    tabStatusFor(get(chatID), hasPendingDecision(chatID), chatRunsJob(chatID)),
+  );
 }

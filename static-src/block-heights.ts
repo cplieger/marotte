@@ -14,7 +14,13 @@ import {
   type RunResults,
 } from "./block-window.js";
 import { toolResultID } from "./entry-ids.js";
-import { callRefused, hookQuiet, hookStatusShown, isToolTriggerHook } from "./hook-fold.js";
+import {
+  callRefused,
+  hookCallSeat,
+  hookQuiet,
+  hookStatusShown,
+  isToolTriggerHook,
+} from "./hook-fold.js";
 import { isInternalToolTitle, isSubagentInvocation } from "./tool-schema.js";
 import type { Entry, EntryToolCall, EntryToolResult } from "./types.js";
 import { payloadOf, type Turn } from "./turns.js";
@@ -337,7 +343,7 @@ function refusedCall(call: EntryToolCall, result: EntryToolResult | undefined): 
 }
 
 /** The tool run holding member `seq`, its members in order over the turn's `span`, and the box owning it. A box owns
- *  the PostToolUse hooks right after it, and the PreToolUse hooks right before it in a run of hooks only, each set a
+ *  the after-seat hooks right after it, and the before-seat hooks right before it in a run of hooks only, each set a
  *  run of its own (`messages-blocks.ts` `indexGroups`). */
 function toolRun(
   seq: number,
@@ -368,7 +374,7 @@ function toolRun(
     }
   }
   let from = 0;
-  while (before !== undefined && trigger(members[from] ?? -1) === "PostToolUse") {
+  while (before !== undefined && hookCallSeat(trigger(members[from] ?? -1)) === "after") {
     from++;
   }
   let to = members.length;
@@ -377,7 +383,7 @@ function toolRun(
     after !== undefined &&
     hooksOnly &&
     to > from &&
-    trigger(members[to - 1] ?? -1) === "PreToolUse"
+    hookCallSeat(trigger(members[to - 1] ?? -1)) === "before"
   ) {
     to--;
   }

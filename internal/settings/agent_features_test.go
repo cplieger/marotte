@@ -49,6 +49,12 @@ func TestValidateAgentPatch_RefusesValuesTheUICannotProduce(t *testing.T) {
 		{name: "timeout null", key: KeyTerminalCommandTimeoutMs, raw: `null`, wantErr: true},
 		{name: "ask first bool", key: KeySpecPlanningAskFirst, raw: `false`},
 		{name: "reminders null", key: KeySteeringReminders, raw: `null`, wantErr: true},
+		{name: "code analysis on", key: KeyCodeAnalysis, raw: `true`},
+		{name: "code analysis null", key: KeyCodeAnalysis, raw: `null`, wantErr: true},
+		{name: "code analysis string", key: KeyCodeAnalysis, raw: `"on"`, wantErr: true},
+		{name: "background jobs on", key: KeyBackgroundJobs, raw: `true`},
+		{name: "background jobs null", key: KeyBackgroundJobs, raw: `null`, wantErr: true},
+		{name: "background jobs string", key: KeyBackgroundJobs, raw: `"on"`, wantErr: true},
 		{name: "workflows off", key: KeyWorkflowsEnabled, raw: `false`},
 		{name: "workflows string", key: KeyWorkflowsEnabled, raw: `"off"`, wantErr: true},
 		{name: "chat messaging on", key: KeyChatMessaging, raw: `true`},
@@ -108,6 +114,8 @@ func TestEffective_AgentCapabilityDefaults(t *testing.T) {
 		{"SpecPlanning", d.SpecPlanning, defaultSpecPlanning},
 		{"SpecPlanningAskFirst", d.SpecPlanningAskFirst, defaultSpecPlanningAskFirst},
 		{"SteeringReminders", d.SteeringReminders, defaultSteeringReminders},
+		{"CodeAnalysis", d.CodeAnalysis, defaultCodeAnalysis},
+		{"BackgroundJobs", d.BackgroundJobs, defaultBackgroundJobs},
 		{"WorkflowsEnabled", d.WorkflowsEnabled, DefaultWorkflowsEnabled},
 		{"WorkValidation", d.WorkValidation, defaultWorkValidation},
 		{"CloudFormationSafetyCheck", d.CloudFormationSafetyCheck, defaultCloudFormationSafety},
@@ -151,6 +159,10 @@ func TestEffective_AgentCapabilityDefaultsAreKiroCLIs(t *testing.T) {
 	// kiro-cli 3.2.0 ships the refusal and availability fallback flags on (FEATURES model_fallback_*).
 	if !defaultModelFallback {
 		t.Error("defaultModelFallback = false, want true")
+	}
+	// KAS's c2s registry row ships off, and so does universal_background_tool.
+	if defaultCodeAnalysis || defaultBackgroundJobs {
+		t.Errorf("defaultCodeAnalysis, defaultBackgroundJobs = %v, %v, want both false", defaultCodeAnalysis, defaultBackgroundJobs)
 	}
 	// KAS's own workflowLaunch default for a new session.
 	if DefaultWorkflowLaunch != "when-asked" {

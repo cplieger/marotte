@@ -39,14 +39,14 @@ into permission prompts — and free-form questions are SURFACED
 instead of silently skipped (without the capability KAS advances
 past them). Handled by translate/user_input.go; answered via the
 user_input_response command.`,
-	"capability.mcpElicitation": `WITHHELD: it gates only sessions KAS relays to a cloud sandbox. With it
-true, attachedClientChannelFor hands a relayed session a requestElicitation that
-forwards the sandbox's MCP elicitation to this client as _kiro/mcp/elicitation,
-and a relayed prompt carries mcpElicitationRespond; without it a relayed ask has
-no client and goes unanswered. marotte opens no relayed session, and a local
-session's elicitation reaches _kiro/mcp/elicitation ungated, which
-translate.HandleElicitationCreate answers, so true would claim a path marotte
-never hosts.`,
+	"capability.mcpElicitation": `SENT: it tells KAS this client answers _kiro/mcp/elicitation
+(translate.HandleElicitationCreate), the same key-plus-handler pairing kiro-cli's
+own TUI declares, and it is true in every engine state like userInput. KAS reads
+it only for a session it relays to a cloud sandbox: attachedClientChannelFor
+then hands the session a requestElicitation that forwards the sandbox's MCP ask
+here, and promptAdmitted stamps mcpElicitationRespond on a forwarded user
+prompt, so the sandbox asks instead of declining the ask itself with a notify.
+A local session's ask reaches _kiro/mcp/elicitation ungated either way.`,
 	"capability.textSearch": `_meta.kiro.textSearch makes KAS send every grep_search to
 _kiro/search/text_search (agent/bridge_kiro_search.go, internal/kirosearch).
 Without it KAS runs its bundled rg, rejects rg's exit 2 (an unreadable path
@@ -230,7 +230,7 @@ object without the member records no effort, so unset leaves the planning step
 of a run started from a prose request (wf-workflow-creator) at that agent's own
 effortLevel, and a stated value replaces the record on load.`,
 	"setting-object.sessionTools": `SENT on both session doors as {"messaging": {"enabled": bool},
-"awareness": {"enabled": bool, "mode"?: string}}. messaging is the Messages between chats
+"awareness": {"enabled": bool, "mode"?: string}, "cloud": {"enabled": false}}. messaging is the Messages between chats
 setting (chat_messaging_enabled, default off, kiro-cli's own
 sessionToolsMessaging default); awareness is Search other chats
 (chat_awareness_enabled, default off, kiro-cli's own sessionToolsAwareness
@@ -252,6 +252,14 @@ stated value replaces the persisted sessionMessagingEnabled
 (saveSessionMessaging) while an absent one leaves it in force, so withholding
 off would leave a chat once opened with it on still reachable; awareness
 persists the same way (saveSessionAwareness).
+
+cloud is sessionToolsCloud, the cloud-session switch marotte declines (it gives
+the agent create_session once a relay is configured, cloudToolsPlaced). It is an
+ordinary layered setting, so ~/.kiro, Kiro's synced settings or an organization
+can resolve it on at session/new, which KAS persists as cloudSessionsEnabled;
+on load an absent member leaves that in force. marotte therefore states it false
+on every session/new and session/load: the session layer overrides every other
+one, and a stated false clears the persisted field. There is no setting for it.
 
 With awareness on, "Search method" (chat_awareness_mode, unset by default)
 adds awareness.mode, one of KAS's direct or consult (sessionToolsAwarenessMode).
@@ -630,38 +638,34 @@ KAS's schema with no reader and stay unsent.
 thinking, tangentMode, checkpoint, _subagent and _delegate are declared in KAS's
 schema with zero readers, so this table has no row for them. marotte's fork and
 Rewind need neither tangentMode nor checkpoint: TestTangentModeAndCheckpointHaveNoReader.`,
-	"setting-object.memory": `SENT on both session doors, from the Memory dropdown (settings.KeyMemoryMode),
-always explicit. KAS reads it through U$ (data.memory), not isSettingEnabled, so its
-value is {mode, reflection} and not the {enabled} object. mode is disabled, read_only
-or read_write; reflection is background learning and only acts under read_write.
-KAS's policy builder applies mode AFTER the entitlement gate, so disabled turns
-injection, the memory tool, writes and extraction off whatever the experiment says.
+	"setting-object.memory": `WITHHELD on chat and run host doors, SENT {"mode": "disabled", "reflection":
+false} on an observer pass (SessionSpawn.MemoryFromDevice is false). KAS reads it
+through U$ (data.memory), not isSettingEnabled, so a sent value is {mode,
+reflection}, never the {enabled} object.
 
-Always sent, whatever KAS's default is: an absent key hands the chat's memory to
-KAS's fallback config, which has moved ({read_write, reflection: true} through
-2.30.0, {disabled, reflection: false} from 2.31.0), so only a sent value keeps the
-user's choice across a release.
+Withheld so KAS's chooseSessionMemory takes the device Memory choice: a
+session/new with no memory field and no userMemoryOptIn opt-out reads the
+memoryMode and memoryReflection rows as composed for the signed-in account
+(deviceMemorySettings), user-local where kiro-cli's terminal UI and marotte's
+Memory dropdown write them (PUT /api/memory/mode), and falls back to {disabled,
+reflection: false} for a row no layer states. So marotte keeps no memory store, a
+choice made in either client applies to the other's new chats, and the dropdown
+shows the same composed value the session takes. A loaded session
+keeps the memory config its record holds, so the choice applies to new chats only.
 
-Session door, not connection door, because only a SESSION-door preference upgrades
-a session persisted with memoryConfigSource "legacy" (every session marotte created
-before this row) to "explicit" on load; a legacy session otherwise loads with KAS's
-fallback config. Once explicit, KAS keeps the session's persisted mode on every
-later load; the bridge re-sends the reflection half through the memoryReflection
-config option after a load.
-
-An empty mode is sent as disabled, so a session that resolves no setting (an observer
-pass) fails closed. Sending any memory field flips the source to explicit, which
-is also what makes KAS stop reading userMemoryOptIn.`,
-	"setting.userMemoryOptIn": `WITHHELD since the memory row went out, and no Settings row: it is no
-user choice. It was the legacy veto ({"enabled": false} on every session). Any
-settings.memory field on the session door makes KAS's memory config source
-explicit, and an explicit session no longer reads this key, so it would veto
-nothing; true grants nothing either, since eligibility is the memory
-experiment's. Sending false would still refuse the sessionless _kiro/memory/*
-calls the Memories tab makes: without a sessionId KAS resolves memory through
-the legacy path, which reads this key. The Memory dropdown is the user's control.
-TestUserMemoryOptInIsALegacyVeto pins each fact; kept as a row so the census
-keeps it claimed.`,
+An observer pass sends disabled so a read-only pass never injects memories or
+learns; the zero spawn sends it too, so a role that does not opt in fails closed.
+Never on initialize: KAS would read a connection-door memory as explicit and skip
+the device read. TestDeviceMemoryDefaultMatchesBundle pins the three premises.`,
+	"setting.userMemoryOptIn": `WITHHELD, and no Settings row: it is no user choice.
+It is KAS's legacy veto: chooseSessionMemory takes an explicit request first, then
+a userMemoryOptIn false as an opt-out (mode disabled), then the device Memory
+choice. Sending false would therefore override the Memory dropdown on every chat,
+and true grants nothing, since eligibility is the memory experiment's. It would
+also refuse the sessionless _kiro/memory/* calls the Memories tab makes: without a
+sessionId KAS resolves memory through the legacy path, which reads this key.
+TestUserMemoryOptInIsALegacyVeto pins each fact; kept as a row so the census keeps
+it claimed.`,
 	"setting.memoryEnable": `WITHHELD, like its sibling userMemoryOptIn but for a different reason:
 that key is redundant beside the explicit memory row and would refuse sessionless
 CRUD, while this one must not be sent in either direction, because it is read at
@@ -685,58 +689,24 @@ not offer, beside the local store the memory row already controls.
 Withholding is sufficient at both sites: absent resolves false through
 isSettingEnabled and through the bridged isFeatureEnabled provider alike. The memory
 preference that matters is the memory row's, and it is a different key.`,
-	"capability.streamingShellContent": `WITHHELD, and unreachable rather than merely unwanted — the obvious
-reason is the wrong one, which is why this row spells it out.
+	"capability.streamingShellContent": `SENT true. kiro-cli 2.19.1 added _kiro/tools/content_chunk, an A->C
+notification carrying a running shell command's output, gated on this capability.
 
-kiro-cli 2.19.1 added _kiro/tools/content_chunk, an A→C notification carrying
-live shell output while a command runs, gated on this capability. The guess a
-reader makes is that marotte simply has not adopted it yet. The real gate is a
-SECOND one the capability does not open: the producer is ExecuteBash's
-StreamCoalescer fed by onOutputChunk, subscribed behind
-if (input.onOutputChunk && term.onOutputChunk). marotte declares terminal:true
-with no sandbox and no agentHostsForegroundShell, so KAS builds an ACPTerminal, whose entire method set is
-runCommand, readOutputLines, ensureCommandRunsInCwd, close and focus — no
-onOutputChunk — and whose runCommand awaits completion, so there is no mid-flight
-output on this path at all. Declaring the flag would emit ZERO frames.
+On a session whose commands marotte hosts (Background jobs off, the default) it
+emits ZERO frames: marotte declares terminal:true with no sandbox and no
+agentHostsForegroundShell, so KAS builds an ACPTerminal, whose method set has no
+onOutputChunk, and the StreamCoalescer is subscribed only behind
+if (input.onOutputChunk && term.onOutputChunk). Those sessions keep marotte's own
+stream: 4 KiB pipe reads with explicit offsets and a 64 KiB tail ring.
 
-That also relocates the trap. The emit path returns, so declaring the capability
-REPLACES the mid-flight tool_call_update for kind === "execute" rather than
-adding to it — a real hazard, but for a client whose terminals KAS hosts
-in-process (DefaultTerminalManager), not for this one.
-
-And marotte already ships the feature, better, because marotte owns the pid:
-pipe-rate 4 KiB reads against 32 ms coalescing, an explicit per-chunk UTF-16
-offset against arrival order with no sequence number, and a 64 KiB rolling ring
-that keeps the TAIL against a hard 256 KiB cap that keeps the head. That last
-pair is the one that matters for a long build: the tail is where the error is.
-Adopting would deliver a coarser, unordered second copy of bytes already on the
-wire.
-
-ANSI is NOT a difference, and an earlier revision of this row said it was.
-sanitizeOutput filters only invisible Unicode (tag characters, zero-width and
-bidi ranges); ESC is U+001B and is in none of its ranges, and the streaming
-redactor only replaces four named env-var VALUES that are unset here. So escapes
-reach the client intact either way. The confusion was a name collision with
-marotte's own SanitizeOutput, which IS StripANSI composed with SanitizeUnicode —
-agent_terminal.go documents having been burned by exactly that, measuring spans=0
-with it and spans=2 without.
-
-Two conditions reverse this, and each moves foreground commands onto KAS's
-in-process terminal (DefaultTerminal DOES implement onOutputChunk), at which point
-marotte's own terminal handlers go silent for them and the stream moves to this
-frame. The first is the capability.agentHostsForegroundShell row (2.32.0), which
-marotte withholds, so the two keys are one decision. The second is a sandbox: the
-sandbox && capabilities.terminal arm hands back DefaultTerminalManager. No sandbox
-can start in this container because bwrap
-is not in the image, so KAS's bubblewrap backend fails isAvailable() and resolves
-to its no-op. Enabling one also needs an explicit session/set_config_option or
-_kiro/sandbox/applyConfig request with configId "sandbox" and value "enabled";
-both reach applySandboxConfigOption, whose absent config defaults to backend
-"auto" (bubblewrap on Linux), and marotte sends neither request.
-
-If the premise ever flips, the order is: a content_chunk handler registered and
-green, THEN a toolCallId→card join (marotte keys on terminal_id today), and only
-THEN this row's send. Never the flag first.`,
+A Background jobs chat sets universalBackgroundTool, so KAS hosts its commands on
+its in-process terminal, which implements onOutputChunk. After a long command moves
+into a background job, its output reaches the job's card only through
+content_chunk, so the capability is declared engine-wide: one engine serves both
+kinds of session and the capability is read at initialize. The emit path replaces
+the mid-flight tool_call_update for kind === "execute", so the order is the
+handler, then the toolCallId-to-card join, then this send; all three land
+together.`,
 	"capability.nonInteractive": `WITHHELD. kiro-cli 3.1.0 reads _meta.kiro.nonInteractive on session/new and
 session/load (=== true) only to add the Default v2 system prompt's "Non-interactive
 session" section, which tells the model no user can answer questions or approve, and
@@ -778,16 +748,19 @@ classifier from every chat on marotte's Approve for me profile until the user pi
 "on". Sending it needs a per-chat Approve for me choice in marotte first; until then
 the Approve for me profile's approve-for-me preset is the control, and the absent
 option leaves it untouched.`,
-	"setting.c2s": `WITHHELD: code-to-spec is declined until Go is analysable end-to-end, a shipped
-client exposes its toggle, or KAS defers the c2s tools behind load_resource. KAS reads c2s
-through its feature proxy to register the Explore subagent and the code_index tools,
-about 14.6 KB of tool description on every model request in every chat, since a key
-sent on one engine cannot be scoped to one chat. Its analysable languages exclude Go,
-so a Go-dominant workspace gets a refusal or a TypeScript-only graph.`,
-	"capability.c2sViews": `WITHHELD with setting.c2s, under the same code-to-spec decline.
-True registers the two c2s_show_* architecture views, about 7 KB more per request, and
-marotte has no renderer for them. The recorded design declares it only together with c2s and a renderer that
-draws a view from the view tool call's own input.`,
+	"setting.c2s": `SENT from "Kiro Code Analysis" (code_analysis_enabled, default off,
+matching KAS's own registry row kg("c2s","off",{hidden:true})). Value-gated, so
+off holds against any provider ramp. KAS reads c2s through its feature proxy to
+register the Explore subagent and the code_index tools: about 12.5 KB of tool
+description on every model request in every chat while on, since a connection-door
+key cannot be scoped to one chat; the hint says so. Without
+KIRO_C2S_DEEP_ANALYSIS (not sent) every language, Go included, is analysed
+structural-only, KAS's default. Restart-only, like every connection row.`,
+	"capability.c2sViews": `WITHHELD, KAS's own default, with setting.c2s sent or not.
+True registers the two c2s_show_* architecture views, about 7 KB more per request,
+and marotte has no renderer for them; Mermaid fences already draw diagrams. Reopens
+when KAS defers the view tools in the mode marotte runs, or a shipped client
+renders them from the view tool call's own input.`,
 	"setting.semanticReview": `WITHHELD, and withholding it is what turns it ON. semanticReview is the
 one settings key KAS does not read through isSettingEnabled: its resolver
 is parsed2.data.semanticReview?.enabled ?? persistedDefault ?? true, so an
@@ -904,19 +877,24 @@ Un-gates the bundled default-v2 mode. The gate reads only the environment and th
 experiment, so this variable is the one client lever: _meta.kiro.settings.unifiedAgent,
 which the bundle's experiment-gate helper names as its settingKey, has no reader.`,
 	"env.KIRO_FEATURE_UNIVERSAL_BACKGROUND_TOOL_ENABLED": `SENT "false", kiro-cli's own default (universal_background_tool, default off),
-so AWS's experiment ramp cannot turn session jobs on. On, the tool belt builds the
-job shell tool in place of execute_bash and selectCommandHost answers "agent", so
-KAS hosts the session's commands and marotte's terminal/* handlers, process-group
-teardown and environment shaping do not apply; a ramp would take workflow steps'
-process tools with them. The job tools, _kiro/job/* and job-end-wake stay unused.
-The session row of the same name states off too, since KAS's per-session gate
+so AWS's experiment ramp cannot turn session jobs on for a session that states no
+setting. KAS's workflow step sessions never carry the session row, and under a ramp
+the tool belt would build the job shell in place of execute_bash for them, with
+selectCommandHost answering "agent", taking their process tools away. A chat's
+Background jobs switch still decides its own sessions, since KAS's per-session gate
 reads setting over persisted over this arm. Not settingOwned, since no Settings
-control decides it; ChildEnv's value is appended last, so it wins over an inherited one.`,
-	"setting.universalBackgroundTool": `SENT {"enabled": false} on both session doors. KAS resolves a session's
-jobs gate setting over persisted over the experiment registry (resolveSessionGate),
-so stating off on session/new and session/load keeps every session, a resumed one
-created under a ramp included, on marotte's terminal: the job shell and the agent
-command host stay off. Pairs with the environment arm of the same name.`,
+control decides the arm; ChildEnv's value is appended last, so it wins over an
+inherited one.`,
+	"setting.universalBackgroundTool": `SENT on both session doors from "Background jobs" (background_jobs,
+default off, matching kiro-cli), {"enabled": false} included. KAS resolves a
+session's jobs gate setting over persisted over the experiment registry
+(resolveSessionGate), so stating the value on session/new and session/load keeps
+the ramp from deciding, a resumed chat created under a ramp included. On, the tool
+belt builds the job shell and selectCommandHost answers "agent": KAS hosts the
+chat's commands on its in-process terminal with its own screened environment, a
+long command moves into a background job that outlives the turn, and the process
+tools go away. Off, the chat's commands stay on marotte's terminal/* handlers.
+Pairs with the environment arm of the same name, which pins step sessions off.`,
 	"env.KIRO_FEATURE_USER_AGENT_REFACTORING_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 Backend user-agent shape; not pinned by decision.`,
@@ -1023,6 +1001,12 @@ as the new session's id (newSessionAdmitted: overrideSessionId ?? a fresh
 "sess_" UUID), so every frame it sends for the session, the ones before the
 reply included, names an id whose lane already exists. A load names its id
 itself and sends none.`,
+	"capability.requireExisting": `SENT on session/load only, as a bare true. KAS's load schema takes it as
+requireExisting: literal(true), and with it a load of an id that is neither a
+settled resident nor on disk throws SessionNotFoundError (-32000 "Session '<id>'
+not found") before hydration, instead of creating a blank session under that id
+that no reply tells apart from a real load. marotte.SessionRecordGone reads the
+refusal as a lost record. session/new names no existing session and sends none.`,
 }
 
 // absentTrue is the rows whose key KAS resolves to TRUE when ABSENT, which inverts the reading

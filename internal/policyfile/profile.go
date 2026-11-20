@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-
-	"go.yaml.in/yaml/v4"
 )
 
 // Named security profiles for the Settings default and each chat's shield pill. A
@@ -138,15 +136,14 @@ func DelegatesToSafetyCheck(presets []string) bool {
 	return slices.Contains(presets, presetApproveForMe)
 }
 
-// HoldsGrant reports whether the file KAS reads for path grants anything a session's presets cannot take
-// away: an allow or evaluate rule, or a preset its `policies` list names. Nothing to read grants nothing;
-// a file Load refuses is an error.
-func HoldsGrant(ctx context.Context, path string) (bool, error) {
+// rulesGrant reports whether the file KAS reads for path holds an allow or evaluate rule, which a session's
+// presets cannot take away. Nothing to read grants nothing; a file Load refuses is an error.
+func rulesGrant(ctx context.Context, path string) (bool, error) {
 	data, name, err := readSource(ctx, path)
 	if err != nil {
 		return false, err
 	}
-	doc, f, err := parse(data, name)
+	_, f, err := parse(data, name)
 	if err != nil {
 		return false, err
 	}
@@ -155,16 +152,49 @@ func HoldsGrant(ctx context.Context, path string) (bool, error) {
 			return true, nil
 		}
 	}
-	if doc == nil || doc.Kind != yaml.DocumentNode {
+	return false, nil
+}
+
+// presetStatusApplies is the status KAS gives a referenced preset a session loads; needs-classifier and unknown,
+// and any status KAS adds later, load nothing.
+const presetStatusApplies = "applies"
+
+// PresetStore is one row of KAS's _kiro/permissions/presets/stores reply: a permissions file a session over the
+// asked roots reads (the user file, then one per workspace root), at the path KAS resolved.
+type PresetStore struct {
+	Scope string          `json:"scope"`
+	File  string          `json:"file"`
+	Read  PresetStoreRead `json:"read"`
+}
+
+// PresetStoreRead is KAS's loader verdict on a store's file: OK false when a fatal error made KAS skip the whole
+// file, else the presets its `policies` list names.
+type PresetStoreRead struct {
+	Presets []PresetReference `json:"presets,omitempty"`
+	OK      bool              `json:"ok"`
+}
+
+// PresetReference is KAS's status for one id a file's `policies` list names.
+type PresetReference struct {
+	Status string `json:"status"`
+}
+
+// Grants reports whether the store's file grants anything a session's presets cannot take away: a preset KAS
+// applies from it, or an allow or evaluate rule (rulesGrant). A file KAS skipped grants nothing; a row naming no
+// file, or a file rulesGrant cannot parse, is an error.
+func (s PresetStore) Grants(ctx context.Context) (bool, error) {
+	if !s.Read.OK {
 		return false, nil
 	}
-	var refs struct {
-		Policies yaml.Node `yaml:"policies"`
+	for _, p := range s.Read.Presets {
+		if p.Status == presetStatusApplies {
+			return true, nil
+		}
 	}
-	if err := doc.Decode(&refs); err != nil {
-		return false, fmt.Errorf("parse %s: %w", name, err)
+	if s.File == "" {
+		return false, fmt.Errorf("the %s preset store names no file", s.Scope)
 	}
-	return refs.Policies.Kind == yaml.SequenceNode && len(refs.Policies.Content) > 0, nil
+	return rulesGrant(ctx, s.File)
 }
 
 // DefaultProfile is what a chat's unset or unrecognised setting resolves to, so a stored choice

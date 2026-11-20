@@ -6,6 +6,8 @@ export type AlwaysReach = "chat" | "step" | "run" | "launching_chat" | "user";
 
 export type AtDays = "daily" | "weekdays" | "monthly";
 
+export type BackgroundJobState = "running" | "completed" | "failed" | "cancelled" | "timed_out" | "outcome_unknown";
+
 export type BotEngineState = "write_failing";
 
 export type BotState = "draft" | "active" | "paused" | "closed";
@@ -26,7 +28,7 @@ export type DenialBasis = "unparseable" | "cedar-unavailable" | "not-loaded" | "
 
 export type EngineState = "starting" | "ready" | "restarting" | "down";
 
-export type EntryKind = "turn_open" | "turn_bind" | "turn_wake" | "run_named" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "steer_cleared" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "profile_switched" | "turn_revert" | "context_reset" | "reconciled" | "turn_close" | "step_graded";
+export type EntryKind = "turn_open" | "turn_bind" | "turn_wake" | "run_named" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "steer_cleared" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "profile_switched" | "turn_revert" | "context_reset" | "reconciled" | "turn_close" | "step_graded" | "job_ended";
 
 export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "memory_not_loaded" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed";
 
@@ -176,7 +178,7 @@ export type TurnSeverity = "running" | "clean" | "stopped" | "broken";
 
 export type WakeNote = "network" | "network_lost" | "repeat_cap";
 
-export type WakeReason = "step_message" | "run_finished" | "rewake" | "unknown";
+export type WakeReason = "step_message" | "run_finished" | "rewake" | "job_ended" | "unknown";
 
 export type WhoamiState = "signed_in" | "signed_out" | "unavailable";
 
@@ -319,6 +321,58 @@ export interface AtTrigger {
 export interface Attachment {
   path: string;
   name: string;
+}
+
+/**
+ * BackgroundJob marks a tool call kiro-cli moved into a background job (_meta.kiro.job). End is nil while
+ * the job runs.
+ */
+export interface BackgroundJob {
+  end?: BackgroundJobEnd;
+  id: string;
+}
+
+/**
+ * BackgroundJobEnd is how a job ended (_meta.kiro.job.end, or a job notice's jobEnd). Status is never
+ * running. StopReason is kiro-cli's model, user, session_close or shutdown, kept as sent; the times are
+ * RFC 3339.
+ */
+export interface BackgroundJobEnd {
+  status: BackgroundJobState;
+  stop_reason?: string;
+  started_at?: string;
+  ended_at?: string;
+  duration_ms: number;
+}
+
+/**
+ * BackgroundJobOutput is GET /api/chats/{id}/jobs/{job}/output: the last lines of the job's log. Gap is set
+ * when kiro-cli skipped lines it could not read whole.
+ */
+export interface BackgroundJobOutput {
+  status: BackgroundJobState;
+  lines: string[];
+  gap?: boolean;
+}
+
+/**
+ * BackgroundJobPayload is the payload for type="job_update" (_kiro/job/update) and one row of GET
+ * /api/jobs. Kind is kiro-cli's job kind (shell), kept as sent. ChatID is set on a GET row only: an
+ * event names its chat on the envelope.
+ */
+export interface BackgroundJobPayload {
+  chat_id?: string;
+  id: string;
+  kind?: string;
+  description: string;
+  status: BackgroundJobState;
+  started_at?: string;
+  ended_at?: string;
+}
+
+/** BackgroundJobsView is GET /api/jobs: every chat's running jobs, by chat then oldest first. */
+export interface BackgroundJobsView {
+  jobs: BackgroundJobPayload[];
 }
 
 /**
@@ -607,6 +661,55 @@ export interface CloseImpact {
 }
 
 /**
+ * CodeIndexBuild is one index build. State is kiro-cli's queued, running, succeeded, failed or canceled;
+ * Phase is scan, parse, graph or save, "" when kiro-cli names none. Both are kept as sent. Message is
+ * kiro-cli's progress line; Reason and Detail say why a build failed or was canceled.
+ */
+export interface CodeIndexBuild {
+  build_id: string;
+  state: string;
+  phase?: string;
+  message?: string;
+  reason?: string;
+  detail?: string;
+}
+
+/**
+ * CodeIndexStatusPayload is the payload for type="code_index_status" and one row of GET /api/code-index:
+ * kiro-cli's latest report on a workspace root's code index (_kiro/codeIntelligence/indexStatus). Build is
+ * the newest build kiro-cli knows for the root, nil when none ran since the engine started.
+ */
+export interface CodeIndexStatusPayload {
+  build?: CodeIndexBuild;
+  workspace_root: string;
+  store: CodeIndexStore;
+}
+
+/**
+ * CodeIndexStore is the saved index. State is kiro-cli's none, ready or unreadable, kept as sent because
+ * its set is open; Summary counts a ready index.
+ */
+export interface CodeIndexStore {
+  summary?: CodeIndexSummary;
+  state: string;
+}
+
+/** CodeIndexSummary is what a saved index holds. */
+export interface CodeIndexSummary {
+  files: number;
+  functions: number;
+}
+
+/**
+ * CodeIndexView is GET /api/code-index: Root is the workspace root Build and Cancel act on, and Statuses
+ * is the latest status of every root kiro-cli reported, sorted by root.
+ */
+export interface CodeIndexView {
+  root: string;
+  statuses: CodeIndexStatusPayload[];
+}
+
+/**
  * CodeReference is one licensed-code attribution. KAS drops the upstream content span,
  * so attributions are TURN-scoped.
  */
@@ -870,6 +973,16 @@ export interface DeviceFlowResponse {
 }
 
 /**
+ * DeviceMemory is the Memory choice kiro-cli keeps for the signed-in account on this machine (its memoryMode and
+ * memoryReflection rows at user-local), reduced as kiro-cli's terminal UI reduces them: Mode is "off", "read_only",
+ * "read_write" or "learn", and Lock is set while a layer locks either row.
+ */
+export interface DeviceMemory {
+  lock: SettingLock | null;
+  mode: string;
+}
+
+/**
  * DraftChangedPayload is the payload for type="draft_changed": the composer state one chat
  * now holds, sent so an idle device converges on a draft it is not typing. Both halves travel
  * on every frame and BOTH writers fill both, because the event describes the COMPOSER rather
@@ -902,6 +1015,8 @@ export interface EffectiveSettings {
    * user has set.
    */
   kiro_defaults: { [key: string]: KiroDefault };
+  /** Memory is kiro-cli's device Memory choice, null until the engine has reported a configuration view. */
+  memory: DeviceMemory | null;
   /**
    * AdditionalDirectoriesRefused maps each AdditionalDirectories entry that
    * settings.AgentDirs.Assess refuses at this GET to its reason; it is never stored, and an
@@ -927,11 +1042,6 @@ export interface EffectiveSettings {
    * means nothing picked yet.
    */
   last_merge_method: string;
-  /**
-   * MemoryMode is the Memory dropdown's value ("off" and its three
-   * siblings); it defaults to settings.DefaultMemoryMode, kiro-cli's own.
-   */
-  memory_mode: string;
   /** InterruptMode is the composer's default beside a running turn, steer unless queue was chosen. */
   interrupt_mode: InterruptMode;
   /** SpecPlanning is "off", "quick" or "full"; default off, matching kiro-cli. */
@@ -1089,11 +1199,13 @@ export interface EffectiveSettings {
    * unattended run's permission ask at its deadline and BotAutoApprove an automatic
    * Bot turn's, both fail-closed by decision. DebugLogs raises the log level. All
    * four default off.
-   * SpecPlanningAskFirst, SteeringReminders, ChatMessaging and ChatAwareness default off, matching kiro-cli.
-   * WorkflowsEnabled defaults ON (user's choice, where the TUI's default is off).
+   * SpecPlanningAskFirst, SteeringReminders, CodeAnalysis, BackgroundJobs, ChatMessaging and ChatAwareness default
+   * off, matching kiro-cli. WorkflowsEnabled defaults ON (user's choice, where the TUI's default is off).
    */
   spec_planning_ask_first: boolean;
   steering_reminders_enabled: boolean;
+  code_analysis_enabled: boolean;
+  background_jobs: boolean;
   workflows_enabled: boolean;
   chat_messaging_enabled: boolean;
   chat_awareness_enabled: boolean;
@@ -1321,6 +1433,19 @@ export interface EntryDeltaPayload {
   delta: string;
   workflow_id?: string;
   n: number;
+}
+
+/**
+ * EntryJobEnded is a background job's end, filed once per job (JobEndedID) from the card's end update or
+ * kiro-cli's job notice, whichever arrives first. ToolCallID names the card when the end came from it,
+ * and Output is the tail of the job's result.
+ */
+export interface EntryJobEnded {
+  job_id: string;
+  tool_call_id?: string;
+  description?: string;
+  output?: string;
+  end: BackgroundJobEnd;
 }
 
 /**
@@ -1616,6 +1741,8 @@ export interface EntryToolResult {
   offload?: ToolOffload;
   /** Interaction is how the call's approval or question was answered. */
   interaction?: ToolInteraction;
+  /** Job is ToolCall's. A result whose job has no End sealed the call while the job ran on. */
+  job?: BackgroundJob;
   /**
    * Truncated is what the STORE dropped to bound this result on disk, nil when it
    * fit; OutputBytes and HasFull mark the served PREVIEW, as on EntryToolCall.
@@ -2459,7 +2586,7 @@ export interface LoadedResource {
   type: LoadedType;
   /** Name is the tool, skill, document or Power name. */
   name: string;
-  /** Server is a LoadedMCP resource's server, else empty. */
+  /** Server is an mcp resource's server, else empty. */
   server: string;
 }
 
@@ -2594,6 +2721,8 @@ export interface MCPServerStatus {
   prompts?: MCPPromptInfo[];
   resources?: MCPResourceInfo[];
   resource_templates?: MCPResourceTemplateInfo[];
+  /** IgnoredFields is the config keys kiro-cli reported it did not use for this server. */
+  ignored_fields?: string[];
   /** Relayed stops a reload or second device offering the paste box for a spent code. */
   relayed?: boolean;
   /** Shadows keeps the client from putting this status on marotte's config row. */
@@ -4423,8 +4552,9 @@ export interface SecurityProfile {
 
 /**
  * SecurityProfileView is the GET /api/permissions/profile response, the chat profile pill's read: the ladder in
- * picker order, the Settings profile a new chat starts on, and whether the user or workspace file grants on its
- * own (policyfile.HoldsGrant), which no chat's profile takes away.
+ * picker order, the Settings profile a new chat starts on, and whether a permissions file a chat session reads (the
+ * user file, the workspace's and each additional directory's, as KAS's preset-stores read names them) grants on its
+ * own (policyfile.PresetStore.Grants), which no chat's profile takes away.
  */
 export interface SecurityProfileView {
   default: string;
@@ -4493,6 +4623,12 @@ export interface SessionModel {
    */
   thinking_toggleable?: boolean;
   thinking_default_off?: boolean;
+}
+
+/** SettingLock names the configuration layer whose lock fixes a kiro-cli setting, with its display name. */
+export interface SettingLock {
+  layer: string;
+  name: string;
 }
 
 /**
@@ -5110,6 +5246,8 @@ export interface ToolCall {
   offload?: ToolOffload;
   /** Interaction is how the call's approval or question was answered; one-way. */
   interaction?: ToolInteraction;
+  /** Job is set once kiro-cli moved the call into a background job; one-way. */
+  job?: BackgroundJob;
   /** Truncated is what the STORE dropped to bound this call on disk, nil when it fit. */
   truncated?: ToolTruncation;
   input?: unknown;
@@ -5345,6 +5483,7 @@ export interface ToolProgressPayload {
   disclosed?: ToolDisclosed;
   denial?: ToolDenial;
   offload?: ToolOffload;
+  job?: BackgroundJob;
   turn: string;
   tool_call_id: string;
   /** Title and Kind: KAS sends them nullish on most updates, so absent is "keep". */
@@ -5480,11 +5619,6 @@ export interface Usage {
   credits: number;
   last_turn_ms: number;
   has_real_data: boolean;
-  /**
-   * ContextCompacted: a compaction committed and no live reading has come since, so a figure KAS
-   * publishes is not a model reading and is not stored.
-   */
-  context_compacted?: boolean;
 }
 
 /**

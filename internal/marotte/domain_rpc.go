@@ -120,6 +120,14 @@ func ReplyUnread(err error) bool {
 	return errors.Is(err, ErrReplyUndecoded) || errors.Is(err, ErrFrameTooLarge)
 }
 
+// SessionRecordGone reports KAS's refusal of a strict session/load (_meta.kiro.requireExisting): it holds no record
+// of sessionID, and created nothing. KAS's SessionNotFoundError carries no data, so the code and the id-bearing
+// message are the whole discriminator; every other -32000 carries other text.
+func SessionRecordGone(err error, sessionID string) bool {
+	rpcErr, ok := errors.AsType[*RPCError](err)
+	return ok && rpcErr.Code == -32000 && rpcErr.Message == "Session '"+sessionID+"' not found"
+}
+
 // ErrBridgeNotStarted is the sentinel every write on an engine returns when there is no process to
 // write to: Start has not run, or it failed.
 var ErrBridgeNotStarted = errors.New("ACP bridge has not started")

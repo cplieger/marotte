@@ -19,6 +19,7 @@ import (
 const (
 	reasonKnowledge         = marotte.EngineReason(settings.KeyKnowledgeEnabled)
 	reasonSteeringReminders = marotte.EngineReason(settings.KeySteeringReminders)
+	reasonCodeAnalysis      = marotte.EngineReason(settings.KeyCodeAnalysis)
 	reasonCloudFormation    = marotte.EngineReason(settings.KeyCloudFormationSafety)
 	reasonModelFallback     = marotte.EngineReason(settings.KeyModelFallback)
 	reasonAutoRouting       = marotte.EngineReason(settings.KeyAutoRouting)
@@ -39,6 +40,7 @@ const (
 var engineReasonLabels = map[marotte.EngineReason]string{
 	reasonKnowledge:                    "Knowledge",
 	reasonSteeringReminders:            "Steering reminders",
+	reasonCodeAnalysis:                 "Kiro Code Analysis",
 	reasonCloudFormation:               "CloudFormation safety check",
 	reasonModelFallback:                "Model fallback",
 	reasonAutoRouting:                  "Auto routing",
@@ -84,7 +86,6 @@ type sessionDocument struct {
 	profile    string
 	dirEntries []string
 	features   marotte.SessionFeatures // before any administrator lock
-	memory     marotte.MemoryPreference
 	// autoCompactPct and autoCompactEnabled are autoCompactionPolicy's answer, which every chat door sends to KAS.
 	autoCompactPct     int
 	dirsInvalid        bool // additional_directories is present and does not decode: the door grants nothing
@@ -128,6 +129,7 @@ func (rt *Runtime) resolveEngine(ctx context.Context, path string) engineSpec {
 	fp := map[marotte.EngineReason]string{
 		reasonKnowledge:                    strconv.FormatBool(e.knowledge),
 		reasonSteeringReminders:            strconv.FormatBool(e.features.SteeringReminders),
+		reasonCodeAnalysis:                 strconv.FormatBool(e.features.CodeAnalysis),
 		reasonCloudFormation:               e.features.InfraSafety,
 		reasonModelFallback:                strconv.FormatBool(e.features.ModelFallback),
 		reasonAutoRouting:                  e.features.AutoRouting,
@@ -159,13 +161,12 @@ func (rt *Runtime) terminalTimeout(ctx context.Context) int {
 // profile's, which a chat takes only at its first door (pinSecurityProfile), so it is outside the fingerprint, as is
 // RunPresets, which a run's host records on its lease.
 type sessionSettings struct {
-	Presets               []string                 `json:"-"`
-	RunPresets            []string                 `json:"-"`
-	AdditionalDirectories []string                 `json:"additional_directories"`
-	Memory                marotte.MemoryPreference `json:"memory"`
-	Features              marotte.SessionFeatures  `json:"features"`
-	AutoCompactPct        int                      `json:"auto_compact_pct"`
-	AutoCompaction        bool                     `json:"auto_compaction"`
+	Presets               []string                `json:"-"`
+	RunPresets            []string                `json:"-"`
+	AdditionalDirectories []string                `json:"additional_directories"`
+	Features              marotte.SessionFeatures `json:"features"`
+	AutoCompactPct        int                     `json:"auto_compact_pct"`
+	AutoCompaction        bool                    `json:"auto_compaction"`
 }
 
 // readSessionSettings is every session door's inputs, from the configDoc owner with the administrator locks applied
@@ -183,7 +184,6 @@ func (rt *Runtime) readSessionSettings(ctx context.Context) sessionSettings {
 		Presets:               securityPresets(s.profile),
 		RunPresets:            runPresets(s.profile),
 		AdditionalDirectories: rt.lifecycle.sessionDirs(s.dirEntries, src == fromDefaults || s.dirsInvalid),
-		Memory:                s.memory,
 		Features:              features,
 		AutoCompactPct:        s.autoCompactPct,
 		AutoCompaction:        s.autoCompactEnabled,
@@ -215,7 +215,6 @@ func (rt *Runtime) chatSessionOpts(ctx context.Context, rec *marotte.Chat, ask *
 		Presets:                 s.Presets,
 		AdditionalDirectories:   s.AdditionalDirectories,
 		Steering:                steering,
-		Memory:                  s.Memory,
 		Features:                s.Features,
 		Supervised:              rec.SupervisedMode,
 		DisableAutoCompaction:   !s.AutoCompaction,

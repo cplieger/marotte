@@ -370,6 +370,73 @@ describe("the hook form", () => {
   });
 });
 
+describe("the Permission Request trigger", () => {
+  const actionLabel = (form: HTMLFormElement): HTMLLabelElement | undefined =>
+    [...form.querySelectorAll("label")].find((l) => l.firstChild?.textContent === "Action");
+
+  it("sits between Pre and Post Tool Use, matches tool names and runs only a command, shown as text", () => {
+    const form = openForm("hooks");
+    const tools = [
+      ...labelled(form, "Trigger").querySelectorAll('optgroup[label="Tool Hooks"] option'),
+    ];
+    expect(tools.map((o) => o.textContent)).toEqual([
+      "Pre Tool Use",
+      "Permission Request",
+      "Post Tool Use",
+    ]);
+
+    setValue(labelled(form, "Action"), "agent");
+    setValue(labelled(form, "Trigger"), "PermissionRequest");
+    expect(labels(form)).toContain("Tool name pattern");
+    const action = actionLabel(form);
+    expect(action?.querySelector("select")?.hidden).toBe(true);
+    const text = action?.querySelector<HTMLElement>("span.tool-form-input");
+    expect(text?.hidden).toBe(false);
+    expect(text?.textContent).toBe("Run Command");
+    expect(labels(form)).toContain("Command to execute");
+    expect(action?.querySelector(".tool-form-hint")?.textContent).toContain(
+      '"behavior":"allow"|"deny"',
+    );
+
+    setValue(labelled(form, "Trigger"), "Stop");
+    expect(action?.querySelector("select")?.hidden).toBe(false);
+    expect(text?.hidden).toBe(true);
+  });
+
+  it("names Pre Tool Use's answers in its command hint, and no other trigger's", () => {
+    const form = openForm("hooks");
+    const hint = (): string =>
+      actionLabel(form)?.querySelector(".tool-form-hint")?.textContent ?? "";
+    setValue(labelled(form, "Trigger"), "PreToolUse");
+    expect(hint()).toContain('"permissionDecision":"allow"|"ask"|"deny"');
+    setValue(labelled(form, "Trigger"), "PostToolUse");
+    expect(hint()).toBe(
+      "Executes a shell command. The hook event payload is provided as JSON on stdin.",
+    );
+  });
+
+  it("posts a command hook whatever the hidden select last held", async () => {
+    answer(201, { path: "p" });
+    const form = openForm("hooks");
+    setValue(labelled(form, "Title"), "Gate");
+    setValue(labelled(form, "Action"), "agent");
+    setValue(labelled(form, "Trigger"), "PermissionRequest");
+    setValue(labelled(form, "Tool name pattern"), "execute_bash");
+    setValue(labelled(form, "Command to execute"), "./gate.sh");
+    submit(form);
+    await vi.waitFor(() => {
+      expect(onCreated).toHaveBeenCalled();
+    });
+    expect(posted().body).toEqual(
+      expect.objectContaining({
+        trigger: "PermissionRequest",
+        matcher: "execute_bash",
+        action: "command",
+      }),
+    );
+  });
+});
+
 describe("the spec form", () => {
   it("starts kiro-cli's spec chat with the description as the shown message", () => {
     const form = openForm("specs");

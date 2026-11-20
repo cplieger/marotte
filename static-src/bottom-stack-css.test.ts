@@ -30,7 +30,7 @@ function chatBar(): HTMLElement {
   const dock = box("div", "decision-dock", form, "");
   probe(box("div", "dock-card dock-permission", dock, "Allow git push?"), "permission card");
   const area = box("div", "holding-area", form, "");
-  const runHost = probe(box("div", "run-bar-host", area, ""), "run bar");
+  const runHost = probe(box("div", "tracker-host", area, ""), "run bar");
   box("li", "run-bar-row", box("ul", "run-bar", runHost, ""), "");
   const steers = box("ul", "steer-stack", area, "");
   for (const n of [1, 2]) {

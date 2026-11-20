@@ -220,7 +220,7 @@ export const MAROTTE_COMMANDS: readonly MarotteCommand[] = Object.entries(HANDLE
  *  on another tab. An unread setting opens it, as Docs does. */
 async function openMemories(chatID: string): Promise<void> {
   const settings = await loadSettings();
-  if (settings?.memory_mode === "off") {
+  if (settings?.memory?.mode === "off") {
     chatNotice(chatID, "Memory is off. Turn it on in Settings > General to review memories.");
     return;
   }

@@ -343,6 +343,7 @@ func (e *Engine) Start(ctx context.Context, o *marotte.EngineOpts) error {
 		SecretStorage:            o.SecretStorage,
 		Knowledge:                o.Knowledge,
 		SteeringReminders:        o.Features.SteeringReminders,
+		CodeAnalysis:             o.Features.CodeAnalysis,
 		DisableTelemetry:         o.DisableTelemetry,
 		ModelFallback:            o.Features.ModelFallback,
 		MessageDeliveryLimit:     o.Features.MessageDeliveryLimit,
@@ -410,8 +411,8 @@ func (e *Engine) initialize(ctx context.Context) error {
 	kiroMeta := kascap.Capabilities(&e.spawn)
 
 	// fs and terminal route file access and command execution through marotte. No elicitation key: it advertises ACP's
-	// standard elicitation/create, which marotte does not serve, and KAS sends _kiro/mcp/elicitation in both modes
-	// without reading it.
+	// standard elicitation/create, which marotte does not serve; the _kiro/mcp/elicitation request marotte does serve is
+	// declared as kascap's mcpElicitation row.
 	resp, err := e.Call(ctx, methodInitialize, map[string]any{
 		"protocolVersion": 1,
 		"clientCapabilities": map[string]any{

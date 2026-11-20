@@ -19,6 +19,8 @@ describe("Agent capabilities switches before settings load", () => {
     ["flag-model-fallback", true],
     ["flag-spec-ask-first", false],
     ["flag-steering-reminders", false],
+    ["flag-code-analysis", false],
+    ["flag-background-jobs", false],
     ["flag-workflows", true],
     ["flag-chat-messaging", false],
     ["flag-chat-awareness", false],

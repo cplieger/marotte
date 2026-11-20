@@ -471,7 +471,7 @@ func stepPromptParams(session, text string) map[string]any {
 	return map[string]any{
 		marotte.KeySessionID: session,
 		marotte.KeyPrompt:    []any{marotte.TextBlock(text)},
-		"_meta":              map[string]any{"kiro": kascap.PromptMeta(&kascap.Prompt{StepMessage: text})},
+		marotte.KeyMeta:      map[string]any{marotte.KeyKiro: kascap.PromptMeta(&kascap.Prompt{StepMessage: text})},
 	}
 }
 

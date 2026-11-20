@@ -11,12 +11,14 @@ import {
   cachedTheme,
   clockChoice,
   coarseEverSeen,
+  jobsOpen,
   loadDeviceView,
   markCoarseSeen,
   pointerModeChoice,
   runBarOpen,
   setActiveView,
   setClockChoice,
+  setJobsOpen,
   setPointerModeChoice,
   setRunBarOpen,
   setShellHeight,
@@ -59,6 +61,7 @@ describe("the layout fields this screen keeps to itself", () => {
       shell_h: 0,
       sidebar_w: 0,
       run_bar_open: null,
+      jobs_open: null,
       stack_open: null,
     });
   });
@@ -71,6 +74,16 @@ describe("the layout fields this screen keeps to itself", () => {
     expect(runBarOpen()).toBe(true);
     localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ run_bar_open: "yes" }));
     expect(runBarOpen()).toBeNull();
+  });
+
+  it("tells a jobs tracker choice apart from no choice, and reads a non-boolean as none", () => {
+    expect(jobsOpen()).toBeNull();
+    setJobsOpen(true);
+    expect(jobsOpen()).toBe(true);
+    setJobsOpen(false);
+    expect(jobsOpen()).toBe(false);
+    localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ jobs_open: 1 }));
+    expect(jobsOpen()).toBeNull();
   });
 
   it("tells a steer stack choice apart from no choice, and reads a non-boolean as none", () => {
@@ -96,6 +109,7 @@ describe("the layout fields this screen keeps to itself", () => {
       shell_h: 0,
       sidebar_w: 0,
       run_bar_open: null,
+      jobs_open: null,
       stack_open: null,
     });
   });
@@ -129,6 +143,7 @@ describe("the layout fields this screen keeps to itself", () => {
       shell_h: 0,
       sidebar_w: 0,
       run_bar_open: null,
+      jobs_open: null,
       stack_open: null,
     };
     localStorage.setItem(LS_UI_STATE_KEY, '"a string"');
@@ -274,6 +289,7 @@ describe("one owner of the key", () => {
       shell_h: 420,
       sidebar_w: 380,
       run_bar_open: null,
+      jobs_open: null,
       stack_open: null,
     });
   });
@@ -304,6 +320,7 @@ describe("one owner of the key", () => {
       shell_h: 420,
       sidebar_w: 380,
       run_bar_open: null,
+      jobs_open: null,
       stack_open: null,
     });
   });
@@ -329,6 +346,7 @@ describe("one owner of the key", () => {
       shell_h: 420,
       sidebar_w: 380,
       run_bar_open: null,
+      jobs_open: null,
       stack_open: null,
     });
   });

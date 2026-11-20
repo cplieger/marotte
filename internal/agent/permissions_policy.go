@@ -1,6 +1,6 @@
 // The read-only native Cedar policy view (_kiro/permissions/list + explain) at GET /api/permissions,
-// each on an observer pass whose door also reports the rules KAS skipped. Editing is a file write KAS
-// hot-reloads (internal/policyfile).
+// each on an observer pass whose door also reports the rules KAS skipped, and the sessionless
+// presets/stores read behind the profile pill. Editing is a file write KAS hot-reloads (internal/policyfile).
 
 package agent
 
@@ -12,10 +12,15 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/policyfile"
 )
 
 // policyCallTimeout bounds one list or explain, its observer pass's door included.
 const policyCallTimeout = 45 * time.Second
+
+// presetStoresTimeout bounds the sessionless stores read, which KAS answers from a few file reads; the chat pill
+// waits on it at every chat open.
+const presetStoresTimeout = 10 * time.Second
 
 // policyRaw issues a read-only, session-scoped _kiro/permissions/* request on an observer pass: KAS answers only for
 // a resident session, and the pass carries the profile's current presets. It also returns the pass door's
@@ -124,4 +129,25 @@ func (st *Settings) PolicyExplain(ctx context.Context, req marotte.PolicyExplain
 		}
 	}
 	return res, nil
+}
+
+// PresetStores reads, with no session, which permission files a chat session reads (over the roots its door opens
+// on) and the presets each references, via _kiro/permissions/presets/stores; the rows are never nil.
+func (st *Settings) PresetStores(ctx context.Context) ([]policyfile.PresetStore, error) {
+	cctx, cancel := st.engine.stallAware(ctx, presetStoresTimeout)
+	defer cancel()
+	raw, err := st.engine.presetStoresRaw(cctx, st.sessionRoots(ctx))
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Stores []policyfile.PresetStore `json:"stores"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("parse permissions/presets/stores: %w", err)
+	}
+	if out.Stores == nil {
+		out.Stores = []policyfile.PresetStore{}
+	}
+	return out.Stores, nil
 }

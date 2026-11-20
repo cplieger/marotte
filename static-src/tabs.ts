@@ -2179,6 +2179,7 @@ const DOT_SUBJECT: Readonly<Record<TabKind, string>> = {
 const NEUTRAL_PHRASE: Readonly<Record<Exclude<TabDotStatus, "done" | "failed">, string>> = {
   idle: "idle",
   working: "working",
+  background: "Background job running",
   waiting: "waiting for you",
   input: "needs a decision",
   dirty: "unsaved changes",

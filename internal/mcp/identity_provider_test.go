@@ -262,8 +262,9 @@ func TestImport_IdentityProviderBlockInstallsWhenNoneIsSet(t *testing.T) {
 		if p, _ := s.getIdentityProvider(); p == nil || *p != *other {
 			t.Errorf("provider after the paste = %+v, want the configured one kept", p)
 		}
-		if !strings.Contains(strings.Join(got.Notes, "\n"), "Organization sign-in") {
-			t.Errorf("notes = %v, want one naming the card", got.Notes)
+		if len(got.Notes) != 1 || got.Notes[0].Key != kasIdentityProviderKey ||
+			!strings.Contains(got.Notes[0].Text, "Organization sign-in") {
+			t.Errorf("notes = %+v, want one on %q naming the card", got.Notes, kasIdentityProviderKey)
 		}
 	})
 	t.Run("the_same_one_set", func(t *testing.T) {

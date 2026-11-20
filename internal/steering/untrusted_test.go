@@ -173,9 +173,8 @@ func TestGenerate_WritesTheConfiguredDirectoriesVerbatim(t *testing.T) {
 			*dir = filepath.Join(parent, odd)
 			repo := seedRepo(t, workDir, "repo")
 			mustWriteFile(t, filepath.Join(repo, ".kiro", "steering", "s.md"), "# S\n")
-			mustWriteFile(t, filepath.Join(configDir, "config.json"), `{"memory_mode":"read_only"}`)
-
 			g := New(Config{WorkDir: workDir, ConfigDir: configDir, ToolsDir: toolsDir})
+			g.SetMemoryOn(func() bool { return true })
 			g.Generate(t.Context())
 			data, err := os.ReadFile(steeringFile)
 			if err != nil {

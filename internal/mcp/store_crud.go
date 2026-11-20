@@ -238,10 +238,10 @@ func (s *Store) importIdentityProviderLocked(req *importRequest) bool {
 	case s.identityProvider != nil && *s.identityProvider == *p:
 		return false
 	}
-	req.notes = append(req.notes, fmt.Sprintf(
-		"kept the configured organization sign-in: the pasted %q names a different provider. Change it under Settings > MCP > Organization sign-in",
-		kasIdentityProviderKey,
-	))
+	req.notes = append(req.notes, importNote{
+		Key:  kasIdentityProviderKey,
+		Text: "Not stored: it names a different provider than the organization sign-in already set up. Change that under Settings > MCP > Organization sign-in.",
+	})
 	return false
 }
 

@@ -27,6 +27,7 @@ var kiroDefaultKeys = map[string]kiroDefaultKey{
 type kiroDefaultsCache struct {
 	stated    map[string]marotte.KiroDefault
 	fallbacks []marotte.ModelFallback
+	memory    translate.DeviceMemoryView
 	mu        sync.Mutex
 	known     bool
 }
@@ -37,11 +38,14 @@ func (st *Settings) cacheConfigurationState(raw json.RawMessage) {
 		return
 	}
 	fallbacks, _ := translate.DecodeModelFallbacks(raw)
-	before, beforeFallbacks := st.KiroDefaults(), st.ModelFallbacks()
+	memory, _ := translate.DecodeDeviceMemoryView(raw)
+	before, beforeFallbacks, beforeMemory := st.KiroDefaults(), st.ModelFallbacks(), st.DeviceMemory()
 	st.kiroDefaults.mu.Lock()
-	st.kiroDefaults.stated, st.kiroDefaults.fallbacks, st.kiroDefaults.known = stated, fallbacks, true
+	st.kiroDefaults.stated, st.kiroDefaults.fallbacks, st.kiroDefaults.memory = stated, fallbacks, memory
+	st.kiroDefaults.known = true
 	st.kiroDefaults.mu.Unlock()
-	changed := !maps.Equal(before, st.KiroDefaults()) || !slices.Equal(beforeFallbacks, fallbacks)
+	changed := !maps.Equal(before, st.KiroDefaults()) || !slices.Equal(beforeFallbacks, fallbacks) ||
+		!sameDeviceMemory(beforeMemory, st.DeviceMemory())
 	if changed {
 		st.announceSettings()
 	}
@@ -54,6 +58,42 @@ func (st *Settings) announceSettings() {
 	if st.broadcast != nil && st.lifecycle != nil {
 		settings.Announce(st.lifecycle.shutdownCtx, st.lifecycle.configDir, st.broadcast)
 	}
+}
+
+// DeviceMemory answers kiro-cli's device Memory choice; nil until the engine has reported a view.
+func (st *Settings) DeviceMemory() *marotte.DeviceMemory {
+	st.kiroDefaults.mu.Lock()
+	defer st.kiroDefaults.mu.Unlock()
+	if !st.kiroDefaults.known {
+		return nil
+	}
+	m := st.kiroDefaults.memory.Choice()
+	return &m
+}
+
+// deviceMemoryView is a copy of the cached Memory rows.
+func (st *Settings) deviceMemoryView() translate.DeviceMemoryView {
+	st.kiroDefaults.mu.Lock()
+	defer st.kiroDefaults.mu.Unlock()
+	return st.kiroDefaults.memory
+}
+
+// storeDeviceMemoryRow puts a row _kiro/configuration/set answered in the cached view, so GET /api/settings answers it
+// before KAS pushes the next view.
+func (st *Settings) storeDeviceMemoryRow(row json.RawMessage) {
+	st.kiroDefaults.mu.Lock()
+	defer st.kiroDefaults.mu.Unlock()
+	st.kiroDefaults.memory.Store(row)
+}
+
+func sameDeviceMemory(a, b *marotte.DeviceMemory) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.Mode != b.Mode || (a.Lock == nil) != (b.Lock == nil) {
+		return false
+	}
+	return a.Lock == nil || *a.Lock == *b.Lock
 }
 
 // ModelFallbacks answers kiro-cli's fallback for each model it serves, sorted by model; empty until the engine has

@@ -63,7 +63,7 @@ const SHAPED = new Set([
   "#agent-dirs-chips .chip-remove",
   "#fb-list .fb-check",
   "#fb-list .fb-git-clickable",
-  "#run-bar-fold .run-bar-toggle",
+  "#run-bar-fold .tracker-toggle",
   "#run-bar-fold .run-bar-all",
   "a.git-pr-row-title",
   ".ev-box-toggle",

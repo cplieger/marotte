@@ -13,7 +13,6 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/policyfile"
 	"github.com/cplieger/marotte/internal/securityprofile"
-	"github.com/cplieger/marotte/internal/workspace"
 )
 
 // Seed is valid only when switching TO custom, and refused otherwise rather than ignored.
@@ -35,8 +34,8 @@ func (s *Server) handlePolicyProfile(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleProfileView reads only config.json and the two permission files, never an observer pass, because the
-// pill reads it on every chat it opens.
+// handleProfileView reads config.json, KAS's sessionless preset-stores read and the permission files it names,
+// never an observer pass, because the pill reads it on every chat it opens.
 func (s *Server) handleProfileView(w http.ResponseWriter, r *http.Request) {
 	profile, _, _ := s.agent.SecurityProfileChoice(r.Context())
 	httpserver.WriteJSON(w, marotte.SecurityProfileView{
@@ -46,21 +45,24 @@ func (s *Server) handleProfileView(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// savedGrants reports whether the user or workspace permissions file grants on its own. A file it cannot read
-// counts as granting nothing, as KAS skips one it cannot load.
+// savedGrants reports whether any permissions file a chat session reads grants on its own (PresetStore.Grants over
+// the stores KAS names). A file it cannot read counts as granting nothing, as KAS skips one it cannot load, and so
+// does an engine that cannot answer: the hint is advisory and the pill reads it again at the next chat open.
 func (s *Server) savedGrants(ctx context.Context) bool {
-	kiroHome, err := workspace.KiroHomeDir()
-	if err != nil {
+	if s.policy == nil {
 		return false
 	}
-	for _, scope := range []string{policyfile.ScopeUser, policyfile.ScopeWorkspace} {
-		path, err := policyfile.PathFor(scope, policyfile.Roots{KiroHome: kiroHome, WorkDir: s.workDir})
+	stores, err := s.policy.PresetStores(ctx)
+	if err != nil {
+		slog.Warn("security profile view: the engine did not say which permission files a session reads",
+			"error", logsafe.Field(err.Error()))
+		return false
+	}
+	for i := range stores {
+		held, err := stores[i].Grants(ctx)
 		if err != nil {
-			continue
-		}
-		held, err := policyfile.HoldsGrant(ctx, path)
-		if err != nil {
-			slog.Debug("security profile view: permissions file unreadable", "scope", scope, "error", logsafe.Field(err.Error()))
+			slog.Debug("security profile view: permissions file unreadable", "scope", stores[i].Scope,
+				"error", logsafe.Field(err.Error()))
 			continue
 		}
 		if held {

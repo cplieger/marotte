@@ -4,6 +4,8 @@
 import { createBus } from "@cplieger/reactive";
 
 import type {
+  BackgroundJobPayload,
+  CodeIndexStatusPayload,
   EngineStatus,
   FilesChangedPayload,
   MCPIdentityProviderPayload,
@@ -128,6 +130,8 @@ export interface SSEPayloads {
   readonly safety_status: SafetyStatusPayload;
   readonly safety_properties: SafetyPropertiesPayload;
   readonly knowledge_indexing: KnowledgeIndexingPayload;
+  readonly code_index_status: CodeIndexStatusPayload;
+  readonly job_update: BackgroundJobPayload;
   readonly governance_state: GovernanceStatePayload;
   readonly open_external_url: OpenExternalURLPayload;
   readonly compaction_started: undefined;

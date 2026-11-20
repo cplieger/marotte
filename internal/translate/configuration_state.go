@@ -11,6 +11,12 @@ import (
 
 const configurationSettingKRN = "krn:::setting/"
 
+// observerConnection is the view observer of the connection-wide rows, as against one session's.
+const observerConnection = "connection"
+
+// composeLocked is the compose mode of a row a configuration layer locks.
+const composeLocked = "locked"
+
 // configurationState is _kiro/configuration/state's params, measured on kiro-cli 2.28.0: the view
 // it composes for, KAS's layer list (ids and display names), and one statement per setting a layer
 // states. An unstated setting has no statement.
@@ -40,7 +46,7 @@ type configurationState struct {
 // its JSON text, and the layer's name comes from the frame's own layer list.
 func DecodeConfigurationState(raw json.RawMessage) (map[string]marotte.KiroDefault, bool) {
 	var s configurationState
-	if json.Unmarshal(raw, &s) != nil || s.View.Observer != "connection" {
+	if json.Unmarshal(raw, &s) != nil || s.View.Observer != observerConnection {
 		return nil, false
 	}
 	names := make(map[string]string, len(s.Layers))
@@ -76,6 +82,172 @@ func configurationValue(raw json.RawMessage) string {
 		return displayText(s)
 	}
 	return displayText(string(raw))
+}
+
+// The two device rows of kiro-cli's Memory choice, and their values (KAS's memoryMode enum, memoryReflection on/off).
+const (
+	memoryModeKRN       = configurationSettingKRN + "memoryMode"
+	memoryReflectionKRN = configurationSettingKRN + "memoryReflection"
+	memoryModeDisabled  = "disabled"
+	memoryModeReadOnly  = "read_only"
+	memoryModeReadWrite = "read_write"
+	memoryReflectionOff = "off"
+)
+
+// deviceMemoryRow is one composed setting row, the fields the Memory reduction reads.
+type deviceMemoryRow struct {
+	KRN        string          `json:"krn"`
+	Value      json.RawMessage `json:"value"`
+	Compose    string          `json:"compose"`
+	Assertions []struct {
+		Layer string `json:"layer"`
+	} `json:"assertions"`
+}
+
+// SettingLock names the layer that locks a composed row: the last assertion's, with its display name from names
+// (the layer id when it has none). nil unless compose is locked.
+func SettingLock(compose string, assertionLayers []string, names map[string]string) *marotte.SettingLock {
+	if compose != composeLocked || len(assertionLayers) == 0 {
+		return nil
+	}
+	raw := assertionLayers[len(assertionLayers)-1]
+	layer, name := displayText(raw), displayText(names[raw])
+	if name == "" {
+		name = layer
+	}
+	return &marotte.SettingLock{Layer: layer, Name: name}
+}
+
+func (r *deviceMemoryRow) lock(names map[string]string) *marotte.SettingLock {
+	layers := make([]string, len(r.Assertions))
+	for i, a := range r.Assertions {
+		layers[i] = a.Layer
+	}
+	return SettingLock(r.Compose, layers, names)
+}
+
+func (r *deviceMemoryRow) text() (string, bool) {
+	var v string
+	if r == nil || json.Unmarshal(r.Value, &v) != nil {
+		return "", false
+	}
+	return v, true
+}
+
+// DeviceMemoryView is a CONNECTION view's two Memory rows, raw as composed (nil when the view lists none), and its
+// layers' display names.
+type DeviceMemoryView struct {
+	Names      map[string]string
+	Mode       json.RawMessage
+	Reflection json.RawMessage
+}
+
+// DecodeDeviceMemoryView reads the Memory rows of a CONNECTION view; ok is false for a session view or an
+// undecodable frame.
+func DecodeDeviceMemoryView(raw json.RawMessage) (DeviceMemoryView, bool) {
+	var s struct {
+		View struct {
+			Observer string `json:"observer"`
+		} `json:"view"`
+		Layers []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"layers"`
+		Settings []json.RawMessage `json:"settings"`
+	}
+	if json.Unmarshal(raw, &s) != nil || s.View.Observer != observerConnection {
+		return DeviceMemoryView{}, false
+	}
+	v := DeviceMemoryView{Names: make(map[string]string, len(s.Layers))}
+	for _, l := range s.Layers {
+		v.Names[l.ID] = l.Name
+	}
+	for _, row := range s.Settings {
+		v.Store(row)
+	}
+	return v, true
+}
+
+// Store puts a composed row, as a view lists it or _kiro/configuration/set answers it, in its slot; ok is false for
+// any other setting or an undecodable row.
+func (v *DeviceMemoryView) Store(row json.RawMessage) bool {
+	var r deviceMemoryRow
+	if json.Unmarshal(row, &r) != nil {
+		return false
+	}
+	switch r.KRN {
+	case memoryModeKRN:
+		v.Mode = row
+	case memoryReflectionKRN:
+		v.Reflection = row
+	default:
+		return false
+	}
+	return true
+}
+
+// Values are the two rows' composed values, KAS's own defaults (disabled, off) for an unstated one.
+func (v *DeviceMemoryView) Values() (mode, reflection string) {
+	mode, ok := decodeRow(v.Mode).text()
+	if !ok {
+		mode = memoryModeDisabled
+	}
+	reflection, ok = decodeRow(v.Reflection).text()
+	if !ok {
+		reflection = memoryReflectionOff
+	}
+	return mode, reflection
+}
+
+// Choice reduces the two rows as kiro-cli's terminal UI reduces them (mode ?? disabled, reflection ?? off), so a view
+// stating neither reads off. A mode outside KAS's three is kept as sent. Lock names the layer locking either row,
+// the mode's first.
+func (v *DeviceMemoryView) Choice() marotte.DeviceMemory {
+	mode, reflection := v.Values()
+	out := marotte.DeviceMemory{}
+	switch {
+	case mode == memoryModeDisabled:
+		out.Mode = marotte.DeviceMemoryOff
+	case mode == memoryModeReadOnly:
+		out.Mode = marotte.DeviceMemoryReadOnly
+	case mode == memoryModeReadWrite && reflection == "on":
+		out.Mode = marotte.DeviceMemoryLearn
+	case mode == memoryModeReadWrite:
+		out.Mode = marotte.DeviceMemoryReadWrite
+	default:
+		out.Mode = displayText(mode)
+	}
+	if r := decodeRow(v.Mode); r != nil {
+		out.Lock = r.lock(v.Names)
+	}
+	if r := decodeRow(v.Reflection); out.Lock == nil && r != nil {
+		out.Lock = r.lock(v.Names)
+	}
+	return out
+}
+
+func decodeRow(raw json.RawMessage) *deviceMemoryRow {
+	var r deviceMemoryRow
+	if len(raw) == 0 || json.Unmarshal(raw, &r) != nil {
+		return nil
+	}
+	return &r
+}
+
+// DeviceMemoryRows maps a Memory choice onto the two rows KAS stores it in: the memoryMode value, then the
+// memoryReflection one. ok is false for a mode outside the four.
+func DeviceMemoryRows(mode string) (modeValue, reflectionValue string, ok bool) {
+	switch mode {
+	case marotte.DeviceMemoryOff:
+		return memoryModeDisabled, memoryReflectionOff, true
+	case marotte.DeviceMemoryReadOnly:
+		return memoryModeReadOnly, memoryReflectionOff, true
+	case marotte.DeviceMemoryReadWrite:
+		return memoryModeReadWrite, memoryReflectionOff, true
+	case marotte.DeviceMemoryLearn:
+		return memoryModeReadWrite, "on", true
+	}
+	return "", "", false
 }
 
 // modelFallbackKRN prefixes the one modelFallback row KAS states per served model.
@@ -142,7 +314,7 @@ func DecodeModelFallbacks(raw json.RawMessage) ([]marotte.ModelFallback, bool) {
 		} `json:"view"`
 		Settings []json.RawMessage `json:"settings"`
 	}
-	if json.Unmarshal(raw, &s) != nil || s.View.Observer != "connection" {
+	if json.Unmarshal(raw, &s) != nil || s.View.Observer != observerConnection {
 		return nil, false
 	}
 	out := []marotte.ModelFallback{}
@@ -173,7 +345,7 @@ func DecodeModelFallbackSetting(raw json.RawMessage) (marotte.ModelFallback, boo
 		f.Configured = displayText(st.Value[0])
 	}
 	switch {
-	case st.Compose == "locked":
+	case st.Compose == composeLocked:
 		f.ReadOnlyReason = "locked"
 	case configured && len(st.Value) > 1:
 		f.ReadOnlyReason = "multiple-targets"

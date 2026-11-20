@@ -54,6 +54,11 @@ func (o *engineOwner) hooksRaw(ctx context.Context, method string, params map[st
 	return o.rawCall(ctx, fmt.Sprintf("hooks call %s", method), method, params)
 }
 
+// presetStoresRaw asks which permission files a session over roots reads and the presets each references.
+func (o *engineOwner) presetStoresRaw(ctx context.Context, roots []string) (json.RawMessage, error) {
+	return o.rawCall(ctx, "preset stores call", methodKiroPermissionsPresetStores, map[string]any{"workspaceRoots": roots})
+}
+
 // configTemplateRaw issues the session-less _kiro/config/template request.
 func (o *engineOwner) configTemplateRaw(ctx context.Context) (json.RawMessage, error) {
 	return o.rawCall(ctx, "config template call", methodKiroConfigTemplate, map[string]any{})

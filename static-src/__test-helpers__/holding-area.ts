@@ -69,13 +69,13 @@ export function paintRuns(root: HTMLElement, count: number, open: boolean): void
   const toggle = document.createElement("div");
   toggle.setAttribute("role", "button");
   toggle.tabIndex = 0;
-  toggle.className = "run-bar-open run-bar-toggle";
+  toggle.className = "tracker-toggle";
   toggle.setAttribute("aria-expanded", String(open));
   const chev = document.createElement("span");
-  chev.className = "run-bar-chev";
+  chev.className = "tracker-chev";
   chev.append(chevronEl());
   const text = document.createElement("span");
-  text.className = "run-bar-count";
+  text.className = "tracker-count";
   text.textContent = `${String(count)} workflows running`;
   toggle.append(chev, text);
   fold.append(toggle);
@@ -162,7 +162,7 @@ export function holds(chat: Chat, visibleH: number): void {
   chat.area.scrollTop = chat.area.scrollHeight;
   const box = chat.area.getBoundingClientRect();
   const lines = [
-    ...chat.area.querySelectorAll<HTMLElement>(".run-bar-fold, .run-bar > li, .steer-stack > li"),
+    ...chat.area.querySelectorAll<HTMLElement>(".tracker-fold, .run-bar > li, .steer-stack > li"),
   ].filter((l) => l.checkVisibility({ visibilityProperty: true }));
   const tops = lines.map((l) => l.getBoundingClientRect().top);
   for (let i = 1; i < tops.length; i++) {

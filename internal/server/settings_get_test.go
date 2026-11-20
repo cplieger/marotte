@@ -461,6 +461,8 @@ func (fakeKiroDefaults) HookStatusShown() bool { return true }
 
 func (fakeKiroDefaults) ModelFallbacks() []marotte.ModelFallback { return []marotte.ModelFallback{} }
 
+func (fakeKiroDefaults) DeviceMemory() *marotte.DeviceMemory { return nil }
+
 // withFallbacks is a kiro-cli that reported a view stating these model fallbacks.
 type withFallbacks struct {
 	fakeKiroDefaults

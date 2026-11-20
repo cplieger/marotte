@@ -574,9 +574,8 @@ func TestRender_NamesTheConfiguredFoldersNotTheDefaults(t *testing.T) {
 	workDir, configDir := t.TempDir(), t.TempDir()
 	repo := seedRepo(t, workDir, "repo")
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "steering", "s.md"), "# S\n")
-	mustWriteFile(t, filepath.Join(configDir, "config.json"), `{"memory_mode":"read_only"}`)
 	g := New(Config{WorkDir: workDir, ConfigDir: configDir, ToolsDir: filepath.Join(configDir, "tools")})
-	env := string(g.render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false, ToolsSnapshot{}, false))
+	env := string(g.render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false, ToolsSnapshot{}, false, true))
 	chat := g.renderChat(ForgeSnapshot{})
 
 	for _, want := range []string{

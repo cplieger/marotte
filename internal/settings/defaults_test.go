@@ -37,6 +37,7 @@ func TestEffectiveSettings_EveryFieldIsSettable(t *testing.T) {
 	resolved := map[string]struct{}{
 		"kiro_defaults": {}, "additional_directories_refused": {}, "hook_status_shown": {},
 		"rejected_keys": {}, "auto_compact_pct_range": {}, "model_fallbacks": {}, "history_window_choices": {},
+		"memory": {},
 	}
 	rt := reflect.TypeFor[marotte.EffectiveSettings]()
 	for f := range rt.Fields() {

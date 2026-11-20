@@ -173,11 +173,44 @@ interface ImportResult {
   outcome: "created" | "unchanged";
 }
 
-/** Per-entry outcomes plus notes on keys marotte recognises but cannot
- *  store. */
+/** What the import says about one pasted key (`internal/mcp.importNote`), in the paste's key order. */
+export interface ImportNote {
+  /** The server the key sits on, absent at the top level. */
+  server?: string;
+  /** The key's path ("oauth.scopes"), or the pasted name a renaming is about. */
+  key: string;
+  text: string;
+}
+
+/** Per-entry outcomes plus a note on each pasted key marotte did not take as written. */
 export interface ImportServersResult {
   results: ImportResult[];
-  notes?: string[];
+  notes: ImportNote[];
+}
+
+/** Narrow the import's 200 body; server-controlled, so each entry is shape-checked. Exported for its test. */
+export function decodeImportResult(body: unknown): ImportServersResult {
+  const o = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+  const results: ImportResult[] = [];
+  for (const r of Array.isArray(o["results"]) ? (o["results"] as unknown[]) : []) {
+    const outcome =
+      typeof r === "object" && r !== null ? (r as { outcome?: unknown }).outcome : undefined;
+    if (outcome === "created" || outcome === "unchanged") {
+      results.push({ outcome });
+    }
+  }
+  const notes: ImportNote[] = [];
+  for (const n of Array.isArray(o["notes"]) ? (o["notes"] as unknown[]) : []) {
+    if (typeof n !== "object" || n === null) {
+      continue;
+    }
+    const { server, key, text } = n as { server?: unknown; key?: unknown; text?: unknown };
+    if (typeof key !== "string" || typeof text !== "string") {
+      continue;
+    }
+    notes.push(typeof server === "string" && server !== "" ? { server, key, text } : { key, text });
+  }
+  return { results, notes };
 }
 
 export const importServers = apiAction<Record<string, unknown>, ImportServersResult>({
@@ -190,13 +223,14 @@ export const importServers = apiAction<Record<string, unknown>, ImportServersRes
     path: `${MCP_API}/import`,
     body: block,
   }),
+  decode: decodeImportResult,
   decodeError: decodeValidationError,
   success: (_args, res) => summariseImport(res),
   // Rendered inline beside the textarea, not as a toast.
   error: false,
 });
 
-/** One sentence naming what landed. Exported for its test. */
+/** One sentence naming what landed; the notes themselves are listed under the paste box. Exported for its test. */
 export function summariseImport(res: ImportServersResult | null): string {
   const results = res?.results ?? [];
   const created = results.filter((r) => r.outcome === "created").length;
@@ -211,12 +245,11 @@ export function summariseImport(res: ImportServersResult | null): string {
   if (parts.length === 0) {
     parts.push("Nothing to connect");
   }
-  const notes = res?.notes ?? [];
-  const onlyNote = notes.length === 1 ? notes[0] : undefined;
-  if (onlyNote !== undefined) {
-    parts.push(onlyNote);
-  } else if (notes.length > 1) {
-    parts.push(`${notes.length} keys marotte does not store were ignored`);
+  const notes = res?.notes.length ?? 0;
+  if (notes > 0) {
+    parts.push(
+      notes === 1 ? "1 key was not taken as pasted" : `${notes} keys were not taken as pasted`,
+    );
   }
   return parts.join(". ") + ".";
 }

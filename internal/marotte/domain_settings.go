@@ -26,6 +26,28 @@ type KnowledgeChunking struct {
 	Overlap int `json:"overlap"`
 }
 
+// SettingLock names the configuration layer whose lock fixes a kiro-cli setting, with its display name.
+type SettingLock struct {
+	Layer string `json:"layer"`
+	Name  string `json:"name"`
+}
+
+// DeviceMemory is the Memory choice kiro-cli keeps for the signed-in account on this machine (its memoryMode and
+// memoryReflection rows at user-local), reduced as kiro-cli's terminal UI reduces them: Mode is "off", "read_only",
+// "read_write" or "learn", and Lock is set while a layer locks either row.
+type DeviceMemory struct {
+	Lock *SettingLock `json:"lock"`
+	Mode string       `json:"mode"`
+}
+
+// The DeviceMemory modes, one per option of the Memory dropdown.
+const (
+	DeviceMemoryOff       = "off"
+	DeviceMemoryReadOnly  = "read_only"
+	DeviceMemoryReadWrite = "read_write"
+	DeviceMemoryLearn     = "learn"
+)
+
 // PctRange is a percentage slider's bounds and step.
 type PctRange struct {
 	Min  int `json:"min"`
@@ -48,6 +70,8 @@ type EffectiveSettings struct {
 	// marotte setting key; a key is absent while that is unknown, and never present for a key the
 	// user has set.
 	KiroDefaults map[string]KiroDefault `json:"kiro_defaults"`
+	// Memory is kiro-cli's device Memory choice, null until the engine has reported a configuration view.
+	Memory *DeviceMemory `json:"memory"`
 	// AdditionalDirectoriesRefused maps each AdditionalDirectories entry that
 	// settings.AgentDirs.Assess refuses at this GET to its reason; it is never stored, and an
 	// entry absent from it is granted.
@@ -65,9 +89,6 @@ type EffectiveSettings struct {
 	// spelling, the merge dialog's default where the repository offers it. Empty
 	// means nothing picked yet.
 	LastMergeMethod string `json:"last_merge_method"`
-	// MemoryMode is the Memory dropdown's value ("off" and its three
-	// siblings); it defaults to settings.DefaultMemoryMode, kiro-cli's own.
-	MemoryMode string `json:"memory_mode"`
 	// InterruptMode is the composer's default beside a running turn, steer unless queue was chosen.
 	InterruptMode InterruptMode `json:"interrupt_mode"`
 	// SpecPlanning is "off", "quick" or "full"; default off, matching kiro-cli.
@@ -180,10 +201,12 @@ type EffectiveSettings struct {
 	// unattended run's permission ask at its deadline and BotAutoApprove an automatic
 	// Bot turn's, both fail-closed by decision. DebugLogs raises the log level. All
 	// four default off.
-	// SpecPlanningAskFirst, SteeringReminders, ChatMessaging and ChatAwareness default off, matching kiro-cli.
-	// WorkflowsEnabled defaults ON (user's choice, where the TUI's default is off).
+	// SpecPlanningAskFirst, SteeringReminders, CodeAnalysis, BackgroundJobs, ChatMessaging and ChatAwareness default
+	// off, matching kiro-cli. WorkflowsEnabled defaults ON (user's choice, where the TUI's default is off).
 	SpecPlanningAskFirst bool `json:"spec_planning_ask_first"`
 	SteeringReminders    bool `json:"steering_reminders_enabled"`
+	CodeAnalysis         bool `json:"code_analysis_enabled"`
+	BackgroundJobs       bool `json:"background_jobs"`
 	WorkflowsEnabled     bool `json:"workflows_enabled"`
 	ChatMessaging        bool `json:"chat_messaging_enabled"`
 	ChatAwareness        bool `json:"chat_awareness_enabled"`

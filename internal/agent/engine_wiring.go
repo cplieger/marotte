@@ -253,12 +253,14 @@ func (rt *Runtime) seedBoot(ctx context.Context) error {
 // onEngineEnded runs once generation gen ended and was reaped: its unsettled mutations go (their writes meet a dead
 // engine), its open step turns end, and every MCP server it ran is reported gone. The recipe catalog goes too: KAS
 // sends no recipes_changed for the next engine's first listing, so an edit made while no engine ran would otherwise
-// never drop it.
+// never drop it. The code index status goes as well: KAS keeps it in its process memory, so the next engine's first
+// replay replaces it.
 func (rt *Runtime) onEngineEnded(gen uint64) {
 	rt.runs.mutations.dropGeneration(gen)
 	rt.runs.askEngineEnded()
 	rt.runs.recipes.invalidate()
 	rt.mcpRegistry.clearAll()
+	rt.codeIndex.reset()
 }
 
 // closeSession releases a session the registry let go of; bridge.Session.Release owns every outcome after it.

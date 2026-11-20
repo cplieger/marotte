@@ -79,9 +79,6 @@ func (f *renderFixture) build(t *testing.T) rendered {
 		}
 	}
 	cfg := map[string]any{}
-	if f.memory {
-		cfg[settings.KeyMemoryMode] = "learn"
-	}
 	if f.granted > 0 {
 		dirs := make([]string, f.granted)
 		for i := range dirs {
@@ -110,7 +107,7 @@ func (f *renderFixture) build(t *testing.T) rendered {
 	g := New(Config{
 		WorkDir: workDir, ConfigDir: configDir, ToolsDir: filepath.Join(configDir, "tools"), ServerAddr: "127.0.0.1:9847",
 	})
-	out := string(g.render(t.Context(), mcp, f.mcp > 0, forges, true, f.tools, true))
+	out := string(g.render(t.Context(), mcp, f.mcp > 0, forges, true, f.tools, true, f.memory))
 	return rendered{out: out, workDir: workDir, configDir: configDir}
 }
 
@@ -512,7 +509,7 @@ func TestRender_ToolsSnapshotNotOKListsNothingAsPresent(t *testing.T) {
 	workDir, configDir := t.TempDir(), t.TempDir()
 	g := New(Config{WorkDir: workDir, ConfigDir: configDir, ToolsDir: filepath.Join(configDir, "tools")})
 	snap := ToolsSnapshot{Tools: engineRows(2, "tool"), System: []string{"git"}}
-	out := string(g.render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false, snap, false))
+	out := string(g.render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false, snap, false, false))
 	want := "\nThe image is Debian slim: its base userland (coreutils, util-linux, findutils, grep, sed, awk, diff, gzip, " +
 		"which, perl, dpkg and apt-get) is present and not listed here. The tools engine did not answer, so the " +
 		"commands installed or baked in are not listed: check with `command -v`, and install through the tools " +
@@ -530,7 +527,7 @@ func TestRender_EveryServerLineNamesTheServerAddress(t *testing.T) {
 		WorkDir: workDir, ConfigDir: configDir, ToolsDir: filepath.Join(configDir, "tools"), ServerAddr: "127.0.0.2:9000",
 	})
 	tools := append(engineRows(maxCommands+1, "tool"), InstalledTool{Version: "2.0", Apt: true})
-	out := string(g.render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false, ToolsSnapshot{Tools: tools}, true))
+	out := string(g.render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false, ToolsSnapshot{Tools: tools}, true, false))
 	for _, want := range []string{
 		"marotte's own HTTP server answers on `127.0.0.2:9000` inside the container",
 		"`curl -s '127.0.0.2:9000/api/tools/search?q=<name>'`",

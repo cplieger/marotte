@@ -251,7 +251,7 @@ var knownUpdateKinds = map[marotte.ACPUpdateKind]struct{}{
 	marotte.ACPUpdateAvailableCommands: {},
 	marotte.ACPUpdateConfigOption:      {},
 	marotte.ACPUpdateUsage:             {},
-	replayUserChunkKind:                {},
+	UserChunkKind:                      {},
 }
 
 // censusUpdateKind reports, once per process, a sessionUpdate kind marotte does not name. A

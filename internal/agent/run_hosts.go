@@ -159,11 +159,17 @@ func (rs *Runs) loadHost(ctx context.Context, workflowID, session string, preset
 	return awaitHost(ctx, sb)
 }
 
+// awaitHost waits for sb's load. A load that failed answers errRunHostStart, except a launching session kiro-cli holds
+// no record of, which stays errLaunchSessionUnavailable alone: the run's state, not a server fault.
 func awaitHost(ctx context.Context, sb *sharedBridge) (*sharedBridge, error) {
-	if err := sb.settled.wait(ctx); err != nil {
-		return nil, fmt.Errorf("%w: %w", errRunHostStart, err)
+	err := sb.settled.wait(ctx)
+	switch {
+	case err == nil:
+		return sb, nil
+	case errors.Is(err, errLaunchSessionUnavailable):
+		return nil, err
 	}
-	return sb, nil
+	return nil, fmt.Errorf("%w: %w", errRunHostStart, err)
 }
 
 func (rs *Runs) openHost(workflowID, session string, presets []string, sb *sharedBridge) {
@@ -178,6 +184,11 @@ func (rs *Runs) openHost(workflowID, session string, presets []string, sb *share
 		rs.coord.goRunForward(chatID, s)
 		return nil
 	})
+	if marotte.SessionRecordGone(err, session) {
+		slog.Warn("kiro-cli holds no record of a run's launching session, so the run cannot be driven",
+			"workflow_id", workflowID, "session_id", session)
+		err = fmt.Errorf("%w: %w", errLaunchSessionUnavailable, err)
+	}
 	if err != nil {
 		rs.bridges.removeIfSame(chatID, sb)
 		sb.settled.settle(err)

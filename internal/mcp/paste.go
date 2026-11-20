@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -32,7 +33,7 @@ const (
 // the object, where a block carries it as the map key.
 var pasteServerKeys = []string{
 	"args", "command", "disabled", "disabledTools",
-	"env", "headers", "name", "oauth", "oauthScopes", "prewarm", "timeout", "type", "url",
+	"env", "headers", "name", "oauth", keyOAuthScopes, "prewarm", "timeout", "timeoutMs", "type", "url",
 	"versionNegotiation", "waitForReady",
 }
 
@@ -40,21 +41,29 @@ var pasteServerKeys = []string{
 // and the user is not left wondering whether it was a typo. The reasons are the user's, not the
 // schema's: "no field for it" is actionable, "unknown key" would not be.
 var pasteServerIgnored = map[string]string{
-	"$schema":     "a schema pointer, not configuration",
-	"alwaysAllow": "marotte does not pre-approve MCP tools, so every call asks for permission",
-	"autoApprove": "marotte does not pre-approve MCP tools, so every call asks for permission",
-	"cwd":         "marotte has no working-directory field",
-	"description": "not stored, because the name is the label",
-	"icon":        "not stored",
+	"$schema":     noteSchemaPointer,
+	"alwaysAllow": perServerApprovalIgnored,
+	"autoApprove": perServerApprovalIgnored,
+	"cwd":         "Not stored: marotte has no working-directory field.",
+	"description": "Not stored, because the name is the label.",
+	"icon":        "Not stored.",
 }
 
-// pasteOAuthKeys are the keys of a server's nested `oauth` object: KAS's closed
-// schema. A scope list is the sibling `oauthScopes`, a consumed server key.
+const (
+	perServerApprovalIgnored = "Kiro does not read a per-server approval list; your permission settings decide each call."
+	noteSchemaPointer        = "Not stored: a schema pointer, not configuration."
+)
+
+// keyOAuthScopes is the scopes key both a server and its oauth object take.
+const keyOAuthScopes = "oauthScopes"
+
+// pasteOAuthKeys are the keys of a server's nested `oauth` object that marotte stores. A scope list may
+// sit there (`oauthScopes`, else `scopes`) or in the sibling server key `oauthScopes`, which wins.
 //
 // The nested object needs its own classification pass: encoding/json drops a
 // key with no matching field, so without one a misspelt `clientIdd` would be
 // accepted and discarded silently.
-var pasteOAuthKeys = []string{"clientId", "clientMetadataUrl", "mode", "redirectUri"}
+var pasteOAuthKeys = []string{"clientId", "clientMetadataUrl", "mode", keyOAuthScopes, "redirectUri", "scopes"}
 
 // pasteOAuthSecretKey is refused by name, before the typo pass: a confidential
 // client cannot authenticate through KAS, so the server would fail at its token
@@ -71,18 +80,17 @@ var pasteTopKeys = []string{kasIdentityProviderKey, kasServerKey}
 var pasteIdentityProviderKeys = []string{"authorizationEndpoint", "clientId", "issuer", "name", "tokenEndpoint"}
 
 var pasteTopIgnored = map[string]string{
-	"$schema": "a schema pointer, not configuration",
-	"inputs":  "an editor's input-prompt list. Type the values into the form instead",
+	"$schema": noteSchemaPointer,
+	"inputs":  "Not stored: an editor's input-prompt list. Type the values into the form instead.",
 }
 
-// importRequest is one parsed paste: the records to create, in the order the
-// block declared them, plus the notes the translation produced (an unmodelled
-// key, a name that had to be adjusted).
+// importRequest is one parsed paste: the records to create, and the notes the translation produced (an unmodelled
+// key, a name that had to be adjusted), in the order their keys appear in the paste.
 type importRequest struct {
 	// identityProvider is the block's organization provider, nil when it names none.
 	identityProvider *IdentityProvider
 	servers          []*Server
-	notes            []string
+	notes            []importNote
 }
 
 type pasteIdentityProvider struct {
@@ -93,11 +101,69 @@ type pasteIdentityProvider struct {
 	TokenEndpoint         string `json:"tokenEndpoint"`
 }
 
+// importNote is one thing the import says about a pasted key, shown as the key then Text. Key is the key's path
+// ("oauth.scopes"), or the pasted name a renaming is about; Server is the server it sits on, empty at the top level.
+type importNote struct {
+	Server string `json:"server,omitempty"`
+	Key    string `json:"key"`
+	Text   string `json:"text"`
+	// pos is the key's position path from the paste's root, which orders the notes.
+	pos []int
+}
+
+// noteScope is one pasted object a note can be about: its server, its position path and its keys' positions,
+// which encoding/json's maps discard.
+type noteScope struct {
+	order  map[string]int
+	server string
+	prefix string
+	at     []int
+}
+
+func newNoteScope(at []int, raw json.RawMessage) noteScope {
+	return noteScope{at: at, order: keyOrder(raw)}
+}
+
+// child is the scope of the object under key, whose notes read as "key.<member>".
+func (sc noteScope) child(key string, raw json.RawMessage) noteScope {
+	return noteScope{server: sc.server, prefix: sc.prefix + key + ".", at: sc.pos(key), order: keyOrder(raw)}
+}
+
+func (sc noteScope) pos(key string) []int {
+	return append(slices.Clip(sc.at), sc.order[key])
+}
+
+// note records text about key, a member of sc's object.
+func (req *importRequest) note(sc noteScope, key, text string) {
+	req.notes = append(req.notes, importNote{Server: sc.server, Key: sc.prefix + key, Text: text, pos: sc.pos(key)})
+}
+
+// keyOrder maps each key of a JSON object to its position; nil for anything else.
+func keyOrder(raw json.RawMessage) map[string]int {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return nil
+	}
+	order := map[string]int{}
+	for i := 0; dec.More(); i++ {
+		tok, err := dec.Token()
+		key, ok := tok.(string)
+		var skip json.RawMessage
+		if err != nil || !ok || dec.Decode(&skip) != nil {
+			return order
+		}
+		order[key] = i
+	}
+	return order
+}
+
 type pasteOAuth struct {
-	ClientID          string `json:"clientId"`
-	ClientMetadataURL string `json:"clientMetadataUrl"`
-	RedirectURI       string `json:"redirectUri"`
-	Mode              string `json:"mode"`
+	ClientID          string   `json:"clientId"`
+	ClientMetadataURL string   `json:"clientMetadataUrl"`
+	RedirectURI       string   `json:"redirectUri"`
+	Mode              string   `json:"mode"`
+	OAuthScopes       []string `json:"oauthScopes"`
+	Scopes            []string `json:"scopes"`
 }
 
 // `env` and `headers` are absent on purpose: they are JSON records, and marotte stores ordered
@@ -113,6 +179,7 @@ type pasteServer struct {
 	Prewarm            *bool       `json:"prewarm"`
 	WaitForReady       *bool       `json:"waitForReady"`
 	Timeout            *int        `json:"timeout"`
+	TimeoutMs          *int        `json:"timeoutMs"`
 	Args               []string    `json:"args"`
 	DisabledTools      []string    `json:"disabledTools"`
 	OAuthScopes        []string    `json:"oauthScopes"`
@@ -130,36 +197,46 @@ func parseImportBody(data []byte) (*importRequest, error) {
 	}
 	// Non-nil so the response carries [] rather than null: the client's type says
 	// an array, and one shape on the wire beats two the reader has to handle.
-	req := &importRequest{notes: []string{}}
+	req := &importRequest{notes: []importNote{}}
+	root := newNoteScope(nil, data)
 	block, isBlock := doc[kasServerKey]
 	idp, hasIDP := doc[kasIdentityProviderKey]
 	if !isBlock && !hasIDP {
-		return parseSingleServer(doc, data, req)
+		return inPasteOrder(parseSingleServer(doc, data, root, req))
 	}
-	if err := classifyKeys("", doc, pasteTopKeys, pasteTopIgnored, req); err != nil {
+	if err := classifyKeys("", root, doc, pasteTopKeys, pasteTopIgnored, req); err != nil {
 		return nil, err
 	}
 	if hasIDP {
-		p, err := parseIdentityProvider(idp, req)
+		ip, err := parseIdentityProvider(root.child(kasIdentityProviderKey, idp), idp, req)
 		if err != nil {
 			return nil, err
 		}
-		req.identityProvider = p
+		req.identityProvider = ip
 	}
 	if !isBlock {
-		return req, nil
+		return inPasteOrder(req, nil)
 	}
-	return parseServerBlock(block, req)
+	return inPasteOrder(parseServerBlock(root.child(kasServerKey, block), block, req))
+}
+
+// inPasteOrder orders req's notes as their keys appear in the paste.
+func inPasteOrder(req *importRequest, err error) (*importRequest, error) {
+	if err != nil {
+		return nil, err
+	}
+	slices.SortStableFunc(req.notes, func(a, b importNote) int { return slices.Compare(a.pos, b.pos) })
+	return req, nil
 }
 
 // parseIdentityProvider translates the block's identityProvider object, naming a typo like any other key.
-func parseIdentityProvider(raw json.RawMessage, req *importRequest) (*IdentityProvider, error) {
+func parseIdentityProvider(sc noteScope, raw json.RawMessage, req *importRequest) (*IdentityProvider, error) {
 	const where = kasIdentityProviderKey + ": "
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
 		return nil, fmt.Errorf(`"%s" must be a JSON object`, kasIdentityProviderKey)
 	}
-	if err := classifyKeys(where, obj, pasteIdentityProviderKeys, nil, req); err != nil {
+	if err := classifyKeys(where, sc, obj, pasteIdentityProviderKeys, nil, req); err != nil {
 		return nil, err
 	}
 	var p pasteIdentityProvider
@@ -174,7 +251,7 @@ func parseIdentityProvider(raw json.RawMessage, req *importRequest) (*IdentityPr
 
 // parseSingleServer handles the one-object shape: the whole body is a server
 // and its name is a field on it.
-func parseSingleServer(doc map[string]json.RawMessage, raw json.RawMessage, req *importRequest) (*importRequest, error) {
+func parseSingleServer(doc map[string]json.RawMessage, raw json.RawMessage, root noteScope, req *importRequest) (*importRequest, error) {
 	var named struct {
 		Name string `json:"name"`
 	}
@@ -184,7 +261,7 @@ func parseSingleServer(doc map[string]json.RawMessage, raw json.RawMessage, req 
 	if strings.TrimSpace(named.Name) == "" {
 		return nil, errors.New(`missing "name": paste an "mcpServers" block, or a single server object with a name`)
 	}
-	sv, err := translateServer(named.Name, doc, raw, req)
+	sv, err := translateServer(named.Name, root.pos("name"), root, doc, raw, req)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +271,7 @@ func parseSingleServer(doc map[string]json.RawMessage, raw json.RawMessage, req 
 
 // Entries are translated in the block's own key order (sorted, since a JSON object has none once
 // decoded) so a re-paste of the same block produces the same order.
-func parseServerBlock(block json.RawMessage, req *importRequest) (*importRequest, error) {
+func parseServerBlock(blockScope noteScope, block json.RawMessage, req *importRequest) (*importRequest, error) {
 	var entries map[string]json.RawMessage
 	if err := json.Unmarshal(block, &entries); err != nil {
 		return nil, fmt.Errorf(`"%s" must be a JSON object of servers keyed by name: %w`, kasServerKey, err)
@@ -205,15 +282,13 @@ func parseServerBlock(block json.RawMessage, req *importRequest) (*importRequest
 	if len(entries) > maxImportServers {
 		return nil, fmt.Errorf(`"%s" names %d servers (max %d)`, kasServerKey, len(entries), maxImportServers)
 	}
-	// Entries are translated in the block's own key order (sorted, since a JSON
-	// object has none once decoded), so a re-paste of the same block produces
-	// the same order.
 	for _, key := range slices.Sorted(maps.Keys(entries)) {
 		var obj map[string]json.RawMessage
 		if err := json.Unmarshal(entries[key], &obj); err != nil {
 			return nil, fmt.Errorf("server %q: must be a JSON object: %w", key, err)
 		}
-		sv, err := translateServer(key, obj, entries[key], req)
+		at := blockScope.pos(key)
+		sv, err := translateServer(key, at, newNoteScope(at, entries[key]), obj, entries[key], req)
 		if err != nil {
 			return nil, err
 		}
@@ -222,21 +297,24 @@ func parseServerBlock(block json.RawMessage, req *importRequest) (*importRequest
 	return req, nil
 }
 
-// validate is NOT called here: the store calls it on every record it takes, and running it twice
-// would report the same problem in two voices.
-func translateServer(rawName string, obj map[string]json.RawMessage, raw json.RawMessage, req *importRequest) (*Server, error) {
-	name, nameErr := importName(rawName, req)
+// translateServer builds one record; namePos is where its name sits in the paste and sc is its object. validate is
+// NOT called here: the store calls it on every record it takes, and running it twice would report the same problem
+// in two voices.
+func translateServer(rawName string, namePos []int, sc noteScope, obj map[string]json.RawMessage, raw json.RawMessage, req *importRequest) (*Server, error) {
+	name, nameErr := importName(rawName, namePos, req)
 	if nameErr != nil {
 		return nil, nameErr
 	}
+	sc.server = name
 	where := fmt.Sprintf("server %q: ", name)
-	if keyErr := classifyKeys(where, obj, pasteServerKeys, pasteServerIgnored, req); keyErr != nil {
+	if keyErr := classifyKeys(where, sc, obj, pasteServerKeys, pasteServerIgnored, req); keyErr != nil {
 		return nil, keyErr
 	}
 	// Classified before the decode below, and regardless of transport: the outer
 	// pass only sees that `oauth` is a consumed key, so the object's own members
 	// would otherwise reach json.Unmarshal's silent-drop.
-	if oauthErr := classifyOAuthKeys(where, obj["oauth"], req); oauthErr != nil {
+	oauthScope := sc.child("oauth", obj["oauth"])
+	if oauthErr := classifyOAuthKeys(where, oauthScope, obj["oauth"], req); oauthErr != nil {
 		return nil, oauthErr
 	}
 	var spec pasteServer
@@ -258,9 +336,7 @@ func translateServer(rawName string, obj map[string]json.RawMessage, raw json.Ra
 		Enabled:      spec.Disabled == nil || !*spec.Disabled,
 		WaitForReady: spec.WaitForReady != nil && *spec.WaitForReady,
 	}
-	if spec.Timeout != nil {
-		sv.TimeoutMS = *spec.Timeout
-	}
+	sv.TimeoutMS = pastedTimeout(&spec, sc, req)
 	if spec.VersionNegotiation != nil {
 		sv.VersionNegotiation = versionNegotiation(*spec.VersionNegotiation)
 	}
@@ -271,37 +347,79 @@ func translateServer(rawName string, obj map[string]json.RawMessage, raw json.Ra
 			return nil, err
 		}
 		sv.Prewarm = prewarmFor(&spec, sv.Command)
-		noteStdioOAuthKeys(where, obj, req)
+		noteStdioOAuthKeys(sc, obj, req)
 	case transportHTTP, transportSSE:
-		if err := fillRemote(sv, &spec, where, obj["headers"]); err != nil {
+		if err := fillRemote(sv, &spec, where, oauthScope, obj["headers"], req); err != nil {
 			return nil, err
 		}
 	}
 	return sv, nil
 }
 
-// fillRemote sets a url server's address, headers and OAuth client from its block.
-func fillRemote(sv *Server, spec *pasteServer, where string, headers json.RawMessage) error {
+// pastedTimeout is KAS's precedence: `timeout`, else a `timeoutMs` of at least 1 (KAS's own
+// minimum), else none. A `timeoutMs` not taken is noted.
+func pastedTimeout(spec *pasteServer, sc noteScope, req *importRequest) int {
+	switch {
+	case spec.Timeout != nil:
+		if spec.TimeoutMs != nil {
+			req.note(sc, "timeoutMs", `Kiro uses "timeout" instead.`)
+		}
+		return *spec.Timeout
+	case spec.TimeoutMs == nil:
+		return 0
+	case *spec.TimeoutMs >= 1:
+		return *spec.TimeoutMs
+	default:
+		req.note(sc, "timeoutMs", "Below 1, so Kiro uses its default timeout instead.")
+		return 0
+	}
+}
+
+// fillRemote sets a url server's address, headers and OAuth client from its block; oauthScope is its `oauth` object.
+func fillRemote(sv *Server, spec *pasteServer, where string, oauthScope noteScope, headers json.RawMessage, req *importRequest) error {
 	sv.URL = strings.TrimSpace(*spec.URL)
 	var err error
 	if sv.Headers, err = decodeOrderedPairs(where+"headers", headers); err != nil {
 		return err
 	}
+	scopes := spec.OAuthScopes
 	if spec.OAuth != nil {
 		sv.OAuthClientID = strings.TrimSpace(spec.OAuth.ClientID)
 		sv.OAuthClientMetadataURL = strings.TrimSpace(spec.OAuth.ClientMetadataURL)
 		sv.OAuthRedirectURI = strings.TrimSpace(spec.OAuth.RedirectURI)
 		sv.OAuthMode = oauthMode(spec.OAuth.Mode)
+		scopes = nestedScopes(spec, oauthScope, req)
 	}
-	sv.OAuthScopes = trimmedScopes(spec.OAuthScopes)
+	sv.OAuthScopes = trimmedScopes(scopes)
 	return nil
 }
 
+// nestedScopes is KAS's scope precedence: the server's `oauthScopes`, else `oauth.oauthScopes`,
+// else `oauth.scopes`. An explicit empty list counts as set, as KAS tests for undefined only;
+// each nested list not taken is noted.
+func nestedScopes(spec *pasteServer, oauthScope noteScope, req *importRequest) []string {
+	winner := `"oauthScopes"`
+	scopes := spec.OAuthScopes
+	for _, c := range []struct {
+		key  string
+		list []string
+	}{{keyOAuthScopes, spec.OAuth.OAuthScopes}, {"scopes", spec.OAuth.Scopes}} {
+		switch {
+		case c.list == nil:
+		case scopes == nil:
+			scopes, winner = c.list, strconv.Quote("oauth."+c.key)
+		default:
+			req.note(oauthScope, c.key, fmt.Sprintf("Kiro uses %s instead.", winner))
+		}
+	}
+	return scopes
+}
+
 // noteStdioOAuthKeys reports the OAuth keys a local server's block carries, which translateServer drops.
-func noteStdioOAuthKeys(where string, obj map[string]json.RawMessage, req *importRequest) {
-	for _, key := range []string{"oauth", "oauthScopes"} {
+func noteStdioOAuthKeys(sc noteScope, obj map[string]json.RawMessage, req *importRequest) {
+	for _, key := range []string{"oauth", keyOAuthScopes} {
 		if _, ok := obj[key]; ok {
-			req.notes = append(req.notes, fmt.Sprintf("%signoring %q: only a server with a url signs in with OAuth", where, key))
+			req.note(sc, key, "Not stored: only a server with a url signs in with OAuth.")
 		}
 	}
 }
@@ -339,21 +457,22 @@ func prewarmFor(spec *pasteServer, command string) bool {
 	return command == "npx"
 }
 
-// importName maps a block key (or a single object's "name") onto a name
-// the store will accept. An adjustment is REPORTED rather than made
-// silently: the name becomes the agent's tool prefix, so a user whose
-// README said one thing and whose tool list says another needs to be
-// told.
-func importName(raw string, req *importRequest) (string, error) {
+// importName maps a block key (or a single object's "name") onto a name the store will accept. An adjustment is
+// REPORTED rather than made silently: the name becomes the agent's tool prefix, so a user whose README said one thing
+// and whose tool list says another needs to be told. namePos is where the name sits in the paste.
+func importName(raw string, namePos []int, req *importRequest) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	clean := sanitizeName(trimmed)
 	if clean == "" {
 		return "", fmt.Errorf("server %q: name needs at least one letter", trimmed)
 	}
 	if clean != trimmed {
-		req.notes = append(req.notes,
-			fmt.Sprintf("named %q %q: a name starts with a letter and holds letters, digits, %q and %q",
-				trimmed, clean, "_", "-"))
+		req.notes = append(req.notes, importNote{
+			Key: trimmed,
+			Text: fmt.Sprintf("Named %q: a name starts with a letter and holds letters, digits, %q and %q.",
+				clean, "_", "-"),
+			pos: namePos,
+		})
 	}
 	return clean, nil
 }
@@ -387,7 +506,7 @@ func sanitizeName(raw string) string {
 // of being dropped into an empty credential. Absent or null yields nothing to
 // classify; a non-object is named here rather than surfacing later as a decode
 // error about the whole server.
-func classifyOAuthKeys(where string, raw json.RawMessage, req *importRequest) error {
+func classifyOAuthKeys(where string, oauthScope noteScope, raw json.RawMessage, req *importRequest) error {
 	if len(raw) == 0 {
 		return nil
 	}
@@ -398,24 +517,22 @@ func classifyOAuthKeys(where string, raw json.RawMessage, req *importRequest) er
 	if _, ok := obj[pasteOAuthSecretKey]; ok {
 		return fmt.Errorf("%soauth: %q is not supported. %s", where, pasteOAuthSecretKey, confidentialClientRefusal)
 	}
-	return classifyKeys(where+"oauth: ", obj, pasteOAuthKeys, nil, req)
+	return classifyKeys(where+"oauth: ", oauthScope, obj, pasteOAuthKeys, nil, req)
 }
 
-// classifyKeys splits an object's keys into the ones the translator consumes,
-// the ones it recognises and cannot store (recorded as a note), and the rest —
-// which is a typo, and is named. `where` prefixes the message with the server
-// it came from; it is empty at the top level.
-func classifyKeys(where string, obj map[string]json.RawMessage, consumed []string, ignored map[string]string, req *importRequest) error {
+// classifyKeys splits an object's keys into the ones the translator consumes, the ones it recognises and cannot
+// store (a note in sc), and the rest, which is a typo and is named. `where` prefixes the message with the server it
+// came from; it is empty at the top level.
+func classifyKeys(where string, sc noteScope, obj map[string]json.RawMessage, consumed []string, ignored map[string]string, req *importRequest) error {
 	if len(obj) > maxImportBlockKeys {
 		return fmt.Errorf("%s%d keys (max %d)", where, len(obj), maxImportBlockKeys)
 	}
 	unknown := make([]string, 0, len(obj))
-	notes := make([]string, 0, len(obj))
 	for key := range obj {
 		switch {
 		case slices.Contains(consumed, key):
 		case ignored[key] != "":
-			notes = append(notes, fmt.Sprintf("%signoring %q: %s", where, key, ignored[key]))
+			req.note(sc, key, ignored[key])
 		default:
 			unknown = append(unknown, key)
 		}
@@ -427,8 +544,6 @@ func classifyKeys(where string, obj map[string]json.RawMessage, consumed []strin
 		return fmt.Errorf("%sunknown key %q%s", where, unknown[0],
 			suggestKey(unknown[0], consumed, ignored))
 	}
-	slices.Sort(notes)
-	req.notes = append(req.notes, notes...)
 	return nil
 }
 

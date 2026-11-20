@@ -177,6 +177,11 @@ const (
 	// EventKnowledgeIndexing reports a custom agent's own knowledge base being
 	// indexed, chat-scoped. The Settings list never shows these bases.
 	EventKnowledgeIndexing EventType = "knowledge_indexing"
+	// EventCodeIndexStatus is one workspace root's code-index status (GET /api/code-index's row).
+	EventCodeIndexStatus EventType = "code_index_status"
+	// EventJobUpdate is one background job's state change (GET /api/jobs's row), chat-scoped: the row's chat is the
+	// event's ChatID.
+	EventJobUpdate EventType = "job_update"
 	// EventRecipesChanged is an empty refetch signal for GET /api/recipes.
 	EventRecipesChanged EventType = "recipes_changed"
 	// EventPowersChanged is an empty refetch signal for GET /api/powers.

@@ -24,7 +24,7 @@ vi.mock(import("./actions/index.js"), async (importOriginal) => {
   };
 });
 
-import { credentialSummary, mountRow, renderMeta } from "./mcp-ui.js";
+import { credentialSummary, ignoredText, mountRow, renderMeta } from "./mcp-ui.js";
 import type { KeyPair, RuntimeStatus, Server } from "./mcp-state.js";
 import { SECRET_MASK, mcpState } from "./mcp-state.js";
 import type { MCPIdentityProviderStatus, MCPServerStatus } from "./wire/types.gen.js";
@@ -289,4 +289,19 @@ describe("the organization Sign in on a row", () => {
   function needsRow(name: string, state: "needs_org_sign_in" | "failed"): MCPServerStatus {
     return { name, origin: "user", state, error: "sign in first" };
   }
+});
+
+describe("the ignored-keys line", () => {
+  it("names every key kiro-cli ignores, in its order, and is empty without any", () => {
+    expect(ignoredText(status({ ignoredFields: ["autoApprove", "disabledTool"] }))).toBe(
+      "Kiro ignores: autoApprove, disabledTool",
+    );
+    expect(ignoredText(status())).toBe("");
+  });
+
+  it("stays off the meta line, which ellipsises", () => {
+    expect(renderMeta(server(), status({ ignoredFields: ["autoApprove"] }))).toBe(
+      "no credentials · https://ex/mcp",
+    );
+  });
 });

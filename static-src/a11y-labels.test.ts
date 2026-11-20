@@ -357,7 +357,7 @@ describe("a11y: the agent engine controls", () => {
       paintEngineRows(null);
       const hints = [...host.querySelectorAll(".engine-restart-hint")];
       // One per engine-wide row; a control id the markup lost would leave its row without one.
-      expect(hints).toHaveLength(16);
+      expect(hints).toHaveLength(17);
       for (const hint of hints) {
         expect(hint.textContent).toContain("Applies after the agent engine restarts.");
         const control = host.querySelector(`[aria-describedby~="${hint.id}"]`);

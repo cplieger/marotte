@@ -32,7 +32,13 @@ import {
   insertConfiguredEntry,
 } from "../mcp-state.js";
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
-import { toggleServer, deleteServer, importServers, summariseImport } from "./mcp.js";
+import {
+  toggleServer,
+  deleteServer,
+  importServers,
+  summariseImport,
+  decodeImportResult,
+} from "./mcp.js";
 import type { ImportServersResult } from "./mcp.js";
 import type { Server } from "../mcp-state.js";
 
@@ -131,49 +137,77 @@ describe("importServers", () => {
   });
 });
 
+describe("decodeImportResult", () => {
+  it("keeps each well-formed note in order and drops the rest", () => {
+    const got = decodeImportResult({
+      results: [{ name: "x", outcome: "created" }, { outcome: "rewritten" }],
+      notes: [
+        { server: "x", key: "cwd", text: "Not stored." },
+        { key: 3, text: "bad key" },
+        "a bare string",
+        { server: "", key: "$schema", text: "Not stored." },
+      ],
+    });
+    expect(got).toEqual({
+      results: [{ outcome: "created" }],
+      notes: [
+        { server: "x", key: "cwd", text: "Not stored." },
+        { key: "$schema", text: "Not stored." },
+      ],
+    });
+  });
+
+  it("reads a body with neither list as empty", () => {
+    expect(decodeImportResult(null)).toEqual({ results: [], notes: [] });
+  });
+});
+
 describe("summariseImport", () => {
   const cases: { label: string; input: ImportServersResult | null; want: string }[] = [
     {
       label: "one created",
-      input: { results: [{ outcome: "created" }] },
+      input: { results: [{ outcome: "created" }], notes: [] },
       want: "Connected 1 integration.",
     },
     {
       label: "several created",
       input: {
         results: [{ outcome: "created" }, { outcome: "created" }],
+        notes: [],
       },
       want: "Connected 2 integrations.",
     },
     {
       label: "a re-paste says so rather than claiming a rewrite",
-      input: { results: [{ outcome: "unchanged" }] },
+      input: { results: [{ outcome: "unchanged" }], notes: [] },
       want: "1 already configured.",
     },
     {
       label: "mixed",
       input: {
         results: [{ outcome: "created" }, { outcome: "unchanged" }],
+        notes: [],
       },
       want: "Connected 1 integration. 1 already configured.",
     },
     {
-      label: "one note is quoted verbatim, because it names the key",
-      input: {
-        results: [{ outcome: "created" }],
-        notes: [`server "a": ignoring "timeout": marotte has no timeout field`],
-      },
-      want: `Connected 1 integration. server "a": ignoring "timeout": marotte has no timeout field.`,
+      label: "one note is counted, since the box lists it",
+      input: { results: [{ outcome: "created" }], notes: [{ key: "cwd", text: "Not stored." }] },
+      want: "Connected 1 integration. 1 key was not taken as pasted.",
     },
     {
       label: "several notes are counted",
       input: {
         results: [{ outcome: "created" }],
-        notes: ["one", "two", "three"],
+        notes: [
+          { key: "a", text: "x" },
+          { key: "b", text: "y" },
+          { key: "c", text: "z" },
+        ],
       },
-      want: "Connected 1 integration. 3 keys marotte does not store were ignored.",
+      want: "Connected 1 integration. 3 keys were not taken as pasted.",
     },
-    { label: "nothing", input: { results: [] }, want: "Nothing to connect." },
+    { label: "nothing", input: { results: [], notes: [] }, want: "Nothing to connect." },
     { label: "null result", input: null, want: "Nothing to connect." },
   ];
 

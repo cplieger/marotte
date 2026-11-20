@@ -18,16 +18,6 @@ func knowledgeEnabled(d settings.Document) bool {
 	return b
 }
 
-// An absent, invalid or unrecognised value takes settings.DefaultMemoryMode.
-func memoryPreference(d settings.Document) marotte.MemoryPreference {
-	mode := settings.DefaultMemoryMode
-	var v string
-	if d.Into(settings.KeyMemoryMode, &v) {
-		mode = v
-	}
-	return settings.MemoryPreferenceFor(mode)
-}
-
 // sessionFeatures resolves the stored Agent-capabilities settings a session door sends KAS; an absent or invalid value
 // takes its default. readSessionSettings applies the administrator locks.
 func sessionFeatures(d settings.Document) marotte.SessionFeatures {
@@ -56,6 +46,7 @@ func sessionFeatures(d settings.Document) marotte.SessionFeatures {
 		f.AwarenessMode = settingString(d, settings.KeyChatAwarenessMode, settings.ValidChatAwarenessMode)
 	}
 	f.WorkValidation = settingString(d, settings.KeyWorkValidation, settings.ValidFeatureChoice)
+	f.BackgroundJobs = settingBool(d, settings.KeyBackgroundJobs)
 	return f
 }
 
@@ -63,6 +54,7 @@ func sessionFeatures(d settings.Document) marotte.SessionFeatures {
 func engineFeatures(d settings.Document) marotte.EngineFeatures {
 	return marotte.EngineFeatures{
 		SteeringReminders:        settingBool(d, settings.KeySteeringReminders),
+		CodeAnalysis:             settingBool(d, settings.KeyCodeAnalysis),
 		InfraSafety:              settingString(d, settings.KeyCloudFormationSafety, settings.ValidCloudFormationChoice),
 		AutoRouting:              settingString(d, settings.KeyAutoRouting, settings.ValidFeatureChoice),
 		AutoDelegation:           settingString(d, settings.KeyAutoDelegation, settings.ValidFeatureChoice),

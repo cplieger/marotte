@@ -122,7 +122,7 @@ function mountBand(states: readonly string[]): {
   box.appendChild(ta);
 
   const barHost = document.createElement("div");
-  barHost.className = "run-bar-host";
+  barHost.className = "tracker-host";
   barHost.append(bar);
   const area = document.createElement("div");
   area.className = "holding-area";
@@ -295,16 +295,16 @@ describe("the run bar's box", () => {
     const form = document.createElement("form");
     form.className = "bottom-bar";
     const barHost = document.createElement("div");
-    barHost.className = "run-bar-host";
+    barHost.className = "tracker-host";
     const bar = document.createElement("ul");
     bar.className = "run-bar";
     if (fold) {
       const foldEl = document.createElement("div");
-      foldEl.className = "run-bar-fold";
+      foldEl.className = "tracker-fold";
       const btn = document.createElement("div");
       btn.setAttribute("role", "button");
       btn.tabIndex = 0;
-      btn.className = "run-bar-open run-bar-toggle";
+      btn.className = "tracker-toggle";
       btn.setAttribute("aria-expanded", "true");
       btn.textContent = `${String(runs.length)} workflows running`;
       foldEl.append(btn);
@@ -386,7 +386,7 @@ describe("the run bar's box", () => {
         try {
           for (const width of [1000, 700, 390]) {
             const bar = mountRows(RUNS.slice(0, 2), true, width, true);
-            const fold = bar.parentElement!.querySelector<HTMLElement>(".run-bar-fold")!;
+            const fold = bar.parentElement!.querySelector<HTMLElement>(".tracker-fold")!;
             // A row rises 4px into place as it mounts (`@starting-style`); measure where it settles.
             for (const a of document.getAnimations()) {
               if (a.effect?.getComputedTiming().endTime !== Infinity) {
@@ -394,7 +394,7 @@ describe("the run bar's box", () => {
               }
             }
             const toggle = fold
-              .querySelector<HTMLElement>(".run-bar-toggle")!
+              .querySelector<HTMLElement>(".tracker-toggle")!
               .getBoundingClientRect();
             const all = fold.querySelector<HTMLElement>(".run-bar-all")!.getBoundingClientRect();
             expect(toggle.height, `${String(width)}px: the toggle's hover`).toBeCloseTo(

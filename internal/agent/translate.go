@@ -57,6 +57,8 @@ func (rt *Runtime) initDispatch() {
 		// A custom agent's own knowledge bases; the Settings list never shows them.
 		methodKiroKnowledgeIndexingStarted:   rt.translator.HandleKnowledgeIndexing(marotte.KnowledgeIndexingStarted),
 		methodKiroKnowledgeIndexingCompleted: rt.translator.HandleKnowledgeIndexing(marotte.KnowledgeIndexingCompleted),
+		methodKiroJobUpdate:                  rt.translator.HandleJobUpdate,
+		methodKiroToolContentChunk:           rt.translator.HandleToolContentChunk,
 	}
 	for method, kind := range map[string]marotte.RunProgressKind{
 		methodWFNodeStart:     marotte.RunProgressNodeStart,
@@ -119,6 +121,7 @@ func (rt *Runtime) initDispatch() {
 		),
 		// The slash-menu catalog; any session's own frame feeds it.
 		marotte.ACPUpdateAvailableCommands: rt.translator.HandleAvailableCommandsUpdate,
+		translate.UserChunkKind:            rt.translator.HandleJobNotice,
 	}
 	// A parentless run's host session folds content into the run record and reads step metering; chat-only kinds are
 	// dropped, since `run:<id>` has no chat record.
@@ -271,8 +274,7 @@ func (rt *Runtime) handleSessionUpdate(ctx context.Context, chatID marotte.ChatI
 		rt.runs.askTurnEdge(attr.RunID, env.SessionID, base.Edge())
 	}
 
-	// The decode reported an unnamed kind, so a miss is a named kind this door does not consume,
-	// user_message_chunk deliberately: marotte persists user messages itself.
+	// The decode reported an unnamed kind, so a miss is a named kind this door does not consume.
 	fn, handled := rt.sessionUpdateHandlers()[base.Kind]
 	if !handled {
 		return

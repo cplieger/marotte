@@ -67,7 +67,6 @@ func readConfigDocument(d settings.Document) configDocument {
 			profile:            securityProfileID(d),
 			dirEntries:         dirs,
 			dirsInvalid:        dirsErr != nil,
-			memory:             memoryPreference(d),
 			features:           sessionFeatures(d),
 			autoCompactEnabled: enabled,
 			autoCompactPct:     pct,

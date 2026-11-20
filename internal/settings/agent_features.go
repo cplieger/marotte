@@ -61,6 +61,8 @@ const (
 	defaultSpecPlanning             = SpecPlanningOff
 	defaultSpecPlanningAskFirst     = false
 	defaultSteeringReminders        = false
+	defaultCodeAnalysis             = false
+	defaultBackgroundJobs           = false
 	DefaultWorkflowsEnabled         = true
 	defaultChatMessaging            = false
 	defaultChatAwareness            = false
@@ -220,6 +222,8 @@ var agentPatchChecks = map[string]func(json.RawMessage) error{
 	},
 	KeySpecPlanningAskFirst: func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
 	KeySteeringReminders:    func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
+	KeyCodeAnalysis:         func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
+	KeyBackgroundJobs:       func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
 	KeyWorkflowsEnabled:     func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
 	KeyChatMessaging:        func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },
 	KeyChatAwareness:        func(r json.RawMessage) error { var b bool; return decodeInto(&b, r) },

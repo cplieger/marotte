@@ -2339,11 +2339,15 @@ describe("the dock's own signal repaints the launching chat's row", () => {
     dispose();
   });
 
-  it("reads the same two inputs chat.ts's own row effect reads", () => {
-    // The replica stands in for `chatRowEffect`: both reads must be unconditional and ahead of every
-    // early return in chat.ts, which subscribes a BACKGROUND chat's row.
-    expect(chatSrc).toContain("hasPendingDecision(chatID)");
-    expect(chatSrc).toContain("tabStatusFor(s, pendingAsk)");
+  it("reads the inputs chat.ts's own row effect and row seed read", () => {
+    // The replica stands in for `chatRowEffect`: its reads must be unconditional and ahead of every
+    // early return in chat.ts, which subscribes a BACKGROUND chat's row; `chatTabDot` seeds a row from
+    // the same three.
+    expect(chatSrc).toContain(
+      "const pendingAsk = hasPendingDecision(chatID);\n    const job = chatRunsJob(chatID);\n    if (s === undefined) {",
+    );
+    expect(chatSrc).toContain("tabStatusFor(s, pendingAsk, job)");
+    expect(chatSrc).toContain("tabStatusFor(get(id), hasPendingDecision(id), chatRunsJob(id))");
     expect(chatSrc).toContain("setTabStatus(tabID,");
   });
 });

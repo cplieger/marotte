@@ -171,10 +171,6 @@ const (
 	// before applying a file-touching turn's writes; `true` (the default) applies them as they
 	// happen. KAS persists it across session/load, so marotte sets it once at session/new.
 	ConfigOptionAutopilot = "autopilot"
-	// ConfigOptionMemoryReflection is background memory learning. Its value is the
-	// STRING "on" or "off" (a JSON boolean is a silent no-op), and it is the one
-	// half of the memory preference KAS lets a client change on a live session.
-	ConfigOptionMemoryReflection = "memoryReflection"
 	// ConfigOptionThinking is extended thinking, present only for a model whose
 	// choice carries `_meta.kiro.thinkingToggleable`. Its value is the STRING
 	// ThinkingOn or ThinkingOff; turning it off caps a high effort tier.
@@ -238,6 +234,12 @@ func TextBlock(content string) map[string]any {
 // parameter maps. Single source of truth; agent and command packages
 // reference this constant instead of bare "sessionId" literals.
 const KeySessionID = "sessionId"
+
+// KeyMeta is the ACP wire key for a call's `_meta` object, and KeyKiro the key of Kiro's own block inside it.
+const (
+	KeyMeta = "_meta"
+	KeyKiro = "kiro"
+)
 
 // KeyPrompt is the ACP wire key for a `session/prompt` call's content-block
 // array. KeySessionID's sibling, for the same reason: two senders build that

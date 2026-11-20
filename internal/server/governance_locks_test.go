@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -253,18 +254,18 @@ func TestReadKiroSettings_ReportsAHeldUnsetValueAsUnset(t *testing.T) {
 func TestSettingsWrite_ReopensOpenChatsWhenASessionSettingMoved(t *testing.T) {
 	dir := t.TempDir()
 	eng := &fakeEngine{sessionSettings: func(ctx context.Context) string {
-		var mode string
-		settings.FieldInto(ctx, dir, settings.KeyMemoryMode, &mode)
-		return mode
+		var on bool
+		settings.FieldInto(ctx, dir, settings.KeyBackgroundJobs, &on)
+		return strconv.FormatBool(on)
 	}}
 	s := &Server{agent: eng, push: &testPush{}, configDir: dir}
 	eng.settle(t.Context())
 
-	patchSettings(t.Context(), t, s, `{"`+settings.KeyMemoryMode+`":"off"}`)
+	patchSettings(t.Context(), t, s, `{"`+settings.KeyBackgroundJobs+`":true}`)
 	if eng.reopens != 1 {
 		t.Errorf("a PATCH that moved a session setting reopened %d times, want 1", eng.reopens)
 	}
-	patchSettings(t.Context(), t, s, `{"`+settings.KeyMemoryMode+`":"off"}`)
+	patchSettings(t.Context(), t, s, `{"`+settings.KeyBackgroundJobs+`":true}`)
 	if eng.reopens != 1 {
 		t.Errorf("a PATCH that rewrote the same value reopened (%d reopens)", eng.reopens)
 	}

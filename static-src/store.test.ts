@@ -937,6 +937,18 @@ describe("tabStatusFor", () => {
   it("keeps a chat that has never initiated on the idle floor", () => {
     expect(tabStatusFor(idleChat())).toBe("idle");
   });
+
+  it("marks a chat whose reply ended but whose background job runs as background, over its outcome", () => {
+    expect(tabStatusFor(idleChat("failed"), false, true)).toBe("background");
+    expect(tabStatusFor(idleChat("completed"), false, true)).toBe("background");
+  });
+
+  it("keeps a running reply and a question ahead of a background job", () => {
+    resetStore("a");
+    openTurnIn("a", "t1");
+    expect(tabStatusFor(get("a"), false, true)).toBe("working");
+    expect(tabStatusFor(idleChat(), true, true)).toBe("input");
+  });
 });
 
 describe("runStatusFor", () => {

@@ -106,6 +106,7 @@ const credentialsRejectedReason = "the server rejected its credentials (check it
 // v3MCPServer is one entry in the _kiro/mcp/status servers list. connected carries the
 // tool, prompt and resource lists; failed carries errorMessage, failedAuthorization and,
 // for OAuth sign-in, authorizationUrl. KAS reports its internal "unavailable" as failed.
+// Every state may carry ignoredFields, the config keys KAS read and did not use.
 type v3MCPServer struct {
 	// EnterpriseAuthorization is present on a server signing in through the organization provider: empty when
 	// connected, {reason, serverDescription?} when failed.
@@ -118,6 +119,7 @@ type v3MCPServer struct {
 	Tools                   []struct {
 		Name string `json:"name"`
 	} `json:"tools"`
+	IgnoredFields       []string                `json:"ignoredFields"`
 	Prompts             []v3MCPPrompt           `json:"prompts"`
 	Resources           []v3MCPResource         `json:"resources"`
 	ResourceTemplates   []v3MCPResourceTemplate `json:"resourceTemplates"`
@@ -219,6 +221,7 @@ const (
 // MCPServerReport is one server as its session's frame reports it. Error is set for
 // MCPReportFailed and MCPReportNeedsOrgSignIn, AuthorizationURL for MCPReportNeedsAuth, the four lists for MCPReportConnected.
 // Enterprise is set on a server signing in through the organization provider, empty when connected.
+// IgnoredFields, in any state, names the config keys KAS reported it did not use.
 type MCPServerReport struct {
 	Name              string
 	Source            marotte.MCPSource
@@ -226,6 +229,7 @@ type MCPServerReport struct {
 	AuthorizationURL  string
 	Enterprise        *marotte.MCPEnterpriseAuth
 	Tools             []string
+	IgnoredFields     []string
 	Prompts           []marotte.MCPPromptInfo
 	Resources         []marotte.MCPResourceInfo
 	ResourceTemplates []marotte.MCPResourceTemplateInfo
@@ -279,7 +283,9 @@ func (s *v3MCPServer) report() (MCPServerReport, bool) {
 	if s.Name == "" {
 		return MCPServerReport{}, false
 	}
-	r := MCPServerReport{Name: s.Name, Source: s.source(), Enterprise: s.EnterpriseAuthorization.auth()}
+	r := MCPServerReport{
+		Name: s.Name, Source: s.source(), Enterprise: s.EnterpriseAuthorization.auth(), IgnoredFields: displayNames(s.IgnoredFields),
+	}
 	switch s.Status {
 	case "connected":
 		r.State = MCPReportConnected
@@ -301,6 +307,18 @@ func (s *v3MCPServer) report() (MCPServerReport, bool) {
 		r.State = MCPReportConnecting
 	}
 	return r, true
+}
+
+// displayNames runs each name through displayText, dropping the ones left blank. KAS bounds
+// ignoredFields at 20 names of 64 characters, so no cap is added here.
+func displayNames(in []string) []string {
+	var out []string
+	for _, n := range in {
+		if n = strings.TrimSpace(displayText(n)); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 func mcpToolNames(tools []struct {

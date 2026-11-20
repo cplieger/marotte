@@ -72,6 +72,8 @@ type MCPServerStatus struct {
 	Prompts           []MCPPromptInfo           `json:"prompts,omitempty"`
 	Resources         []MCPResourceInfo         `json:"resources,omitempty"`
 	ResourceTemplates []MCPResourceTemplateInfo `json:"resource_templates,omitempty"`
+	// IgnoredFields is the config keys kiro-cli reported it did not use for this server.
+	IgnoredFields []string `json:"ignored_fields,omitempty"`
 	// Relayed stops a reload or second device offering the paste box for a spent code.
 	Relayed bool `json:"relayed,omitempty"`
 	// Shadows keeps the client from putting this status on marotte's config row.

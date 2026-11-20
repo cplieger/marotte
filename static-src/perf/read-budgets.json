@@ -10,6 +10,14 @@
           "count": 1,
           "maxBytes": 466
         },
+        "GET /api/code-index": {
+          "count": 1,
+          "maxBytes": 35
+        },
+        "GET /api/jobs": {
+          "count": 1,
+          "maxBytes": 11
+        },
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
@@ -24,7 +32,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1667
+          "maxBytes": 1715
         },
         "GET /api/whoami": {
           "count": 1,
@@ -60,7 +68,7 @@
         },
         "GET /api/engine": {
           "count": 1,
-          "maxBytes": 301
+          "maxBytes": 300
         },
         "GET /api/config-template": {
           "count": 1,
@@ -108,10 +116,6 @@
           "count": 1,
           "maxBytes": 1681
         },
-        "POST /api/events/view": {
-          "count": 1,
-          "maxBytes": 0
-        },
         "GET /api/chats/{chat}/turns": {
           "count": 1,
           "maxBytes": 4429
@@ -119,6 +123,10 @@
         "GET /api/git/status-all": {
           "count": 1,
           "maxBytes": 5046
+        },
+        "POST /api/events/view": {
+          "count": 1,
+          "maxBytes": 0
         },
         "POST /api/events/alive": {
           "count": 1,
@@ -173,6 +181,14 @@
           "count": 1,
           "maxBytes": 466
         },
+        "GET /api/code-index": {
+          "count": 1,
+          "maxBytes": 35
+        },
+        "GET /api/jobs": {
+          "count": 1,
+          "maxBytes": 11
+        },
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
@@ -187,7 +203,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1667
+          "maxBytes": 1715
         },
         "GET /api/whoami": {
           "count": 1,
@@ -223,7 +239,7 @@
         },
         "GET /api/engine": {
           "count": 1,
-          "maxBytes": 301
+          "maxBytes": 300
         },
         "GET /api/config-template": {
           "count": 1,
@@ -336,6 +352,14 @@
           "count": 1,
           "maxBytes": 466
         },
+        "GET /api/code-index": {
+          "count": 1,
+          "maxBytes": 35
+        },
+        "GET /api/jobs": {
+          "count": 1,
+          "maxBytes": 11
+        },
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
@@ -350,7 +374,7 @@
         },
         "GET /api/settings": {
           "count": 2,
-          "maxBytes": 1667
+          "maxBytes": 1715
         },
         "GET /api/whoami": {
           "count": 1,
@@ -386,7 +410,7 @@
         },
         "GET /api/engine": {
           "count": 1,
-          "maxBytes": 301
+          "maxBytes": 300
         },
         "GET /api/config-template": {
           "count": 1,
@@ -531,6 +555,14 @@
           "count": 1,
           "maxBytes": 466
         },
+        "GET /api/code-index": {
+          "count": 1,
+          "maxBytes": 35
+        },
+        "GET /api/jobs": {
+          "count": 1,
+          "maxBytes": 11
+        },
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
@@ -545,7 +577,7 @@
         },
         "GET /api/settings": {
           "count": 3,
-          "maxBytes": 1667
+          "maxBytes": 1715
         },
         "GET /api/whoami": {
           "count": 1,
@@ -581,7 +613,7 @@
         },
         "GET /api/engine": {
           "count": 1,
-          "maxBytes": 301
+          "maxBytes": 300
         },
         "GET /api/config-template": {
           "count": 1,
@@ -729,7 +761,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1667
+          "maxBytes": 1715
         }
       },
       "topics": []
@@ -746,6 +778,14 @@
           "count": 1,
           "maxBytes": 466
         },
+        "GET /api/code-index": {
+          "count": 1,
+          "maxBytes": 35
+        },
+        "GET /api/jobs": {
+          "count": 1,
+          "maxBytes": 11
+        },
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
@@ -760,7 +800,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1667
+          "maxBytes": 1715
         },
         "GET /api/whoami": {
           "count": 1,
@@ -796,7 +836,7 @@
         },
         "GET /api/engine": {
           "count": 1,
-          "maxBytes": 301
+          "maxBytes": 300
         },
         "GET /api/config-template": {
           "count": 1,
@@ -842,7 +882,7 @@
         },
         "GET /api/git/status-all?paths": {
           "count": 12,
-          "maxBytes": 5049
+          "maxBytes": 5050
         },
         "GET /api/git/status-all": {
           "count": 13,
@@ -879,7 +919,7 @@
         },
         "GET /api/git/status-all?paths": {
           "count": 12,
-          "maxBytes": 5049
+          "maxBytes": 5050
         },
         "GET /api/git/status-all": {
           "count": 13,
@@ -917,6 +957,14 @@
           "count": 1,
           "maxBytes": 466
         },
+        "GET /api/code-index": {
+          "count": 1,
+          "maxBytes": 35
+        },
+        "GET /api/jobs": {
+          "count": 1,
+          "maxBytes": 11
+        },
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
@@ -931,7 +979,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1667
+          "maxBytes": 1715
         },
         "GET /api/whoami": {
           "count": 1,
@@ -967,7 +1015,7 @@
         },
         "GET /api/engine": {
           "count": 1,
-          "maxBytes": 301
+          "maxBytes": 300
         },
         "GET /api/config-template": {
           "count": 1,
@@ -1104,6 +1152,14 @@
           "count": 1,
           "maxBytes": 466
         },
+        "GET /api/code-index": {
+          "count": 1,
+          "maxBytes": 35
+        },
+        "GET /api/jobs": {
+          "count": 1,
+          "maxBytes": 11
+        },
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
@@ -1118,7 +1174,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1667
+          "maxBytes": 1715
         },
         "GET /api/whoami": {
           "count": 1,
@@ -1154,7 +1210,7 @@
         },
         "GET /api/engine": {
           "count": 1,
-          "maxBytes": 301
+          "maxBytes": 300
         },
         "GET /api/config-template": {
           "count": 1,
@@ -1188,13 +1244,13 @@
           "count": 1,
           "maxBytes": 0
         },
-        "GET /api/forges/inventory": {
-          "count": 1,
-          "maxBytes": 69179
-        },
         "GET /api/forges/{forge}/repos": {
           "count": 1,
           "maxBytes": 4058
+        },
+        "GET /api/forges/inventory": {
+          "count": 1,
+          "maxBytes": 69179
         }
       },
       "topics": []
@@ -1283,6 +1339,14 @@
           "count": 1,
           "maxBytes": 466
         },
+        "GET /api/code-index": {
+          "count": 1,
+          "maxBytes": 35
+        },
+        "GET /api/jobs": {
+          "count": 1,
+          "maxBytes": 11
+        },
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
@@ -1297,7 +1361,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1667
+          "maxBytes": 1715
         },
         "GET /api/whoami": {
           "count": 1,
@@ -1333,7 +1397,7 @@
         },
         "GET /api/engine": {
           "count": 1,
-          "maxBytes": 301
+          "maxBytes": 300
         },
         "GET /api/config-template": {
           "count": 1,
@@ -1446,6 +1510,14 @@
           "count": 1,
           "maxBytes": 466
         },
+        "GET /api/code-index": {
+          "count": 1,
+          "maxBytes": 35
+        },
+        "GET /api/jobs": {
+          "count": 1,
+          "maxBytes": 11
+        },
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
@@ -1460,7 +1532,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1667
+          "maxBytes": 1715
         },
         "GET /api/whoami": {
           "count": 1,
@@ -1496,7 +1568,7 @@
         },
         "GET /api/engine": {
           "count": 1,
-          "maxBytes": 301
+          "maxBytes": 300
         },
         "GET /api/config-template": {
           "count": 1,
@@ -1605,6 +1677,14 @@
           "count": 1,
           "maxBytes": 466
         },
+        "GET /api/code-index": {
+          "count": 1,
+          "maxBytes": 35
+        },
+        "GET /api/jobs": {
+          "count": 1,
+          "maxBytes": 11
+        },
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
@@ -1619,7 +1699,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1667
+          "maxBytes": 1715
         },
         "GET /api/whoami": {
           "count": 1,
@@ -1655,7 +1735,7 @@
         },
         "GET /api/engine": {
           "count": 1,
-          "maxBytes": 301
+          "maxBytes": 300
         },
         "GET /api/config-template": {
           "count": 1,
@@ -1704,7 +1784,7 @@
     "live": {
       "routes": {
         "GET /api/runs/{run}?view=glance": {
-          "count": 55,
+          "count": 44,
           "maxBytes": 61788
         }
       },
@@ -1760,6 +1840,14 @@
           "count": 1,
           "maxBytes": 466
         },
+        "GET /api/code-index": {
+          "count": 1,
+          "maxBytes": 35
+        },
+        "GET /api/jobs": {
+          "count": 1,
+          "maxBytes": 11
+        },
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
@@ -1774,7 +1862,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1667
+          "maxBytes": 1715
         },
         "GET /api/whoami": {
           "count": 1,
@@ -1810,7 +1898,7 @@
         },
         "GET /api/engine": {
           "count": 1,
-          "maxBytes": 301
+          "maxBytes": 300
         },
         "GET /api/config-template": {
           "count": 1,
@@ -1867,7 +1955,7 @@
     "live": {
       "routes": {
         "GET /api/runs/{run}?view=glance": {
-          "count": 51,
+          "count": 38,
           "maxBytes": 61788
         }
       },
@@ -1935,6 +2023,14 @@
           "count": 1,
           "maxBytes": 466
         },
+        "GET /api/code-index": {
+          "count": 1,
+          "maxBytes": 35
+        },
+        "GET /api/jobs": {
+          "count": 1,
+          "maxBytes": 11
+        },
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
@@ -1949,7 +2045,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1667
+          "maxBytes": 1715
         },
         "GET /api/whoami": {
           "count": 1,
@@ -1985,7 +2081,7 @@
         },
         "GET /api/engine": {
           "count": 1,
-          "maxBytes": 301
+          "maxBytes": 300
         },
         "GET /api/config-template": {
           "count": 1,
@@ -2110,6 +2206,14 @@
           "count": 1,
           "maxBytes": 466
         },
+        "GET /api/code-index": {
+          "count": 1,
+          "maxBytes": 35
+        },
+        "GET /api/jobs": {
+          "count": 1,
+          "maxBytes": 11
+        },
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
@@ -2124,7 +2228,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1667
+          "maxBytes": 1715
         },
         "GET /api/whoami": {
           "count": 1,
@@ -2160,7 +2264,7 @@
         },
         "GET /api/engine": {
           "count": 1,
-          "maxBytes": 301
+          "maxBytes": 300
         },
         "GET /api/config-template": {
           "count": 1,
@@ -2285,6 +2389,14 @@
           "count": 1,
           "maxBytes": 466
         },
+        "GET /api/code-index": {
+          "count": 1,
+          "maxBytes": 35
+        },
+        "GET /api/jobs": {
+          "count": 1,
+          "maxBytes": 11
+        },
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
@@ -2299,7 +2411,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1667
+          "maxBytes": 1715
         },
         "GET /api/whoami": {
           "count": 1,
@@ -2335,7 +2447,7 @@
         },
         "GET /api/engine": {
           "count": 1,
-          "maxBytes": 301
+          "maxBytes": 300
         },
         "GET /api/config-template": {
           "count": 1,
@@ -2415,6 +2527,14 @@
           "count": 1,
           "maxBytes": 466
         },
+        "GET /api/code-index": {
+          "count": 1,
+          "maxBytes": 35
+        },
+        "GET /api/jobs": {
+          "count": 1,
+          "maxBytes": 11
+        },
         "GET /api/mcp/status": {
           "count": 1,
           "maxBytes": 96
@@ -2429,7 +2549,7 @@
         },
         "GET /api/settings": {
           "count": 1,
-          "maxBytes": 1667
+          "maxBytes": 1715
         },
         "GET /api/whoami": {
           "count": 1,
@@ -2465,7 +2585,7 @@
         },
         "GET /api/engine": {
           "count": 1,
-          "maxBytes": 301
+          "maxBytes": 300
         },
         "GET /api/config-template": {
           "count": 1,

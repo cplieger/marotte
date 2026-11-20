@@ -134,7 +134,7 @@ func TestConfigReads_TheReadersDecodeOnlyTheSnapshot(t *testing.T) {
 	t.Parallel()
 	const body = `{"engine_heap_mib":1024,"debug_logs":true,"agent_ignore_files":[".gitignore"],` +
 		`"terminal_command_timeout_ms":300000,"content_collection_enabled":true,"security_profile":"unrestricted",` +
-		`"additional_directories":["/data"],"memory_mode":"learn","auto_compaction_enabled":false,"auto_compact_pct":60,` +
+		`"additional_directories":["/data"],"auto_compaction_enabled":false,"auto_compact_pct":60,` +
 		`"knowledge_enabled":false,"steering_reminders_enabled":true,"cloudformation_safety_check":"enforce","auto_routing":"on",` +
 		`"auto_delegation":"on","model_fallback_enabled":true,"high_throughput_optimizations":false,` +
 		`"spec_planning":"quick","spec_planning_ask_first":true,"workflows_enabled":false,"work_validation":"off",` +

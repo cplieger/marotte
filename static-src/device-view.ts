@@ -18,6 +18,7 @@ interface DeviceView {
   shell_h: number;
   sidebar_w: number;
   run_bar_open: boolean | null;
+  jobs_open: boolean | null;
   stack_open: boolean | null;
 }
 
@@ -28,6 +29,7 @@ function empty(): DeviceView {
     shell_h: 0,
     sidebar_w: 0,
     run_bar_open: null,
+    jobs_open: null,
     stack_open: null,
   };
 }
@@ -69,6 +71,7 @@ export function loadDeviceView(): DeviceView {
     shell_h: validLength(o["shell_h"]) ?? e.shell_h,
     sidebar_w: validLength(o["sidebar_w"]) ?? e.sidebar_w,
     run_bar_open: typeof o["run_bar_open"] === "boolean" ? o["run_bar_open"] : e.run_bar_open,
+    jobs_open: typeof o["jobs_open"] === "boolean" ? o["jobs_open"] : e.jobs_open,
     stack_open: typeof o["stack_open"] === "boolean" ? o["stack_open"] : e.stack_open,
   };
 }
@@ -116,6 +119,16 @@ export function runBarOpen(): boolean | null {
 
 export function setRunBarOpen(open: boolean): void {
   writeBlob({ run_bar_open: open });
+}
+
+/** Whether the reader last opened (true) or folded (false) the chat's jobs tracker list; null when this screen never
+ *  chose. */
+export function jobsOpen(): boolean | null {
+  return loadDeviceView().jobs_open;
+}
+
+export function setJobsOpen(open: boolean): void {
+  writeBlob({ jobs_open: open });
 }
 
 /** Whether the reader last opened (true) or folded (false) a folding steer stack; null when this screen never chose. */

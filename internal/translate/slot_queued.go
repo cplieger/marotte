@@ -8,9 +8,9 @@ import (
 )
 
 // infoKindQueued is KAS's report that the chat's prompt waits for the engine's one execution slot, which another
-// session holds (AgentExecutionWaitingForActiveSlot, and getActiveSessionBlockingQueued on session/load). Only
-// Default (chat-agent) and Default v2 executions start outside the slot, so any two marotte chats in another mode
-// take turns.
+// session holds (AgentExecutionWaitingForActiveSlot, and getActiveSessionBlockingQueued on session/load). KAS alone
+// decides which executions wait (waitsForActiveSlot; from kiro-cli 3.4.0 only spec generation: Spec, Quick Spec, Bug
+// Fix), so marotte infers nothing from the chat's mode.
 const infoKindQueued = "queued"
 
 // slotWait is the wait a chat shows: the turn waiting and the session it waits for.
@@ -70,7 +70,7 @@ func (t *Translator) handleSlotQueued(ctx context.Context, chatID marotte.ChatID
 	}))
 	n := marotte.SystemNoticePayload{
 		Level:   marotte.NoticeInfo,
-		Message: "Waiting for " + holder + " to finish: outside Default and Default v2, kiro-cli runs one turn at a time, so this turn starts when that one ends.",
+		Message: "Waiting for " + holder + " to finish: kiro-cli runs one turn of this kind at a time, so this turn starts when that one ends.",
 	}
 	if c, ok := t.chats.Get(ctx, chatID); ok {
 		n.ChatName = c.Name

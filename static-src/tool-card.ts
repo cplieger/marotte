@@ -2,7 +2,9 @@
 
 import type { ToolStatus, TextSpan } from "./types.js";
 import type { BuildToolCardOpts } from "./tool-card-opts.js";
-import { escText, truncate, windowOutput, windowSpans } from "./strings.js";
+import { escText, formatElapsed, truncate, windowOutput, windowSpans } from "./strings.js";
+import { relativeTime } from "./relative-time.js";
+import { JOB_OUTCOME_WORDS } from "./job-state.js";
 import { renderOutput } from "./output-render.js";
 import { fileIcon, toolIcon, outcomeIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
@@ -33,7 +35,7 @@ import {
   type ToolRenderInfo,
 } from "./tool-schema.js";
 import type { ToolDenial, ToolInteraction, ToolOffload } from "./types.js";
-import type { DenialBasis } from "./wire/types.gen.js";
+import type { BackgroundJob, DenialBasis } from "./wire/types.gen.js";
 import { buildPath } from "./route-path.js";
 import { askBucket, interactionFact } from "./interaction.js";
 import { el } from "@cplieger/reactive";
@@ -88,7 +90,10 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     node.dataset["filename"] = info.fileBasename;
     node.dataset["filePath"] = info.filePath;
   }
-  if (opts.live && isToolActive(opts.status)) {
+  if (opts.job !== undefined) {
+    node.dataset["jobId"] = opts.job.id;
+  }
+  if (opts.live && isToolActive(opts.status) && opts.job === undefined) {
     // `data-start-ms` MEANS in flight: `tool-group.ts`'s fold guards read it, and
     // `applyStatusUpdate` drops it on every settle.
     node.dataset["startMs"] = String(Date.now());
@@ -103,6 +108,7 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   summary.appendChild(buildHeader(opts, displayTitle, info, withToggle));
   node.appendChild(summary);
   applyOutcome(node, opts.status, displayTitle, info);
+  syncJobMark(node, opts.job);
 
   // The subtitle sits in the summary, so the box is one disclosure and one hover
   // target.
@@ -404,6 +410,7 @@ function buildHeader(
     }
   }
 
+  // A background job's card loses it in `syncJobMark`.
   if (opts.live && isToolActive(opts.status)) {
     header.appendChild(spinnerEl("tool-spinner"));
   }
@@ -624,6 +631,46 @@ export function syncSilenceMarker(card: HTMLElement, chatID: string, toolID: str
     marker,
     header.querySelector(".tool-spinner") ?? header.querySelector(".tool-disclosure"),
   );
+}
+
+/** Paint a background job's line on its card: "Running in background, job <id>", then the outcome, how long it ran
+ *  and when it ended, so an end after the reply reads as later. Also the card's accessible name; `applyOutcome` paints
+ *  the mark from the job's status first. No job removes the line. */
+export function syncJobMark(card: HTMLElement, job: BackgroundJob | undefined): void {
+  const header = card.querySelector<HTMLElement>(".tool-header");
+  const existing = header?.querySelector<HTMLElement>(".tool-job") ?? null;
+  if (header === null || job === undefined) {
+    existing?.remove();
+    return;
+  }
+  card.dataset["jobId"] = job.id;
+  // Still: the jobs tracker owns the live state, and the reply no longer waits on the call.
+  header.querySelector(".tool-spinner")?.remove();
+  delete card.dataset["startMs"];
+  const words = jobLine(job);
+  const line = existing ?? el("span", { className: "tool-job", [CHROME_ATTR]: "" });
+  line.textContent = words;
+  if (existing === null) {
+    header.insertBefore(line, header.querySelector(".tool-disclosure"));
+  }
+  const title = card.dataset["title"] ?? "";
+  card.setAttribute("aria-label", `${title}, ${words.charAt(0).toLowerCase()}${words.slice(1)}`);
+}
+
+function jobLine(job: BackgroundJob): string {
+  const end = job.end;
+  if (end === undefined) {
+    return `Running in background, job ${job.id}`;
+  }
+  const parts = [JOB_OUTCOME_WORDS[end.status]];
+  if (end.duration_ms > 0) {
+    parts.push(formatElapsed(end.duration_ms));
+  }
+  const ended = relativeTime(Date.parse(end.ended_at ?? ""));
+  if (ended !== "") {
+    parts.push(`ended ${ended}`);
+  }
+  return parts.join(", ");
 }
 
 /** The word the accessible name uses. */

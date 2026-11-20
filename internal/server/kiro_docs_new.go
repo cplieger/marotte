@@ -437,11 +437,10 @@ func newAgentDoc(req *kiroDocNewRequest, _ matcherCheck) (newDoc, error) {
 	}, nil
 }
 
-// The New hook form's trigger list: the IDE hook editor's ten plus the two compaction triggers KAS
-// loads. Manual and SessionEnd stay out.
+// The New hook form's trigger list: the triggers KAS loads, less Manual and SessionEnd.
 var hookTriggers = map[string]bool{
 	"PostFileCreate": true, "PostFileSave": true, "PostFileDelete": true,
-	"PreToolUse": true, "PostToolUse": true,
+	"PreToolUse": true, "PermissionRequest": true, "PostToolUse": true,
 	"UserPromptSubmit": true, "SessionStart": true, "Stop": true,
 	"PreTaskExec": true, "PostTaskExec": true,
 	"PreCompact": true, "PostCompact": true,
@@ -520,6 +519,9 @@ func hookEntryFrom(req *kiroDocNewRequest, accepts matcherCheck) (hookEntry, err
 		entry.Action = hookAction{Type: hookActionCommand, Command: content}
 		entry.Timeout = req.Timeout
 	case hookActionAgent:
+		if marotte.HookTriggerRunsCommandsOnly(req.Trigger) {
+			return hookEntry{}, fieldError("Permission Request hooks can only run a command.")
+		}
 		if content == "" {
 			return hookEntry{}, fieldError("Instructions are required for the Ask Kiro action.")
 		}

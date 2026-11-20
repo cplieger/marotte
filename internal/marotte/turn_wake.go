@@ -21,6 +21,8 @@ const (
 	// WakeReasonRewake is KAS re-delivering the workflow messages a reader's cancel cleared
 	// unread (notification-rewake, or rewakeWithInfo's send-message-wake).
 	WakeReasonRewake WakeReason = "rewake"
+	// WakeReasonJobEnded is a background job ending in a session with jobs on (job-end-wake).
+	WakeReasonJobEnded WakeReason = "job_ended"
 	// WakeReasonUnknown is a reason this build does not know, or none.
 	WakeReasonUnknown WakeReason = "unknown"
 )
@@ -262,6 +264,10 @@ func WakeSearchTexts(w *EntryTurnWake) []string {
 
 var fallbackLabel = wakeLabel{rest: WakeFallbackLine}
 
+// wakeJobEndedLine names no job: the wake frames carry none, and the job-ended row filed just
+// before the wake does.
+const wakeJobEndedLine = "A background job ended"
+
 func wakeLineOf(w *EntryTurnWake) (label wakeLabel, body string) {
 	switch w.Reason {
 	case WakeReasonStepMessage:
@@ -270,6 +276,8 @@ func wakeLineOf(w *EntryTurnWake) (label wakeLabel, body string) {
 		return runFinishedLine(w), ""
 	case WakeReasonRewake:
 		return rewakeLine(w.Steers)
+	case WakeReasonJobEnded:
+		return wakeLabel{rest: wakeJobEndedLine}, ""
 	case WakeReasonUnknown:
 	}
 	return fallbackLabel, ""

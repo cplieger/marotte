@@ -14,6 +14,8 @@ type Settings struct {
 	engine     *engineOwner
 	// observe runs fn on an observer pass (Runtime.observe).
 	observe func(ctx context.Context, fn func(ctx context.Context, s engineSession) error) error
+	// sessionRoots is the workspace roots a chat session door opens over (Runtime.sessionRoots).
+	sessionRoots func(ctx context.Context) []string
 	// lifecycle supplies the workspace dir and the process lifetime.
 	lifecycle *lifetime
 	broadcast func(context.Context, marotte.ServerEvent)

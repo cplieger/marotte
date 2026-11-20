@@ -135,10 +135,10 @@ function mountChat(height: number): { dock: HTMLElement; bar: HTMLElement; compo
   const toggle = document.createElement("div");
   toggle.setAttribute("role", "button");
   toggle.tabIndex = 0;
-  toggle.className = "run-bar-open run-bar-toggle";
+  toggle.className = "tracker-toggle";
   toggle.setAttribute("aria-expanded", "false");
   const count = document.createElement("span");
-  count.className = "run-bar-count";
+  count.className = "tracker-count";
   count.textContent = "7 workflows, 1 needs you";
   toggle.append(count);
   fold.append(toggle);
@@ -521,7 +521,7 @@ describe("the agent-question card", () => {
             const sideways = height <= SIDEWAYS_MAX_H;
             const tight = vv <= TIGHT_MAX_VV;
             const short = vv <= SHORT_MAX_VV;
-            const strip = bar.querySelector(".run-bar-host");
+            const strip = bar.querySelector(".tracker-host");
             if (sideways || tight || (keyboard && short)) {
               expect(composer.checkVisibility(), "the composer aside").toBe(false);
             }
@@ -1265,7 +1265,7 @@ describe("a press on a waiting question's controls", () => {
           paintViewportHeight(vv, 1);
           await settle();
 
-          const strip = bar.querySelector<HTMLElement>(".run-bar-host");
+          const strip = bar.querySelector<HTMLElement>(".tracker-host");
           const buttons = [
             ...card.querySelectorAll<HTMLElement>(".user-input-option, .dock-ask-actions button"),
           ];
@@ -1273,7 +1273,7 @@ describe("a press on a waiting question's controls", () => {
             target === "the answer box"
               ? answer
               : target === "the run strip"
-                ? strip!.querySelector<HTMLElement>(".run-bar-toggle")!
+                ? strip!.querySelector<HTMLElement>(".tracker-toggle")!
                 : buttons.find(
                     (b) =>
                       (b.querySelector(".user-input-option-title") ?? b).textContent === target,
