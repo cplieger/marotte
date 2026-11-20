@@ -8,6 +8,7 @@ package workflow
 
 import (
 	"encoding/json"
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -59,11 +60,11 @@ func firstStep(doc map[string]any) map[string]any {
 	return find(stateOf(doc)["root"].(map[string]any))
 }
 
-// stepNamed is the first step node with id nodeID.
-func stepNamed(doc map[string]any, nodeID string) map[string]any {
+// pausedStep is the first paused step node with id nodeID.
+func pausedStep(doc map[string]any, nodeID string) map[string]any {
 	var find func(n map[string]any) map[string]any
 	find = func(n map[string]any) map[string]any {
-		if n["nodeId"] == nodeID {
+		if n["nodeId"] == nodeID && n["status"] == "paused" {
 			return n
 		}
 		kids, _ := n["children"].([]any)
@@ -81,7 +82,7 @@ func healthOf(in Inspect, f HealthFacts) RunHealth {
 	if f.Asks == nil && in.OK {
 		f.Asks = OpenAsks(in, RunLog{})
 	}
-	return Health(in, f, healthNow)
+	return Health(in, &f, healthNow)
 }
 
 func stepState(h RunHealth, nodeID string) (StepHealth, bool) {
@@ -125,7 +126,7 @@ func TestHealth_ParkedLeaves(t *testing.T) {
 		},
 		{
 			name: "a step paused through update_status is paused", fixture: "parked",
-			edit: func(doc map[string]any) { firstStep(doc)["completionSignalSource"] = "status_update" },
+			edit:  func(doc map[string]any) { firstStep(doc)["completionSignalSource"] = "status_update" },
 			facts: launched, want: HealthPaused,
 		},
 		{
@@ -157,7 +158,7 @@ func TestHealth_ParkedSilentlyCarriesTheAsk(t *testing.T) {
 	asks := OpenAsks(in, RunLog{Steps: map[string]StepLog{
 		"sess_63ef0731-ce88-4a8f-b0b3-eaa68afd4027": {Said: "probe done"},
 	}})
-	h := Health(in, HealthFacts{Reachable: true, Launched: true, Asks: asks}, healthNow)
+	h := Health(in, &HealthFacts{Reachable: true, Launched: true, Asks: asks}, healthNow)
 	s := h.Steps[h.Lead]
 	if s.AskID != asks[0].ID || s.Key != asks[0].ID {
 		t.Errorf("AskID, Key = %q, %q, want the ask's id %q", s.AskID, s.Key, asks[0].ID)
@@ -193,7 +194,7 @@ func TestHealth_EnginePausedBranch(t *testing.T) {
 		},
 		{
 			name:    "a spent continuation budget",
-			edit:    func(doc map[string]any) { stepNamed(doc, pathKey)["continuationAttempts"] = 4 },
+			edit:    func(doc map[string]any) { pausedStep(doc, pathKey)["continuationAttempts"] = 4 },
 			wantWhy: "three turns with no signal",
 		},
 	}
@@ -237,9 +238,7 @@ func pausedWith(fields map[string]any) func(map[string]any) {
 	return func(doc map[string]any) {
 		s := stateOf(doc)
 		s["status"] = "paused"
-		for k, v := range fields {
-			s[k] = v
-		}
+		maps.Copy(s, fields)
 	}
 }
 
@@ -396,7 +395,7 @@ func TestHealth_RunOrder(t *testing.T) {
 
 func TestHealth_NoReadYetIsUnknown(t *testing.T) {
 	t.Parallel()
-	h := Health(Inspect{}, HealthFacts{}, healthNow)
+	h := Health(Inspect{}, &HealthFacts{}, healthNow)
 	if h.State != HealthUnknown || !strings.Contains(h.Why, "has not read") {
 		t.Errorf("Health of no read = %q (%s), want unknown, not read", h.State, h.Why)
 	}
@@ -436,6 +435,8 @@ func TestHealth_BlockedAskSaysWhy(t *testing.T) {
 	in := recombined(t, "running", map[string]any{
 		"nodeId": "fan", "type": "parallel", "status": "running", "children": []any{asker, sibling},
 	})
+	// The recombined run keeps the parked fixture's question sentence, which would make this sole ask a question.
+	in.State.PauseReason = ""
 	h := healthOf(in, HealthFacts{Reachable: true, Launched: true})
 	s, ok := stepState(h, "ask")
 	if !ok || s.State != HealthParkedSilently {

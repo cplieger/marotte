@@ -33,7 +33,7 @@ func CaptureAt(raw json.RawMessage, pathKey string) (capture *string, found bool
 	if n == nil {
 		return nil, false, nil
 	}
-	if len(n.CapturedOutput) == 0 || string(n.CapturedOutput) == "null" {
+	if len(n.CapturedOutput) == 0 || string(n.CapturedOutput) == jsonNull {
 		return nil, true, nil
 	}
 	var text string
