@@ -44,7 +44,7 @@ export function attach(handle: ViewAttachHandle): void {
 export function applyPendingRestore(): void {
   getInstance().applyPendingRestore();
 }
-/** A switch is still writing the attached view the reader has not seen; false before any scroller exists. */
+/** The controller's `restorePending`; false before any scroller exists. */
 export function restorePending(): boolean {
   return instance?.restorePending() ?? false;
 }

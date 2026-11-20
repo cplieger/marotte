@@ -52,6 +52,8 @@ const sigs = await import("./store-signals.js");
 const scroll = await import("./scroll.js");
 const messages = await import("./messages.js");
 const { appendTerminalChunk } = await import("./messages-tools.js");
+const { mountedWindow } = await import("./messages-blocks.js");
+const { RESIDENT_ENTRIES } = await import("./block-window.js");
 
 messages.mountChatView();
 
@@ -663,6 +665,66 @@ describe("the view handle", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => 
     // The reader never watched the trace stop being newest, so the switch shows it already shut.
     expect(slid.length, "slides started on a reasoning trace by the switch").toBe(0);
     expect(trace()?.open).toBe(false);
+  });
+
+  it("reads no layout in the incoming view when the switch back drops its window's head", async () => {
+    const a = freshID("c-head");
+    const b = freshID("c-head");
+    const t = `${a}-t1`;
+    const span = RESIDENT_ENTRIES + 8;
+    const entries: Entry[] = [turnOpen(t, 1)];
+    for (let at = 1; at <= span; at++) {
+      entries.push(textEntry(t, at, `line ${String(at)}`));
+    }
+    const s = session(a);
+    s.turns.set(t, { entries, openEntries: new Map() });
+    s.turn_order.push(t);
+    s.turn_count = 1;
+    seed(s, oneTurn(b, "x"));
+    await vi.waitFor(() => {
+      expect(mountedWindow(t)?.to, "the premise: the window reaches the live edge").toBe(span + 1);
+    });
+    const scroller = document.getElementById("messages-wrap") as HTMLElement;
+    await vi.waitFor(() => {
+      expect(
+        scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop,
+        "the premise: Following at the end",
+      ).toBeLessThanOrEqual(1);
+    });
+    const head = mountedWindow(t)?.from ?? 0;
+    switchTo(b);
+    await flushed();
+    await settledFrames();
+    for (let at = span + 1; at <= span + 16; at++) {
+      store.appendEntry(a, textEntry(t, at, `line ${String(at)}`));
+    }
+    await flushed();
+
+    const view = viewOf(a);
+    const reads: string[] = [];
+    const height = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      ...height,
+      get(this: HTMLElement): number {
+        if (scroll.restorePending() && view.contains(this)) {
+          reads.push(this.className);
+        }
+        return (height?.get?.call(this) as number | undefined) ?? 0;
+      },
+    });
+    try {
+      switchTo(a);
+      await flushed();
+    } finally {
+      if (height !== undefined) {
+        Object.defineProperty(HTMLElement.prototype, "offsetHeight", height);
+      }
+    }
+    expect(mountedWindow(t)?.from, "the premise: the switch back dropped the head").toBeGreaterThan(
+      head,
+    );
+    // The view's rendering is still skipped until its restore, so any read there forces a skipped subtree's layout.
+    expect(reads, "row heights read in the incoming view before its restore").toEqual([]);
   });
 
   it("holds the reading position through a park/unpark over a turn that GREW", async () => {

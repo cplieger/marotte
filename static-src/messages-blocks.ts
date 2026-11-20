@@ -1292,14 +1292,15 @@ export function geometrySkipped(el: Element): boolean {
   );
 }
 
-/** Whether a reader can be watching `el`, which a slide needs: rendered, and not in a view a switch is still writing. */
+/** Whether a reader can be watching `el`: rendered, and not in a view a switch is still writing, whose rendering
+ *  Chrome skips until the next style update. A slide needs it, and a layout read outside it forces a skipped render. */
 function watched(el: Element): boolean {
   return !geometrySkipped(el) && !restorePending();
 }
 
 /**
  * Record the height `seq`'s row holds, so the spacer replacing it holds it too. A run's row is one box, keyed by
- * the run's range; a member row, a container root and an unrendered subtree record nothing.
+ * the run's range; a member row, a container root and a row no reader watches record nothing.
  */
 function recordOutgoingHeight(st: TurnRender, seq: number): void {
   const el = st.entryEls.get(seq);
@@ -1307,7 +1308,7 @@ function recordOutgoingHeight(st: TurnRender, seq: number): void {
   if (el === undefined || (head !== undefined && head !== seq)) {
     return;
   }
-  if (isContainerRoot(st, el, hostedRun(st, entryAt(st.turn, seq))?.card) || geometrySkipped(el)) {
+  if (isContainerRoot(st, el, hostedRun(st, entryAt(st.turn, seq))?.card) || !watched(el)) {
     return;
   }
   const px = el.offsetHeight;

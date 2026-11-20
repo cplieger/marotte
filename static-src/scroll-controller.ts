@@ -1238,8 +1238,7 @@ export class ScrollController {
     }
   }
 
-  /** Whether the attached view's position has yet to land: until `applyPendingRestore`, the reader has seen nothing
-   *  of the view. */
+  /** Whether the attached view's saved position is not written yet: true from `attach` until `applyPendingRestore`. */
   restorePending(): boolean {
     return this.pendingRestore !== null;
   }
