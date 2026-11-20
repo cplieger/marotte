@@ -249,6 +249,19 @@ describe("the chat-options menu", () => {
     }
   });
 
+  // One stroke weight down the card: a glyph with its own width and stroke-width scales with the 1rem column.
+  it("draws every leading glyph at the ui tier", async () => {
+    const { card } = await mountMenu();
+    const glyphs = Array.from(
+      card.querySelectorAll(".chat-opt-icon > svg, .chat-opt-strip-icon > svg"),
+    );
+    expect(glyphs).toHaveLength(10);
+    for (const glyph of glyphs) {
+      expect(glyph.getAttribute("class")).toBe("ic-ui");
+      expect(glyph.hasAttribute("stroke-width")).toBe(false);
+    }
+  });
+
   // A card of buttons inside its trigger <button> is invalid HTML (as in pill-expand.test.ts).
   it("keeps every row out of the trigger button", async () => {
     const { card } = await mountMenu();

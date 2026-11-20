@@ -49,7 +49,7 @@ const PATH_EYE =
 // A tier pair is suffixed `_UI`, never a pixel count: 01-tokens.css owns `--icon-ui`'s size, so a number would go stale.
 export const ICON_EDIT = svg("inline", PATH_PENCIL);
 export const ICON_EDIT_UI = svg("ui", PATH_PENCIL);
-/** Lucide `text-cursor-input`: a name edited in place. Every Rename draws it; the pencil is Edit's. */
+/** Lucide `text-cursor-input`: a name edited in place, kept apart from Edit's pencil (`PATH_PENCIL`). */
 export const ICON_RENAME_UI = svg(
   "ui",
   '<path d="M12 20h-1a2 2 0 0 1-2-2 2 2 0 0 1-2 2H6"/><path d="M13 8h7a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-7"/>' +
@@ -95,13 +95,23 @@ export const ICON_REPO =
 const PATH_TANGENT =
   '<line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/>';
 export const ICON_TANGENT = svg("ui", PATH_TANGENT);
+export const ICON_ATTACH = svg(
+  "ui",
+  '<path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>',
+);
+export const ICON_GOAL = svg(
+  "ui",
+  '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1" fill="currentColor"/>',
+);
+export const ICON_SESSION = svg(
+  "ui",
+  '<path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/>',
+);
 /** Lucide `ellipsis`: a menu of more actions. */
 export const ICON_MORE = svg(
   "ui",
   '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
 );
-/** The same mark at the 14px a Chat options row's leading column is sized for. */
-export const ICON_TANGENT_ROW = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${PATH_TANGENT}</svg>`;
 export const ICON_EXPORT =
   '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
 export const ICON_DIFF =
@@ -695,13 +705,14 @@ export const ICON_TAB_AUTONOMOUS = svg(
  * scale wrapper: it would give that depth back.
  */
 export const ICON_TAB_SETTINGS = `<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>`;
-// Lucide "git-branch" under two names (the git tab, the branch popover field). Centred on (12,12), since a 3..21 x
+// Lucide "git-merge" under three names (the git tab, the branch popover field, a tangent's merge row). Centred on (12,12), since a 3..21 x
 // 2..20 ink box sits 0.67 CSS px high in the toolbar.
 export const ICON_GIT_BRANCH = svg(
   "ui",
   '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/>',
 );
 export const ICON_TAB_GIT = ICON_GIT_BRANCH;
+export const ICON_MERGE = ICON_GIT_BRANCH;
 /**
  * Lucide "git-commit-horizontal" for the editor toolbar's diff-vs-HEAD control, unique within that bar. Centred on
  * (12,12) for the reason above.

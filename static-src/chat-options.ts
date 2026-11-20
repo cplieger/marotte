@@ -19,7 +19,17 @@ import {
 import { copyClipboard } from "./actions/messages.js";
 import { downloadChatExport } from "./chat-export.js";
 import { buildPath } from "./route-path.js";
-import { ICON_COMPACT, ICON_EXPORT, ICON_LINK, ICON_RENAME_UI, ICON_TANGENT_ROW } from "./icons.js";
+import {
+  ICON_ATTACH,
+  ICON_COMPACT,
+  ICON_EXPORT,
+  ICON_GOAL,
+  ICON_LINK,
+  ICON_MERGE,
+  ICON_RENAME_UI,
+  ICON_SESSION,
+  ICON_TANGENT,
+} from "./icons.js";
 import { openFilePicker } from "./files-picker.js";
 import { uploadLimitHint } from "./upload-policy.js";
 import { openTangentChat } from "./chat.js";
@@ -33,17 +43,6 @@ import { compactRefusal } from "./typed-commands.js";
 import * as toast from "./toast.js";
 import { chatNotice } from "./notice-subject.js";
 import type { Session } from "./types.js";
-
-// Local constants rather than icons.ts entries: each is used once, by this module, and `icons.ts`
-// is the shared vocabulary.
-const ICON_ATTACH =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>';
-const ICON_GOAL =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1" fill="currentColor"/></svg>';
-const ICON_MERGE =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/></svg>';
-const ICON_SESSION =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg>';
 
 /**
  * KAS's own clamp on the goal loop's budget, mirrored: `parseGoalCommand` runs
@@ -231,7 +230,7 @@ const TANGENT_HINT_EMPTY = "Send a message first. A tangent inherits the convers
 /** Disabled while `tangentRefusal` holds. */
 function tangentRow(): HTMLElement {
   const { row, btn, hint } = actionRow({
-    icon: ICON_TANGENT_ROW,
+    icon: ICON_TANGENT,
     name: "Start a tangent",
     hint: TANGENT_HINT,
     onClick: () => {
