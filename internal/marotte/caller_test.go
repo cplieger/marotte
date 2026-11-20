@@ -25,6 +25,33 @@ func TestCaller_SentBy(t *testing.T) {
 	}
 }
 
+// One sender's later message replaces its waiting one: an outside caller that labels itself "marotte" is not
+// marotte, so neither replaces the other.
+func TestCaller_SameSender(t *testing.T) {
+	marotteCaller := Caller{Kind: CallerKindMarotte, Label: "marotte"}
+	weekly := ruleCaller("Weekly questions", "ev-1")
+	cases := []struct {
+		name string
+		a, b Caller
+		want bool
+	}{
+		{name: "one API label", a: Caller{Label: "Agent Mail"}, b: Caller{Label: "Agent Mail"}, want: true},
+		{name: "two API labels", a: Caller{Label: "Agent Mail"}, b: Caller{Label: "cron"}, want: false},
+		{name: "marotte and marotte", a: marotteCaller, b: Caller{Kind: CallerKindMarotte, Label: "marotte"}, want: true},
+		{name: "marotte and an API caller named marotte", a: marotteCaller, b: Caller{Label: "marotte"}, want: false},
+		{name: "an API caller named marotte and marotte", a: Caller{Label: "marotte"}, b: marotteCaller, want: false},
+		{name: "one rule event under two names", a: weekly, b: ruleCaller("Renamed", "ev-1"), want: true},
+		{name: "one rule, two events", a: weekly, b: ruleCaller("Weekly questions", "ev-2"), want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.a.SameSender(&tc.b); got != tc.want {
+				t.Errorf("%+v.SameSender(%+v) = %v, want %v", tc.a, tc.b, got, tc.want)
+			}
+		})
+	}
+}
+
 func ruleCaller(label, event string) Caller {
 	return Caller{Kind: CallerKindRule, Label: label, Rule: "r-weekly", Event: event, Depth: 2}
 }

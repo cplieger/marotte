@@ -6,8 +6,10 @@ package agent
 
 import (
 	"errors"
+	"maps"
 	"slices"
 	"strconv"
+	"time"
 
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -98,6 +100,8 @@ type runEntry struct {
 	// afterSend: the reader's send released this stamped steer kiro-cli holds (releaseHold), so it comes back paused
 	// with pausedBy 0 and waits for the next clean close, never steered into that send's reply (returned).
 	afterSend bool
+	// gateHeld: the model gate holds this attention entry for the advance in progress (advance), which takes another.
+	gateHeld bool
 	// failedLaunch: a failed launch paused this door entry after its caller was answered, so the caller's next send
 	// puts it back in order while no stop holds it (doorOnto). It is stored with the list (RunEntry.FailedLaunch) and
 	// kept under a stop's hold, so it outlives a close and the stop's undo; a reader's send that lifts a hold, any
@@ -109,6 +113,12 @@ func (e *runEntry) live() bool { return e.state.Live() }
 
 // byUser reports an entry the user sent: one whose row names no caller.
 func (e *runEntry) byUser() bool { return e.row == nil || e.row.Caller == nil }
+
+// attention reports a run-attention wake: a notify-door entry from marotte's own caller.
+func (e *runEntry) attention() bool {
+	return e.origin == marotte.RunFromNotify && e.row != nil && e.row.Caller != nil &&
+		e.row.Caller.Kind == marotte.CallerKindMarotte
+}
 
 // inFlight reports a row handed to kiro-cli as a steer and not yet read or returned.
 func (e *runEntry) inFlight() bool {
@@ -146,7 +156,14 @@ type orderFacts struct {
 	// newOffer mints a steer offer's token, unique in the process, so a fate the steer record reports for an earlier
 	// offer, in this life or another, never matches a later one.
 	newOffer func() uint64
-	stamp    uint64
+	// gate is the model gate's answer for an attention entry's take (modelGate.check); nil admits every take.
+	gate func(e *runEntry) (ok bool, openAt time.Time)
+	// gateStart is the gate's answer at an attention entry's take, recording the start (modelGate.start); nil starts
+	// every take.
+	gateStart func(e *runEntry) (ok bool, openAt time.Time)
+	// gateUnstart takes back a start whose take was then refused (modelGate.unstart).
+	gateUnstart func(e *runEntry)
+	stamp       uint64
 	// nextSeq and stopSeq are the lifecycle's open and stop sequences (chatLifecycle.nextSeq, stopSeq).
 	nextSeq uint64
 	stopSeq uint64
@@ -156,12 +173,24 @@ type orderFacts struct {
 
 // runEffects are what the glue owes once lc.mu is released.
 type runEffects struct {
+	// gateAt is when the model gate next opens for an attention entry it held; zero when it held none.
+	gateAt time.Time
 	// launch lists the entries advance took, in take order.
 	launch []*runEntry
 	// steer lists the rows advance offered as steers into the running turn, in offer order.
 	steer []*runEntry
+	// closed lists the attention entries that ended, each once (effAttentionClosed).
+	closed []attentionClose
 	// changed: the projection changed, so the version is bumped and the list written and announced.
 	changed bool
+	// attentionRead: the agent read an attention entry kiro-cli held as a steer (runAttention.read).
+	attentionRead bool
+}
+
+// attentionClose is how one attention entry ended: its carrying turn's outcome, attnLost or attnDiscarded.
+type attentionClose struct {
+	entryID string
+	outcome marotte.TurnOutcome
 }
 
 // runList's live prefix is one entry, or two: kiro-cli's fold-opened wire turn and a marotte turn or revert taken
@@ -169,6 +198,12 @@ type runEffects struct {
 type runList struct {
 	// intent is submit's own entry and stamp for the advance it runs; intentRefused its refusal.
 	intent *runEntry
+	// attentionCarriers is, per turn id, the attention entries the agent read as steers in that turn, whose close
+	// is theirs.
+	attentionCarriers map[string][]string
+	// lastClose is the newest turn close's turn and outcome: an attention steer whose read lands after its turn closed
+	// ends with that turn.
+	lastClose attentionClose
 	// steerRefused are the door entries kiro-cli refused as a steer since a turn's prompt was written or a turn
 	// closed clean: they wait for a turn of their own rather than being offered into a full buffer again.
 	steerRefused []string
@@ -205,7 +240,13 @@ func (l *runList) touch() { l.fx.changed = true }
 
 // owesEffects reports effects recorded since the last takeEffects.
 func (l *runList) owesEffects() bool {
-	return l.fx.changed || len(l.fx.launch) > 0 || len(l.fx.steer) > 0
+	return l.fx.changed || len(l.fx.launch) > 0 || len(l.fx.steer) > 0 || len(l.fx.closed) > 0 || !l.fx.gateAt.IsZero() ||
+		l.fx.attentionRead
+}
+
+// attentionEnded records an attention entry's end for the glue.
+func (l *runList) attentionEnded(id string, outcome marotte.TurnOutcome) {
+	l.fx.closed = append(l.fx.closed, attentionClose{entryID: id, outcome: outcome})
 }
 
 // takeEffects hands the recorded effects to the glue, bumping the version when the projection changed.
@@ -344,7 +385,7 @@ func (l *runList) requeue(e *runEntry, by uint64) {
 // new message id since its opened turn keeps the old one: its words reached no one, and the caller's message may be
 // its only copy. A wake whose caller has a row waiting adds nothing, and that row goes behind the user's.
 func (l *runList) requeueUnsent(e *runEntry, by uint64) {
-	if e.byUser() || e.kind != marotte.RunKindRow {
+	if e.byUser() || e.kind != marotte.RunKindRow || e.attention() {
 		return
 	}
 	if e.origin == marotte.RunFromNotify && l.waitingWake(e) != nil {
@@ -528,7 +569,8 @@ func overtaken(e *runEntry, f *orderFacts, wireSeq uint64) bool {
 }
 
 // advance is the one taker: it takes the first pending entry when the head rule allows, or offers a row as a steer
-// into the running turn, or nothing. marotte.Deliver picks among rows; every other entry keeps its own take rule.
+// into the running turn, or nothing. marotte.Deliver picks among rows; every other entry keeps its own take rule. An
+// attention entry's take passes the model gate, which marotte's own turn starts all meet here.
 func (l *runList) advance(f *orderFacts) {
 	if l.ended {
 		return
@@ -544,22 +586,88 @@ func (l *runList) advance(f *orderFacts) {
 		l.offerSteer(f)
 		return
 	}
-	e, dl := l.pick(f)
-	if e == nil || !l.mayLaunch(e) {
-		return
-	}
-	switch {
-	case e.kind == marotte.RunKindRevert && by != nil, !f.admit:
-		return
-	default:
-		if !l.reserveFor(e, f) {
-			return
+	e, dl, held := l.pickPastGate(f)
+	defer func() {
+		for _, h := range held {
+			h.gateHeld = false
 		}
+	}()
+	e, dl, ok := l.startPastGate(e, dl, f, by, &held)
+	if !ok || !l.reserveStarted(e, f) {
+		return
 	}
 	l.take(e, n)
 	if dl.Kind == marotte.DeliverPrompt {
 		l.carry(e, dl)
 	}
+}
+
+// startPastGate reports whether e's take may start, recording an attention entry's start with the model gate. When
+// another chat's start landed between pickPastGate's check and this one, e is held too and what waits behind it is
+// picked once more, so a person's row is never held behind a wake; held gathers every entry held.
+func (l *runList) startPastGate(
+	e *runEntry, dl marotte.Delivery, f *orderFacts, by *runEntry, held *[]*runEntry,
+) (*runEntry, marotte.Delivery, bool) {
+	for retried := false; ; retried = true {
+		if e == nil || !l.mayLaunch(e) || (e.kind == marotte.RunKindRevert && by != nil) || !f.admit {
+			return nil, dl, false
+		}
+		if l.gateStarts(e, f) {
+			return e, dl, true
+		}
+		if retried {
+			return nil, dl, false
+		}
+		e.gateHeld = true
+		var more []*runEntry
+		*held = append(*held, e)
+		e, dl, more = l.pickPastGate(f)
+		*held = append(*held, more...)
+	}
+}
+
+// gateStarts reports whether e's take may go, recording an attention entry's start with the model gate; a refusal
+// arms the taker's re-run for when the gate opens.
+func (l *runList) gateStarts(e *runEntry, f *orderFacts) bool {
+	if !e.attention() || f.gateStart == nil {
+		return true
+	}
+	ok, openAt := f.gateStart(e)
+	if !ok && (l.fx.gateAt.IsZero() || openAt.Before(l.fx.gateAt)) {
+		l.fx.gateAt = openAt
+	}
+	return ok
+}
+
+// reserveStarted is reserveFor for an entry whose model gate start is recorded: a refused reservation takes the start
+// back, so a take that did not happen spaces no other.
+func (l *runList) reserveStarted(e *runEntry, f *orderFacts) bool {
+	if l.reserveFor(e, f) {
+		return true
+	}
+	if e.attention() && f.gateUnstart != nil {
+		f.gateUnstart(e)
+	}
+	return false
+}
+
+// pickPastGate is pick with every attention entry the model gate holds left pending at its place, so a person's row
+// behind it is taken instead; held lists them, for the caller to clear once its take is decided.
+func (l *runList) pickPastGate(f *orderFacts) (e *runEntry, dl marotte.Delivery, held []*runEntry) {
+	e, dl = l.pick(f)
+	for e != nil && e.attention() && f.gate != nil {
+		ok, openAt := f.gate(e)
+		if ok {
+			break
+		}
+		e.gateHeld = true
+		held = append(held, e)
+		if l.fx.gateAt.IsZero() || openAt.Before(l.fx.gateAt) {
+			l.fx.gateAt = openAt
+		}
+		e, dl = l.pick(f)
+	}
+	return e, dl, held
 }
 
 // pick is the entry advance would take, or nil: the first pending entry, or the row marotte.Deliver takes when that is
@@ -569,7 +677,14 @@ func (l *runList) pick(f *orderFacts) (*runEntry, marotte.Delivery) {
 	if e == nil || e.kind != marotte.RunKindRow {
 		return e, marotte.Delivery{Kind: marotte.DeliverNothing}
 	}
-	dl := marotte.Deliver(l.project(), l.headFacts())
+	entries := l.project()
+	if held := slices.IndexFunc(l.entries, func(e *runEntry) bool { return e.gateHeld }); held >= 0 {
+		entries = slices.DeleteFunc(entries, func(re marotte.RunEntry) bool {
+			_, x := l.find(re.ID)
+			return x != nil && x.gateHeld
+		})
+	}
+	dl := marotte.Deliver(entries, l.headFacts())
 	if dl.Kind != marotte.DeliverPrompt {
 		return nil, dl
 	}
@@ -633,7 +748,7 @@ func (l *runList) nextPending(f *orderFacts) *runEntry {
 	for {
 		var e *runEntry
 		for _, c := range l.entries[l.liveLen():] {
-			if c.state == marotte.RunPending {
+			if c.state == marotte.RunPending && !c.gateHeld {
 				e = c
 				break
 			}
@@ -992,6 +1107,9 @@ func (l *runList) unqueue(id string) error {
 		return errRowInKAS
 	}
 	l.remove(e)
+	if e.attention() {
+		l.attentionEnded(e.id, attnDiscarded)
+	}
 	return nil
 }
 
@@ -1114,7 +1232,7 @@ func (l *runList) steerFates(fs []entryFate) {
 		case fateInKAS:
 			l.steerQueued(f.id)
 		case fateRead, fateGone:
-			l.steerRead(f.id)
+			l.steerRead(f.id, f.fate == fateGone)
 		case fateBack:
 			l.steerBack(f.id)
 		case fateUnread:
@@ -1172,18 +1290,85 @@ func (l *runList) steerCleared(id string) {
 	if e == nil || !e.inFlight() {
 		return
 	}
+	if e.attention() {
+		l.endAttention(e)
+		return
+	}
 	l.returned(e)
 	l.doorsBehindUsers()
 }
 
-// steerRead takes a steer off the list once the agent read it or the reader removed it from the dock.
-func (l *runList) steerRead(id string) {
-	if _, e := l.find(id); e != nil && e.inFlight() {
-		if e.submitter && e.launch != nil {
-			answerSteered(e)
-		}
-		l.remove(e)
+// steerRead takes a steer off the list once the agent read it or the reader removed it from the dock (gone). An
+// attention entry the agent read is carried by the running turn, whose close is its end.
+func (l *runList) steerRead(id string, gone bool) {
+	_, e := l.find(id)
+	if e == nil || !e.inFlight() {
+		return
 	}
+	if e.submitter && e.launch != nil {
+		answerSteered(e)
+	}
+	l.remove(e)
+	if !e.attention() {
+		return
+	}
+	switch head := l.headTurn(); {
+	case gone:
+		l.attentionEnded(e.id, attnDiscarded)
+	case head == "" && l.lastClose.entryID != "":
+		l.attentionEnded(e.id, l.lastClose.outcome)
+	case head == "":
+		l.attentionEnded(e.id, attnLost)
+	default:
+		if l.attentionCarriers == nil {
+			l.attentionCarriers = map[string][]string{}
+		}
+		l.attentionCarriers[head] = append(l.attentionCarriers[head], e.id)
+		l.fx.attentionRead = true
+	}
+}
+
+// attentionEntry is where attention entry id stands: on the list, or carried by the turn that read it.
+func (l *runList) attentionEntry(id string) attnEntry {
+	if _, e := l.find(id); e != nil {
+		switch {
+		case e.state == marotte.RunPending || e.state == marotte.RunPaused:
+			return attnEntryWaiting
+		case e.inFlight():
+			return attnEntryUnread
+		}
+		return attnEntryCarried
+	}
+	for _, ids := range l.attentionCarriers {
+		if slices.Contains(ids, id) {
+			return attnEntryCarried
+		}
+	}
+	return attnEntryGone
+}
+
+// headTurn is the running turn a steer is read in: the live steerable turn, else the first live turn not closing; ""
+// with none, as when the turn the steer was read in has closed already.
+func (l *runList) headTurn() string {
+	live := l.entries[:l.liveLen()]
+	for _, e := range live {
+		if e.steerable && e.turnID != "" {
+			return e.turnID
+		}
+	}
+	for _, e := range live {
+		if e.turnID != "" && e.state != marotte.RunClosing {
+			return e.turnID
+		}
+	}
+	return ""
+}
+
+// endAttention takes an attention entry kiro-cli handed back unread or a clear took out of its buffer off the list:
+// its re-delivery is the ledger's, on its backoff and with its lines rebuilt.
+func (l *runList) endAttention(e *runEntry) {
+	l.remove(e)
+	l.attentionEnded(e.id, attnLost)
 }
 
 // turnEnded returns the steers a turn end left unread to pending at their places, marked Unread (one sender's run of
@@ -1193,6 +1378,10 @@ func (l *runList) turnEnded(unread []string) {
 	for _, id := range unread {
 		_, e := l.find(id)
 		if e == nil || !e.inFlight() {
+			continue
+		}
+		if e.attention() {
+			l.endAttention(e)
 			continue
 		}
 		e.unread = true
@@ -1240,19 +1429,31 @@ type listClose struct {
 	turnID string
 	// retryID is the message id a retry would take.
 	retryID string
+	// outcome is the closed turn's outcome, the end of every attention entry it carried.
+	outcome marotte.TurnOutcome
 	seq     uint64
 	clean   bool
 	// handoff: marotte closed a fold-opened turn to send its next call (closerPromptHandoff).
 	handoff bool
+	// throttled: the turn failed on a model throttle, which holds the model gate's starts.
+	throttled bool
 	// emptyRetry: the closed turn ended clean on the wire with nothing emitted.
 	emptyRetry bool
 }
 
 // turnClosed acts on the entry whose turn closed, wherever it sits.
 func (l *runList) turnClosed(c listClose, f *orderFacts) {
+	for _, id := range l.attentionCarriers[c.turnID] {
+		l.attentionEnded(id, c.outcome)
+	}
+	delete(l.attentionCarriers, c.turnID)
+	l.lastClose = attentionClose{entryID: c.turnID, outcome: c.outcome}
 	i, e := l.byTurn(c.turnID)
 	if e == nil || !e.live() {
 		return
+	}
+	if e.attention() {
+		l.attentionEnded(e.id, c.outcome)
 	}
 	n := l.liveLen()
 	stopped := e.state == marotte.RunStopping
@@ -1397,6 +1598,8 @@ func (l *runList) launched(id string, token uint64, turnID string, refusal launc
 	switch {
 	case e.origin == marotte.RunFromSummary, e.kind == marotte.RunKindRetry:
 		l.remove(e)
+	case e.attention() && refusal == launchFailed:
+		l.endAttention(e)
 	case e.submitter && refusal != launchWithdrawn:
 		e.submitter, e.opts.composer = false, false
 		l.remove(e)
@@ -1545,11 +1748,16 @@ func (l *runList) stopUndone(token uint64, open func(turnID string) bool) {
 
 // endLife is the section that ends the life: every waiter is answered with the chat's close, and the list the next
 // life starts from (rows only, the waited-on takes left out, an unopened take's joined rows kept) is returned for the
-// life's last write, with the steers kiro-cli was handed, which that list leaves out (marotte.SanitizeRun).
-func (l *runList) endLife() (next, steers []marotte.RunEntry) {
+// life's last write, with the steers kiro-cli was handed, which that list leaves out (marotte.SanitizeRun), and the
+// attention entries the life's end lost, which no list keeps: the ledger re-delivers them.
+func (l *runList) endLife() (next, steers []marotte.RunEntry, lost []string) {
 	l.ended = true
 	var keep []marotte.RunEntry
 	for _, e := range l.entries {
+		if e.attention() {
+			lost = append(lost, e.id)
+			continue
+		}
 		if e.launch != nil && e.submitter && e.turnID == "" {
 			e.submitter, e.opts.composer = false, false
 			e.launch.finish("", marotte.ErrChatClosedDuringCall, false, false)
@@ -1562,7 +1770,11 @@ func (l *runList) endLife() (next, steers []marotte.RunEntry) {
 			}
 		}
 	}
-	return marotte.SanitizeRun(keep, false), handedSteers(keep)
+	for _, turn := range slices.Sorted(maps.Keys(l.attentionCarriers)) {
+		lost = append(lost, l.attentionCarriers[turn]...)
+	}
+	l.attentionCarriers = nil
+	return marotte.SanitizeRun(keep, false), handedSteers(keep), lost
 }
 
 // handedSteers is the entries kiro-cli was handed as steers: offered, or in its buffer.
@@ -1594,11 +1806,16 @@ func (e *runEntry) stopPaused() bool {
 const loadedStop = ^uint64(0)
 
 // load seeds a new life's list from the stored one (SanitizeRun ran on it) and the stored version. A row a stop
-// paused stays paused by it, so the queue stays paused for a row an outside caller sends (queuePaused).
+// paused stays paused by it, so the queue stays paused for a row an outside caller sends (queuePaused). An attention
+// entry, which only a crash between writes leaves stored, is dropped: the ledger re-derives its wake.
 func (l *runList) load(entries, stored []marotte.RunEntry, version uint64) {
 	l.entries = nil
 	for i := range entries {
 		re := entries[i]
+		if re.Origin == marotte.RunFromNotify && re.Row != nil && re.Row.Caller != nil &&
+			re.Row.Caller.Kind == marotte.CallerKindMarotte {
+			continue
+		}
 		e := &runEntry{
 			id: re.ID, kind: re.Kind, state: re.State, origin: re.Origin, row: re.Row, next: re.Next,
 			want: re.Want, unread: re.Unread, failedLaunch: re.FailedLaunch,

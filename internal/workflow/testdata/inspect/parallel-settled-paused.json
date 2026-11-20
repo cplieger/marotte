@@ -1,0 +1,459 @@
+{
+ "workflowId": "wf_8d16c0416aacd151",
+ "state": {
+  "workflowId": "wf_8d16c0416aacd151",
+  "workflowName": "seats",
+  "status": "paused",
+  "inputs": {},
+  "artifacts": {},
+  "capturedOutputs": {},
+  "root": {
+   "nodeId": "wf_8d16c0416aacd151",
+   "type": "sequence",
+   "status": "paused",
+   "children": [
+    {
+     "nodeId": "create-workflow",
+     "type": "step",
+     "status": "completed",
+     "agentName": "creator",
+     "modelId": "model-b-5.5",
+     "effortLevel": "high",
+     "startedAt": "2026-11-20T05:31:33.909Z",
+     "sessionId": "sess_e3a20dab-2ea0-480a-9a97-09f50a26085b",
+     "completionSignal": "success",
+     "completionSignalSource": "send_message",
+     "capturePinned": true,
+     "credits": [
+      {
+       "usage": 12.210215351907133,
+       "unit": "credit",
+       "unitPlural": "credits"
+      }
+     ],
+     "endedAt": "2026-11-20T05:39:00.443Z",
+     "captureSummary": "Probe capture.",
+     "hasCapture": true
+    },
+    {
+     "nodeId": "setup",
+     "type": "step",
+     "status": "completed",
+     "agentName": "coder",
+     "startedAt": "2026-11-20T05:39:13.582Z",
+     "modelId": "model-f-5.5",
+     "effortLevel": "low",
+     "sessionId": "sess_8f77dbb1-1d2f-4633-89a6-f6b0d976745e",
+     "completionSignal": "success",
+     "completionSignalSource": "send_message",
+     "credits": [
+      {
+       "usage": 0.6416524910945274,
+       "unit": "credit",
+       "unitPlural": "credits"
+      }
+     ],
+     "endedAt": "2026-11-20T05:41:23.785Z",
+     "captureSummary": "Probe capture.",
+     "hasCapture": true
+    },
+    {
+     "nodeId": "review-loop",
+     "type": "repeat",
+     "status": "paused",
+     "children": [
+      {
+       "nodeId": "review-loop#0",
+       "type": "sequence",
+       "status": "paused",
+       "iteration": 0,
+       "children": [
+        {
+         "nodeId": "build-turns",
+         "type": "repeat",
+         "status": "completed",
+         "children": [
+          {
+           "nodeId": "build-turns#0",
+           "type": "sequence",
+           "status": "completed",
+           "iteration": 0,
+           "children": [
+            {
+             "nodeId": "build",
+             "type": "step",
+             "status": "completed",
+             "agentName": "coder",
+             "startedAt": "2026-11-20T05:41:31.266Z",
+             "iteration": 0,
+             "modelId": "model-b-5.5",
+             "effortLevel": "high",
+             "sessionId": "sess_b1d701db-d5cd-4b3f-bcca-ae19fd3e7ad0",
+             "completionSignal": "success",
+             "completionSignalSource": "send_message",
+             "credits": [
+              {
+               "usage": 63.38921211608621,
+               "unit": "credit",
+               "unitPlural": "credits"
+              }
+             ],
+             "endedAt": "2026-11-20T06:20:53.890Z",
+             "captureSummary": "Probe capture.",
+             "hasCapture": true
+            }
+           ],
+           "startedAt": "2026-11-20T05:41:26.671Z",
+           "endedAt": "2026-11-20T06:21:08.340Z"
+          }
+         ],
+         "startedAt": "2026-11-20T05:41:25.552Z",
+         "iteration": 0,
+         "endedAt": "2026-11-20T06:21:09.010Z"
+        },
+        {
+         "nodeId": "validate-turns",
+         "type": "repeat",
+         "status": "completed",
+         "children": [
+          {
+           "nodeId": "validate-turns#0",
+           "type": "sequence",
+           "status": "completed",
+           "iteration": 0,
+           "children": [
+            {
+             "nodeId": "validate",
+             "type": "step",
+             "status": "completed",
+             "agentName": "coder",
+             "startedAt": "2026-11-20T06:21:09.143Z",
+             "iteration": 0,
+             "modelId": "model-f-5.5",
+             "effortLevel": "high",
+             "sessionId": "sess_7c4f9baf-14e3-40b5-9e82-7ff2110e9023",
+             "completionSignal": "success",
+             "completionSignalSource": "send_message",
+             "credits": [
+              {
+               "usage": 3.429284635456054,
+               "unit": "credit",
+               "unitPlural": "credits"
+              }
+             ],
+             "endedAt": "2026-11-20T06:27:03.987Z",
+             "captureSummary": "Probe capture.",
+             "hasCapture": true
+            }
+           ],
+           "startedAt": "2026-11-20T06:21:09.127Z",
+           "endedAt": "2026-11-20T06:27:05.652Z"
+          }
+         ],
+         "startedAt": "2026-11-20T06:21:09.035Z",
+         "iteration": 0,
+         "endedAt": "2026-11-20T06:27:05.674Z"
+        },
+        {
+         "nodeId": "dispatch",
+         "type": "step",
+         "status": "completed",
+         "agentName": "coder",
+         "startedAt": "2026-11-20T06:27:05.687Z",
+         "iteration": 0,
+         "modelId": "model-f-5.5",
+         "effortLevel": "low",
+         "sessionId": "sess_5e3b75c9-1748-4123-b5b4-f29d727da78d",
+         "completionSignal": "success",
+         "completionSignalSource": "send_message",
+         "credits": [
+          {
+           "usage": 0.5529363097512437,
+           "unit": "credit",
+           "unitPlural": "credits"
+          }
+         ],
+         "endedAt": "2026-11-20T06:28:12.944Z",
+         "captureSummary": "Probe capture.",
+         "hasCapture": true
+        },
+        {
+         "nodeId": "seats",
+         "type": "parallel",
+         "status": "paused",
+         "children": [
+          {
+           "nodeId": "seat-a-loop",
+           "type": "repeat",
+           "status": "completed",
+           "children": [
+            {
+             "nodeId": "seat-a-loop#0",
+             "type": "sequence",
+             "status": "completed",
+             "iteration": 0,
+             "children": [
+              {
+               "nodeId": "seat-a",
+               "type": "step",
+               "status": "completed",
+               "agentName": "seat-a",
+               "startedAt": "2026-11-20T06:28:16.693Z",
+               "iteration": 0,
+               "modelId": "model-b-5.5",
+               "effortLevel": "high",
+               "sessionId": "sess_c188ae8c-4e32-44c7-9d96-524115a4f221",
+               "completionSignal": "success",
+               "completionSignalSource": "send_message",
+               "credits": [
+                {
+                 "usage": 22.462519641459366,
+                 "unit": "credit",
+                 "unitPlural": "credits"
+                }
+               ],
+               "endedAt": "2026-11-20T06:38:43.417Z",
+               "captureSummary": "Probe capture.",
+               "hasCapture": true
+              }
+             ],
+             "startedAt": "2026-11-20T06:28:16.681Z",
+             "endedAt": "2026-11-20T06:38:46.308Z"
+            }
+           ],
+           "branchId": "seat-a-loop",
+           "startedAt": "2026-11-20T06:28:16.674Z",
+           "iteration": 0,
+           "endedAt": "2026-11-20T06:38:46.527Z"
+          },
+          {
+           "nodeId": "seat-b-loop",
+           "type": "repeat",
+           "status": "paused",
+           "children": [
+            {
+             "nodeId": "seat-b-loop#0",
+             "type": "sequence",
+             "status": "paused",
+             "iteration": 0,
+             "children": [
+              {
+               "nodeId": "seat-b",
+               "type": "step",
+               "status": "paused",
+               "agentName": "seat-b",
+               "startedAt": "2026-11-20T06:28:16.693Z",
+               "iteration": 0,
+               "modelId": "model-g-4.7",
+               "effortLevel": "high",
+               "sessionId": "sess_34da7f9e-212d-4c9c-b1aa-7318317338b8"
+              }
+             ],
+             "startedAt": "2026-11-20T06:28:16.680Z"
+            }
+           ],
+           "branchId": "seat-b-loop",
+           "startedAt": "2026-11-20T06:28:16.674Z",
+           "iteration": 0
+          }
+         ],
+         "startedAt": "2026-11-20T06:28:16.656Z",
+         "iteration": 0
+        },
+        {
+         "nodeId": "gate",
+         "type": "step",
+         "status": "pending",
+         "agentName": "coder"
+        }
+       ],
+       "startedAt": "2026-11-20T05:41:25.533Z"
+      }
+     ],
+     "startedAt": "2026-11-20T05:41:25.516Z"
+    },
+    {
+     "nodeId": "land",
+     "type": "step",
+     "status": "pending",
+     "agentName": "coder"
+    }
+   ],
+   "startedAt": "2026-11-20T05:31:33.903Z"
+  },
+  "createdAt": "2026-11-20T05:31:32.551Z",
+  "planRevision": 1,
+  "parentSessionId": "sess_d1ecd33e-3ddd-4593-a0f4-a318be206937",
+  "launchChain": [],
+  "runLabel": "seats",
+  "originalUserMessages": [],
+  "rootConversationId": "sess_d1ecd33e-3ddd-4593-a0f4-a318be206937",
+  "workspacePath": "/work",
+  "memoryConfig": {
+   "mode": "disabled",
+   "reflection": false
+  },
+  "memoryConfigSource": "explicit",
+  "backgroundExecution": true,
+  "sessionTools": {
+   "awareness": false,
+   "messaging": false,
+   "cloud": false
+  },
+  "additionalDirectories": [
+   "/extra"
+  ],
+  "parentModelId": "model-b-5.5",
+  "parentEffortLevel": "high",
+  "pauseReason": "Parallel 'seats' is waiting on branch 'seat-b-loop' (branch paused on transient error ModelThrottleError).",
+  "pauseDetail": {
+   "class": "transient-error",
+   "code": "ModelThrottleError",
+   "occurredAt": "2026-11-20T06:45:38.642Z"
+  }
+ },
+ "nodePlan": [
+  {
+   "nodeId": "create-workflow",
+   "type": "step",
+   "agentName": "creator",
+   "modelId": "model-b-5.5",
+   "effortLevel": "high"
+  },
+  {
+   "nodeId": "setup",
+   "type": "step",
+   "agentName": "coder",
+   "modelId": "model-f-5.5",
+   "effortLevel": "low"
+  },
+  {
+   "nodeId": "review-loop",
+   "type": "repeat",
+   "steps": [
+    {
+     "nodeId": "build-turns",
+     "type": "repeat",
+     "steps": [
+      {
+       "nodeId": "build",
+       "type": "step",
+       "agentName": "coder",
+       "modelId": "model-b-5.5",
+       "effortLevel": "high"
+      }
+     ],
+     "maxIterations": 6,
+     "onMaxIterations": "pause",
+     "stopWhen": "{{build.output}} contains BUILD COMPLETE"
+    },
+    {
+     "nodeId": "validate-turns",
+     "type": "repeat",
+     "steps": [
+      {
+       "nodeId": "validate",
+       "type": "step",
+       "agentName": "coder",
+       "modelId": "model-f-5.5",
+       "effortLevel": "high"
+      }
+     ],
+     "maxIterations": 3,
+     "onMaxIterations": "pause",
+     "stopWhen": "{{validate.output}} contains VALIDATION ANSWERED"
+    },
+    {
+     "nodeId": "dispatch",
+     "type": "step",
+     "agentName": "coder",
+     "modelId": "model-f-5.5",
+     "effortLevel": "low"
+    },
+    {
+     "nodeId": "seats",
+     "type": "parallel",
+     "branches": [
+      {
+       "nodeId": "seat-a-loop",
+       "type": "repeat",
+       "steps": [
+        {
+         "nodeId": "seat-a",
+         "type": "step",
+         "agentName": "seat-a",
+         "modelId": "model-b-5.5",
+         "effortLevel": "high"
+        }
+       ],
+       "maxIterations": 3,
+       "onMaxIterations": "continue",
+       "stopCondition": {
+        "fileCheck": {
+         "path": "/work/review/a.json",
+         "jsonPath": "status",
+         "value": [
+          "complete",
+          "refused",
+          "skipped",
+          "not-owed"
+         ]
+        }
+       }
+      },
+      {
+       "nodeId": "seat-b-loop",
+       "type": "repeat",
+       "steps": [
+        {
+         "nodeId": "seat-b",
+         "type": "step",
+         "agentName": "seat-b",
+         "modelId": "model-g-4.7",
+         "effortLevel": "high"
+        }
+       ],
+       "maxIterations": 3,
+       "onMaxIterations": "continue",
+       "stopCondition": {
+        "fileCheck": {
+         "path": "/work/review/b.json",
+         "jsonPath": "status",
+         "value": [
+          "complete",
+          "refused",
+          "skipped",
+          "not-owed"
+         ]
+        }
+       }
+      }
+     ]
+    },
+    {
+     "nodeId": "gate",
+     "type": "step",
+     "agentName": "coder",
+     "modelId": "model-b-5.5",
+     "effortLevel": "high"
+    }
+   ],
+   "maxIterations": 4,
+   "onMaxIterations": "pause",
+   "stopCondition": {
+    "fileCheck": {
+     "path": "/work/review/gate.json",
+     "jsonPath": "verdict",
+     "value": "APPROVED"
+    }
+   }
+  },
+  {
+   "nodeId": "land",
+   "type": "step",
+   "agentName": "coder",
+   "modelId": "model-b-5.5",
+   "effortLevel": "medium"
+  }
+ ]
+}

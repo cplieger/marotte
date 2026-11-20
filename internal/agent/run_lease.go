@@ -302,6 +302,7 @@ func (rs *Runs) grantKeeping(
 			"workflow_id", workflowID, "recipe", recipe, "origin", o.origin, "error", err)
 	}
 	rs.beginLife(workflowID)
+	rs.attention.granted(workflowID)
 	// A triggered run's row start is its run_start's confirmation, not the grant.
 	if o.origin != runlease.OriginTriggered {
 		run := ruleRun(&l)
@@ -391,56 +392,19 @@ func throttledPause(d *pauseDetail) bool {
 	return d != nil && strings.Contains(strings.ToLower(d.Code), "throttl")
 }
 
-// notifyAutoResumeStop pushes the stop under the run and tells the launching agent, off the caller's resume lock:
-// the steer can wait behind KAS's write backpressure.
+// notifyAutoResumeStop pushes the stop under the run, and has the run-attention ledger read the run again, which wakes
+// the launching agent: the heal reads the run outside its cell, so the cell may hold no read of the pause.
 func (rs *Runs) notifyAutoResumeStop(ctx context.Context, workflowID string, throttled bool) {
 	l, held := rs.lease(workflowID)
 	if !held || rs.coord == nil {
 		return
 	}
-	name := rs.leasedRunName(&l)
-	n := notice.AutoResumeStopped(notice.RunTarget(workflowID, name), throttled)
+	n := notice.AutoResumeStopped(notice.RunTarget(workflowID, rs.leasedRunName(&l)), throttled)
 	rs.coord.Notify(ctx, marotte.ChatID(l.ChatID), &n)
-	chat := marotte.ChatID(l.ChatID)
-	if chat == "" || marotte.IsRunHostChat(chat) || rs.lifecycle == nil {
-		return
+	rs.attention.recompute(workflowID)
+	if c := rs.cellFor(workflowID); c != nil {
+		rs.kickCell(c)
 	}
-	text := autoResumeStopNoteText(workflowID, name, throttled)
-	rs.lifecycle.goUnlessDraining(func() {
-		nctx, cancel := rs.lifecycle.derivedContext()
-		defer cancel()
-		rs.tellLaunchingAgent(nctx, workflowID, chat, "marotte stopped resuming it", text)
-	})
-}
-
-// autoResumeStopNoteText is the launching agent's copy of the stop, naming the run by id for its workflow tools.
-func autoResumeStopNoteText(workflowID, name string, throttled bool) string {
-	cause := "for a cause nobody chose"
-	if throttled {
-		cause = "for model throttling"
-	}
-	run := workflowID
-	if name != "" {
-		run = name + " (" + workflowID + ")"
-	}
-	return "marotte stopped resuming workflow run " + run + " on its own: it kept pausing " + cause +
-		" with no progress between resumes. It stays paused until it is resumed (update_workflow resume) or ended."
-}
-
-// tellLaunchingAgent files text in the run's launching session; command.SteerWarningNotice owns how it is read. about
-// names what it tells, for the log.
-func (rs *Runs) tellLaunchingAgent(ctx context.Context, workflowID string, chat marotte.ChatID, about, text string) {
-	host, release, err := rs.ensureResident(ctx, workflowID)
-	defer release()
-	if err == nil {
-		err = command.SteerWarningNotice(ctx, host.sb, text)
-	}
-	if err != nil {
-		slog.Warn("a run's launching agent could not be told", "about", about,
-			"workflow_id", workflowID, "chat_id", chat, "error", err)
-		return
-	}
-	slog.Info("told a run's launching agent", "about", about, "workflow_id", workflowID, "chat_id", chat)
 }
 
 // endAutoResumeStop drops a run's stop and the spent heal budget behind it, reporting whether it had one: the run

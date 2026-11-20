@@ -22,8 +22,8 @@ var readCosts = map[string]testsupport.Cost{
 	"since read x10":       {Allocs: 130, Bytes: 48264},
 	"glance read x1":       {Allocs: 37461, Bytes: 4304759},
 	"glance read x10":      {Allocs: 384012, Bytes: 43973557},
-	"ask core refresh x1":  {Allocs: 68313, Bytes: 13142528},
-	"ask core refresh x10": {Allocs: 686190, Bytes: 137888984},
+	"ask core refresh x1":  {Allocs: 75743, Bytes: 14592688},
+	"ask core refresh x10": {Allocs: 760977, Bytes: 153028912},
 	"session listing x1":   {Allocs: 3047, Bytes: 720140},
 	"session listing x10":  {Allocs: 28448, Bytes: 6571324},
 }

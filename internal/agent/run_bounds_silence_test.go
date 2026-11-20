@@ -3,12 +3,14 @@ package agent
 // A step whose turn stays open and sends nothing: flagged for a chat-launched run, stopped for a parentless one.
 
 import (
+	"context"
 	"encoding/json"
 	"slices"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/translate"
@@ -23,6 +25,11 @@ const silencePushBody = "No activity for 1 hour · a step is still running"
 func silentStep(t *testing.T, launch launchOrigin, ago time.Duration, opts ...Option) (*Runtime, *fakeBridge, time.Time) {
 	t.Helper()
 	h, _, br := newTestHub(opts...)
+	// The run-attention wake of a hung step is its own suite's (run_attention_test.go); here the launching chat has no
+	// session, and a wake would open one these hours-long bubbles never close.
+	h.runs.notifyChat = func(context.Context, marotte.ChatID, string) (command.NotifyReceipt, error) {
+		return command.NotifyReceipt{}, command.ErrChatNotFound
+	}
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 	h.insertBridgeNow(marotte.RunHostChatID(silentRunID), testBridge(br, bridgeReady))
 	h.runs.log = newRunLog(t.TempDir())

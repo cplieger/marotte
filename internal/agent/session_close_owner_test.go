@@ -2292,15 +2292,6 @@ func TestCloseOwner_EveryAcquireReleasesOnError(t *testing.T) {
 			}
 			return 1
 		}},
-		{name: "a notice to the launching agent that fails", fail: func(t *testing.T, o *ownerHub) int {
-			o.launchRun(t, "wf_1")
-			o.br.setCallErr(marotte.MethodSessionSteer, errors.New("broken pipe"))
-			o.h.runs.tellLaunchingAgent(t.Context(), "wf_1", "c1", "test", "hello")
-			if !slices.Contains(o.br.callLog(), marotte.MethodSessionSteer) {
-				t.Error("Setup: the notice never reached the launching session")
-			}
-			return 1
-		}},
 		{name: "the boot pass over two chat-parented runs", fail: func(t *testing.T, o *ownerHub) int {
 			o.launchRun(t, "wf_1")
 			o.launchRun(t, "wf_2")

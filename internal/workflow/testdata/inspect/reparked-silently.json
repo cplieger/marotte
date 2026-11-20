@@ -1,0 +1,78 @@
+{
+ "workflowId": "wf_47f511b2431607ba",
+ "state": {
+  "workflowId": "wf_47f511b2431607ba",
+  "workflowName": "run-attention-repark-probe",
+  "status": "paused",
+  "inputs": {},
+  "artifacts": {},
+  "capturedOutputs": {},
+  "root": {
+   "nodeId": "wf_47f511b2431607ba",
+   "type": "sequence",
+   "status": "paused",
+   "children": [
+    {
+     "nodeId": "ask",
+     "type": "step",
+     "status": "paused",
+     "agentName": "advisor",
+     "modelId": "model-a-5.5",
+     "effortLevel": "low",
+     "startedAt": "2026-11-20T04:35:10.471Z",
+     "sessionId": "sess_63ef0731-ce88-4a8f-b0b3-eaa68afd4027",
+     "awaitingUserInput": true,
+     "attention": [
+      {
+       "kind": "question",
+       "since": "2026-11-20T04:35:45.557Z"
+      }
+     ]
+    }
+   ],
+   "startedAt": "2026-11-20T04:35:09.417Z"
+  },
+  "createdAt": "2026-11-20T04:32:37.738Z",
+  "planRevision": 0,
+  "parentSessionId": "sess_68e61e9a-7200-4904-9960-6fbf86a28894",
+  "launchChain": [],
+  "rootConversationId": "sess_68e61e9a-7200-4904-9960-6fbf86a28894",
+  "workspacePath": "/work",
+  "memoryConfig": {
+   "mode": "disabled",
+   "reflection": false
+  },
+  "memoryConfigSource": "explicit",
+  "backgroundExecution": true,
+  "sessionTools": {
+   "awareness": false,
+   "messaging": false,
+   "cloud": false
+  },
+  "additionalDirectories": [
+   "/extra"
+  ],
+  "pauseReason": "Step 'ask' is awaiting user input.",
+  "attention": [
+   {
+    "kind": "question",
+    "since": "2026-11-20T04:35:45.557Z",
+    "nodeId": "ask",
+    "nodePath": [
+     "wf_47f511b2431607ba",
+     "ask"
+    ],
+    "sessionId": "sess_63ef0731-ce88-4a8f-b0b3-eaa68afd4027"
+   }
+  ]
+ },
+ "nodePlan": [
+  {
+   "nodeId": "ask",
+   "type": "step",
+   "agentName": "advisor",
+   "modelId": "model-a-5.5",
+   "effortLevel": "low"
+  }
+ ]
+}

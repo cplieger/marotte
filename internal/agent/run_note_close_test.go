@@ -32,7 +32,7 @@ func TestRunNote_AfterAReopenLandsInTheReopenedChat(t *testing.T) {
 		reopenTab(t, h, "op-reopen")
 		turnID, _ := h.stagePromptTurn(t, "c1")
 
-		h.runs.noteGradedStepEnd(t.Context(), &lease, workflow.PathKey(path), &refused, "", false)
+		h.runs.noteGradedStepEnd(t.Context(), &lease, workflow.PathKey(path), &refused)
 		endTurn(t, h, "c1", turnID)
 
 		entries, err := cs.All(t.Context(), "c1")
@@ -59,7 +59,7 @@ func TestRunNote_AfterAReopenLandsInTheReopenedChat(t *testing.T) {
 		}
 		awaitTeardown(t, h, "c1")
 
-		h.runs.noteGradedStepEnd(t.Context(), &lease, workflow.PathKey(path), &refused, "", false)
+		h.runs.noteGradedStepEnd(t.Context(), &lease, workflow.PathKey(path), &refused)
 
 		if p := cs.Presence("c1"); p != chat.PresenceAbsent {
 			t.Errorf("the deleted chat's presence after the note = %v, want no record", p)

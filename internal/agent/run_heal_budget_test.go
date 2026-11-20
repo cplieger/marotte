@@ -337,8 +337,8 @@ func TestHealPaused_AThrottleReportedAsAQuestionIsResumed(t *testing.T) {
 	})
 }
 
-// Throttled questions with no progress between them spend the heal budget like any throttle, and the stop says the
-// run kept pausing on model throttling.
+// Throttled questions with no progress between them spend the heal budget like any throttle, and the stop's notice
+// says the run kept pausing on model throttling.
 // The step's frames and the parent's pause frame travel on different sessions, so the last one's turn end can land
 // after its pause frame.
 func TestHealBudget_ThrottledAsksWithNoProgressStopWithTheThrottleRecord(t *testing.T) {
@@ -351,18 +351,20 @@ func TestHealBudget_ThrottledAsksWithNoProgressStopWithTheThrottleRecord(t *test
 		{name: "the last pause frame ahead of its turn end", last: askTurn{answered: true, failed: true, pauseFirst: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			g := newThrottleRig(t, nil)
+			// Room for every question's push beside the stop's.
+			fp := &runOutcomePush{sent: make(chan runPushSent, 64)}
+			g := newThrottleRig(t, nil, WithPush(fp))
 			for i := range int32(maxAutoHeals) {
 				g.throttledAsk(t, throttledAnsweredAsk)
 				waitUntil(t, "the automatic answer", func() bool { return g.answers.Load() == i+1 })
 			}
 			g.throttledAsk(t, tc.last)
 			waitUntil(t, "the run's stop recorded", func() bool { return autoResumeStoppedAt(t, g.h) != "" })
-			waitUntil(t, "the parent's notice", func() bool { return len(g.stopNotices()) > 0 })
+			g.stopRead(t)
 			awaitStepAnswers(t, g, maxAutoHeals)
-			msg, _ := g.stopNotices()[0]["message"].(string)
-			if !strings.Contains(msg, "for model throttling") {
-				t.Errorf("the parent's notice %q does not say the run kept pausing for model throttling", msg)
+			joinInflight(g.h)
+			if p := runOutcomePushes(fp); len(p) != 1 || !strings.Contains(p[0].body, "model throttling") {
+				t.Errorf("the stop pushed %+v, want one notice saying the run kept pausing for model throttling", p)
 			}
 			if p := g.pauseParams(); len(p) != 0 {
 				t.Errorf("stopping the automatic answers wrote pauses %v", p)

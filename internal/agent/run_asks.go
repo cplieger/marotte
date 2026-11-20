@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cplieger/go/keyenc"
@@ -64,7 +65,10 @@ type runAsks struct {
 	// seq stamps every snapshot, monotonic across cells, so a cell rebuilt for the same run never
 	// re-uses a number a client already holds.
 	seq uint64
-	mu  sync.Mutex
+	// attnSeq orders the run-attention ledger's snapshots of every cell (attentionInput.seq), each taken under its
+	// cell's mu.
+	attnSeq atomic.Uint64
+	mu      sync.Mutex
 }
 
 type pendingPhase int
@@ -126,6 +130,8 @@ type askCell struct {
 	decodeWarns bool
 	// readFailed is set while the newest read failed, so reply is older than the run.
 	readFailed bool
+	// gone is set while the newest read was kiro-cli answering that it holds no such run.
+	gone bool
 }
 
 func newAskCell(workflowID string, chatID marotte.ChatID) *askCell {
@@ -260,10 +266,11 @@ func (a *runAsks) list() []marotte.ServerEvent {
 	return out
 }
 
-// endAsks retires the run's cell once its lease is released: the release itself says the run waits
+// endAsks retires the run's cell and its attention once its lease is released: the release itself says the run waits
 // on nobody, so no read is needed. Every surface gets the empty snapshot, every banner's push is
 // retracted, and a stop waiting on a pending answer is let go.
 func (rs *Runs) endAsks(ctx context.Context, workflowID string) {
+	rs.attention.forget(workflowID)
 	a := &rs.asks
 	c := a.get(workflowID)
 	if c == nil {
@@ -550,17 +557,22 @@ func (rs *Runs) refreshCell(ctx context.Context, c *askCell) (askRead, error) {
 		rs.markUnreadable(ctx, c)
 		return askRead{raw: raw}, decodeErr
 	}
+	if bad := workflow.Unreadable(in.State); len(bad) > 0 {
+		slog.Debug("ask core: a pause or park field of a run did not parse", "workflow_id", c.workflowID, "fields", bad)
+	}
 	rs.readSaid(ctx, c, in, basis)
 	c.mu.Lock()
-	c.reply, c.raw, c.basis, c.readFailed = in, raw, basis, false
+	c.reply, c.raw, c.basis, c.readFailed, c.gone = in, raw, basis, false, false
 	asks := workflow.OpenAsks(in, c.runLogLocked(basis, rs.asks.epochNow()))
 	c.settleOnReadLocked(in, asks)
 	// Settling can clear marotte's own holds, which are part of this snapshot.
 	asks = workflow.OpenAsks(in, c.runLogLocked(basis, rs.asks.epochNow()))
 	n := rs.publishLocked(ctx, c, wireAsks(asks), true)
 	rs.armTimersLocked(c, asks)
+	held := attentionInput{workflowID: c.workflowID, reply: in, asks: asks, reachable: true, seq: rs.asks.attnSeq.Add(1)}
 	c.mu.Unlock()
 	rs.sendNotices(ctx, c, n)
+	rs.attention.observe(&held)
 	return askRead{raw: raw, in: in, asks: asks, rev: rs.revise(ctx, c, &freshRead{raw: raw, in: in, turns: turns})}, nil
 }
 
@@ -590,19 +602,21 @@ func (rs *Runs) markGone(ctx context.Context, c *askCell) {
 	c.clearPendingLocked()
 	stopTimer(c.requery)
 	stopTimer(c.quiet)
-	c.reply, c.raw, c.readFailed = workflow.Inspect{}, nil, false
+	c.reply, c.raw, c.readFailed, c.gone = workflow.Inspect{}, nil, false, true
 	n := rs.publishLocked(ctx, c, nil, true)
 	c.mu.Unlock()
 	rs.sendNotices(ctx, c, n)
+	rs.attend(c)
 }
 
 func (rs *Runs) markUnreadable(ctx context.Context, c *askCell) {
 	c.mu.Lock()
-	c.readFailed = true
+	c.readFailed, c.gone = true, false
 	n := rs.publishLocked(ctx, c, c.last.Asks, false)
 	rs.armRequeryLocked(c)
 	c.mu.Unlock()
 	rs.sendNotices(ctx, c, n)
+	rs.attend(c)
 }
 
 func (rs *Runs) armTimersLocked(c *askCell, asks []workflow.Ask) {
@@ -885,6 +899,7 @@ func (rs *Runs) registerPending(ctx context.Context, c *askCell) *pendingPrompt 
 	n := rs.republishLocked(ctx, c)
 	c.mu.Unlock()
 	rs.sendNotices(ctx, c, n)
+	rs.attend(c)
 	return p
 }
 
@@ -899,6 +914,7 @@ func (rs *Runs) clearPending(ctx context.Context, c *askCell, p *pendingPrompt) 
 	n := rs.republishLocked(ctx, c)
 	c.mu.Unlock()
 	rs.sendNotices(ctx, c, n)
+	rs.attend(c)
 }
 
 func (c *askCell) clearPendingLocked() {
@@ -940,6 +956,7 @@ func (rs *Runs) repliedPending(ctx context.Context, c *askCell, p *pendingPrompt
 		n := rs.republishLocked(ctx, c)
 		c.mu.Unlock()
 		rs.sendNotices(ctx, c, n)
+		rs.attend(c)
 		return
 	}
 	if rs.lifecycle != nil {
@@ -1019,6 +1036,7 @@ func (rs *Runs) setStopping(ctx context.Context, c *askCell, on bool) {
 	n := rs.republishLocked(ctx, c)
 	c.mu.Unlock()
 	rs.sendNotices(ctx, c, n)
+	rs.attend(c)
 }
 
 // clearStopping is a kept delete: the run takes answers again.

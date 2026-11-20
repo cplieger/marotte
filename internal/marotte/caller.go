@@ -6,9 +6,13 @@ type CallerKind string
 // CallerKindRule is a Bot's rule: Label is the rule's name, Rule its id, Event the event that fired it.
 const CallerKindRule CallerKind = "rule"
 
-// Caller marks a message a program sent through marotte's API, or a Bot's rule sent, rather than one the user typed
-// in its page; a message with no Caller is the user's own. Label is the name the sender gave itself, "" when it gave
-// none.
+// CallerKindMarotte is marotte's own message, its run-attention wake or a run heal's answer. No outside caller can
+// state it, so SameSender never matches an outside caller's label "marotte" against it.
+const CallerKindMarotte CallerKind = "marotte"
+
+// Caller marks a message a program sent through marotte's API, a Bot's rule sent, or marotte sent on its own, rather
+// than one the user typed in its page; a message with no Caller is the user's own. Label is the name the sender gave
+// itself, "" when it gave none.
 type Caller struct {
 	Kind  CallerKind `json:"kind,omitempty"`
 	Label string     `json:"label,omitempty"`

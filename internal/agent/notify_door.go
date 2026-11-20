@@ -26,7 +26,8 @@ func (rt *Runtime) Notifier() notify.Deliverer {
 		engineReady: rt.engine.isReady,
 		chats:       rt.chatStore.List,
 		deliver: func(ctx context.Context, chatID marotte.ChatID, text string, from *marotte.Caller) (string, error) {
-			return rt.dispatcher.Notify(ctx, chatID, text, from, command.NotifyOptions{})
+			r, err := rt.dispatcher.Notify(ctx, chatID, text, from, command.NotifyOptions{})
+			return r.MessageID, err
 		},
 	}
 }

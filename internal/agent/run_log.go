@@ -51,9 +51,13 @@ type runTurn struct {
 	tail atomic.Pointer[string]
 	// calls is the sink's printedLine state, nil until the turn's first entry.
 	calls stepCalls
-	// callTitles is calls' card titles by call id as the sink last left them, which a read's row carries; never
+	// callSnap is calls by call id as the sink last left them, which a read's row and the health facts carry; never
 	// written after it is stored.
-	callTitles atomic.Pointer[map[string]string]
+	callSnap atomic.Pointer[map[string]workflow.OpenCall]
+	// callStarts is when the sink first held each of calls, on the run log's clock; the sink's alone.
+	callStarts map[string]time.Time
+	// pausedAt is the step's newest node_paused, zero once a turn_start follows it.
+	pausedAt time.Time
 	// lastError is the newest model error KAS displayed in the step's current KAS turn, zero when none.
 	lastError marotte.EngineError
 	// rawStop is the last turn_end's stop reason, carried by the close.
@@ -88,19 +92,28 @@ type runTurn struct {
 	ended bool
 	// seq is the newest seq the sink assigned, written on the dispatch goroutine and read by the digest.
 	seq atomic.Uint64
+	// lastAt is the step's last activity in unix ms on the run log's clock: every entry but marotte's own cards, and
+	// the end of each wait on the step (its open, an unpark, a turn_start, an ask's close), so a step that waited is
+	// not read as hung the moment the wait ends.
+	lastAt atomic.Int64
 }
 
-// runSink wraps the run's log so every append records the turn's newest seq.
+// runSink wraps the run's log so every append records the turn's newest seq and activity.
 type runSink struct {
 	log  *chat.EntryLog
 	turn *runTurn
+	now  func() time.Time
 }
 
 func (s runSink) Append(ctx context.Context, e *marotte.Entry) error {
 	if err := s.log.Append(ctx, e); err != nil {
 		return err
 	}
+	at := s.now()
 	s.turn.seq.Store(e.Seq)
+	if !marotteCard(e) {
+		s.turn.stamp(at)
+	}
 	s.turn.answer.see(e)
 	if s.turn.calls == nil {
 		s.turn.calls = make(stepCalls)
@@ -109,18 +122,79 @@ func (s runSink) Append(ctx context.Context, e *marotte.Entry) error {
 		s.turn.tail.Store(&line)
 	}
 	if e.Lane == "" && (e.Kind == marotte.EntryKindToolCall || e.Kind == marotte.EntryKindToolResult) {
-		titles := s.turn.calls.titles()
-		s.turn.callTitles.Store(&titles)
+		s.turn.snapCalls(at)
 	}
 	return nil
 }
 
+// marotteCard reports marotte's own hook or steering card, which is no model or tool activity.
+func marotteCard(e *marotte.Entry) bool {
+	if e.Kind != marotte.EntryKindToolCall {
+		return false
+	}
+	var c struct {
+		Kind marotte.ToolKind `json:"kind"`
+	}
+	return json.Unmarshal(e.Payload, &c) == nil && (c.Kind == marotte.ToolKindHook || c.Kind == marotte.ToolKindSteering)
+}
+
+func (t *runTurn) stamp(at time.Time) { t.lastAt.Store(at.UnixMilli()) }
+
+// lastActivity is lastAt as a time, zero when nothing stamped it.
+func (t *runTurn) lastActivity() time.Time {
+	if ms := t.lastAt.Load(); ms != 0 {
+		return time.UnixMilli(ms)
+	}
+	return time.Time{}
+}
+
+// snapCalls stores the snapshot of calls, a call first held now starting at at. The sink's alone.
+func (t *runTurn) snapCalls(at time.Time) {
+	var snap map[string]workflow.OpenCall
+	starts := make(map[string]time.Time, len(t.calls))
+	for k, call := range t.calls {
+		start, ok := t.callStarts[k.id]
+		if !ok {
+			start = at
+		}
+		starts[k.id] = start
+		if snap == nil {
+			snap = make(map[string]workflow.OpenCall, len(t.calls))
+		}
+		tc := marotte.ToolCallOfEntry(call)
+		title, _ := marotte.ToolCard(&tc)
+		snap[k.id] = workflow.OpenCall{Title: title, Kind: string(call.Kind), StartedAt: start}
+	}
+	t.callStarts = starts
+	t.callSnap.Store(&snap)
+}
+
 // openCalls is the card titles of the turn's own-lane calls stepCalls holds, nil when none.
 func (t *runTurn) openCalls() map[string]string {
-	if p := t.callTitles.Load(); p != nil {
-		return *p
+	p := t.callSnap.Load()
+	if p == nil || len(*p) == 0 {
+		return nil
 	}
-	return nil
+	out := make(map[string]string, len(*p))
+	for id, c := range *p {
+		out[id] = c.Title
+	}
+	return out
+}
+
+// oldestCall is the turn's own-lane call open longest, nil when none.
+func (t *runTurn) oldestCall() *workflow.OpenCall {
+	p := t.callSnap.Load()
+	if p == nil {
+		return nil
+	}
+	var out *workflow.OpenCall
+	for _, id := range slices.Sorted(maps.Keys(*p)) {
+		if c := (*p)[id]; out == nil || c.StartedAt.Before(out.StartedAt) {
+			out = &c
+		}
+	}
+	return out
 }
 
 // runRecord is one run: its log, open turns by node path, newest closed turn per path, and the bridge whose death closes them.
@@ -128,6 +202,8 @@ type runRecord struct {
 	log    *chat.EntryLog
 	open   map[string]*runTurn
 	closed map[string]string
+	// opened counts each path's turns this process opened: the newest turn's ordinal, open or closed (attnTurn).
+	opened map[string]int
 	// staged holds, per path, the user's words a paused step resumes on, until KAS reopens the path's
 	// turn: they become that turn's prompt.
 	staged map[string]*marotte.EntryPrompt
@@ -157,8 +233,10 @@ type runLog struct {
 	steps stepHolds
 	// removeAll is removeDir's os.RemoveAll, a field so a test can fail one removal as root cannot be refused.
 	removeAll func(path string) error
-	root      string
-	mu        sync.Mutex
+	// clock is the time activity, pauses and call starts are stamped with; a test sets it (setClock).
+	clock atomic.Pointer[func() time.Time]
+	root  string
+	mu    sync.Mutex
 }
 
 // stepHolds is the turn registry as the run log reports a hosted step turn: the host's session may not close while
@@ -171,12 +249,18 @@ type stepHolds interface {
 var _ stepHolds = (*turnRegistry)(nil)
 
 func newRunLog(configDir string) *runLog {
-	return &runLog{
+	r := &runLog{
 		runs:      make(map[string]*runRecord),
 		removeAll: os.RemoveAll,
 		root:      filepath.Join(configDir, runLogDir),
 	}
+	r.setClock(time.Now)
+	return r
 }
+
+func (r *runLog) setClock(now func() time.Time) { r.clock.Store(&now) }
+
+func (r *runLog) now() time.Time { return (*r.clock.Load())() }
 
 // dir is a run's directory, refused for an id that is not a plain name.
 func (r *runLog) dir(workflowID string) (string, error) {
@@ -617,6 +701,9 @@ func (r *runLog) open(ctx context.Context, step *translate.RunStep, chatID marot
 	}
 	if t := rec.open[nodePath]; t != nil {
 		// KAS sends node_start twice per step, and again when it resumes a parked one; each continues this turn.
+		if t.parked {
+			t.stamp(r.now())
+		}
 		t.parked, t.parkedTurn = false, false
 		if t.top == "" {
 			t.top = topStepOf(step)
@@ -642,11 +729,16 @@ func (r *runLog) open(ctx context.Context, step *translate.RunStep, chatID marot
 	delete(rec.staged, nodePath)
 	delete(rec.late, nodePath)
 	t := &runTurn{path: nodePath, top: topStepOf(step), nodeType: step.NodeType, nodeID: nodeIDOf(step)}
-	t.turn = turnlog.Open(e.ID, runSink{log: rec.log, turn: t})
+	t.stamp(r.now())
+	t.turn = turnlog.Open(e.ID, runSink{log: rec.log, turn: t, now: r.now})
 	if r.steps != nil {
 		r.steps.holdStep(rec.host, e.ID)
 	}
 	rec.open[nodePath] = t
+	if rec.opened == nil {
+		rec.opened = make(map[string]int)
+	}
+	rec.opened[nodePath]++
 	if rec.starts != nil {
 		noteAttemptOpen(rec.starts, nodePath, e.Ts)
 		rec.turns[nodePath] = append(rec.turns[nodePath], e.ID)
@@ -791,6 +883,77 @@ func (r *runLog) transientFailure(workflowID, nodePath string) (code string, ok 
 	return t.transientFailure()
 }
 
+// attnSteps is a run's step turns as the run-attention ledger reads them: the open ones' facts by path, and each
+// path's newest turn, open or closed.
+type attnSteps struct {
+	live   map[string]workflow.StepFacts
+	newest map[string]attnTurn
+}
+
+// attnTurn is a path's newest step turn: its id and its ordinal among the path's turns this process opened, which
+// orders two reads of the path taken at different times.
+type attnTurn struct {
+	id string
+	n  int
+}
+
+// attentionSteps is the run's open step turns and each path's newest turn.
+func (r *runLog) attentionSteps(workflowID string) attnSteps {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.runs[workflowID]
+	if !ok {
+		return attnSteps{}
+	}
+	out := attnSteps{}
+	for path := range rec.opened {
+		if t := newestLocked(rec, path); t.id != "" {
+			if out.newest == nil {
+				out.newest = make(map[string]attnTurn, len(rec.opened))
+			}
+			out.newest[path] = t
+		}
+	}
+	if len(rec.open) > 0 {
+		out.live = make(map[string]workflow.StepFacts, len(rec.open))
+	}
+	for path, t := range rec.open {
+		code, _ := t.transientFailure()
+		out.live[path] = workflow.StepFacts{
+			PausedAt: t.pausedAt, LastAt: t.lastActivity(), OpenCall: t.oldestCall(),
+			TransientFailure: code, CountsTowardSilence: t.countsTowardSilence(),
+		}
+	}
+	return out
+}
+
+// newestTurn is the path's newest step turn, open or closed; zero when the run log holds none.
+func (r *runLog) newestTurn(workflowID, nodePath string) attnTurn {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.runs[workflowID]
+	if !ok {
+		return attnTurn{}
+	}
+	return newestLocked(rec, nodePath)
+}
+
+func newestLocked(rec *runRecord, path string) attnTurn {
+	t := attnTurn{n: rec.opened[path], id: rec.closed[path]}
+	if open := rec.open[path]; open != nil {
+		t.id = open.turn.ID()
+	}
+	return t
+}
+
+// throttledStop reports a step whose current KAS turn ended `error` on a model throttle.
+func (r *runLog) throttledStop(workflowID, nodePath string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t := r.openLocked(workflowID, nodePath)
+	return t != nil && t.errStop && rpcerr.Mapped{ErrorType: t.lastError.ErrorType, RetryErrorType: t.lastError.RetryErrorType}.Throttle()
+}
+
 // stepFailure is an open step turn whose current KAS turn ended `error`: its path, its error class, and whether that
 // class is transient (runTurn.transientFailure).
 type stepFailure struct {
@@ -839,6 +1002,8 @@ func (r *runLog) turnStarted(workflowID, nodePath string) bool {
 	if t == nil {
 		return false
 	}
+	t.stamp(r.now())
+	t.pausedAt = time.Time{}
 	t.ownEnd = false
 	t.errStop = false
 	t.ended = false
@@ -855,6 +1020,7 @@ func (r *runLog) paused(workflowID, nodePath string) {
 	defer r.mu.Unlock()
 	if t := r.openLocked(workflowID, nodePath); t != nil {
 		t.ownEnd, t.parked, t.parkedTurn = false, true, false
+		t.pausedAt = r.now()
 	}
 }
 
@@ -1093,7 +1259,7 @@ func lateCallsOf(sealed []turnlog.Sealed, dock stepCalls) *lateCalls {
 // sealedClose is the close a closer sealed, through the scan's constructor so a live close and a scanned one cannot
 // differ: the conclusion, the fallback when the turn_close does not decode, has no refusal.
 func sealedClose(sealed []turnlog.Sealed, turn string, c *marotte.TurnConclusion) stepClose {
-	if tc, ok := turnCloseOf(sealed); ok {
+	if tc, _, ok := turnCloseOf(sealed); ok {
 		return stepCloseOf(&tc, turn)
 	}
 	return stepClose{
@@ -1252,7 +1418,7 @@ func (*runLog) gradeLocked(ctx context.Context, rec *runRecord, path string, k k
 		return nil, err
 	}
 	rec.closes[path] = graded
-	g := &stepGrade{entry: e, nodePath: path, grade: graded, sessionID: kas.SessionID}
+	g := &stepGrade{entry: e, nodePath: path, grade: graded}
 	if n, held := rec.noteLeases[path]; held {
 		delete(rec.noteLeases, path)
 		if n.turn == c.turn {

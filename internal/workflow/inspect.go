@@ -45,7 +45,7 @@ func DecodeInspect(workflowID string, raw json.RawMessage) (Inspect, error) {
 }
 
 func pendingCount(raw json.RawMessage) int {
-	if len(raw) == 0 || string(raw) == "null" {
+	if len(raw) == 0 || string(raw) == jsonNull {
 		return 0
 	}
 	var steps []json.RawMessage

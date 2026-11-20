@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -21,6 +22,10 @@ type tableWorld struct {
 	offers     uint64
 	// mode is the interrupt_mode a door send takes (doorSubmitLocked).
 	mode marotte.InterruptMode
+	// gate is the model gate's answer for an attention entry's take; nil admits every take.
+	gate func(e *runEntry) (bool, time.Time)
+	// gateStart is the gate's answer when the take starts; nil starts every take.
+	gateStart func(e *runEntry) (bool, time.Time)
 }
 
 func newTableWorld() *tableWorld { return &tableWorld{l: &runList{}} }
@@ -36,7 +41,7 @@ func (w *tableWorld) facts() *orderFacts {
 			return command.Reservation{Chat: "c1", Token: w.tokens}, takeGranted
 		},
 		newOffer: func() uint64 { w.offers++; return w.offers },
-		nextSeq:  w.nextSeq, stopSeq: w.stopSeq, admit: !w.kasRunning,
+		nextSeq:  w.nextSeq, stopSeq: w.stopSeq, admit: !w.kasRunning, gate: w.gate, gateStart: w.gateStart,
 	}
 }
 

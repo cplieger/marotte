@@ -69,6 +69,9 @@ type Runs struct {
 	steers  *stepSteers
 	// asks is the ask core's per-run cells (run_asks.go).
 	asks runAsks
+	// attention is the run-attention ledger (run_attention.go); notifyChat is the notify door it wakes a chat through.
+	attention  *runAttention
+	notifyChat func(ctx context.Context, chat marotte.ChatID, text string) (command.NotifyReceipt, error)
 	// stepReplays holds the step-transcript reads in flight (step_replay.go).
 	stepReplays stepReplays
 	// unconfirmed answers a retried step message whose engine died before replying (run_message.go).

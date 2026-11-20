@@ -891,7 +891,7 @@ func (h *holdWorld) lifeEvent() {
 	if h.l.liveLen() != 0 {
 		return
 	}
-	next, _ := h.l.endLife()
+	next, _, _ := h.l.endLife()
 	if h.r.IntN(3) == 0 {
 		// A restart holds every row it keeps for the user (RunHeld) and drops the wakes: nothing is paused.
 		h.log = append(h.log, "restart")

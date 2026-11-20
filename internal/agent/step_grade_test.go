@@ -528,7 +528,7 @@ func TestStepEnd_AStepKASCompletedWithNoSignalAfterAnEmptyAnswerReadsFailed(t *t
 				if len(wakes) != 1 {
 					t.Fatalf("the launching agent got %d wakes, want one: %q", len(wakes), wakes)
 				}
-				for _, want := range []string{nodePath, session, "ended with an empty model turn and no completion signal"} {
+				for _, want := range []string{id, "step review-b: ", "ended on an empty model answer"} {
 					if !strings.Contains(wakes[0], want) {
 						t.Errorf("wake text = %q, want it to name %q", wakes[0], want)
 					}
@@ -816,7 +816,7 @@ func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *tes
 				joinInflight(h)
 				var wakes int
 				for _, w := range g.wakes() {
-					if strings.Contains(w, "ended with an empty model turn and no completion signal") {
+					if strings.Contains(w, "ended on an empty model answer") {
 						wakes++
 					}
 				}

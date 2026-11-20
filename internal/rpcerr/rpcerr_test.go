@@ -343,3 +343,29 @@ func TestKnownClassSessionHeldElsewhere(t *testing.T) {
 		t.Error(`KnownClass("SessionHeldElsewhereError") = false, want true`)
 	}
 }
+
+// Only the account's rate limit is a throttle: a stalled stream or a service fault is transient but no throttle.
+func TestMapped_Throttle(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		m    Mapped
+		want bool
+	}{
+		{"a client throttle", Mapped{ErrorType: "ClientThrottleError", RetryErrorType: RetryThrottling}, true},
+		{"a model throttle", Mapped{ErrorType: "ModelThrottleError"}, true},
+		{"a service throttle", Mapped{ErrorType: "ServiceThrottleError"}, true},
+		{"a minified class the backend throttled", Mapped{ErrorType: "ge", RetryErrorType: RetryThrottling}, true},
+		{"a stream idle timeout", Mapped{ErrorType: "StreamIdleTimeoutError"}, false},
+		{"a service 5xx", Mapped{ErrorType: "InternalServerException", RetryErrorType: "SERVER_ERROR"}, false},
+		{"no class at all", Mapped{}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := c.m.Throttle(); got != c.want {
+				t.Errorf("%+v.Throttle() = %v, want %v", c.m, got, c.want)
+			}
+		})
+	}
+}

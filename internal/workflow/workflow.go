@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -32,6 +33,69 @@ type node struct {
 	EndedAt          string           `json:"endedAt"`
 	Children         []node           `json:"children"`
 	Attention        []attentionEntry `json:"attention"`
+	// The lenient fields, kept raw so a drifted type never fails the reply: the ask core keeps its last asks on a
+	// failed decode. Read through signalSource and continuations; Unreadable reports one that does not parse.
+	RawSignalSource  json.RawMessage `json:"completionSignalSource"`
+	RawContinuations json.RawMessage `json:"continuationAttempts"`
+}
+
+// signalSource is the node's completionSignalSource, "" when absent or unparsed.
+func (n *node) signalSource() string {
+	v, _ := rawAs[string](n.RawSignalSource)
+	return v
+}
+
+// continuations is the node's continuationAttempts, 0 when absent or unparsed.
+func (n *node) continuations() int {
+	v, _ := rawAs[int](n.RawContinuations)
+	return v
+}
+
+// rawAs parses raw as T; ok is false when raw is absent, null, or does not parse.
+func rawAs[T any](raw json.RawMessage) (v T, ok bool) {
+	if len(raw) == 0 || string(raw) == jsonNull {
+		return v, false
+	}
+	return v, json.Unmarshal(raw, &v) == nil
+}
+
+// unparsed reports raw present and not parsing as T.
+func unparsed[T any](raw json.RawMessage) bool {
+	_, ok := rawAs[T](raw)
+	return !ok && len(raw) > 0 && string(raw) != jsonNull
+}
+
+// jsonNull is JSON's null literal, which KAS sends for an absent value.
+const jsonNull = "null"
+
+// lenient decodes raw into dst, recording name in bad when raw is present and does not parse into dst's type.
+func lenient[T any](raw json.RawMessage, dst *T, name string, bad *[]string) {
+	if len(raw) == 0 || string(raw) == jsonNull {
+		return
+	}
+	var v T
+	if json.Unmarshal(raw, &v) != nil {
+		*bad = append(*bad, name+"="+string(raw))
+		return
+	}
+	*dst = v
+}
+
+// RunPause is the run-level pause record of kiro-cli's state (3.5.0 schema): pauseDetail, pause, pausePending,
+// stopInitiator and stopReason, each decoded on its own.
+type RunPause struct {
+	DetailClass      string
+	DetailCode       string
+	DetailAt         string
+	PendingInitiator string
+	PendingReason    string
+	StopInitiator    string
+	StopReason       string
+	// CapKind is pause.kind ("maxIterations" for a repeat at its cap).
+	CapKind   string
+	HasDetail bool
+	// Unreadable is set when any of the five fields was present and did not parse.
+	Unreadable bool
 }
 
 // attentionEntry is one of KAS's open waits on a node: a step's park (markWaitingForUser) carries no
@@ -52,8 +116,78 @@ type State struct {
 	RunLabel        string `json:"runLabel"`
 	WorkflowName    string `json:"workflowName"`
 	// PauseReason is KAS's sentence for the run's latest park, whichever step parked.
-	PauseReason string `json:"pauseReason"`
-	CreatedAt   string `json:"createdAt"`
+	PauseReason string   `json:"pauseReason"`
+	CreatedAt   string   `json:"createdAt"`
+	Pause       RunPause `json:"-"`
+	unreadable  []string
+}
+
+// UnmarshalJSON decodes the state and its run-level pause record leniently (node's raw fields say why).
+func (s *State) UnmarshalJSON(b []byte) error {
+	type plain State
+	var w struct {
+		plain
+		PauseDetail   json.RawMessage `json:"pauseDetail"`
+		PausePending  json.RawMessage `json:"pausePending"`
+		Pause         json.RawMessage `json:"pause"`
+		StopInitiator json.RawMessage `json:"stopInitiator"`
+		StopReason    json.RawMessage `json:"stopReason"`
+	}
+	if err := json.Unmarshal(b, &w); err != nil {
+		return err
+	}
+	*s = State(w.plain)
+	s.unreadable = nil
+	var detail struct {
+		Class      string `json:"class"`
+		Code       string `json:"code"`
+		OccurredAt string `json:"occurredAt"`
+	}
+	var pending struct {
+		Initiator string `json:"initiator"`
+		Reason    string `json:"reason"`
+	}
+	var capped struct {
+		Kind string `json:"kind"`
+	}
+	lenient(w.PauseDetail, &detail, "pauseDetail", &s.unreadable)
+	lenient(w.PausePending, &pending, "pausePending", &s.unreadable)
+	lenient(w.Pause, &capped, "pause", &s.unreadable)
+	p := RunPause{
+		DetailClass: detail.Class, DetailCode: detail.Code, DetailAt: detail.OccurredAt,
+		PendingInitiator: pending.Initiator, PendingReason: pending.Reason, CapKind: capped.Kind,
+		HasDetail: detail.Class != "",
+	}
+	lenient(w.StopInitiator, &p.StopInitiator, "stopInitiator", &s.unreadable)
+	lenient(w.StopReason, &p.StopReason, "stopReason", &s.unreadable)
+	p.Unreadable = len(s.unreadable) > 0
+	s.Pause = p
+	return nil
+}
+
+// Unreadable names every lenient field of s, run-level or on a node, that was present and did not parse, with
+// its raw value, for a Debug log; nil when every one parsed.
+func Unreadable(s *State) []string {
+	if s == nil {
+		return nil
+	}
+	out := slices.Clone(s.unreadable)
+	var walk func(n *node)
+	walk = func(n *node) {
+		if unparsed[string](n.RawSignalSource) {
+			out = append(out, "node "+n.NodeID+" completionSignalSource="+string(n.RawSignalSource))
+		}
+		if unparsed[int](n.RawContinuations) {
+			out = append(out, "node "+n.NodeID+" continuationAttempts="+string(n.RawContinuations))
+		}
+		for i := range n.Children {
+			walk(&n.Children[i])
+		}
+	}
+	if s.Root != nil {
+		walk(s.Root)
+	}
+	return out
 }
 
 // UpdatedAt is the run's last activity as `_kiro/workflow/list` derives its row's updatedAt from this same state: the

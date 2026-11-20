@@ -125,6 +125,8 @@ type activeTurn struct {
 }
 
 type chatLifecycle struct {
+	// gateAt is when armGateLocked runs the taker again: the model gate opens then for an attention entry it held.
+	gateAt time.Time
 	// ctx is the life's: cancelled with marotte.ErrChatClosedDuringCall when the life ends, and every wait of the
 	// life's work selects on it.
 	ctx   context.Context
@@ -180,6 +182,8 @@ type chatLifecycle struct {
 	runFinal []marotte.RunEntry
 	// runSteers are the steers the life's end took off the list (takeEndedSteers).
 	runSteers []marotte.RunEntry
+	// attentionLost is the attention entries the life's end took off the list, for writeFinalRun to hand on.
+	attentionLost []string
 	// run is the chat's one ordered list of what runs next (run_list.go); only its advance takes an entry.
 	run runList
 	// work counts the life's running goroutines by kind (beginWork).
@@ -260,6 +264,8 @@ type turnRegistry struct {
 	records turnRecords
 	// runHost carries out what the chats' run lists owe outside them; nil carries out nothing. Set once at construction.
 	runHost runEffectsHost
+	// gate spaces the turns marotte starts on its own under the account's model rate limit, for every chat.
+	gate *modelGate
 	// onIdle runs, with no lock held, each time a chat leaves its last open turn or admission: an engine restart
 	// pending on quiescence re-checks there, and so does the chat's release check. Set once at construction.
 	onIdle func(marotte.ChatID)
@@ -315,7 +321,7 @@ func newTurnRegistry(records turnRecords) *turnRegistry {
 	if records == nil {
 		panic("agent: newTurnRegistry needs the chat store's turn keep writes")
 	}
-	return &turnRegistry{chats: make(map[marotte.ChatID]*chatLifecycle), gates: newChatGates(), records: records}
+	return &turnRegistry{chats: make(map[marotte.ChatID]*chatLifecycle), gates: newChatGates(), records: records, gate: newModelGate()}
 }
 
 // lifecycleAt returns chatID's live lifecycle, creating it, for a caller whose intent began at stamp. It waits while

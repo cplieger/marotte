@@ -171,15 +171,24 @@ func (bc *bridgeCoordinator) closeFactsOf(t *activeTurn, closer turnCloser, outc
 	return cf
 }
 
-// listCloseOf is the close's facts the run list reads at finish (runList.turnClosed): its grade, and whether the turn
-// ended clean on the wire with nothing emitted, which re-sends a retry-marked prompt once.
+// listCloseOf is the close's facts the run list reads at finish (runList.turnClosed): its grade and outcome, whether it
+// failed on a model throttle, and whether the turn ended clean on the wire with nothing emitted, which re-sends a
+// retry-marked prompt once.
 func listCloseOf(t *activeTurn, closer turnCloser, cf *closeFacts, result *marotte.TurnResult) *listClose {
 	return &listClose{
 		clean:      command.CloseFacts{Outcome: cf.outcome, Unattended: cf.unattended}.Clean(),
 		handoff:    closer == closerPromptHandoff,
 		emptyRetry: result.WireEnded && result.Stop == marotte.StopReasonEndTurn && result.EmittedNothing,
 		retryID:    "retry-" + t.ID,
+		outcome:    cf.outcome,
+		throttled:  cf.outcome == marotte.TurnOutcomeFailed && throttledTurn(t),
 	}
+}
+
+// throttledTurn reports a turn whose engine error is the account's model rate limit.
+func throttledTurn(t *activeTurn) bool {
+	e := t.Log.EngineError()
+	return e != nil && rpcerr.Mapped{ErrorType: e.ErrorType, RetryErrorType: e.RetryErrorType}.Throttle()
 }
 
 // graceClosed reports a close marotte's cancel grace made. A prompt's failure concludes `cancelled` only on
