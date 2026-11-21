@@ -7,7 +7,7 @@ require (
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/cplieger/go/httpcache v1.1.0 // indirect
 	github.com/cplieger/go/httpclient v1.2.0 // indirect
-	github.com/cplieger/go/httpserver/v2 v2.0.0-dev.10 // indirect
+	github.com/cplieger/go/httpserver/v2 v2.0.0-dev.13 // indirect
 	github.com/cplieger/go/jsonx v1.1.0 // indirect
 	github.com/cplieger/go/masked v1.0.0-dev.1 // indirect
 	github.com/cplieger/go/scheduler v1.1.0 // indirect
@@ -19,9 +19,9 @@ require (
 )
 
 require (
-	github.com/cplieger/forgeapi/v3 v3.0.0-dev.5
+	github.com/cplieger/forgeapi/v3 v3.0.0-dev.10
 	github.com/cplieger/go/envx/v2 v2.0.0-dev.1
-	github.com/cplieger/go/filesafe v1.2.0-dev.2
+	github.com/cplieger/go/filesafe v1.2.0-dev.4
 	github.com/cplieger/go/health/v2 v2.0.0
 	github.com/cplieger/go/httpserver v1.5.0
 	github.com/cplieger/go/keyenc v1.3.0
@@ -32,13 +32,13 @@ require (
 	github.com/cplieger/go/sse/v2 v2.3.0-dev.18
 	github.com/cplieger/go/ssrf v1.1.0
 	github.com/cplieger/go/textsafe v1.1.0
-	github.com/cplieger/go/wiregen/v2 v2.4.0-dev.1
+	github.com/cplieger/go/wiregen/v2 v2.4.0-dev.4
 	github.com/cplieger/go/yamlenv v1.1.0
 	github.com/cplieger/toolbelt/v3 v3.16.0-dev.7
 	github.com/cplieger/web-terminal-engine/v6 v6.6.0-dev.7
 	github.com/creack/pty v1.1.24
 	github.com/evanw/esbuild v0.28.2
-	github.com/klauspost/compress v1.20.4
+	github.com/klauspost/compress v1.20.5
 	github.com/tailscale/hujson v0.0.0-20260727124030-b80ff77dac4f
 	go.yaml.in/yaml/v4 v4.0.0
 	golang.org/x/image v0.48.0
