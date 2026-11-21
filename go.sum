@@ -8,6 +8,8 @@ github.com/cplieger/go/envx/v2 v2.0.0-dev.1 h1:wD/C4/xfT68gAKUgWMlb2Ev4A0dGGS3Zz
 github.com/cplieger/go/envx/v2 v2.0.0-dev.1/go.mod h1:8tW2M5tRWGVUD/meU45+zATd4Ir2p6VqpdqCVF+Isoo=
 github.com/cplieger/go/filesafe v1.2.0-dev.2 h1:KzGIp+fvRgpUCJc4ndztIKm56kzMAx5fYM7xeGbPAvA=
 github.com/cplieger/go/filesafe v1.2.0-dev.2/go.mod h1:ji4TnJD8S8kgKelJlCQxlHyX0UXQGTW1ylSBqH5xqhI=
+github.com/cplieger/go/filesafe v1.2.0-dev.4 h1:YSiO42ooQsYpR26PM2XoHRJsP+t31lO+9WctnvbFAnI=
+github.com/cplieger/go/filesafe v1.2.0-dev.4/go.mod h1:ji4TnJD8S8kgKelJlCQxlHyX0UXQGTW1ylSBqH5xqhI=
 github.com/cplieger/go/health/v2 v2.0.0 h1:WHZiSYIyvmaFvkohJopPptEg9oW4QxRSV5HUxaeFUKo=
 github.com/cplieger/go/health/v2 v2.0.0/go.mod h1:Dmp78r+0ZHF2xMfOQqZ7c5pBiZF1el3QhLHA1y9um2A=
 github.com/cplieger/go/httpcache v1.1.0 h1:v5BOjRilWhWMKvi9ygNgfw/q/SufZLcO6y/CSHzk8Gs=
@@ -18,6 +20,8 @@ github.com/cplieger/go/httpserver v1.5.0 h1:z4ji5vpyd6mhR+FnFtzFBe9Mv6nOuVPWhcFv
 github.com/cplieger/go/httpserver v1.5.0/go.mod h1:MuZxKRRjQG6DAJBO88cTGhVdhSCmBu2PMeA/DWRbiTQ=
 github.com/cplieger/go/httpserver/v2 v2.0.0-dev.10 h1:hTa8RA2RVzXAFJA0KkNwkZFS0c6NCcJHirqPahlOazM=
 github.com/cplieger/go/httpserver/v2 v2.0.0-dev.10/go.mod h1:IUzAOZzxsi24r2nK1aTp2uIMi3Y1+67hBcng8bcQj6w=
+github.com/cplieger/go/httpserver/v2 v2.0.0-dev.13 h1:XZl3Ld2sMcS5I1gTlfrsFROOzSQnKwR9umje8jjCI9w=
+github.com/cplieger/go/httpserver/v2 v2.0.0-dev.13/go.mod h1:w6gBJDFGQjaYD9/9ozzKk4zY5xYQAdQCmrg2RpsRLcE=
 github.com/cplieger/go/jsonx v1.1.0 h1:/XBHr3vJVqKYVDteO8cZEMAdTgmT3Df/SeyNw1pdak8=
 github.com/cplieger/go/jsonx v1.1.0/go.mod h1:ry6co0JYAadIhjHtkktBSK3to4YdtEak1P7mdmQlr7U=
 github.com/cplieger/go/keyenc v1.3.0 h1:v0zvHSY4ZOZapGNYGAkghEXPz1SeifT/Trg0b9A8IBU=
@@ -36,6 +40,8 @@ github.com/cplieger/go/slogx v1.1.0 h1:whWmZcNmLuWGFM33SYFR+alUTfEodzBjKju44DHNg
 github.com/cplieger/go/slogx v1.1.0/go.mod h1:N88y5LJZ1aVp++cLFqzEV4WsalaX5YKXoRtXT29Ngkw=
 github.com/cplieger/go/sse/v2 v2.3.0-dev.18 h1:R9Mg4YljaqS4Q6MFmOlDN8e+kTNBZ/eS4gU9W2gys/k=
 github.com/cplieger/go/sse/v2 v2.3.0-dev.18/go.mod h1:EpLLOJxK1rTIHsddOQHHqpwt4zwCI0N3UvEboTpaIn8=
+github.com/cplieger/go/sse/v2 v2.3.0-dev.23 h1:zsz7rroFXJaZ3xk9LA+GhXOkiKriaEt/v2jatYZP6B0=
+github.com/cplieger/go/sse/v2 v2.3.0-dev.23/go.mod h1:l+k0cGpMYbZvAAegWfpi1LtXskfvyllSRf0mVREFdIc=
 github.com/cplieger/go/ssrf v1.1.0 h1:gyP7pYm1415RkHmIdod1YCvuX+I1xD1dXiRa8tvz8Bg=
 github.com/cplieger/go/ssrf v1.1.0/go.mod h1:95hUJ04+tP4FHFyd9Vp+egJpNDuf8d+jtgvcxzf7Mkw=
 github.com/cplieger/go/textsafe v1.1.0 h1:D+p7ZDBQmABv/empI2TNMZfvhMXNlfii8E2e5V+dUWE=
