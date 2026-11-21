@@ -1,9 +1,9 @@
 {
  "last": {
-  "commit": "cad46a5ff1eae76dbabe5153c67b275b3669004b",
-  "date": "2026-11-21T01:29:18Z",
+  "commit": "007273c22bc7a9beae618bf61930ccf9337b01eb",
+  "date": "2026-11-21T09:21:33Z",
   "guard_behind": null,
-  "run_url": "https://github.com/cplieger/marotte/actions/runs/44849677806",
+  "run_url": "https://github.com/cplieger/marotte/actions/runs/44889193167",
   "runner": "ubuntu-26.04"
  },
  "scenarios": {},
