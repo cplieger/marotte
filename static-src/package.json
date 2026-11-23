@@ -36,7 +36,7 @@
     "@vitest/coverage-v8": "5.1.1",
     "eslint": "10.15.0",
     "fast-check": "4.10.3",
-    "knip": "6.46.1",
+    "knip": "6.47.0",
     "msw": "3.0.7",
     "playwright": "1.65.1",
     "prettier": "3.10.1",
