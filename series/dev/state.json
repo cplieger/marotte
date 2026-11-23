@@ -1,12 +1,33 @@
 {
  "last": {
-  "commit": "ff2c66b8226d7675622af139bdb4d1599e0e2b81",
-  "date": "2026-11-23T01:38:16Z",
+  "commit": "e0d01e98bc218329f951bcd1af65583e8903640d",
+  "date": "2026-11-23T09:44:33Z",
   "guard_behind": null,
-  "run_url": "https://github.com/cplieger/marotte/actions/runs/45094218665",
+  "run_url": "https://github.com/cplieger/marotte/actions/runs/45147078936",
   "runner": "ubuntu-26.04"
  },
- "scenarios": {},
+ "scenarios": {
+  "shell": {
+   "bad_runs": [
+    "https://github.com/cplieger/marotte/actions/runs/45147078936"
+   ],
+   "first_bad": {
+    "commit": "e0d01e98bc218329f951bcd1af65583e8903640d",
+    "date": "2026-11-23T09:44:33Z",
+    "run_url": "https://github.com/cplieger/marotte/actions/runs/45147078936"
+   },
+   "items": [
+    "shell/x10/webkit/desktop/away/cpu_ms"
+   ],
+   "last_good": {
+    "commit": "ff2c66b8226d7675622af139bdb4d1599e0e2b81",
+    "date": "2026-11-23T01:38:16Z",
+    "run_url": "https://github.com/cplieger/marotte/actions/runs/45094218665"
+   },
+   "runner": "ubuntu-26.04",
+   "status": "suspect"
+  }
+ },
  "schema": 1,
  "series": "dev"
 }
