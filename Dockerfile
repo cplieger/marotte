@@ -13,11 +13,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # anchored rules when the walk starts in a subfolder (BurntSushi/ripgrep#829,
 # fixed in 15.0.0). Debian trixie ships 14.1.1.
 # renovate: datasource=github-releases depName=BurntSushi/ripgrep
-ARG RIPGREP_VERSION=15.2.0
+ARG RIPGREP_VERSION=16.0.0
 # repin: dep=BurntSushi/ripgrep url=https://github.com/BurntSushi/ripgrep/releases/download/{version}/ripgrep-{version}-x86_64-unknown-linux-musl.tar.gz
-ARG RIPGREP_AMD64_SHA256=33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c
+ARG RIPGREP_AMD64_SHA256=54268ab4643c00a290a29b0086066d64b3f56236dd805ec64629a86f9bd29fd0
 # repin: dep=BurntSushi/ripgrep url=https://github.com/BurntSushi/ripgrep/releases/download/{version}/ripgrep-{version}-aarch64-unknown-linux-gnu.tar.gz
-ARG RIPGREP_ARM64_SHA256=a740b91c82eaf9914cfedd353572f2791cbe0162c84101ee0951058f4dcbc90d
+ARG RIPGREP_ARM64_SHA256=0b0bddcfaf42be1f3c56bf929d70defd1a2d96f2577aecbd7029a3734ddb4740
 # The release tarballs ship ripgrep's own licence only; the texts of everything the binaries
 # link are committed, for the version the MANIFEST's first line names.
 COPY licenses/crates/ /licenses/crates/
