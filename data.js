@@ -1,6 +1,6 @@
 window.BENCHMARK_DATA = {
   "lastUpdate": 1795561902214,
-  "repoUrl": "https://github.com/cplieger/ci",
+  "repoUrl": "https://github.com/cplieger/marotte",
   "entries": {
     "Benchmark": [
       {
@@ -15745,10 +15745,10 @@ window.BENCHMARK_DATA = {
             "username": "web-flow",
             "email": "noreply@github.com"
           },
-          "id": "e1240fbce166e4e35c5bcfec8003c2e615e40deb",
-          "message": "chore(deps): update cplieger/ci digest to f266d61 (#1243)\n\nCo-authored-by: tribble-trouble[bot] <338123824+tribble-trouble[bot]@users.noreply.github.com>",
-          "timestamp": "2026-11-24T19:22:54Z",
-          "url": "https://github.com/cplieger/ci/commit/e1240fbce166e4e35c5bcfec8003c2e615e40deb"
+          "id": "f69cc3c9915a75916ac068186cbd9e32888318dc",
+          "message": "chore(sync): synced file(s) with cplieger/ci (#2539)\n\nCo-authored-by: tribble-trouble[bot] <338123824+tribble-trouble[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-24T20:22:18Z",
+          "url": "https://github.com/cplieger/marotte/commit/f69cc3c9915a75916ac068186cbd9e32888318dc"
         },
         "date": 1795561901991,
         "tool": "customSmallerIsBetter",
