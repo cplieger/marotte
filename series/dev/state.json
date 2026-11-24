@@ -1,36 +1,12 @@
 {
  "last": {
-  "commit": "213dde85df48a7f18668958b48523703148dfff8",
-  "date": "2026-11-24T01:22:31Z",
+  "commit": "43db0044cb794c98b4c7062a53c85a259f09d957",
+  "date": "2026-11-24T09:23:37Z",
   "guard_behind": null,
-  "run_url": "https://github.com/cplieger/marotte/actions/runs/45304486668",
+  "run_url": "https://github.com/cplieger/marotte/actions/runs/45364734843",
   "runner": "ubuntu-26.04"
  },
- "scenarios": {
-  "shell": {
-   "bad_runs": [
-    "https://github.com/cplieger/marotte/actions/runs/45147078936",
-    "https://github.com/cplieger/marotte/actions/runs/45226756370"
-   ],
-   "body": "<!-- perf-trend:dev:shell -->\nThe scheduled performance trend of `dev` measured **shell** past its thresholds at two consecutive points.\n\n| Cell | Before | After | Ratio |\n|---|---|---|---|\n| shell/x10/webkit/desktop/away/cpu_ms | 1810 | 5920 | 3.27x |\n\nCommits from the last good point `ff2c66b8226d` to the first bad point `e0d01e98bc21`: https://github.com/cplieger/marotte/compare/ff2c66b8226d7675622af139bdb4d1599e0e2b81...e0d01e98bc218329f951bcd1af65583e8903640d\n\nRuns of the bad points:\n\n- https://github.com/cplieger/marotte/actions/runs/45147078936\n- https://github.com/cplieger/marotte/actions/runs/45226756370\n\nCounts that changed: `shell/x1/chromium/desktop/back/dom` 8902 to 10298, `shell/x1/chromium/phone/back/dom` 9312 to 8959, `shell/x1/webkit/phone/back/dom` 4766 to 4992, `shell/x10/chromium/desktop/back/dom` 11959 to 11866, `shell/x10/chromium/desktop/cold/reads:GET /api/chats` 2 to 1, `shell/x10/chromium/phone/back/dom` 9361 to 9243, `shell/x10/webkit/desktop/back/dom` 9671 to 11810, `shell/x10/webkit/phone/back/dom` 9338 to 9362.\n\nBefore is the cell's baseline, the median of up to 7 earlier good points; After is the latest point. A cell is bad at cpu_ms over 2.0x and more than 250 ms over, server_cpu_ms over 2.0x and more than 10 ms over, heap_mb over 1.25x and more than 2 MB over, rss_mb over 1.25x and more than 50 MB over. This issue closes itself after two consecutive good points; closing it by hand accepts the new values as the baseline.\n",
-   "first_bad": {
-    "commit": "e0d01e98bc218329f951bcd1af65583e8903640d",
-    "date": "2026-11-23T09:44:33Z",
-    "run_url": "https://github.com/cplieger/marotte/actions/runs/45147078936"
-   },
-   "items": [
-    "shell/x10/webkit/desktop/away/cpu_ms"
-   ],
-   "last_good": {
-    "commit": "ff2c66b8226d7675622af139bdb4d1599e0e2b81",
-    "date": "2026-11-23T01:38:16Z",
-    "run_url": "https://github.com/cplieger/marotte/actions/runs/45094218665"
-   },
-   "opened": "2026-11-23T17:21:29Z",
-   "runner": "ubuntu-26.04",
-   "status": "recovering"
-  }
- },
+ "scenarios": {},
  "schema": 1,
  "series": "dev"
 }
