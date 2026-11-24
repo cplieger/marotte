@@ -1,6 +1,6 @@
 # check=error=true
 
-FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS ripgrep
+FROM debian:trixie-slim@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0 AS ripgrep
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -45,7 +45,7 @@ RUN set -e; \
     printf '{"bomFormat":"CycloneDX","specVersion":"1.5","version":1,"components":[{"bom-ref":"ripgrep@%s","type":"application","name":"ripgrep","version":"%s","purl":"pkg:cargo/ripgrep@%s?download_url=%s&checksum=sha256:%s"}]}\n' \
       "$RIPGREP_VERSION" "$RIPGREP_VERSION" "$RIPGREP_VERSION" "$url" "$rg_sha" > /out/usr/share/sbom/ripgrep.cdx.json
 
-FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS builder
+FROM debian:trixie-slim@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0 AS builder
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -251,7 +251,7 @@ RUN sh scripts/collect-licenses.sh --name marotte . && \
       static-src/node_modules/@cplieger/ui/fonts/LICENSE-* static-src/node_modules/@cplieger/ui/icons/LICENSE-* \
       /out/usr/share/licenses/cplieger-ui/
 
-FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
+FROM debian:trixie-slim@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0
 
 ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
