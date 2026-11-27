@@ -1,6 +1,6 @@
 # check=error=true
 
-FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS builder
+FROM debian:trixie-slim@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0 AS builder
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -48,7 +48,7 @@ RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 
 # css/ui-primitives.css is concatenated into static/style.css by cmd/bundle.
 # This pin and static-src/package.json's track the same exact version.
 # renovate: datasource=npm depName=@cplieger/ui
-ARG CPLIEGER_UI_VERSION=1.1.0
+ARG CPLIEGER_UI_VERSION=1.2.0
 RUN mkdir -p static-src/node_modules/@cplieger/ui && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/ui/-/ui-${CPLIEGER_UI_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/ui --strip-components=1
@@ -67,7 +67,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-ui && \
 
 # This pin and static-src/package.json's track the same exact version.
 # renovate: datasource=npm depName=@cplieger/keyenc
-ARG CPLIEGER_KEYENC_VERSION=1.1.0
+ARG CPLIEGER_KEYENC_VERSION=1.3.0
 RUN mkdir -p static-src/node_modules/@cplieger/keyenc && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/keyenc/-/keyenc-${CPLIEGER_KEYENC_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/keyenc --strip-components=1
@@ -187,7 +187,7 @@ RUN sh scripts/collect-licenses.sh --name marotte . && \
     mkdir -p /out/usr/share/licenses/pele && \
     cp static-src/node_modules/pele/LICENSE /out/usr/share/licenses/pele/LICENSE
 
-FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
+FROM debian:trixie-slim@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0
 
 ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
